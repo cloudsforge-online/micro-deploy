@@ -1,0 +1,75 @@
+# Loki — the raw log stream, 30 days.
+#
+# Loki holds the stream; Lantern holds the triage view. That division is what
+# makes Lantern's 7-day retention acceptable (AD-20) and it is why this is not
+# "the log system" — it is the commodity half of it.
+#
+# The cost driver here is label cardinality, not volume. 13-operational-model.md
+# §1.4 limits labels to `service`, `env`, `level` and `route_class`; `user_id`,
+# `request_id` and `trace_id` are line CONTENT, searched and never labelled. A
+# trace_id label would create one stream per request, which is how a Loki
+# install becomes the outage.
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # 30 days, per AD-20.
+  retention_period: 720h
+  # Structured metadata is how OTLP attributes (trace_id, request_id, user_id)
+  # are carried WITHOUT becoming labels. This is the setting that makes the
+  # cardinality rule above enforceable rather than aspirational.
+  allow_structured_metadata: true
+  volume_enabled: true
+  # An incident produces a burst. Refusing it loses exactly the lines that
+  # matter, so the burst allowance is generous and retention is what bounds cost.
+  ingestion_rate_mb: 16
+  ingestion_burst_size_mb: 32
+  max_query_series: 10000
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h
+
+compactor:
+  working_directory: /loki/compactor
+  # Retention is only enforced if the compactor is told to do it. Left off, the
+  # `retention_period` above is a comment and the disk fills in month four.
+  retention_enabled: true
+  delete_request_store: filesystem
+  compaction_interval: 10m
+
+# OTLP ingest from the collector. Only these promote to labels; everything else
+# becomes structured metadata, per the cardinality rule.
+distributor:
+  otlp_config:
+    default_resource_attributes_as_index_labels:
+      - service.name
+      - deployment.environment
+
+analytics:
+  reporting_enabled: false

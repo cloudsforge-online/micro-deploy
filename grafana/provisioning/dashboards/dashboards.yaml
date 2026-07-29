@@ -1,0 +1,17 @@
+apiVersion: 1
+
+providers:
+  - name: cloudsforge
+    orgId: 1
+    folder: CloudsForge
+    type: file
+    # Read-only in the UI on purpose. A panel edited in the browser is a change
+    # no repository has and it is lost on the next deploy — which is discovered
+    # at the worst possible moment, when somebody opens the dashboard they fixed
+    # last month during an incident.
+    disableDeletion: true
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

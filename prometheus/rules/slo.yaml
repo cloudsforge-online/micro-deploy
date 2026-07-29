@@ -1,0 +1,166 @@
+# Recording rules for the SLIs of 13-operational-model.md §8.
+#
+# Two jobs, and they are different jobs:
+#
+#   1. Precompute the SLIs, so a dashboard panel is one series read rather than
+#      a histogram_quantile over a 28-day range every time somebody opens it.
+#      A dashboard that puts Prometheus under load during an incident is a
+#      dashboard nobody can open during an incident.
+#
+#   2. Give the 400-day retention story something to retain. Prometheus cannot
+#      downsample — AD-20 says "15d raw, 400d downsampled" and there is no flag
+#      for the second half. These 5m-resolution rollups ARE the downsampled
+#      series; see README §Retention.
+#
+# METRIC NAMES. These use what @cloudsforge/telemetry actually registers:
+# `http_requests_total{method,route,status}` and `http_request_duration_ms`
+# (a histogram in MILLISECONDS). 13-operational-model.md §5.1 writes
+# `http_server_requests_total` and `http_server_request_duration_seconds`, which
+# is the OTel semantic-convention spelling and is not what the library emits.
+# Rules that reference a metric nobody publishes evaluate to empty and alert on
+# nothing, silently — so the library wins here and the document is what needs
+# amending. Flagged in README §Divergences.
+
+groups:
+  # ---------------------------------------------------------------- RED ----
+  - name: cf.red
+    interval: 30s
+    rules:
+      - record: cf:http_requests:rate5m
+        expr: sum by (service, route, status) (rate(http_requests_total[5m]))
+
+      - record: cf:http_requests:rate5m:total
+        expr: sum by (service) (rate(http_requests_total[5m]))
+
+      # 5xx only. A 4xx is a client being wrong, and putting it in the error
+      # ratio means a scanner probing /wp-admin burns the availability budget.
+      - record: cf:http_errors:rate5m
+        expr: sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+
+      - record: cf:http_errors:ratio5m
+        expr: |
+          cf:http_errors:rate5m
+            /
+          clamp_min(cf:http_requests:rate5m:total, 1e-9)
+
+      # Latency quantiles, in milliseconds because that is the histogram's unit.
+      - record: cf:http_latency_ms:p50
+        expr: histogram_quantile(0.50, sum by (service, le) (rate(http_request_duration_ms_bucket[5m])))
+      - record: cf:http_latency_ms:p95
+        expr: histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_ms_bucket[5m])))
+      - record: cf:http_latency_ms:p99
+        expr: histogram_quantile(0.99, sum by (service, le) (rate(http_request_duration_ms_bucket[5m])))
+
+  # ------------------------------------------------------- availability SLI --
+  - name: cf.slo.availability
+    interval: 30s
+    rules:
+      # Good events over total, per service. The SLI, not the SLO: the objective
+      # it is measured against is a label on the rules below, because one query
+      # serving Tier 1 at 99.95% and Tier 2 at 99.5% is one query to maintain.
+      - record: cf:slo_availability:ratio_rate5m
+        expr: |
+          1 - (
+            sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+              /
+            clamp_min(sum by (service) (rate(http_requests_total[5m])), 1e-9)
+          )
+
+      - record: cf:slo_availability:ratio_rate1h
+        expr: |
+          1 - (
+            sum by (service) (rate(http_requests_total{status=~"5.."}[1h]))
+              /
+            clamp_min(sum by (service) (rate(http_requests_total[1h])), 1e-9)
+          )
+
+      - record: cf:slo_availability:ratio_rate6h
+        expr: |
+          1 - (
+            sum by (service) (rate(http_requests_total{status=~"5.."}[6h]))
+              /
+            clamp_min(sum by (service) (rate(http_requests_total[6h])), 1e-9)
+          )
+
+  # ------------------------------------------------------------ burn rate ---
+  # The multi-window pair from 13-operational-model.md §8: 14.4x over 1h pages
+  # (that is 2% of a 28-day budget consumed in an hour), 6x over 6h tickets.
+  # A single window cannot serve both — a short one pages on every blip, a long
+  # one fires after the budget is already gone.
+  #
+  # Target 99.5% is the Tier-2 default; Tier 1 is computed separately below,
+  # because dividing by the wrong budget is how an SLO stops meaning anything.
+  - name: cf.slo.burn
+    interval: 30s
+    rules:
+      - record: cf:slo_burn_rate:1h
+        labels:
+          tier: "2"
+          objective: "0.995"
+        expr: (1 - cf:slo_availability:ratio_rate1h) / (1 - 0.995)
+
+      - record: cf:slo_burn_rate:6h
+        labels:
+          tier: "2"
+          objective: "0.995"
+        expr: (1 - cf:slo_availability:ratio_rate6h) / (1 - 0.995)
+
+      # Tier 1 — money services, 99.95%. Twenty-one minutes of budget over 28
+      # days, which is why the same absolute error rate burns ten times faster.
+      - record: cf:slo_burn_rate_tier1:1h
+        labels:
+          tier: "1"
+          objective: "0.9995"
+        expr: |
+          (
+            1 - cf:slo_availability:ratio_rate1h{service=~"ledger|wallet|settlement|custody|indexer|pricing|billing"}
+          ) / (1 - 0.9995)
+
+      - record: cf:slo_burn_rate_tier1:6h
+        labels:
+          tier: "1"
+          objective: "0.9995"
+        expr: |
+          (
+            1 - cf:slo_availability:ratio_rate6h{service=~"ledger|wallet|settlement|custody|indexer|pricing|billing"}
+          ) / (1 - 0.9995)
+
+  # ------------------------------------------------------------- journeys ---
+  # A metric says "p99 is high"; a journey says "a user cannot withdraw".
+  # These are the series the page-vs-ticket split in §9 rests on.
+  - name: cf.slo.journeys
+    interval: 30s
+    rules:
+      # 1 pass, 0 fail or error, 0.5 skip. `== 1` and not `!= 0`, because a skip
+      # is not-run and a skip is never green — Beacon emits 0.5 precisely so
+      # this distinction is available rather than assumed (metrics.js:145).
+      - record: cf:journey_passing
+        expr: (beacon_journey_status == bool 1)
+
+      - record: cf:journey_pass_ratio:1h
+        expr: avg_over_time(cf:journey_passing[1h])
+
+      # Staleness. A journey that stopped running reports its last status
+      # forever, so a green grid can mean the scheduler died. Nothing else
+      # catches this.
+      - record: cf:journey_staleness_seconds
+        expr: time() - beacon_journey_last_run_timestamp_seconds
+
+  # ------------------------------------------------------- 5m downsampling ---
+  # The "400d downsampled" half of AD-20's retention line. Prometheus keeps one
+  # retention for everything, so these are recorded at 5m and read by the
+  # long-horizon panels; when a remote-write store lands they are what gets
+  # shipped to it, at ~1/20th the series volume of the raw data.
+  - name: cf.downsample.5m
+    interval: 5m
+    rules:
+      - record: cf:ds5m:http_requests:rate
+        expr: cf:http_requests:rate5m:total
+      - record: cf:ds5m:http_errors:ratio
+        expr: cf:http_errors:ratio5m
+      - record: cf:ds5m:http_latency_ms:p99
+        expr: cf:http_latency_ms:p99
+      - record: cf:ds5m:target_up
+        expr: avg_over_time(beacon_target_up[5m])
+      - record: cf:ds5m:journey_pass_ratio
+        expr: avg_over_time(cf:journey_passing[5m])

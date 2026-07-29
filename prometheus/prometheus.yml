@@ -1,0 +1,136 @@
+# Scrape configuration for the new estate.
+#
+# Cardinality budget: 500k active series (13-operational-model.md §13).
+# `user_id`, `address`, `request_id` and `trace_id` are NEVER labels. They are
+# span attributes and log line content, joined on trace_id — which is the whole
+# point of running three signals instead of one.
+
+global:
+  scrape_interval: 15s
+  scrape_timeout: 10s
+  evaluation_interval: 15s
+  external_labels:
+    cluster: cf-micro
+    env: local
+
+rule_files:
+  - /etc/prometheus/rules/slo.yaml
+  - /etc/prometheus/rules/alerts.yaml
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # ------------------------------------------------------- telemetry plane ---
+  # The monitor monitors itself. `up == 0` on any of these is the signal that
+  # the rest of this file is lying.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+        labels:
+          team: platform
+
+  - job_name: otel-collector
+    # The collector's own health (spans refused, queue size, exporter failures)
+    # AND everything services pushed to it over OTLP, re-exposed for pull.
+    static_configs:
+      - targets: ["otel-collector:8889"]
+        labels:
+          team: platform
+
+  - job_name: alertmanager
+    static_configs:
+      - targets: ["alertmanager:9093"]
+        labels:
+          team: platform
+
+  - job_name: tempo
+    static_configs:
+      - targets: ["tempo:3200"]
+        labels:
+          team: platform
+
+  - job_name: loki
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["loki:3100"]
+        labels:
+          team: platform
+
+  - job_name: grafana
+    static_configs:
+      - targets: ["grafana:3000"]
+        labels:
+          team: platform
+
+  # -------------------------------------------------------------- beacon ---
+  # The gap AD-20 names by name: "Beacon emits Prometheus format explicitly so
+  # that adopting a scraper costs a scrape config rather than a rewrite, and
+  # nothing has ever scraped it." This is the scrape config.
+  #
+  # It costs one thing more than AD-20 predicted: a credential. Beacon gates
+  # /metrics behind the same auth as every other route (infra/beacon/src/
+  # server.js:373) — deliberately, because an open /metrics publishes the shape
+  # of the estate to anyone who can reach the port. Beacon accepts a static
+  # break-glass token in an `x-beacon-token` header, so the cost is a scrape
+  # config plus BEACON_TOKEN being set. It is EMPTY in the running estate today,
+  # which means this target 401s until an operator sets it. See README §Beacon.
+  #
+  # The token is read from a file, never written into this config: a token in a
+  # config file is a token in a backup, in a diff and in a screenshot.
+  - job_name: beacon
+    scheme: http
+    # Beacon holds live state in memory and its /metrics never touches Postgres
+    # (metrics.js:8-12), so a 30s scrape is free. It is slower than the global
+    # 15s because every value behind it changes on Beacon's own probe schedule,
+    # not on ours — scraping faster samples the same number twice.
+    scrape_interval: 30s
+    http_headers:
+      x-beacon-token:
+        files:
+          - /etc/prometheus/secrets/beacon_token
+    static_configs:
+      # Reached over the estate's own network, which Prometheus joins as an
+      # external network. The estate's compose file is not modified and does not
+      # know this exists.
+      - targets: ["beacon:4011"]
+        labels:
+          team: platform
+          service: beacon
+
+  # -------------------------------------------------- new estate services ---
+  # The twenty-five backend deployables of AD-01. Each exposes the RED and job
+  # metrics that @cloudsforge/telemetry registers (registerHttpMetrics,
+  # registerJobMetrics) on /metrics.
+  #
+  # Static targets, not Docker service discovery. Docker SD reads the host's
+  # Docker socket, which is precisely the collection method AD-20 demotes
+  # Lantern away from because it survives neither a second host nor Kubernetes.
+  # Building the new stack's scraper on the mechanism we are retiring would be
+  # a decision to redo this work. These become file_sd fed by the release
+  # manifest (AD-03) — one generated file, one reload, no socket.
+  - job_name: cf-services
+    file_sd_configs:
+      - files:
+          - /etc/prometheus/targets/*.yaml
+        refresh_interval: 30s
+    relabel_configs:
+      # `instance` defaults to host:port, which changes every time a replica is
+      # rescheduled and takes every series with it. AD-17 makes deploy.replicas
+      # legal; a dashboard that breaks when it is used is not a dashboard.
+      - source_labels: [__meta_cf_service]
+        target_label: service
+      - source_labels: [__meta_cf_team]
+        target_label: team
+
+  # ------------------------------------------------------------- gateway ---
+  # Traefik, from the gateway overlay. Absent until that stack is up, and a
+  # target that is absent rather than down is exactly what `absent()` alerts on.
+  - job_name: traefik
+    static_configs:
+      - targets: ["gateway:8082"]
+        labels:
+          team: platform
+          service: gateway

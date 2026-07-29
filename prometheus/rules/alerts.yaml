@@ -1,0 +1,436 @@
+# Alerting rules.
+#
+# THE RUNBOOK RULE (13-operational-model.md §9). Every rule below carries a
+# `runbook_url`. An alert without one is deleted, not silenced, because an
+# unactionable page teaches the on-call to ignore pages — and the pages that
+# matter here are about somebody's money. CI enforces it:
+#
+#   yq '.groups[].rules[] | select(.alert) | select(.annotations.runbook_url == null)' \
+#     prometheus/rules/alerts.yaml
+#
+# must return nothing, and every URL must resolve.
+#
+# PAGE VS TICKET. `severity: page` wakes a human, and only for user-visible
+# failure or irreversible money risk. `severity: ticket` is everything else.
+# A metric says "p99 is high"; a journey says "a user cannot withdraw". Page on
+# the second. Alertmanager routes on this label and on `team`, both mandatory.
+#
+# METRICS THAT DO NOT EXIST YET. The money and chain rules reference metrics
+# that ledger, wallet, settlement, custody and indexer must emit — those
+# services are P4/P5 and are not written. Those rules are the CONTRACT: a
+# service that does not emit `ledger_trial_balance_delta` fails an alert that is
+# already deployed and already has a runbook, rather than shipping and then
+# being instrumented. The `MoneyMetricContractMissing` rule at the bottom is
+# what stops a missing metric reading as a healthy system, which is the failure
+# mode this whole design exists to prevent.
+
+groups:
+  # ======================================================== PAGE — money ====
+  - name: cf.page.money
+    rules:
+      - alert: LedgerTrialBalanceNonZero
+        # Sum of debits minus sum of credits. Double-entry has exactly one
+        # invariant and this is it. Non-zero does not mean a number is off — it
+        # means the accounting is not accounting, and every balance derived from
+        # it is unproven, including the ones users are looking at.
+        expr: ledger_trial_balance_delta != 0
+        for: 2m
+        labels:
+          severity: page
+          team: ledger
+          service: ledger
+          sev: "1"
+        annotations:
+          summary: "Trial balance is {{ $value }} for {{ $labels.currency }} — it must be exactly 0"
+          description: >-
+            Σ debits − Σ credits is non-zero on the {{ $labels.currency }} journal.
+            No balance in the platform is trustworthy until this is 0. Do not
+            correct it with an UPDATE; an adjustment is a new balanced entry
+            under dual approval.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-trial-balance-nonzero.md
+
+      - alert: WithdrawalStuck
+        # Pages on >= 1, not on a rate. One user unable to get their money out
+        # is the failure this platform is least allowed to have, and it is
+        # invisible to every latency and error-rate metric — the request
+        # succeeded, the money did not move.
+        expr: withdrawal_stuck_total >= 1
+        for: 5m
+        labels:
+          severity: page
+          team: settlement
+          service: settlement
+          sev: "1"
+        annotations:
+          summary: "{{ $value }} withdrawal(s) stuck on {{ $labels.chain }}"
+          description: >-
+            A withdrawal has been in pending, signed or broadcast longer than the
+            chain's policy allows. Freeze before diagnosing: freezing is
+            reversible, a duplicated payout is not.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-stuck-withdrawal.md
+
+  # ====================================================== PAGE — custody ====
+  - name: cf.page.custody
+    rules:
+      - alert: CustodyUnreachable
+        # Custody is permanently single-replica (AD-18) and that is accepted, so
+        # its availability objective is deliberately the lowest in the estate at
+        # 99.5%. Accepted does not mean unwatched: while it is down, deposits
+        # still land and withdrawals and sweeps queue, and that degradation is
+        # supposed to be visible on the public status page rather than
+        # discovered by a user whose withdrawal is silent.
+        expr: up{job=~"cf-services|custody", service="custody"} == 0
+        for: 2m
+        labels:
+          severity: page
+          team: security
+          service: custody
+          sev: "1"
+        annotations:
+          summary: "Custody has not answered for 2 minutes"
+          description: >-
+            Signing is unavailable. Withdrawals and sweeps queue; deposits are
+            unaffected. Confirm the queue is queuing and not failing, and put the
+            degradation on the status page before users find it.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-custody-unreachable.md
+
+  # ======================================================== PAGE — chain ====
+  - name: cf.page.chain
+    rules:
+      - alert: IndexerLagPastConfirmationDepth
+        # Compared against the chain's OWN confirmation depth, published as a
+        # metric by the indexer, rather than against a constant. Hearth's depth
+        # is 60 and Bitcoin's is not; one threshold for both is one threshold
+        # that is wrong for one of them.
+        #
+        # Past this point deposits are provably not being credited — it is a
+        # user-visible money failure wearing an infrastructure metric's clothes.
+        expr: indexer_lag_blocks > on (chain) group_left indexer_confirmation_depth
+        for: 10m
+        labels:
+          severity: page
+          team: indexer
+          service: indexer
+          sev: "2"
+        annotations:
+          summary: "Indexer is {{ $value }} blocks behind on {{ $labels.chain }}, past its confirmation depth"
+          description: >-
+            Deposits on {{ $labels.chain }} are not being credited. Check
+            provider health before restarting anything — a failover loop looks
+            identical to a stalled worker in this metric.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-indexer-lag.md
+
+      - alert: ChainHeightSpreadSustained
+        # Beacon emits one unlabelled height for the chain and a spread across
+        # nodes, because "which node is ahead" is not a question anyone asks and
+        # "do the nodes disagree" is.
+        expr: beacon_chain_height_spread > 3
+        for: 15m
+        labels:
+          severity: page
+          team: chain
+          service: hearth
+          sev: "2"
+        annotations:
+          summary: "Hearth nodes disagree by {{ $value }} blocks"
+          description: >-
+            Sustained non-zero height spread is a partition or a fork, not a slow
+            node. Do not restart nodes until you know which chain is the chain.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-hearth-fork.md
+
+  # ===================================================== PAGE — journeys ====
+  - name: cf.page.journeys
+    rules:
+      - alert: BeaconCriticalJourneyFailing
+        # `!= 1`, never `== 0`. Beacon emits 0.5 for a skip, and a skip is
+        # not-run, which is never green — alerting on `== 0` would treat a
+        # journey whose credentials went missing as passing.
+        #
+        # "Twice consecutively" is expressed as `for:`, not counted: the gauge
+        # holds its last value between runs, so remaining non-1 across a window
+        # longer than the journey interval means the most recent run failed and
+        # the one before it did too. Beacon applies hysteresis at the source for
+        # target state (failThreshold=3); it deliberately does not for journeys,
+        # so this is where it belongs. Do not double-apply it.
+        expr: beacon_journey_status{journey=~"critical.*|register|signin|deposit|convert|withdraw|mint.*|market.*"} != 1
+        for: 10m
+        labels:
+          severity: page
+          team: on-call
+          service: "{{ $labels.group }}"
+          sev: "2"
+        annotations:
+          summary: "Journey {{ $labels.journey }} has been failing for two consecutive runs"
+          description: >-
+            A synthetic user cannot complete {{ $labels.journey }}. This is a
+            user-visible failure, not a metric being ugly. Beacon's journey grid
+            before Grafana — the journey names what broke.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-incident-comms.md
+
+  # ========================================================== PAGE — SLO ====
+  - name: cf.page.slo
+    rules:
+      - alert: SLOErrorBudgetBurnFast
+        # 14.4x over 1h is 2% of a 28-day budget in an hour. Paired with the 6h
+        # ticket rule below because one window cannot serve both cases: short
+        # alone pages on every blip, long alone fires after the budget is gone.
+        expr: cf:slo_burn_rate_tier1:1h > 14.4
+        for: 5m
+        labels:
+          severity: page
+          team: "{{ $labels.service }}"
+          sev: "2"
+        annotations:
+          summary: "{{ $labels.service }} is burning its error budget at {{ $value | printf \"%.1f\" }}x"
+          description: >-
+            At this rate a Tier-1 28-day budget is gone inside two days. Tier 1
+            is 99.95% — twenty-one minutes for the month.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-rollback-release.md
+
+      - alert: GatewayErrorRatioHigh
+        expr: cf:http_errors:ratio5m{service="gateway"} > 0.05
+        for: 5m
+        labels:
+          severity: page
+          team: platform
+          service: gateway
+          sev: "1"
+        annotations:
+          summary: "Gateway is returning {{ $value | humanizePercentage }} 5xx"
+          description: >-
+            Every product is behind this. Check the deploy annotation first; if a
+            release landed in the window, roll back to the previous manifest
+            before diagnosing.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-rollback-release.md
+
+  # ======================================================= PAGE — backup ====
+  - name: cf.page.backup
+    rules:
+      - alert: BackupAgeExceeded
+        # Alerting on AGE rather than on failure is the whole point. A backup job
+        # that silently stops firing produces no failure to alert on, and the
+        # estate's backup.sh is unscheduled today — so the first thing to watch
+        # is that it ran at all.
+        expr: time() - backup_last_success_timestamp_seconds > 129600
+        labels:
+          severity: page
+          team: platform
+          sev: "2"
+        annotations:
+          summary: "No successful backup of {{ $labels.target }} for {{ $value | humanizeDuration }}"
+          description: >-
+            The ledger's RPO is zero. A backup nobody has restored is a
+            hypothesis; a backup that has not run is not even that.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-restore-from-backup.md
+
+  # ==================================================== TICKET — money ======
+  - name: cf.ticket.money
+    rules:
+      - alert: LedgerReconciliationDrift
+        # Ledger's custody account versus the indexer's observed on-chain
+        # balance. Ticket at any non-zero; the per-chain dust threshold that
+        # escalates it to a page is a property of the chain and belongs in the
+        # metric's own labels, not in a second copy of the number here.
+        expr: ledger_reconciliation_drift_native != 0
+        for: 15m
+        labels:
+          severity: ticket
+          team: ledger
+          service: ledger
+          sev: "3"
+        annotations:
+          summary: "Reconciliation drift of {{ $value }} on {{ $labels.chain }}"
+          description: >-
+            What the ledger says custody holds and what the chain says custody
+            holds have diverged. Two truths is the thing the single-journal
+            design exists to prevent, so this is a real finding even when small.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-reconciliation-drift.md
+
+      - alert: DepositAddressFrozen
+        # A live failure mode today: crediting freezes on one address until an
+        # operator records a manual sweep. This metric exists so it is visible
+        # before the user complains.
+        expr: wallet_deposit_address_frozen > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: wallet
+          service: wallet
+          sev: "3"
+        annotations:
+          summary: "{{ $value }} deposit address(es) frozen on {{ $labels.chain }}"
+          description: >-
+            Crediting has stopped on these addresses. The only fix is a recorded
+            manual sweep, which is a money-touching operation under dual approval.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-frozen-deposit-address.md
+
+  # ===================================================== TICKET — jobs ======
+  - name: cf.ticket.jobs
+    rules:
+      - alert: JobDeadLetterGrowth
+        # `jobs_dead_total` is what @cloudsforge/telemetry registers;
+        # 13-operational-model.md §5.2 calls it `jobs_dead_lettered_total`.
+        # The library wins — see README §Divergences.
+        expr: increase(jobs_dead_total[15m]) > 0
+        labels:
+          severity: ticket
+          team: "{{ $labels.service }}"
+          sev: "4"
+        annotations:
+          summary: "{{ $value }} job(s) of kind {{ $labels.kind }} dead-lettered in {{ $labels.service }}"
+          description: >-
+            A dead letter is work that will never happen unless somebody makes it
+            happen. Drain deliberately; replaying blindly is how a double
+            withdrawal is created.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-dead-letter-drain.md
+
+      - alert: JobQueueOverdue
+        # `jobs_overdue` counts work due more than five minutes ago. It rises for
+        # two very different reasons — nothing is claiming, or a worker died
+        # holding a lease — and the second is the class of bug that produced the
+        # estate's double-billing.
+        expr: jobs_overdue > 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: "{{ $labels.service }}"
+          sev: "4"
+        annotations:
+          summary: "{{ $labels.service }} has {{ $value }} overdue job(s)"
+          description: >-
+            Either nothing is claiming, or a worker died holding a lease. Check
+            jobs_claimed_total before assuming the queue is idle.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-lease-expiry-storm.md
+
+  # ====================================================== TICKET — SLO ======
+  - name: cf.ticket.slo
+    rules:
+      - alert: SLOErrorBudgetBurnSlow
+        expr: cf:slo_burn_rate:6h > 6
+        for: 30m
+        labels:
+          severity: ticket
+          team: "{{ $labels.service }}"
+          sev: "3"
+        annotations:
+          summary: "{{ $labels.service }} is burning budget at {{ $value | printf \"%.1f\" }}x over 6h"
+          description: >-
+            Not a page. At 50% consumed this becomes a ticket named in the weekly
+            review; at 75% reliability work outranks features; at 100% the
+            service is frozen to fixes only.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-rollback-release.md
+
+  # ================================================== TICKET — telemetry ====
+  - name: cf.ticket.telemetry
+    rules:
+      - alert: BeaconScrapeFailing
+        # Beacon gates /metrics behind auth. The most likely cause of this alert
+        # is not that Beacon is down — it is that BEACON_TOKEN is unset or the
+        # token file is stale, which is a silent condition that would otherwise
+        # present as "the journey panels are empty" three weeks later.
+        expr: up{job="beacon"} == 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: platform
+          service: beacon
+          sev: "3"
+        annotations:
+          summary: "Prometheus cannot scrape Beacon"
+          description: >-
+            Beacon's /metrics needs an x-beacon-token. Check
+            prometheus/secrets/beacon_token and BEACON_TOKEN on the Beacon
+            container before assuming Beacon itself is down — Beacon holds live
+            state in memory and stays up through a Postgres outage.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-telemetry-plane-down.md
+
+      - alert: TelemetryComponentDown
+        expr: up{job=~"otel-collector|tempo|loki|alertmanager|grafana"} == 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: platform
+          sev: "3"
+        annotations:
+          summary: "{{ $labels.job }} is down"
+          description: >-
+            Part of the observability plane has stopped. Everything downstream of
+            it is now reporting silence, which is not the same as health.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-telemetry-plane-down.md
+
+      - alert: BeaconJourneyStale
+        # A journey that stopped running reports its last status forever. A green
+        # grid can mean the scheduler died, and no status metric says so.
+        expr: cf:journey_staleness_seconds > 3600
+        for: 15m
+        labels:
+          severity: ticket
+          team: platform
+          service: beacon
+          sev: "3"
+        annotations:
+          summary: "Journey {{ $labels.journey }} has not run for {{ $value | humanizeDuration }}"
+          description: >-
+            The grid is showing a stale pass. Beacon's scheduler has stopped
+            running this journey; its last result is not evidence of anything.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-telemetry-plane-down.md
+
+      - alert: MoneyMetricContractMissing
+        # The rule that stops a missing metric reading as a healthy system.
+        #
+        # Every money alert above evaluates to nothing if its metric is never
+        # published — no series, no alert, a green dashboard and a silent page.
+        # That is the exact shape of the estate's current problem, where "no
+        # metrics scraped anywhere" presents as no alerts firing. `absent()`
+        # inverts it: not publishing the metric is itself the alert.
+        expr: absent(ledger_trial_balance_delta) or absent(withdrawal_stuck_total) or absent(indexer_lag_blocks)
+        for: 30m
+        labels:
+          severity: ticket
+          team: platform
+          sev: "4"
+        annotations:
+          summary: "A money-integrity metric is not being published by anything"
+          description: >-
+            ledger_trial_balance_delta, withdrawal_stuck_total or
+            indexer_lag_blocks has no series. The alerts that depend on it are
+            deployed and cannot fire. Expected until ledger, settlement and
+            indexer ship (P4/P5) — after that it means instrumentation regressed.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-metric-contract-missing.md
+
+  # =================================================== TICKET — conformance =
+  - name: cf.ticket.conformance
+    rules:
+      - alert: HearthConformanceVectorsFailing
+        # Beacon reports a suite it could not run under result="skipped" and
+        # never under "passed", so this counts real failures only.
+        expr: beacon_conformance_vectors{result="failed"} > 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: chain
+          service: hearth
+          sev: "4"
+        annotations:
+          summary: "{{ $value }} EVM conformance vector(s) failing in suite {{ $labels.suite }}"
+          description: >-
+            A non-zero failed count blocks the next Hearth release. No component
+            is done until its vectors pass.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-hearth-node-down.md
+
+      - alert: BeaconTargetDown
+        # Beacon's own hysteresis has already been applied here — this is the
+        # reported state, the same value the status grid shows, so a `for:` of
+        # 5m is the second filter and not a duplicate of the first.
+        expr: beacon_target_up == 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: platform
+          sev: "3"
+        annotations:
+          summary: "Beacon reports {{ $labels.target }} ({{ $labels.group }}) down"
+          description: >-
+            A single target degrading is a ticket. It becomes a page only when a
+            journey fails, because a journey is what says a user is blocked.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-telemetry-plane-down.md

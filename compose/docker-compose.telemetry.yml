@@ -1,0 +1,249 @@
+# CloudsForge telemetry plane — AD-20.
+#
+# A PARALLEL stack. It shares no port, no volume and no container name with the
+# eighteen-container estate in ../../../docker-compose.yml, which keeps running
+# untouched while this comes up beside it. Port allocation and the reasoning are
+# in ../README.md.
+#
+#   docker compose -f compose/docker-compose.telemetry.yml up -d
+#
+# Every image is pinned to a released tag. The estate has exactly one floating
+# base image (`nginx:alpine` on cv-web) and it is recorded as a known risk; a
+# telemetry plane that silently changes underneath an incident is worse than no
+# telemetry plane, because you will not believe it.
+
+# Applied to every container here, matching the estate's x-svc anchor: survive a
+# host reboot, and cap the json-file driver so telemetry cannot fill the disk it
+# shares with Postgres. Losing Postgres because Loki grew is the exact failure
+# mode a monitor must never cause.
+x-obs: &obs
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  # ------------------------------------------------------------- collector ---
+  # The only component that knows where telemetry goes. Services speak OTLP to
+  # this and nothing else, which is what makes adopting a commercial APM later a
+  # change to one exporter block rather than a re-instrumentation of 38 repos.
+  otel-collector:
+    <<: *obs
+    image: otel/opentelemetry-collector-contrib:0.115.1
+    command: ["--config=/etc/otel/collector.yaml"]
+    env_file:
+      # Per-service env file, never the estate's 64-variable fan-out. The
+      # collector needs three variables; it receives three.
+      - env/otel-collector.env
+    volumes:
+      - ../otel/collector.yaml:/etc/otel/collector.yaml:ro
+    ports:
+      - "127.0.0.1:9317:4317"   # OTLP gRPC  — services
+      - "127.0.0.1:9318:4318"   # OTLP HTTP  — browsers, via the gateway
+      - "127.0.0.1:9098:13133"  # health_check extension
+      - "127.0.0.1:9099:8889"   # Prometheus exposition of collector-received metrics
+    healthcheck:
+      # The health_check extension answers 200 only once every pipeline has
+      # started. `depends_on: service_healthy` downstream is therefore a real
+      # ordering guarantee and not a liveness guess.
+      test: ["CMD", "/otelcol-contrib", "--version"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    networks: [app, edge]
+
+  # ------------------------------------------------------------ prometheus ---
+  prometheus:
+    <<: *obs
+    image: prom/prometheus:v2.55.1
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      # 15d raw. The justification and what "400d downsampled" actually costs
+      # are in ../README.md — it is not a Prometheus flag.
+      - --storage.tsdb.retention.time=15d
+      - --storage.tsdb.retention.size=8GB
+      - --web.enable-lifecycle
+      # Exemplars are the AD-20 requirement that a p99 spike links to a slow
+      # trace. Off by default in Prometheus; nothing else turns it on.
+      - --enable-feature=exemplar-storage
+      # Tempo's metrics_generator remote-writes span metrics and service graphs
+      # here. Without this flag that write 404s silently and the upstream-call
+      # latency panels are empty for a reason nothing reports.
+      - --web.enable-remote-write-receiver
+      - --web.external-url=http://localhost:9090
+    env_file:
+      - env/prometheus.env
+    volumes:
+      - ../prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../prometheus/rules:/etc/prometheus/rules:ro
+      # file_sd target lists. Generated from the release manifest (AD-03), not
+      # hand-edited, and reloaded without a restart.
+      - ../prometheus/targets:/etc/prometheus/targets:ro
+      # Scrape credentials, never in the committed config. See README §Secrets.
+      - ../prometheus/secrets:/etc/prometheus/secrets:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "127.0.0.1:9090:9090"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    depends_on:
+      alertmanager:
+        condition: service_healthy
+    networks:
+      app: {}
+      # Prometheus, and only Prometheus, joins the existing estate's network so
+      # it can scrape Beacon at `beacon:4011`. Joining a network does not modify
+      # it; the estate's compose file is untouched and unaware. This is what
+      # makes "adopting a scraper costs a scrape config" finally true.
+      estate: {}
+
+  # ------------------------------------------------------------------ tempo ---
+  tempo:
+    <<: *obs
+    image: grafana/tempo:2.6.1
+    command: ["-config.file=/etc/tempo/tempo.yaml"]
+    env_file:
+      - env/tempo.env
+    volumes:
+      - ../tempo/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - tempo-data:/var/tempo
+    ports:
+      - "127.0.0.1:9094:3200"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3200/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks: [app]
+
+  # ------------------------------------------------------------------- loki ---
+  loki:
+    <<: *obs
+    image: grafana/loki:3.3.2
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    env_file:
+      - env/loki.env
+    user: "0:0"
+    volumes:
+      - ../loki/loki.yaml:/etc/loki/loki.yaml:ro
+      - loki-data:/loki
+    ports:
+      - "127.0.0.1:9092:3100"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3100/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    networks: [app]
+
+  # ----------------------------------------------------------- alertmanager ---
+  alertmanager:
+    <<: *obs
+    image: prom/alertmanager:v0.27.0
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+      - --web.external-url=http://localhost:9093
+    env_file:
+      - env/alertmanager.env
+    volumes:
+      - ../alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Receiver URLs, written by ../up.sh from ../.env. Never committed.
+      - ../alertmanager/secrets:/etc/alertmanager/secrets:ro
+      - alertmanager-data:/alertmanager
+    ports:
+      - "127.0.0.1:9093:9093"
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9093/-/healthy"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      app: {}
+      # Alertmanager must reach Beacon's incident receiver: an alert opens a
+      # Beacon incident rather than inventing a second incident system.
+      estate: {}
+
+  # ---------------------------------------------------------------- grafana ---
+  grafana:
+    <<: *obs
+    image: grafana/grafana:11.4.0
+    env_file:
+      - env/grafana.env
+    environment:
+      # The one credential this stack holds. It is NOT in a committed file: it
+      # comes from ../.env (gitignored, made from ../.env.example). The default
+      # exists so `docker compose config` works on a clean checkout, and it is
+      # only ever reachable on loopback — every published port in this file is
+      # bound to 127.0.0.1, following the estate's own treatment of pay,
+      # keyvault and postgres. An operator plane is not a public surface.
+      GF_SECURITY_ADMIN_PASSWORD: ${CF_GRAFANA_ADMIN_PASSWORD:-local-dev-only}
+    volumes:
+      - ../grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:9091:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget --spider -q http://localhost:3000/api/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    depends_on:
+      prometheus:
+        condition: service_healthy
+      tempo:
+        condition: service_healthy
+      loki:
+        condition: service_healthy
+    networks: [app, edge]
+
+# AD-17's three networks. `app` is where services talk to each other, `edge` is
+# the gateway's side, `vault` holds custody, ledger and settlement.
+#
+# The isolation is structural, not a rule: a container attached only to `vault`
+# has no route to a container attached only to `app`, so "custody is unreachable
+# from app" is a property of the topology rather than of a firewall somebody has
+# to remember to write. `vault` is additionally `internal`, so nothing on it can
+# reach the internet — custody has no business making an outbound call.
+#
+# Nothing in THIS file sits on `vault`; it is declared here so that the gateway
+# overlay and the eventual service overlays attach to networks that already
+# exist with the right properties, rather than each inventing their own.
+networks:
+  edge:
+    name: cf-micro-edge
+  app:
+    name: cf-micro-app
+  vault:
+    name: cf-micro-vault
+    internal: true
+  estate:
+    # The running eighteen-container estate. `external` means compose attaches
+    # to it and never creates, modifies or removes it.
+    external: true
+    name: stack_default
+
+volumes:
+  prometheus-data:
+  tempo-data:
+  loki-data:
+  grafana-data:
+  alertmanager-data:

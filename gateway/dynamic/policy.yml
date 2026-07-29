@@ -1,0 +1,114 @@
+# Gateway policy — the part that is NOT a label on a container.
+#
+# A service must not be able to relax the rule that constrains it. Labels are
+# owned by whoever writes the service's compose block; this file is owned by the
+# platform and reviewed as policy. That distinction is the reason /internal
+# lives here and not in a `traefik.http.routers.*` label on pay.
+
+http:
+  middlewares:
+    # ---------------------------------------------------- /internal refusal --
+    # THE INVARIANT, MOVED.
+    #
+    # Today this is a path rule in deploy/cloudflared/config.example.yml and a
+    # CI job (.github/workflows/ci.yml:155) that parses that YAML and fails if
+    # the first matching rule for pay.* is no longer a refusal of /internal.
+    # AD-17 moves TLS and routing to the gateway, so the mechanism moves — and
+    # the invariant has to move with it or the check keeps passing against a
+    # file nothing reads any more, which is worse than no check.
+    #
+    # Why it matters: Pay's /internal routes take a `userId` as a PARAMETER
+    # rather than reading it from an authenticated session. Reaching one from
+    # off the box is an act-as-anyone primitive. The service's own auth is a
+    # second gate, not the first one; this is the first one.
+    #
+    # Case-insensitive and tolerant of leading-slash duplication for the same
+    # reason the cloudflared rule is: `//Internal/x` and `/%2finternal` are the
+    # shapes a path filter is bypassed with.
+    # Traefik has no "deny" middleware, so the refusal is a ROUTER (below) at a
+    # priority nothing can outrank, pointed at an unreachable service. A
+    # middleware chain cannot refuse a request; a route can.
+
+    # ------------------------------------------------------------- CORS ------
+    # ONE list, not eight. The estate carries CORS_ORIGINS in every service's
+    # environment and it has already drifted: :4004 was in nimbus's copy and
+    # missing from everyone else's, so ForgeMint's SPA could sign in locally and
+    # could not call Pay, while production worked. A second list buys nothing
+    # and costs exactly that bug.
+    #
+    # Never a wildcard. `allowCredentials: true` with `*` is rejected by
+    # browsers anyway, and an allowlist that has to be written out is an
+    # allowlist somebody has to justify.
+    cf-cors:
+      headers:
+        accessControlAllowOriginList:
+          - https://cloudsforge.online
+          - https://hub.cloudsforge.online
+          - https://market.cloudsforge.online
+          - https://mint.cloudsforge.online
+          - https://trade.cloudsforge.online
+          - https://worlds.cloudsforge.online
+          - https://explorer.cloudsforge.online
+          - https://admin.cloudsforge.online
+          - https://devportal.cloudsforge.online
+          - https://status.cloudsforge.online
+        accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
+        accessControlAllowHeaders:
+          - content-type
+          - authorization
+          - x-request-id
+          - traceparent
+          - tracestate
+          - baggage
+        accessControlAllowCredentials: true
+        accessControlMaxAge: 600
+        addVaryHeader: true
+
+    # --------------------------------------------------- correlation id ------
+    # `x-request-id` is retained alongside W3C traceparent, not replaced by it.
+    # Generated here when absent, echoed on every response, shown on every
+    # user-facing error page, indexed in Loki, Lantern and audit_events.
+    # `trace_id` is what machines join on; this is what humans quote.
+    cf-request-id:
+      headers:
+        customRequestHeaders:
+          X-Forwarded-Proto: https
+        customResponseHeaders:
+          # Traefik generates the id itself when tracing is on; this ensures it
+          # reaches the browser so an error page can print it.
+          X-Request-Id: ""
+
+    cf-security-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        contentTypeNosniff: true
+        browserXssFilter: true
+        referrerPolicy: strict-origin-when-cross-origin
+        # The gateway must not leak which service answered. "Our status page
+        # told the attacker which service fell over first" applies to headers
+        # as much as to the status page.
+        customResponseHeaders:
+          Server: ""
+          X-Powered-By: ""
+
+  routers:
+    # The refusal itself. Priority is deliberately enormous so that it wins
+    # against every service router regardless of rule specificity — the
+    # cloudflared config relies on "the first rule wins" and this is the
+    # equivalent guarantee in a system that sorts by priority instead.
+    cf-internal-refusal:
+      rule: "PathRegexp(`(?i)^/+internal(/|$)`)"
+      priority: 100000
+      entryPoints: [web, websecure]
+      service: cf-refuse
+
+  services:
+    # Routed to a service that does not resolve, which Traefik answers as 502.
+    # A 404 would be a lie (the path exists) and a 403 would confirm it exists
+    # to whoever is probing. 502 is what an unreachable upstream looks like,
+    # which is exactly what /internal should look like from outside the box.
+    cf-refuse:
+      loadBalancer:
+        servers:
+          - url: "http://127.0.0.1:1"

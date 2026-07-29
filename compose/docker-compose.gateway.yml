@@ -1,0 +1,146 @@
+# The gateway — AD-17.
+#
+# Traefik with LABEL-BASED DISCOVERY, which is the whole point. The estate today
+# carries eighteen `container_name:` entries and a fixed host port for every
+# service; that is what makes `deploy.replicas` illegal, because two replicas
+# cannot both be `cloudsforge-pay` and cannot both bind 4003. Discovery by label
+# deletes both, and horizontal scaling stops being a rewrite.
+#
+# It owns four things that are currently owned by four different places:
+#
+#   TLS         — today: cloudflared. Moves here so a certificate is a gateway
+#                 concern rather than a tunnel configuration nobody reads.
+#   CORS        — today: an env-var allowlist copied into eight services, which
+#                 has already drifted once (:4004 in nimbus's list and missing
+#                 from everyone else's, so ForgeMint's SPA could sign in and
+#                 could not call Pay). One middleware, one list.
+#   /internal   — today: a hand-written path rule in deploy/cloudflared/
+#                 config.example.yml, asserted by a CI invariant that parses
+#                 that YAML. The MECHANISM moves, so the INVARIANT moves with
+#                 it: see the CI check at the bottom of this file.
+#   SPA serving — today: static bundles inside API processes plus a
+#                 hand-maintained API_PREFIXES array.
+#
+#   docker compose -f compose/docker-compose.telemetry.yml \
+#                  -f compose/docker-compose.gateway.yml up -d
+#
+# The telemetry file must be up first: it creates the three networks this one
+# attaches to as external.
+
+x-obs: &obs
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  gateway:
+    <<: *obs
+    image: traefik:v3.2.3
+    # No container_name, deliberately, and it is the first place to prove the
+    # point: this service is discovered by label like everything behind it.
+    env_file:
+      - env/traefik.env
+    command:
+      - --global.checknewversion=false
+      - --global.sendanonymoususage=false
+      - --log.level=INFO
+      # Access logs as JSON so the collector parses them without a regex, and
+      # so `cf.request_id` survives into Loki as a field rather than as a
+      # substring somebody greps.
+      - --accesslog=true
+      - --accesslog.format=json
+      - --accesslog.fields.headers.names.X-Request-Id=keep
+      - --accesslog.fields.headers.names.Traceparent=keep
+      # Never log a credential. The gateway sees every Authorization header in
+      # the estate; it is the single highest-value line in any log file here.
+      - --accesslog.fields.headers.names.Authorization=drop
+      - --accesslog.fields.headers.names.Cookie=drop
+
+      # --- discovery ---------------------------------------------------------
+      # Only containers that opt in with `traefik.enable=true` are routed.
+      # Exposing everything by default is how an admin surface ends up on the
+      # internet because somebody added a label for an unrelated reason.
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --providers.docker.network=cf-micro-edge
+      # Dynamic configuration that is NOT a container: the /internal refusal and
+      # the CORS list. Policy belongs in a file under review, not in a label on
+      # the service it is supposed to constrain.
+      - --providers.file.directory=/etc/traefik/dynamic
+      - --providers.file.watch=true
+
+      # --- entrypoints -------------------------------------------------------
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      # TLS termination. ACME in production; the local stack runs Traefik's
+      # self-signed default, which is correct for loopback and wrong to ship.
+      - --entrypoints.websecure.http.tls=true
+      # Every request gets an x-request-id at the edge if it does not have one.
+      # This is the id a user reads off an error page and an operator pastes
+      # into one search box — a workflow that already works and must keep
+      # working. `traceparent` is 55 hex characters and nobody reads one aloud.
+      # The /internal refusal is NOT in this chain: it is a router at priority
+      # 100000 in gateway/dynamic/policy.yml, because a middleware cannot refuse
+      # a request and a route can. Nothing a service labels can outrank it.
+      - --entrypoints.websecure.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+
+      # --- observability -----------------------------------------------------
+      - --metrics.prometheus=true
+      - --metrics.prometheus.entrypoint=metrics
+      - --metrics.prometheus.addrouterslabels=true
+      - --entrypoints.metrics.address=:8082
+      - --tracing.otlp=true
+      - --tracing.otlp.grpc.endpoint=otel-collector:4317
+      - --tracing.otlp.grpc.insecure=true
+      # The gateway is the first span of every trace. Sampling it away would
+      # break the join between a browser error and the server trace that caused
+      # it, which is the whole reason Lantern gains RUM. Head sampling stays at
+      # 100% here; the tail sampler decides.
+      - --tracing.sampleRate=1.0
+      - --ping=true
+    ports:
+      # Loopback, like every other port in this stack. Public exposure is the
+      # tunnel's job and it is the tunnel that terminates on a public address.
+      - "127.0.0.1:9095:80"
+      - "127.0.0.1:9096:443"
+      - "127.0.0.1:9097:8082"
+    volumes:
+      # Read-only. Traefik reads container labels; it never needs to create,
+      # stop or exec anything — the same reasoning that makes Lantern's socket
+      # mount read-only.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ../gateway/dynamic:/etc/traefik/dynamic:ro
+    healthcheck:
+      test: ["CMD", "traefik", "healthcheck", "--ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks: [edge, app]
+    labels:
+      # The gateway routes to itself for its own dashboard, which is the
+      # cheapest possible proof that label discovery is working.
+      traefik.enable: "true"
+
+networks:
+  # External here: created by docker-compose.telemetry.yml, which is the file
+  # that owns them. Two compose files each creating a network called
+  # `cf-micro-edge` is two networks or one error, depending on ordering.
+  edge:
+    external: true
+    name: cf-micro-edge
+  app:
+    external: true
+    name: cf-micro-app
+  # Declared so that a service overlay adding custody to this stack attaches to
+  # the network with the right properties rather than inventing one. NOTHING in
+  # this file joins it: the gateway must not be able to reach custody, and the
+  # way to guarantee that is for the gateway to have no route to it at all.
+  vault:
+    external: true
+    name: cf-micro-vault

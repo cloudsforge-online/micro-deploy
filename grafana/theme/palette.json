@@ -1,0 +1,72 @@
+{
+  "_comment": [
+    "The CloudsForge chart palette, as data. Transcribed from",
+    "docs/ecosystem/assets/chart-palette.md §8 without alteration — every value",
+    "there was produced by running the palette validator against the estate's",
+    "real dark panel surface #141110, and none of it was chosen by eye.",
+    "",
+    "Grafana has no mechanism for registering a custom named palette, so this",
+    "file is not read at runtime: build-dashboards.py reads it and writes fixed",
+    "colours into every panel. That is the only way to get the validated set in",
+    "instead of Grafana's default, and it is why dashboards here are generated",
+    "rather than hand-edited. Changing a colour means changing this file and",
+    "re-running the build, which is also what stops the operator dashboards and",
+    "the product charts from drifting apart.",
+    "",
+    "Rules that travel with the values, and are enforced in the generator:",
+    "  - categorical slots are assigned IN ORDER and NEVER cycled. A ninth",
+    "    series folds to Other, becomes small multiples, or the form is wrong.",
+    "  - all-pairs forms (scatter, small multiples) cap at four, from ap_*.",
+    "  - status colours are reserved and are never a series colour.",
+    "  - status marks ship icon + label + colour, because the one surface a",
+    "    colourblind operator reads under stress is the one that is red.",
+    "  - quantiles are ORDINAL, so p50/p95/p99 take the sequential ramp rather",
+    "    than three categorical hues."
+  ],
+
+  "categorical": {
+    "viz_1_ember": "#e8622c",
+    "viz_2_teal": "#2a9e93",
+    "viz_3_gold": "#ad8418",
+    "viz_4_cyan": "#2494b4",
+    "viz_5_violet": "#7d5ce0",
+    "viz_6_rose": "#cc5384",
+    "viz_7_blue": "#3d7ed6",
+    "viz_8_green": "#4f9c40"
+  },
+
+  "all_pairs": {
+    "ap_1_gold": "#ad8418",
+    "ap_2_cyan": "#2494b4",
+    "ap_3_violet": "#7d5ce0",
+    "ap_4_rose": "#cc5384"
+  },
+
+  "sequential_ember": {
+    "100": "#6b3a22",
+    "200": "#8c4522",
+    "300": "#ae5025",
+    "400": "#d66430",
+    "500": "#e88a55",
+    "600": "#f2a97b",
+    "700": "#f8c8a5"
+  },
+
+  "diverging": {
+    "gain": "#8fd06a",
+    "mid": "#493c2d",
+    "loss": "#e2705a"
+  },
+
+  "status": {
+    "good": "#7fae5c",
+    "warn": "#f4a63c",
+    "crit": "#d2543a"
+  },
+
+  "chrome": {
+    "surface": "#141110",
+    "grid": "#2a2320",
+    "axis": "#8a7f78"
+  }
+}

@@ -1,0 +1,1186 @@
+{
+  "uid": "cf-chain-health",
+  "title": "CloudsForge \u00b7 Chain health",
+  "description": "Owner: the indexer team. Question: are we seeing the chains correctly?",
+  "tags": [
+    "cloudsforge"
+  ],
+  "timezone": "utc",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "#e8622c",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "#7d5ce0",
+        "name": "Deploys",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [
+            "deploy"
+          ],
+          "type": "tags"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 44,
+      "type": "timeseries",
+      "title": "Indexer lag, in blocks",
+      "description": "Both series are BLOCKS, which is why the confirmation depth may share this panel \u2014 it is the same unit and the same scale. Past the depth, deposits are provably not being credited, and that pages. Hearth's depth is 60 and Bitcoin's is not, so the threshold is read from the chain rather than hardcoded. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-indexer-lag.md",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "indexer_lag_blocks",
+          "legendFormat": "{{chain}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "indexer_confirmation_depth",
+          "legendFormat": "depth \u2014 {{chain}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "B",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "hearth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8622c"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethereum"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2a9e93"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ember"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ad8418"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "solana"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2494b4"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bitcoin"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7d5ce0"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "xrp"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#cc5384"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 45,
+      "type": "timeseries",
+      "title": "Reorg depth events",
+      "description": "A reorg deeper than the policy depth means something was credited on a block that no longer exists. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-reorg-recovery.md",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "indexer_reorg_depth",
+          "legendFormat": "{{chain}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "hearth"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8622c"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ethereum"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2a9e93"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "ember"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ad8418"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "solana"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2494b4"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "bitcoin"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7d5ce0"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "xrp"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#cc5384"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 46,
+      "type": "timeseries",
+      "title": "RPC provider success ratio",
+      "description": "The indexer is the largest consumer of chain RPC and these metrics are the bill as well as the health. Provider count is open-ended, so one hue and hover \u2014 not a ninth generated colour.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "indexer_rpc_success_ratio",
+          "legendFormat": "{{provider}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#2a9e93"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 47,
+      "type": "timeseries",
+      "title": "RPC failovers",
+      "description": "Failover working is a ticket, not a page. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-rpc-provider-failover.md",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (provider) (increase(indexer_rpc_failover_total[15m]))",
+          "legendFormat": "{{provider}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#ad8418"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 48,
+      "type": "timeseries",
+      "title": "RPC rate-limit rejections",
+      "description": "A separate panel from failover: a provider rate-limiting us and a provider being down look the same in a success ratio and are different problems with different fixes.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (provider) (increase(indexer_rpc_rate_limited_total[15m]))",
+          "legendFormat": "{{provider}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#cc5384"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 49,
+      "type": "row",
+      "title": "Forge Network \u2014 Hearth",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "panels": []
+    },
+    {
+      "id": 50,
+      "type": "timeseries",
+      "title": "Block height",
+      "description": "One unlabelled series, because the chain has one height. Which node is ahead is not the question anyone asks of this metric \u2014 whether the nodes disagree is, and that is the next panel.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 0,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "beacon_chain_height",
+          "legendFormat": "height",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "hidden",
+          "placement": "bottom",
+          "showLegend": false,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#e8622c"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 51,
+      "type": "stat",
+      "title": "Height spread across nodes",
+      "description": "Sustained non-zero is a partition or a fork, not a slow node. Do not restart nodes until you know which chain is the chain. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-hearth-fork.md",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 6,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "beacon_chain_height_spread",
+          "legendFormat": "spread",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "text": {}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "mappings": [],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              },
+              {
+                "color": "#f4a63c",
+                "value": 1
+              },
+              {
+                "color": "#d2543a",
+                "value": 4
+              }
+            ]
+          },
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 52,
+      "type": "timeseries",
+      "title": "Peers per node",
+      "description": "A miner at zero peers is not down. It is mining a chain nobody will accept, which is worse. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-hearth-node-down.md",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 12,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "beacon_chain_peers",
+          "legendFormat": "{{node}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "seed"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8622c"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "miner1"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2a9e93"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "miner2"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ad8418"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 53,
+      "type": "timeseries",
+      "title": "Mempool depth",
+      "description": "Read from the seed only: a backlog is a property of the network, and reading it from three nodes emits three answers to one question. Rising depth means transactions are not being mined, not that the chain is busy.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 6,
+        "x": 18,
+        "y": 15
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "beacon_chain_mempool",
+          "legendFormat": "pending",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "hidden",
+          "placement": "bottom",
+          "showLegend": false,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 0,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#2494b4"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 54,
+      "type": "table",
+      "title": "EVM conformance \u2014 failing vectors by suite",
+      "description": "Beacon runs Hearth's 31 suites, not Hearth's own CI. A suite that could not be RUN reports under result=\"skipped\" and never under \"passed\", so an empty table here means passing and not missing. Non-zero blocks the next Hearth release.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "beacon_conformance_vectors{result=\"failed\"} > 0",
+          "legendFormat": "",
+          "range": false,
+          "instant": true,
+          "format": "table",
+          "refId": "A"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "excludeByName": {
+              "Time": true,
+              "job": true,
+              "instance": true,
+              "result": true
+            },
+            "renameByName": {
+              "Value": "failed vectors"
+            }
+          }
+        }
+      ],
+      "options": {
+        "showHeader": true,
+        "cellHeight": "sm",
+        "footer": {
+          "show": false
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "align": "auto",
+            "filterable": true
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 55,
+      "type": "stat",
+      "title": "Chain probe state",
+      "description": "Beacon's hysteresis-filtered state \u2014 the same value the status grid shows, so an alert built on it fires when the status page turns red and not before. 0.5 is 'answered, but with a caveat', which is a real third state and not a rounding of down.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "beacon_target_up{group=\"chain\"}",
+          "legendFormat": "{{target}}",
+          "range": false,
+          "instant": true,
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "text": {}
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": null,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "\u25cf up",
+                  "color": "#7fae5c",
+                  "index": 0
+                },
+                "0.5": {
+                  "text": "\u25b2 degraded",
+                  "color": "#f4a63c",
+                  "index": 1
+                },
+                "0": {
+                  "text": "\u25a0 down",
+                  "color": "#d2543a",
+                  "index": 2
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u25b2 no data answered",
+                  "color": "#f4a63c",
+                  "index": 3
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#d2543a",
+                "value": null
+              },
+              {
+                "color": "#f4a63c",
+                "value": 0.5
+              },
+              {
+                "color": "#7fae5c",
+                "value": 1
+              }
+            ]
+          },
+          "custom": {}
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

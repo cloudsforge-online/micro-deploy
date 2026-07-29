@@ -1,0 +1,239 @@
+# The one place that knows where telemetry goes.
+#
+# AD-20 chose OpenTelemetry over a vendor SDK precisely so that adopting a
+# commercial APM later is a change to the `exporters:` block below rather than a
+# re-instrumentation of 38 repositories. That property only holds if services
+# speak OTLP to this collector and to nothing else — no service may hold a
+# backend address.
+#
+# Pipeline order is fixed by 13-operational-model.md §1.4 and each step is here
+# for a reason that is not "the example had it":
+#
+#   memory_limiter  → first, always. Under load the collector must shed
+#                     telemetry rather than OOM. A monitor that dies of the
+#                     incident it is reporting reports nothing.
+#   resource        → stamp deployment.environment so Loki and Grafana can
+#                     label by it without every service remembering to.
+#   attributes/redact → drop credentials by key AND by pattern. A secret reaches
+#                     a log through a field nobody predicted at least as often
+#                     as through one they did.
+#   transform/addresses → truncate wallet addresses to first-6/last-4. An
+#                     operational plane is redacted by policy (AD-20's four
+#                     planes); full addresses belong in the audit plane.
+#   tail_sampling   → traces only, and after redaction so a dropped span never
+#                     carried a secret even briefly.
+#   batch           → last. Batching before sampling would batch spans that are
+#                     about to be discarded.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+        # Browsers post here through the gateway (Lantern RUM, AD-20). The
+        # gateway owns the origin allowlist; the collector does not duplicate
+        # it, because two allowlists drift — the estate has a whole comment
+        # block in docker-compose.yml about exactly that.
+        cors:
+          allowed_origins:
+            - http://localhost:*
+            - https://*.cloudsforge.online
+
+  # The collector scrapes itself so its own health is a first-class series.
+  # If the collector is dropping spans, that must be visible in the same
+  # Prometheus as everything else rather than in its stderr.
+  prometheus/self:
+    config:
+      scrape_configs:
+        - job_name: otel-collector-internal
+          scrape_interval: 30s
+          static_configs:
+            - targets: ["127.0.0.1:8888"]
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_percentage: 75
+    spike_limit_percentage: 20
+
+  resource:
+    attributes:
+      - key: deployment.environment
+        value: ${env:OTEL_ENV}
+        action: upsert
+
+  # Credential removal. Two mechanisms, because they fail differently: the
+  # explicit list catches the headers we know carry credentials, the pattern
+  # catches the field somebody added last Tuesday.
+  attributes/redact:
+    actions:
+      - key: http.request.header.authorization
+        action: delete
+      - key: http.request.header.cookie
+        action: delete
+      - key: http.response.header.set_cookie
+        action: delete
+      - key: authorization
+        action: delete
+      - key: cookie
+        action: delete
+      - key: set-cookie
+        action: delete
+      # Anything whose key looks like a credential, at any depth of naming.
+      # Matches the DEFAULT_REDACT_KEYS list in @cloudsforge/telemetry, so the
+      # SDK and the collector agree rather than each having their own idea.
+      - pattern: (?i)(token|secret|password|passwd|mnemonic|private_?key|seed|api_?key|credential|signature)
+        action: delete
+
+  # Addresses are truncated, not deleted: "which address" is an operational
+  # question and first-6/last-4 answers it, while the full string is PII that
+  # belongs in the audit plane. Nothing in the operational plane is allowed to
+  # be the system of record for it — AD-20's rule that no plane is derived from
+  # another cuts both ways.
+  transform/addresses:
+    error_mode: ignore
+    trace_statements:
+      - context: span
+        statements:
+          - replace_pattern(attributes["cf.address"], "^(0x.{4}).*(.{4})$", "$$1…$$2")
+          - replace_pattern(attributes["cf.to"], "^(0x.{4}).*(.{4})$", "$$1…$$2")
+          - replace_pattern(attributes["cf.from"], "^(0x.{4}).*(.{4})$", "$$1…$$2")
+    log_statements:
+      - context: log
+        statements:
+          - replace_pattern(attributes["cf.address"], "^(0x.{4}).*(.{4})$", "$$1…$$2")
+
+  # AD-20's sampling rule, verbatim: 100% of errors, 100% of slow, 100% of
+  # anything touching custody or ledger, ~5% of the rest.
+  #
+  # Tail rather than head, because the decision needs the whole trace and the
+  # traces worth keeping are exactly the ones a head sampler throws away before
+  # it knows they failed. The custody/ledger rule is not a sampling preference:
+  # those two must be reconstructable request-by-request for an audit, and a
+  # statistical sample cannot answer "show me this withdrawal".
+  #
+  # Policies are OR-ed. A trace kept by any policy is kept.
+  tail_sampling:
+    # How long to hold a trace before deciding. Longer than the p99 of a
+    # cross-service request (gateway → hub-api → wallet → policy → ledger →
+    # settlement → custody → indexer) or the decision is made on half a trace.
+    decision_wait: 10s
+    num_traces: 50000
+    expected_new_traces_per_sec: 200
+    policies:
+      - name: keep-all-errors
+        type: status_code
+        status_code:
+          status_codes: [ERROR]
+
+      - name: keep-all-slow
+        # 2s, per 13-operational-model.md §1.4. Not a latency SLO — it is the
+        # threshold past which somebody will want the trace.
+        type: latency
+        latency:
+          threshold_ms: 2000
+
+      - name: keep-all-money
+        type: ottl_condition
+        ottl_condition:
+          error_mode: ignore
+          span:
+            - 'resource.attributes["service.name"] == "custody"'
+            - 'resource.attributes["service.name"] == "ledger"'
+            - 'resource.attributes["service.name"] == "settlement"'
+
+      - name: baseline-five-percent
+        type: probabilistic
+        probabilistic:
+          sampling_percentage: 5
+
+  batch:
+    timeout: 5s
+    send_batch_size: 512
+    send_batch_max_size: 1024
+
+exporters:
+  # Metrics. Prometheus scrapes this endpoint rather than the collector pushing,
+  # because pull keeps `up` meaningful: a collector that has stopped is a target
+  # that is down, which is a signal. A push pipeline that stops looks like a
+  # quiet system.
+  prometheus:
+    endpoint: 0.0.0.0:8889
+    # Resource attributes (service.name, deployment.environment) become labels,
+    # which is what lets one dashboard template over $service.
+    resource_to_telemetry_conversion:
+      enabled: true
+    # OpenMetrics exposition is what carries exemplars, and exemplars are the
+    # AD-20 requirement that a p99 spike links to the trace that caused it.
+    enable_open_metrics: true
+
+  otlp/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 120s
+
+  # Loki 3 ingests OTLP natively at /otlp; the old `loki` exporter with its
+  # hand-written label hints is deprecated and would have re-created the label
+  # cardinality problem 13-operational-model.md §1.4 exists to prevent.
+  otlphttp/loki:
+    endpoint: http://loki:3100/otlp
+    retry_on_failure:
+      enabled: true
+      max_elapsed_time: 120s
+
+  # Lantern, moved from Docker-socket pull to OTLP push (AD-20). This is the
+  # change that lets Lantern survive a second host, and Lantern is the tool most
+  # needed on the day of that move — so it cannot be the tool that breaks on it.
+  #
+  # Failures here are contained: `sending_queue` drops rather than blocking, so
+  # a Lantern outage cannot back-pressure the log pipeline into Loki. Loki holds
+  # the raw stream; Lantern holds the triage view, and losing the triage view is
+  # an inconvenience while losing the raw stream is an incident.
+  otlphttp/lantern:
+    endpoint: ${env:LANTERN_OTLP_ENDPOINT}
+    sending_queue:
+      enabled: true
+      queue_size: 1000
+    retry_on_failure:
+      enabled: false
+
+extensions:
+  health_check:
+    endpoint: 0.0.0.0:13133
+
+service:
+  extensions: [health_check]
+  telemetry:
+    logs:
+      level: ${env:OTEL_LOG_LEVEL}
+    metrics:
+      # Bound to loopback: this is the collector's own instrumentation, scraped
+      # by the prometheus/self receiver above, and it has no business on a
+      # network interface.
+      address: 127.0.0.1:8888
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors:
+        - memory_limiter
+        - resource
+        - attributes/redact
+        - transform/addresses
+        - tail_sampling
+        - batch
+      exporters: [otlp/tempo]
+
+    metrics:
+      receivers: [otlp, prometheus/self]
+      processors: [memory_limiter, resource, attributes/redact, batch]
+      exporters: [prometheus]
+
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, resource, attributes/redact, transform/addresses, batch]
+      exporters: [otlphttp/loki, otlphttp/lantern]

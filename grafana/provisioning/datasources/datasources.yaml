@@ -1,0 +1,90 @@
+apiVersion: 1
+
+# Four datasources and, more importantly, the links BETWEEN them. A pane over
+# three signals is only worth having if you can move between them: click a slow
+# trace, get its logs; open a Lantern issue, jump to the trace. The join key is
+# `trace_id` on every log line, and the configuration below is what makes
+# Grafana aware of it.
+
+datasources:
+  - name: Prometheus
+    uid: cf-prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      httpMethod: POST
+      timeInterval: 15s
+      # Exemplars: a histogram bucket carries the trace id of a request in it,
+      # so "p99 spiked" becomes one click to the trace that was slow. This is
+      # the AD-20 requirement that most often gets configured on the emitting
+      # side and forgotten on the reading side.
+      exemplarTraceIdDestinations:
+        - name: trace_id
+          datasourceUid: cf-tempo
+          urlDisplayLabel: "View trace"
+
+  - name: Tempo
+    uid: cf-tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # Trace → logs. Only `service` and `env` are carried across, because those
+      # are the only Loki labels; carrying trace_id as a LABEL would create one
+      # log stream per request, which is how a Loki install becomes the outage.
+      # trace_id is matched as line content instead.
+      tracesToLogsV2:
+        datasourceUid: cf-loki
+        spanStartTimeShift: -5m
+        spanEndTimeShift: 5m
+        tags:
+          - key: service.name
+            value: service_name
+        filterByTraceID: true
+        filterBySpanID: false
+      tracesToMetrics:
+        datasourceUid: cf-prometheus
+        tags:
+          - key: service.name
+            value: service
+      serviceMap:
+        datasourceUid: cf-prometheus
+      nodeGraph:
+        enabled: true
+      lokiSearch:
+        datasourceUid: cf-loki
+
+  - name: Loki
+    uid: cf-loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      maxLines: 2000
+      # Log → trace. Two patterns, because a line carries both ids: the machine
+      # join key and the one a user reads off an error page.
+      derivedFields:
+        - name: trace_id
+          matcherType: label
+          matcherRegex: trace_id
+          url: "$${__value.raw}"
+          datasourceUid: cf-tempo
+          urlDisplayLabel: "View trace"
+        - name: TraceIDFromLine
+          matcherRegex: '"trace_id":"([a-f0-9]{32})"'
+          url: "$${__value.raw}"
+          datasourceUid: cf-tempo
+          urlDisplayLabel: "View trace"
+
+  # Alertmanager as a datasource, so the alert list is a panel on the Platform
+  # overview rather than a second browser tab an operator has to remember.
+  - name: Alertmanager
+    uid: cf-alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false

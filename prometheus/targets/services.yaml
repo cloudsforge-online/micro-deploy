@@ -1,0 +1,26 @@
+# file_sd target list for the new estate's services.
+#
+# GENERATED, eventually, from stack/releases/<version>.yaml — the release
+# manifest of AD-03, which is the only file that names which image of each
+# service is deployed. A hand-maintained scrape list is a second answer to
+# "what is running", and the estate already lost that argument once with the
+# API_PREFIXES array.
+#
+# Empty on purpose today: no service in micro/ is deployed yet. Prometheus
+# reloads this file every 30s, so adding a service costs writing a block here
+# and nothing else — no restart, no downtime, no config change.
+#
+# Shape, for when the first one lands:
+#
+#   - targets: ["ledger:4100"]
+#     labels:
+#       __meta_cf_service: ledger
+#       __meta_cf_team: ledger
+#       tier: "1"
+#
+# `tier` matters: the SLO recording rules in ../rules/slo.yaml compute a
+# different objective for Tier 1 (money) than for Tier 2 (product), per
+# 13-operational-model.md §8, and they read it from this label rather than from
+# a hardcoded list of service names that would drift the day a service is added.
+
+[]

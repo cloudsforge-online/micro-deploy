@@ -1,0 +1,714 @@
+{
+  "uid": "cf-money-integrity",
+  "title": "CloudsForge \u00b7 Money integrity",
+  "description": "Owner: the ledger team; read daily by finance. Question: is the ledger right? Sourced from metrics the ledger EMITS, never from queries Grafana runs against it \u2014 operational observability is never derived from the financial plane.",
+  "tags": [
+    "cloudsforge"
+  ],
+  "timezone": "utc",
+  "editable": false,
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": {
+    "from": "now-6h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "templating": {
+    "list": []
+  },
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": true,
+        "iconColor": "#e8622c",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      },
+      {
+        "datasource": {
+          "type": "grafana",
+          "uid": "-- Grafana --"
+        },
+        "enable": true,
+        "hide": false,
+        "iconColor": "#7d5ce0",
+        "name": "Deploys",
+        "target": {
+          "limit": 100,
+          "matchAny": false,
+          "tags": [
+            "deploy"
+          ],
+          "type": "tags"
+        }
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "Trial balance \u2014 \u03a3 debits \u2212 \u03a3 credits",
+      "description": "MUST BE EXACTLY 0, per currency. Double-entry has one invariant and this is it; non-zero does not mean a number is off, it means the accounting is not accounting and every balance derived from it is unproven \u2014 including the ones users are looking at right now. Non-zero for two consecutive evaluations PAGES immediately, SEV1, and there is no error budget: the objective is 100%. Never correct this with an UPDATE \u2014 an adjustment is a new balanced entry under dual approval. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-trial-balance-nonzero.md \u2014 and note that 'no data answered' is NOT balanced. A metric nobody publishes and a ledger that balances look identical here, which is why MoneyMetricContractMissing exists as a separate alert.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ledger_trial_balance_delta",
+          "legendFormat": "{{currency}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "text": {
+          "valueSize": 56
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 8,
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "\u25cf 0 \u2014 balanced",
+                  "color": "#7fae5c",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "\u25b2 no data answered",
+                  "color": "#f4a63c",
+                  "index": 1
+                }
+              }
+            }
+          ],
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#d2543a",
+                "value": null
+              },
+              {
+                "color": "#7fae5c",
+                "value": 0
+              },
+              {
+                "color": "#d2543a",
+                "value": 1e-09
+              }
+            ]
+          },
+          "custom": {}
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Posting rate by source",
+      "description": "Per-product revenue is derivable from this and was not derivable from anything before. Every posting records the calling service, so 'which product earned this' stops being a reconstruction.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 0,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (source) (rate(ledger_postings_total[5m]))",
+          "legendFormat": "{{source}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 2,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#e8622c"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 31,
+      "type": "timeseries",
+      "title": "Reconciliation drift per chain",
+      "description": "Ledger's custody account against the indexer's observed on-chain balance. Ticket at any non-zero, page above the chain's dust threshold. Two truths is exactly what one journal exists to prevent, so this is a real finding even when it is small. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-reconciliation-drift.md",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 12,
+        "x": 12,
+        "y": 7
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ledger_reconciliation_drift_native",
+          "legendFormat": "{{chain}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "decimals": 8,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#493c2d",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byValue",
+              "options": {
+                "op": "gte",
+                "reducer": "allValues",
+                "value": 0
+              }
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#8fd06a"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 32,
+      "type": "bargauge",
+      "title": "Unreconciled entries by age",
+      "description": "Ordinal buckets, so bars rather than hues. Any entry past 24h is a ticket.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ledger_unreconciled_entries",
+          "legendFormat": "{{age_bucket}}",
+          "range": false,
+          "instant": true,
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "valueMode": "text",
+        "sizing": "auto",
+        "minVizWidth": 8,
+        "minVizHeight": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "max": null,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              },
+              {
+                "color": "#f4a63c",
+                "value": 1
+              },
+              {
+                "color": "#d2543a",
+                "value": 50
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 33,
+      "type": "bargauge",
+      "title": "Reservations open, by age",
+      "description": "A reservation older than 24h is a user's money they cannot see and cannot spend. It will not appear in any error rate.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 8,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "ledger_reservations_open",
+          "legendFormat": "{{age_bucket}}",
+          "range": false,
+          "instant": true,
+          "format": "time_series",
+          "refId": "A"
+        }
+      ],
+      "options": {
+        "displayMode": "gradient",
+        "orientation": "horizontal",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "showUnfilled": true,
+        "valueMode": "text",
+        "sizing": "auto",
+        "minVizWidth": 8,
+        "minVizHeight": 16
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "none",
+          "max": null,
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              },
+              {
+                "color": "#f4a63c",
+                "value": 1
+              },
+              {
+                "color": "#d2543a",
+                "value": 20
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    },
+    {
+      "id": 34,
+      "type": "timeseries",
+      "title": "Failed postings by reason",
+      "description": "reason=\"unbalanced\" is a code bug and pages. The others are the system refusing correctly, which is a different fact.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 8,
+        "x": 16,
+        "y": 14
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum by (reason) (rate(ledger_posting_failures_total[5m]))",
+          "legendFormat": "{{reason}}",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "decimals": 3,
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unbalanced"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#e8622c"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "idempotency_conflict"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2a9e93"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "account_frozen"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#ad8418"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "insufficient_funds"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#2494b4"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "unknown_account"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "mode": "fixed",
+                  "fixedColor": "#7d5ce0"
+                }
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 35,
+      "type": "timeseries",
+      "title": "Idempotency replay ratio",
+      "description": "A sudden rise means a caller is retrying, which means something upstream is timing out. Idempotency working is not the same as idempotency being needed \u2014 this is the panel that tells them apart.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "cf-prometheus"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "cf-prometheus"
+          },
+          "editorMode": "code",
+          "expr": "sum(rate(ledger_idempotency_replay_total[5m])) / clamp_min(sum(rate(ledger_postings_total[5m])), 1e-9)",
+          "legendFormat": "replay ratio",
+          "range": true,
+          "instant": false,
+          "format": "time_series",
+          "refId": "A",
+          "exemplar": false
+        }
+      ],
+      "options": {
+        "legend": {
+          "displayMode": "hidden",
+          "placement": "bottom",
+          "showLegend": false,
+          "calcs": []
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "desc"
+        }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 3,
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "#2a9e93"
+          },
+          "custom": {
+            "drawStyle": "line",
+            "lineWidth": 2,
+            "fillOpacity": 0,
+            "gradientMode": "none",
+            "showPoints": "never",
+            "stacking": {
+              "mode": "none",
+              "group": "A"
+            },
+            "axisGridShow": true,
+            "axisBorderShow": false,
+            "spanNulls": false,
+            "insertNulls": 300000
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "#7fae5c",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      }
+    }
+  ]
+}

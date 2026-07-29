@@ -1,0 +1,135 @@
+# Alert routing — 13-operational-model.md §9.
+#
+# Two things happen to every alert, and only one of them wakes anybody:
+#
+#   1. It opens a Beacon incident. Beacon already owns incident open/close,
+#      hysteresis, the timeline and the public status page, so an alert lands
+#      where incidents already live rather than in a second incident system that
+#      then has to be reconciled with the first. This is the `continue: true`
+#      first route below and it applies to every alert without exception.
+#
+#   2. It is delivered to a human, as a page or as a ticket. Page = user-visible
+#      failure or irreversible money risk. Ticket = everything else.
+#
+# No secret appears in this file. Receiver URLs that carry a token in the path
+# are read from files under /etc/alertmanager/secrets, written by ../up.sh from
+# ../.env. Unconfigured is a SUPPORTED MODE: with no delivery URL set, both
+# receivers fall back to the Beacon incident record, which is a degradation
+# (no acknowledgement, no escalation) rather than a failure. The estate's single
+# fire-and-forget BEACON_WEBHOOK_URL is kept as the chat receiver and is
+# explicitly not the paging path — paging needs acknowledgement and escalation,
+# and a fire-and-forget POST has neither.
+
+global:
+  resolve_timeout: 5m
+
+route:
+  # Grouping per §9. One incident produces one notification even when it lights
+  # up six rules on the same service.
+  group_by: [service, alertname]
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  receiver: ticket
+
+  routes:
+    # ---- 1. Every alert, always, opens a Beacon incident ------------------
+    # `continue: true` means matching here does not stop routing, so the alert
+    # goes on to be paged or ticketed as well. Wider grouping (by alertname
+    # only) because Beacon deduplicates into an incident anyway and a per-service
+    # split here would open three incidents for one outage.
+    - receiver: beacon-incident
+      continue: true
+      group_by: [alertname]
+      group_wait: 10s
+      group_interval: 5m
+      # Beacon holds hysteresis and open/close state; re-POSTing the same firing
+      # alert every four hours would add an update to an incident nobody has
+      # touched. Long, so a resolve is what closes it.
+      repeat_interval: 24h
+
+    # ---- 2. Money, always paged, never grouped away ------------------------
+    # Split out of the general page route with a tighter group_wait: a trial
+    # balance that is non-zero is not something to hold for 30 seconds in case a
+    # friend arrives, and it must never be grouped behind an unrelated alert on
+    # the same service.
+    - receiver: page-money
+      matchers:
+        - severity = page
+        - team =~ "ledger|settlement|security"
+      group_by: [alertname, service, currency, chain]
+      group_wait: 10s
+      group_interval: 2m
+      repeat_interval: 1h
+
+    # ---- 3. Everything else that pages ------------------------------------
+    - receiver: page
+      matchers:
+        - severity = page
+      group_wait: 30s
+      group_interval: 5m
+      repeat_interval: 4h
+
+    # ---- 4. Tickets --------------------------------------------------------
+    # Longer group_wait, because nothing is waiting on it and a wider batch is
+    # one notification instead of five. repeat_interval is a working day: a
+    # ticket that repeats every four hours is a ticket that gets muted.
+    - receiver: ticket
+      matchers:
+        - severity = ticket
+      group_wait: 5m
+      group_interval: 30m
+      repeat_interval: 24h
+
+# Suppression. Both rules exist because the alternative is a page storm in which
+# the one alert that names the cause is the twelfth notification.
+inhibit_rules:
+  # A service that is down will also be slow, erroring and burning budget. Those
+  # are consequences, and paging on a consequence when the cause is already
+  # paging is how an on-call learns to silence the group.
+  - source_matchers:
+      - alertname =~ "CustodyUnreachable|TelemetryComponentDown|BeaconTargetDown"
+    target_matchers:
+      - alertname =~ "SLOErrorBudgetBurn.*|GatewayErrorRatioHigh|JobQueueOverdue|BeaconJourneyStale"
+    equal: [service]
+
+  # Postgres taking a money service with it suppresses everything bound to that
+  # service — the ledger cannot post if it cannot write, and the posting-failure
+  # alert adds nothing to the database alert.
+  - source_matchers:
+      - alertname = PostgresUnreachable
+    target_matchers:
+      - team =~ "ledger|wallet|settlement"
+    equal: [service]
+
+  # A page suppresses the ticket for the same condition on the same service.
+  # Otherwise every SEV1 also files paperwork at itself.
+  - source_matchers:
+      - severity = page
+    target_matchers:
+      - severity = ticket
+    equal: [service, alertname]
+
+receivers:
+  # Beacon's Alertmanager receiver (13-operational-model.md §3). Not a secret:
+  # a compose-network address, unreachable from outside the estate.
+  - name: beacon-incident
+    webhook_configs:
+      - url: http://beacon:4011/api/alerts/webhook
+        send_resolved: true
+        max_alerts: 0
+
+  - name: page-money
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/page_webhook_url
+        send_resolved: true
+
+  - name: page
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/page_webhook_url
+        send_resolved: true
+
+  - name: ticket
+    webhook_configs:
+      - url_file: /etc/alertmanager/secrets/ticket_webhook_url
+        send_resolved: true
