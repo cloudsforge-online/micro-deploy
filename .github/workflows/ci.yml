@@ -1,0 +1,19 @@
+name: CI
+
+# A content repository: no service, no suite, no image. What CI owes it is the one check that
+# guards the failure that cannot be undone — a committed secret is compromised the moment it
+# lands, whatever kind of repository it lands in.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  hygiene:
+    uses: cloudsforge-online/micro-org/.github/workflows/secret-hygiene.yml@main
+    with:
+      require-dockerignore: false
+    permissions:
+      contents: read
