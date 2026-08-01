@@ -1,0 +1,186 @@
+# The public API route map — GENERATED. Do not hand-edit.
+#
+# Regenerate:  node --import tsx tools/public-api.ts   (in micro-sdk)
+# Check:       node --import tsx tools/public-api.ts --check
+#
+# ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
+#
+# It did not, and that was a P11 blocker nobody could see. `policy.yml` carries
+# CORS, security headers and the /internal refusal — every rule about how a
+# request is treated — and nothing that says where a public request GOES. There
+# was no public API. `micro-sdk` was written against the services' own paths and
+# exposed a `pathPrefix` seam rather than invent a layout, which was the right
+# call and is why this file could be derived rather than designed.
+#
+# ── THE ONE DECISION ───────────────────────────────────────────────────────────
+#
+# The public surface is `api.<apex>/v1/<resource>`, uniformly.
+#
+# Four services already serve `/v1/…` (wallet, market, mint, worlds) and four do
+# not (pricing, foresight, activity, identity). 11 §288 specifies the public API
+# as URL-versioned, so half of it would have shipped unversioned. Changing the
+# four would mean editing four shipped, CI-green services and breaking every
+# internal caller; so the gateway presents one versioned surface and strips the
+# prefix for the services that do not use it. The split stops at this file.
+#
+# Resources, not services. `api/v1/rates` rather than `api/v1/pricing/rates`:
+# which service owns a resource is an implementation detail, and publishing it
+# turns an internal refactor into a breaking public change. This is safe to do
+# because the 65 verified public routes have NO method+path collision across
+# services — checked, not assumed, and re-checked by `--check`.
+#
+# ── WHAT IS DELIBERATELY ABSENT ────────────────────────────────────────────────
+#
+# `ledger`. Every one of its routes refuses a non-service principal
+# (ledger/src/server.ts:575), so it has no public surface. That is correct — the
+# financial source of truth is reached through wallet and billing — and it is
+# recorded here so nobody reads the gap as an oversight.
+#
+# Anything under `/internal`, which policy.yml refuses at a priority nothing can
+# outrank. This file adds no route that could shadow it: every router here is
+# scoped to the api host AND a `/v1/` prefix.
+
+http:
+  middlewares:
+    # The four services that do not serve /v1 themselves. The gateway owns the
+    # version in the public path; the service never sees it.
+    cf-api-strip-version:
+      stripPrefix:
+        prefixes:
+          - "/v1"
+
+    # Applied to every public route below. The API host is not a browser origin
+    # for a first-party app — it is called by third-party servers and by the
+    # SDK — so it gets the security headers without the app CORS allowlist.
+    cf-api-headers:
+      headers:
+        contentTypeNosniff: true
+        frameDeny: true
+        referrerPolicy: "no-referrer"
+        customResponseHeaders:
+          # A public API answer is never a browser cache entry: an authenticated
+          # response cached by an intermediary is that response served to the
+          # next caller.
+          Cache-Control: "no-store"
+
+  routers:
+    # ---------------------------------------------------------------- pricing
+    # Unversioned upstream: GET /rates, /rates/:asset (pricing/src/server.ts:312,321)
+    cf-api-pricing:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && PathPrefix(`/v1/rates`)"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers, cf-api-strip-version]
+      service: cf-api-pricing
+
+    # --------------------------------------------------------------- activity
+    # Unversioned upstream: GET /feed, /feed/:id (activity/src/server.ts:318,351)
+    cf-api-activity:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && PathPrefix(`/v1/feed`)"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers, cf-api-strip-version]
+      service: cf-api-activity
+
+    # -------------------------------------------------------------- foresight
+    # Unversioned upstream: /categories, /markets (foresight/src/server.ts:398,409)
+    cf-api-foresight:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/markets`) || PathPrefix(`/v1/categories`))"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers, cf-api-strip-version]
+      service: cf-api-foresight
+
+    # --------------------------------------------------------------- identity
+    # Unversioned upstream: GET /auth/me (identity/src/server.ts:891).
+    # NOTE: identity refuses a SERVICE token on /auth/me (identity/src/server.ts:540),
+    # so a devplatform API key has no whoami through this route. Recorded in
+    # 18 §3.3d; micro-devplatform owns the answer.
+    cf-api-identity:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && PathPrefix(`/v1/auth`)"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers, cf-api-strip-version]
+      service: cf-api-identity
+
+    # ----------------------------------------------------------------- wallet
+    # Serves /v1 natively — forwarded unchanged, no strip.
+    cf-api-wallet:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/wallets`) || PathPrefix(`/v1/deposits`) || PathPrefix(`/v1/withdrawals`) || PathPrefix(`/v1/spend`) || PathPrefix(`/v1/transfers`) || PathPrefix(`/v1/conversions`) || PathPrefix(`/v1/portfolio`))"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers]
+      service: cf-api-wallet
+
+    # ----------------------------------------------------------------- market
+    cf-api-market:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/listings`) || PathPrefix(`/v1/orders`) || PathPrefix(`/v1/offers`) || PathPrefix(`/v1/collections`) || PathPrefix(`/v1/verifications`))"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers]
+      service: cf-api-market
+
+    # ------------------------------------------------------------------- mint
+    cf-api-mint:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/catalogue`) || PathPrefix(`/v1/tokens`))"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers]
+      service: cf-api-mint
+
+    # ----------------------------------------------------------------- worlds
+    cf-api-worlds:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/titles`) || PathPrefix(`/v1/players`) || PathPrefix(`/v1/provisions`))"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers]
+      service: cf-api-worlds
+
+    # Anything else on the API host is a 404 from the gateway rather than a
+    # request that reaches a service by accident. Lower priority than every
+    # route above and far below the /internal refusal in policy.yml.
+    cf-api-catchall:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`)"
+      priority: 1
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers]
+      service: cf-api-unrouted
+
+  services:
+    # The upstream port is each image's own EXPOSE, read from its Dockerfile — not a number
+    # chosen here. Every service but foresight listens on 4000 INSIDE its container, which is
+    # fine because each has its own; the distinct ports elsewhere in this estate are dev ports on
+    # one developer machine and are a different fact. Getting this wrong twice in one day (a
+    # registry devPort of 4011 that was beacon's, then 3014 for a service that binds 4100) is why
+    # it is derived rather than typed.
+    cf-api-pricing:
+      loadBalancer:
+        servers: [{ url: "http://pricing:4000" }]
+    cf-api-activity:
+      loadBalancer:
+        servers: [{ url: "http://activity:4000" }]
+    cf-api-foresight:
+      loadBalancer:
+        servers: [{ url: "http://foresight:4021" }]
+    cf-api-identity:
+      loadBalancer:
+        servers: [{ url: "http://identity:4000" }]
+    cf-api-wallet:
+      loadBalancer:
+        servers: [{ url: "http://wallet:4000" }]
+    cf-api-market:
+      loadBalancer:
+        servers: [{ url: "http://market:4000" }]
+    cf-api-mint:
+      loadBalancer:
+        servers: [{ url: "http://mint:4000" }]
+    cf-api-worlds:
+      loadBalancer:
+        servers: [{ url: "http://worlds:4000" }]
+
+    # An unrouted path on the API host. Same reasoning as policy.yml's
+    # cf-refuse: an unreachable upstream is what "there is nothing here" looks
+    # like from outside, and it tells a prober nothing about what does exist.
+    cf-api-unrouted:
+      loadBalancer:
+        servers: [{ url: "http://127.0.0.1:1" }]
