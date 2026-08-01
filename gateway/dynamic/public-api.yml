@@ -1,7 +1,17 @@
-# The public API route map — GENERATED. Do not hand-edit.
+# The public API route map — DERIVED from micro-sdk's verified route table, and CHECKED against
+# it. Hand-edited, deliberately: the routers below group resources and carry middleware that no
+# generator chose, so what is mechanical here is the AGREEMENT, not the text.
 #
-# Regenerate:  node --import tsx tools/public-api.ts   (in micro-sdk)
-# Check:       node --import tsx tools/public-api.ts --check
+# The two lines this header used to carry said "GENERATED. Do not hand-edit." and named a command
+# that writes `openapi.json` and has never written this file. That is the estate's own recurring
+# defect — a document describing something other than reality — sitting in the header of the file
+# whose whole purpose is to not be that.
+#
+# Check (in micro-sdk):  node --import tsx tools/public-api.ts --gateway <this repo's checkout>
+#
+# It fails if any resource in the table is unrouted here, and it fails if this file is absent —
+# never skips. micro-sdk's `gateway` CI job runs it against a fresh checkout of this repository on
+# every push, then deletes a router and requires the check to go red.
 #
 # ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
 #
