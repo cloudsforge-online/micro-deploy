@@ -1,0 +1,194 @@
+# The first vertical slice — identity and ledger, running together.
+#
+# ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
+#
+# Before it, `deploy/compose/` defined the telemetry stack and the gateway and
+# NOT ONE OF THE TWENTY SERVICES. Forty-one repositories were pushed and green,
+# ~5,600 tests passed, and there was no way to start a single service — let alone
+# have two talk to each other. Nothing in this estate had ever been executed
+# against anything else.
+#
+# That matters because of what the record shows. Every defect found in this
+# programme so far was found by READING: six times a downstream consumer caught
+# what an upstream's own suite could not; the reusable CI carried nine defects
+# because it had never run; micro-brand's verifier failed on its own repository;
+# the design system's dE figures cited a validator that did not exist. Things
+# that have never been executed are wrong at a high rate here, and deployment had
+# never been executed at all.
+#
+# ── WHY THESE TWO ──────────────────────────────────────────────────────────────
+#
+# Ledger is the financial core and holds the estate's strongest assertions — a
+# deferred constraint that refuses an unbalanced journal even to a caller holding
+# a database connection. Identity issues the tokens ledger refuses to work
+# without. Between them the pair exercises, for the first time OUTSIDE a test
+# process:
+#
+#   * the migrator run as a deploy runs it, one-shot, against an empty database
+#   * @cloudsforge/lifecycle's /livez and /readyz over a real socket
+#   * @cloudsforge/auth fetching a JWKS over the network rather than from a stub
+#   * a service token minted by one service and accepted by another
+#   * @cloudsforge/db against a Postgres it did not create
+#
+# Wallet was the obvious third and is deliberately absent: it requires custody,
+# indexer and pricing, and a first slice that needs five services proves less
+# than one that needs two, because when it fails you cannot tell which seam
+# broke.
+#
+# ── HOW TO RUN IT ──────────────────────────────────────────────────────────────
+#
+#   cd deploy && docker compose -f compose/docker-compose.slice.yml up --build
+#
+# Every value below is a THROWAWAY for a local slice. The secrets are literal
+# and weak on purpose: a real one in a committed compose file is a real one in
+# the fork network. `scripts/slice-verify.sh` drives the running stack.
+
+name: cloudsforge-slice
+
+services:
+  # ------------------------------------------------------------------ postgres
+  # One server, two databases. Separate databases rather than separate schemas,
+  # because rule 1 of 03 §2 is that a service owns exactly one database and
+  # reads no other — and a slice that quietly shares one would prove the
+  # opposite of what it is here to prove.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: cloudsforge
+      POSTGRES_PASSWORD: slice-only-not-a-real-password
+      POSTGRES_DB: postgres
+    volumes:
+      - ./slice/initdb.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
+    healthcheck:
+      # Without this the migrators race the server's first accept and the
+      # failure reads as a flaky stack rather than as a start-order bug.
+      test: ["CMD-SHELL", "pg_isready -U cloudsforge -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # ----------------------------------------------------------------- migrators
+  # One-shot, exactly as a deploy runs them: the service asserts its schema at
+  # boot and refuses to serve below it, so the migration is a separate act with
+  # its own exit code rather than something a replica does on the way up. That
+  # is the defect the frozen estate had — DDL on every boot, retried by a timer,
+  # so a Postgres returning during a rolling deploy met every replica running
+  # CREATE TABLE at once.
+  identity-migrate:
+    build:
+      context: ../../identity
+      additional_contexts:
+        runtimepkgs: ../../runtime
+        contractspkgs: ../../contracts
+    command: ["node", "--import", "tsx", "src/migrator.ts"]
+    environment:
+      IDENTITY_DATABASE_URL: postgres://cloudsforge:slice-only-not-a-real-password@postgres:5432/identity
+      IDENTITY_ISSUER: http://identity:4000
+      IDENTITY_PUBLIC_URL: http://identity:4000
+      IDENTITY_KEY_SECRET: slice-only-key-secret-not-a-real-one-000000
+      # The scope names are identity's own, from SCOPE_NAMES — not invented here. The first
+      # attempt used `ledger:write`, which does not exist, and identity refused to start and
+      # listed every scope it knows. That refusal is the design working: configuration is
+      # validated at import, so a wrong value is a dead container rather than a service that
+      # runs and denies requests for a reason nobody can see.
+      IDENTITY_SERVICE_TOKEN_GRANTS: '{"ledger":["ledger:read","ledger:post","ledger:reserve"]}'
+      OUTBOX_SIGNING_SECRET: slice-only-outbox-secret-000000000000
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CLOUDSFORGE_TAG: slice
+      INSTANCE_ID: identity-slice
+      PORT: "4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  ledger-migrate:
+    build:
+      context: ../../ledger
+      additional_contexts:
+        runtimepkgs: ../../runtime
+        contractspkgs: ../../contracts
+    command: ["node", "--import", "tsx", "src/migrator.ts"]
+    environment:
+      LEDGER_DATABASE_URL: postgres://cloudsforge:slice-only-not-a-real-password@postgres:5432/ledger
+      IDENTITY_JWKS_URL: http://identity:4000/.well-known/jwks.json
+      IDENTITY_ISSUER: http://identity:4000
+      OUTBOX_SIGNING_SECRET: slice-only-outbox-secret-000000000000
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CLOUDSFORGE_TAG: slice
+      INSTANCE_ID: ledger-slice
+      PORT: "4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  # ------------------------------------------------------------------ services
+  identity:
+    build:
+      context: ../../identity
+      additional_contexts:
+        runtimepkgs: ../../runtime
+        contractspkgs: ../../contracts
+    environment:
+      IDENTITY_DATABASE_URL: postgres://cloudsforge:slice-only-not-a-real-password@postgres:5432/identity
+      IDENTITY_ISSUER: http://identity:4000
+      IDENTITY_PUBLIC_URL: http://identity:4000
+      IDENTITY_KEY_SECRET: slice-only-key-secret-not-a-real-one-000000
+      # The scope names are identity's own, from SCOPE_NAMES — not invented here. The first
+      # attempt used `ledger:write`, which does not exist, and identity refused to start and
+      # listed every scope it knows. That refusal is the design working: configuration is
+      # validated at import, so a wrong value is a dead container rather than a service that
+      # runs and denies requests for a reason nobody can see.
+      IDENTITY_SERVICE_TOKEN_GRANTS: '{"ledger":["ledger:read","ledger:post","ledger:reserve"]}'
+      OUTBOX_SIGNING_SECRET: slice-only-outbox-secret-000000000000
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CLOUDSFORGE_TAG: slice
+      INSTANCE_ID: identity-slice
+      PORT: "4000"
+    ports:
+      - "127.0.0.1:4401:4000"
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      # /readyz, not /livez: liveness answers while the database is unreachable,
+      # which is the whole distinction those two endpoints exist to draw.
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  ledger:
+    build:
+      context: ../../ledger
+      additional_contexts:
+        runtimepkgs: ../../runtime
+        contractspkgs: ../../contracts
+    environment:
+      LEDGER_DATABASE_URL: postgres://cloudsforge:slice-only-not-a-real-password@postgres:5432/ledger
+      # THE SEAM THIS SLICE EXISTS TO TEST. Until now every test of
+      # @cloudsforge/auth fetched a JWKS from a stub in the same process.
+      IDENTITY_JWKS_URL: http://identity:4000/.well-known/jwks.json
+      IDENTITY_ISSUER: http://identity:4000
+      OUTBOX_SIGNING_SECRET: slice-only-outbox-secret-000000000000
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CLOUDSFORGE_TAG: slice
+      INSTANCE_ID: ledger-slice
+      PORT: "4000"
+    ports:
+      - "127.0.0.1:4402:4000"
+    depends_on:
+      ledger-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 3s
+      timeout: 5s
+      retries: 20
