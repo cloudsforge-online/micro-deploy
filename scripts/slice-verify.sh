@@ -12,6 +12,8 @@ set -uo pipefail
 
 IDENTITY=${IDENTITY:-http://127.0.0.1:4401}
 LEDGER=${LEDGER:-http://127.0.0.1:4402}
+ACTIVITY=${ACTIVITY:-http://127.0.0.1:4403}
+COMPOSE=${COMPOSE:-compose/docker-compose.slice.yml}
 fails=0
 
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
@@ -91,5 +93,40 @@ tb=$(curl -s "$LEDGER/trial-balance" -H "authorization: Bearer $stok")
 printf '%s' "$tb" | grep -q '"balanced":true' && ok "trial balance is balanced" || bad "trial balance: $tb"
 
 echo
+echo "── THE EVENT SEAM: outbox → signed HTTP → inbox ─────────────────────────"
+# No route creates a subscription — deliberately: who receives which topic is deploy
+# configuration, not something a caller decides. The deploy is this file, so it seeds the row.
+docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+  "insert into event_subscriptions (topic, url) values ('identity.session.created', 'http://activity:4000/ingest') on conflict do nothing" \
+  >/dev/null 2>&1 && ok "subscription seeded: identity.session.created → activity" \
+  || bad "could not seed the subscription row"
+
+# A fresh login makes identity WRITE an outbox row; its relay must then sign it, POST it to
+# activity's inbox, and activity must attribute it to the USER — not to the session id, which is
+# the misattribution both suites missed because activity's fixtures imagined the producer.
+curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
+  -d "{\"identifier\":\"$EMAIL\",\"password\":\"$PASS\"}" >/dev/null
+
+seam=""
+for _ in $(seq 1 30); do
+  feed=$(curl -s "$ACTIVITY/feed" -H "authorization: Bearer $utok")
+  seam=$(printf '%s' "$feed" | python3 -c "
+import sys, json
+try:
+    records = json.load(sys.stdin).get('records', [])
+except Exception:
+    records = []
+hits = [r for r in records if r.get('type') == 'security.session_created']
+print(hits[0].get('summary', 'found') if hits else '')
+" 2>/dev/null)
+  [ -n "$seam" ] && break
+  sleep 1
+done
+if [ -n "$seam" ]; then
+  ok "the sign-in crossed the bus and landed in the user's own feed: $seam"
+else
+  bad "no session_created record reached the feed within 30s — the relay, the inbox gate, or the attribution is broken"
+fi
+
 [ "$fails" -eq 0 ] && { echo "all seams verified"; exit 0; }
 echo "$fails check(s) failed"; exit 1

@@ -3,3 +3,4 @@
 -- sharing a schema and proving the opposite of what it is here to prove.
 CREATE DATABASE identity;
 CREATE DATABASE ledger;
+CREATE DATABASE activity;

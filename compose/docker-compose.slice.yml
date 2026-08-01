@@ -162,6 +162,65 @@ services:
       timeout: 5s
       retries: 20
 
+  # ------------------------------------------------------------ the event seam
+  # Identity and ledger prove the TOKEN seam. Activity proves the EVENT seam —
+  # outbox → signed HTTP → inbox — which no pair of unit suites can reach, and
+  # which found two defects on its first composition: both consumer inboxes
+  # demanded a bearer no relay presents (fixed — the MAC is the gate now), and
+  # the topic lists of producer, registry and consumer had drifted three ways
+  # (18 §3.3p).
+  activity-migrate:
+    build:
+      context: ../../activity
+      additional_contexts:
+        runtimepkgs: ../../runtime
+        contractspkgs: ../../contracts
+    command: ["node", "--import", "tsx", "src/migrator.ts"]
+    environment:
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:slice-only-not-a-real-password@postgres:5432/activity
+      # The same secret identity signs its outbox with: the MAC is the seam.
+      ACTIVITY_INGEST_SECRETS: slice-only-outbox-secret-000000000000
+      IDENTITY_ISSUER: http://identity:4000
+      IDENTITY_JWKS_URL: http://identity:4000/.well-known/jwks.json
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CLOUDSFORGE_TAG: slice
+      INSTANCE_ID: activity-slice
+      PORT: "4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  activity:
+    build:
+      context: ../../activity
+      additional_contexts:
+        runtimepkgs: ../../runtime
+        contractspkgs: ../../contracts
+    environment:
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:slice-only-not-a-real-password@postgres:5432/activity
+      ACTIVITY_INGEST_SECRETS: slice-only-outbox-secret-000000000000
+      IDENTITY_ISSUER: http://identity:4000
+      IDENTITY_JWKS_URL: http://identity:4000/.well-known/jwks.json
+      NODE_ENV: production
+      LOG_LEVEL: info
+      CLOUDSFORGE_TAG: slice
+      INSTANCE_ID: activity-slice
+      PORT: "4000"
+    ports:
+      - "127.0.0.1:4403:4000"
+    depends_on:
+      activity-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
   ledger:
     build:
       context: ../../ledger
