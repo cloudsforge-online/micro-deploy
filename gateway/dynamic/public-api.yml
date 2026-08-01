@@ -139,8 +139,20 @@ http:
       service: cf-api-mint
 
     # ----------------------------------------------------------------- worlds
+    # `/v1/seasons` was missing here, and it is the route a TITLE is paid through.
+    # `worlds/src/server.ts:802` serves `POST /v1/seasons/:id/rewards`, which accepts a service
+    # principal holding `worlds:title` — that is a title crediting a player at the end of a season.
+    # Without a router it fell through to the catch-all, so **no title could be paid a season
+    # reward through the public host**. `GET /v1/seasons/:id/budget` (`:779`) was unreachable the
+    # same way, which is the read a title uses to know whether a grant will fit the budget.
+    #
+    # It was invisible to the drift check on purpose-built grounds: `sdk/tools/public-api.ts`
+    # verifies that every resource in the SDK's table has a router here, and `/v1/seasons` was in
+    # NEITHER document. Two artefacts agreeing with each other is not the same as either agreeing
+    # with the services, and nothing in this estate yet compares this file against what the
+    # services actually serve. Recorded as the real gap; this line only closes today's instance.
     cf-api-worlds:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/titles`) || PathPrefix(`/v1/players`) || PathPrefix(`/v1/provisions`))"
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/titles`) || PathPrefix(`/v1/players`) || PathPrefix(`/v1/provisions`) || PathPrefix(`/v1/seasons`))"
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers]
