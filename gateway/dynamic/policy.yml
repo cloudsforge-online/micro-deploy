@@ -56,6 +56,12 @@ http:
           # serves fails closed and silently.
           - https://developers.cloudsforge.online
           - https://status.cloudsforge.online
+          # network and foresight were missing - the only two registry products absent from this
+          # list, found when micro-network-site's chain panel could fetch nothing. An allowlist
+          # that omits an origin fails closed and silently: the browser refuses the response and
+          # nothing server-side records that anything was refused.
+          - https://network.cloudsforge.online
+          - https://foresight.cloudsforge.online
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:
           - content-type
