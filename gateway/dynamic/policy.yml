@@ -50,7 +50,11 @@ http:
           - https://worlds.cloudsforge.online
           - https://explorer.cloudsforge.online
           - https://admin.cloudsforge.online
-          - https://devportal.cloudsforge.online
+          # developers, not devportal: that is the registry subdomain for this surface
+          # (ui/packages/ui/src/surfaces.ts:388). The host had been written from the
+          # repository name, micro-devportal-web. A CORS allowlist naming a host nobody
+          # serves fails closed and silently.
+          - https://developers.cloudsforge.online
           - https://status.cloudsforge.online
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:

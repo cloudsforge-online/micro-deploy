@@ -271,7 +271,11 @@ presents as no alerts firing.
 Five of the nine are built: Platform overview, Service detail (templated by
 `$service`), Money integrity, Deposits & withdrawals, Chain health. Business,
 Product funnels, Custody & security and Developer platform need `analytics`,
-`billing`, `custody` and `devplatform`, none of which exist.
+`billing`, `custody` and `devplatform` — **all four of which now exist**, are built
+and are green. This said "none of which exist", which was true when it was written
+and is false for every one of them today; those four dashboards are buildable work
+rather than a blocked dependency. `micro-devportal-web` caught the devplatform half
+of it; the other three were wrong in the same sentence.
 
 **They are generated, not hand-written.** `grafana/build-dashboards.py` reads
 `grafana/theme/palette.json` and writes fixed colours into every panel, because
@@ -369,3 +373,27 @@ container was never given cannot leak from it.** The collector needs three
 variables and receives three.
 
 This is the highest-severity item in the estate and close to free.
+
+## Verifying a gateway change, and one way to waste an hour
+
+**Never ship a change to `gateway/dynamic/*.yml` without booting Traefik against it.** A failure
+rejects the whole directory: it is not a partial outage, nothing is routed.
+
+```bash
+cp gateway/dynamic/*.yml /tmp/gw-check/          # a FRESH directory - see below
+docker run --rm -v /tmp/gw-check:/dyn:ro -e CF_API_HOST=api.example.com \
+  traefik:v3.1 --providers.file.directory=/dyn --entrypoints.websecure.address=:443
+```
+
+An `ERR Error while building configuration` line means the directory was rejected. Silence means it
+loaded.
+
+**Copy to a fresh directory first.** Bind-mounting the working tree directly gave a reproducible
+false failure: Docker Desktop's file sharing served a stale cached view of a directory that had been
+edited several times in quick succession, so the container was reading a version of the file that no
+longer existed on disk. It failed 3 runs out of 3 against the working tree and passed 3 out of 3
+against a byte-identical copy - same md5, both files - which is what proved it.
+
+The error it produced pointed at a line ninety lines away from any edit and blamed a construct that
+was correct. Every hypothesis drawn from it was wrong, because the input was a ghost. If a gateway
+error does not survive a fresh copy, it is not real.

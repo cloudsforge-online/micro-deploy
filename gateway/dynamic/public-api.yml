@@ -158,6 +158,13 @@ http:
       middlewares: [cf-api-headers]
       service: cf-api-worlds
 
+    cf-api-devplatform:
+      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/apps`) || PathPrefix(`/v1/keys`) || PathPrefix(`/v1/oauth-clients`) || PathPrefix(`/v1/organisations`) || PathPrefix(`/v1/projects`) || PathPrefix(`/v1/scopes`) || PathPrefix(`/v1/webhook-endpoints`))"
+      priority: 1000
+      entryPoints: [websecure]
+      middlewares: [cf-api-headers]
+      service: cf-api-devplatform
+
     # Anything else on the API host is a 404 from the gateway rather than a
     # request that reaches a service by accident. Lower priority than every
     # route above and far below the /internal refusal in policy.yml.
@@ -199,6 +206,9 @@ http:
     cf-api-worlds:
       loadBalancer:
         servers: [{ url: "http://worlds:4000" }]
+    cf-api-devplatform:
+      loadBalancer:
+        servers: [{ url: "http://devplatform:4000" }]
 
     # An unrouted path on the API host. Same reasoning as policy.yml's
     # cf-refuse: an unreachable upstream is what "there is nothing here" looks
