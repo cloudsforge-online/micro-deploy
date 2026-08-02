@@ -352,5 +352,118 @@ else
   bad "notify: new ack ${ninbox_before:-0} → ${nack:-0}, remaining=${nleft:-?} — the service holding addresses and push tokens did not forget"
 fi
 
+echo
+echo "── THE TEN-MINUTE CLIFF: a call made AFTER its token expired ────────────"
+#
+# THE DEFECT THIS SECTION EXISTS FOR. Service tokens expire in 600 seconds
+# (identity/src/tokens.ts:28). Consuming services read theirs from an environment
+# variable at boot and nothing re-minted it, because nothing COULD: the only
+# issuer was an operator holding the `admin` role. The estate therefore worked
+# perfectly for the first ten minutes of any deployment and then every
+# service-to-service call in the money tier failed 401.
+#
+# WHY NOTHING CAUGHT IT. Every check above — and every per-service suite in the
+# estate — mints a token and uses it seconds later. **No token has ever been
+# asked to outlive itself here.** That is the shape that let this through two
+# reviewers and twenty-one test suites, and it is why the section below is
+# written the way it is: the token is deliberately allowed to DIE first, and the
+# call that must then succeed is a real one, against a real service, over a real
+# socket.
+#
+# WHY IT DOES NOT TAKE TEN MINUTES. identity now accepts a requested lifetime
+# that may only ever SHORTEN (identity/src/tokens.ts, clampServiceTtl), so the
+# cliff is reproduced at three seconds rather than six hundred. The ceiling is
+# asserted below too — a caller that asks for a day must still get ten minutes,
+# because "just make the TTL longer" is the wrong fix and this is where that
+# would be caught.
+#
+# The sleep must clear the token's TTL *plus* the verifier's clock tolerance,
+# which is 5s by default (runtime/packages/auth/src/index.ts:106). 3 + 5 = 8, so
+# 12 is comfortably past it without being slow.
+CLIFF_TTL=3
+CLIFF_SLEEP=12
+
+cred=$(curl -s -X POST "$IDENTITY/service-credentials" -H "authorization: Bearer $utok" \
+  -H 'content-type: application/json' \
+  -d '{"service":"wallet","label":"estate-verify cliff drill"}')
+cred_secret=$(printf '%s' "$cred" | python3 -c "import sys,json;print(json.load(sys.stdin).get('secret',''))" 2>/dev/null)
+cred_id=$(printf '%s' "$cred" | python3 -c "import sys,json;print(json.load(sys.stdin).get('id',''))" 2>/dev/null)
+# Captured BEFORE anything reads them. `set -u` turns a read-before-capture into
+# an immediate failure rather than a curl carrying the empty string — the
+# ordering bug this file has already caught once.
+[ -n "$cred_secret" ] && ok "identity issued a long-lived service credential for wallet" \
+  || bad "no service credential issued: $(printf '%s' "$cred" | head -c 160)"
+
+# A credential is NOT a token. Presenting it to a peer must achieve nothing —
+# that is what keeps it a key to identity's door rather than a second
+# PAY_SERVICE_TOKEN with the run of the estate.
+[ "$(code "$LEDGER/entries" -H "authorization: Bearer $cred_secret")" = 401 ] \
+  && ok "the credential itself is refused by ledger — it is not a bearer token" \
+  || bad "ledger ACCEPTED a raw service credential; it must only ever accept a token"
+
+short=$(curl -s -X POST "$IDENTITY/service-tokens/exchange" \
+  -H "authorization: Bearer $cred_secret" -H 'content-type: application/json' \
+  -d "{\"scopes\":[\"ledger:read\"],\"ttlSeconds\":$CLIFF_TTL}")
+short_token=$(printf '%s' "$short" | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+short_ttl=$(printf '%s' "$short" | python3 -c "import sys,json;print(json.load(sys.stdin).get('expiresIn',''))" 2>/dev/null)
+[ "$short_ttl" = "$CLIFF_TTL" ] && ok "wallet minted its own ${CLIFF_TTL}s token — no operator involved" \
+  || bad "exchange did not honour ttlSeconds: $(printf '%s' "$short" | head -c 160)"
+
+# T+0: it works. This is the half every existing test already proves.
+[ "$(code "$LEDGER/entries" -H "authorization: Bearer $short_token")" = 200 ] \
+  && ok "the freshly minted token is accepted by ledger" \
+  || bad "ledger refused a token identity had just minted"
+
+echo "  … letting the token expire (${CLIFF_SLEEP}s) — this is the wait no suite ever did"
+sleep "$CLIFF_SLEEP"
+
+# T+12: THE CLIFF ITSELF, reproduced across the wire. Before this fix every
+# service in the money tier reached this state ten minutes after deploy and
+# stayed there.
+expired_code=$(code "$LEDGER/entries" -H "authorization: Bearer $short_token")
+[ "$expired_code" = 401 ] \
+  && ok "the expired token is now refused (401) — the cliff, reproduced" \
+  || bad "an EXPIRED service token was answered $expired_code; expiry is not being enforced"
+
+# And the fix: the credential outlived the token, so wallet mints a replacement
+# for itself. No redeploy, no operator, no re-run of estate-bootstrap.
+after=$(curl -s -X POST "$IDENTITY/service-tokens/exchange" \
+  -H "authorization: Bearer $cred_secret" -H 'content-type: application/json' \
+  -d '{"scopes":["ledger:read"]}')
+after_token=$(printf '%s' "$after" | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+after_ttl=$(printf '%s' "$after" | python3 -c "import sys,json;print(json.load(sys.stdin).get('expiresIn',''))" 2>/dev/null)
+if [ "$(code "$LEDGER/entries" -H "authorization: Bearer $after_token")" = 200 ]; then
+  ok "wallet re-minted past its own expiry and ledger accepted it — THE CLIFF IS CLOSED"
+else
+  bad "a service could not obtain a working token after its first one expired"
+fi
+
+# THE TTL CEILING IS NOT NEGOTIABLE. If someone ever "fixes" the cliff by
+# raising the TTL, or by letting a caller ask for a longer one, it fails here.
+[ "$after_ttl" = 600 ] && ok "the default service-token TTL is still 600s — not lengthened" \
+  || bad "expected a 600s TTL, got ${after_ttl:-none} — has SERVICE_TTL_SECONDS been changed?"
+greedy_ttl=$(curl -s -X POST "$IDENTITY/service-tokens/exchange" \
+  -H "authorization: Bearer $cred_secret" -H 'content-type: application/json' \
+  -d '{"ttlSeconds":86400}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('expiresIn',''))" 2>/dev/null)
+[ "$greedy_ttl" = 600 ] && ok "a caller asking for a day is clamped to 600s" \
+  || bad "ttlSeconds was not clamped: got ${greedy_ttl:-none}"
+
+# A credential cannot mint outside its service's allowlist, and cannot name a
+# different service — the service is read off the row, never off the request.
+[ "$(code -X POST "$IDENTITY/service-tokens/exchange" -H "authorization: Bearer $cred_secret" \
+     -H 'content-type: application/json' -d '{"scopes":["custody:sign:treasury"]}')" = 403 ] \
+  && ok "wallet's credential cannot mint the treasury signing scope (403)" \
+  || bad "a credential minted a scope outside its allowlist"
+
+# Revocation — the containment lever a bearer JWT cannot have.
+revoke_code=$(code -X POST "$IDENTITY/service-credentials/$cred_id/revoke" \
+  -H "authorization: Bearer $utok")
+[ "$revoke_code" = 200 ] && ok "the drill credential was revoked" || bad "revoke returned $revoke_code"
+[ "$(code -X POST "$IDENTITY/service-tokens/exchange" -H "authorization: Bearer $cred_secret" \
+     -H 'content-type: application/json' -d '{}')" = 401 ] \
+  && ok "a revoked credential mints nothing (401) — a compromised service is contained" \
+  || bad "a REVOKED credential could still mint a token"
+
 [ "$fails" -eq 0 ] && { echo "all seams verified"; exit 0; }
 echo "$fails check(s) failed"; exit 1
