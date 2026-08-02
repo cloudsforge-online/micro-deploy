@@ -77,7 +77,7 @@ http:
     # ---------------------------------------------------------------- pricing
     # Unversioned upstream: GET /rates, /rates/:asset (pricing/src/server.ts:312,321)
     cf-api-pricing:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && PathPrefix(`/v1/rates`)"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/rates`)'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers, cf-api-strip-version]
@@ -86,7 +86,7 @@ http:
     # --------------------------------------------------------------- activity
     # Unversioned upstream: GET /feed, /feed/:id (activity/src/server.ts:318,351)
     cf-api-activity:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && PathPrefix(`/v1/feed`)"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/feed`)'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers, cf-api-strip-version]
@@ -95,7 +95,7 @@ http:
     # -------------------------------------------------------------- foresight
     # Unversioned upstream: /categories, /markets (foresight/src/server.ts:398,409)
     cf-api-foresight:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/markets`) || PathPrefix(`/v1/categories`))"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/markets`) || PathPrefix(`/v1/categories`))'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers, cf-api-strip-version]
@@ -107,7 +107,7 @@ http:
     # so a devplatform API key has no whoami through this route. Recorded in
     # 18 §3.3d; micro-devplatform owns the answer.
     cf-api-identity:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && PathPrefix(`/v1/auth`)"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/auth`)'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers, cf-api-strip-version]
@@ -116,7 +116,7 @@ http:
     # ----------------------------------------------------------------- wallet
     # Serves /v1 natively — forwarded unchanged, no strip.
     cf-api-wallet:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/wallets`) || PathPrefix(`/v1/deposits`) || PathPrefix(`/v1/withdrawals`) || PathPrefix(`/v1/spend`) || PathPrefix(`/v1/transfers`) || PathPrefix(`/v1/conversions`) || PathPrefix(`/v1/portfolio`))"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/wallets`) || PathPrefix(`/v1/deposits`) || PathPrefix(`/v1/withdrawals`) || PathPrefix(`/v1/spend`) || PathPrefix(`/v1/transfers`) || PathPrefix(`/v1/conversions`) || PathPrefix(`/v1/portfolio`))'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers]
@@ -124,7 +124,7 @@ http:
 
     # ----------------------------------------------------------------- market
     cf-api-market:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/listings`) || PathPrefix(`/v1/orders`) || PathPrefix(`/v1/offers`) || PathPrefix(`/v1/collections`) || PathPrefix(`/v1/verifications`))"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/listings`) || PathPrefix(`/v1/orders`) || PathPrefix(`/v1/offers`) || PathPrefix(`/v1/collections`) || PathPrefix(`/v1/verifications`))'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers]
@@ -132,7 +132,7 @@ http:
 
     # ------------------------------------------------------------------- mint
     cf-api-mint:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/catalogue`) || PathPrefix(`/v1/tokens`))"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/catalogue`) || PathPrefix(`/v1/tokens`))'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers]
@@ -152,14 +152,14 @@ http:
     # with the services, and nothing in this estate yet compares this file against what the
     # services actually serve. Recorded as the real gap; this line only closes today's instance.
     cf-api-worlds:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/titles`) || PathPrefix(`/v1/players`) || PathPrefix(`/v1/provisions`) || PathPrefix(`/v1/seasons`))"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/titles`) || PathPrefix(`/v1/players`) || PathPrefix(`/v1/provisions`) || PathPrefix(`/v1/seasons`))'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers]
       service: cf-api-worlds
 
     cf-api-devplatform:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`) && (PathPrefix(`/v1/apps`) || PathPrefix(`/v1/keys`) || PathPrefix(`/v1/oauth-clients`) || PathPrefix(`/v1/organisations`) || PathPrefix(`/v1/projects`) || PathPrefix(`/v1/scopes`) || PathPrefix(`/v1/webhook-endpoints`))"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/apps`) || PathPrefix(`/v1/keys`) || PathPrefix(`/v1/oauth-clients`) || PathPrefix(`/v1/organisations`) || PathPrefix(`/v1/projects`) || PathPrefix(`/v1/scopes`) || PathPrefix(`/v1/webhook-endpoints`))'
       priority: 1000
       entryPoints: [websecure]
       middlewares: [cf-api-headers]
@@ -169,7 +169,7 @@ http:
     # request that reaches a service by accident. Lower priority than every
     # route above and far below the /internal refusal in policy.yml.
     cf-api-catchall:
-      rule: "Host(`{{ env \"CF_API_HOST\" }}`)"
+      rule: 'Host(`{{ env "CF_API_HOST" }}`)'
       priority: 1
       entryPoints: [websecure]
       middlewares: [cf-api-headers]

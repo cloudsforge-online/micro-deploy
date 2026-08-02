@@ -43,6 +43,62 @@ if not MAP.exists():
 text = MAP.read_text()
 
 # ---------------------------------------------------------------------------
+# 0. the two ways a route map can be dead without being wrong
+# ---------------------------------------------------------------------------
+# Both of these actually happened here, and neither was visible from the file.
+#
+# (a) Traefik runs a dynamic file through Go's text/template BEFORE parsing it as
+#     YAML. So `rule: "Host(`{{ env \"CF_API_HOST\" }}`)"` — correct YAML —
+#     reaches the template engine with literal backslashes and fails to parse.
+#     A template failure REJECTS THE WHOLE DIRECTORY: not this router, not this
+#     file, everything, including policy.yml's /internal refusal. Single-quoted
+#     YAML scalars avoid the escape entirely.
+#
+# (b) An `{{ env "X" }}` whose X is undefined renders EMPTY and silently. The
+#     router still loads; its rule is `Host(``)`, which matches no request ever
+#     sent. Traefik logs nothing. The public API is dead and looks configured.
+#
+# Both are checked statically here so that neither needs a running Traefik to
+# catch — though `make check-gateway` is not a substitute for booting one.
+GATEWAY_ENV = ROOT / "compose" / "env" / "traefik.env"
+preflight = []
+
+for path in sorted((ROOT / "gateway" / "dynamic").glob("*.yml")):
+    body = path.read_text()
+    for lineno, line in enumerate(body.split("\n"), 1):
+        if "{{" in line and '\\"' in line:
+            preflight.append(
+                f"{path.name}:{lineno}: a templated line is double-quoted YAML with escaped quotes. "
+                "Go's text/template sees the backslashes and rejects THE WHOLE DIRECTORY. "
+                "Use a single-quoted YAML scalar."
+            )
+
+declared = set()
+if GATEWAY_ENV.exists():
+    for line in GATEWAY_ENV.read_text().split("\n"):
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            declared.add(line.split("=", 1)[0].strip())
+else:
+    preflight.append(f"{GATEWAY_ENV} does not exist, so no templated variable can be shown to be defined.")
+
+referenced = set()
+for path in sorted((ROOT / "gateway" / "dynamic").glob("*.yml")):
+    referenced |= set(re.findall(r'\{\{\s*env\s+\\?"([A-Z0-9_]+)\\?"\s*\}\}', path.read_text()))
+for name in sorted(referenced - declared):
+    preflight.append(
+        f"{name} is templated into a gateway rule but is not set in {GATEWAY_ENV.name}. "
+        "It renders empty, the rule becomes Host(``), and the route matches nothing — silently."
+    )
+
+if preflight:
+    print(f"checked {len(referenced)} templated variable(s) across gateway/dynamic/")
+    for p in preflight:
+        print(f"  FAIL  {p}")
+    print(f"\n{len(preflight)} problem(s) that would make the route map load empty or not at all.")
+    sys.exit(1)
+
+# ---------------------------------------------------------------------------
 # 1. the route map: routers, their path prefixes, and the upstream each names
 # ---------------------------------------------------------------------------
 
@@ -59,12 +115,16 @@ routers = []
 # Each router is a `    <name>:` block under `routers:` carrying a `rule:` line.
 for block in re.split(r"^    (?=[a-z0-9-]+:\n      rule:)", text, flags=re.M)[1:]:
     name = block.split(":", 1)[0].strip()
-    rule = re.search(r"rule: \"(.*)\"", block)
+    # Either quote style. The file moved to single-quoted scalars because the
+    # double-quoted form broke Go templating (see the preflight above), so a
+    # parser that knew only one style would report "no routers" — which is why
+    # the no-routers case above is a hard failure and not a skip.
+    rule = re.search(r"rule: \"(.*)\"|rule: '(.*)'", block)
     service = re.search(r"service: ([a-z0-9-]+)", block)
     middlewares = re.search(r"middlewares: \[([^\]]*)\]", block)
     if not rule or not service:
         continue
-    prefixes = re.findall(r"PathPrefix\(`([^`]+)`\)", rule.group(1))
+    prefixes = re.findall(r"PathPrefix\(`([^`]+)`\)", rule.group(1) or rule.group(2))
     routers.append(
         {
             "name": name,

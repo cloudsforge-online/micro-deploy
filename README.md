@@ -497,13 +497,46 @@ This is the highest-severity item in the estate and close to free.
 rejects the whole directory: it is not a partial outage, nothing is routed.
 
 ```bash
-cp gateway/dynamic/*.yml /tmp/gw-check/          # a FRESH directory - see below
-docker run --rm -v /tmp/gw-check:/dyn:ro -e CF_API_HOST=api.example.com \
-  traefik:v3.1 --providers.file.directory=/dyn --entrypoints.websecure.address=:443
+rm -rf ~/gw-check && mkdir -p ~/gw-check       # a FRESH directory, under $HOME - see below
+cp gateway/dynamic/*.yml ~/gw-check/
+docker run --rm -d --name gwtest -v ~/gw-check:/dyn:ro \
+  traefik:v3.2.3 --providers.file.directory=/dyn --entrypoints.websecure.address=:443 --log.level=DEBUG
+sleep 6 && docker logs gwtest 2>&1 | sed 's/\x1b\[[0-9;]*m//g' | grep -E "Error while building|providerName=file"
+docker rm -f gwtest
 ```
 
 An `ERR Error while building configuration` line means the directory was rejected. Silence means it
-loaded.
+loaded — but **read the `Configuration received` line too**, because a directory that loads is not
+the same as a directory that routes. See below.
+
+**Under `$HOME`, not `/tmp`.** Docker Desktop on macOS does not share `/tmp`, so
+`-v /tmp/gw-check:/dyn:ro` mounts an **empty** directory and Traefik cheerfully reports no errors
+about the two files it cannot see. That produces a clean run that has verified nothing, which is
+worse than a failure. Check with
+`docker run --rm -v ~/gw-check:/dyn:ro --entrypoint /bin/sh traefik:v3.2.3 -c 'ls /dyn'` before
+believing any result.
+
+**Do not pass `-e CF_API_HOST` unless you are testing an override.** The recipe here used to, and
+that is exactly how the next two defects survived: the check supplied a value the deployment did
+not, so it proved something the deployment could not do. `CF_API_HOST` now lives in
+`compose/env/traefik.env`, which is the file the gateway actually loads.
+
+### Two ways a route map is dead without being wrong
+
+Both of these were live in this repository, and neither is visible from reading the file.
+
+1. **Go templating runs before YAML parsing.** A dynamic file is rendered as a Go `text/template`
+   *first*. So `rule: "Host(`{{ env \"CF_API_HOST\" }}`)"` — perfectly valid YAML — reaches the
+   template engine with literal backslashes and fails with ``unexpected "\" in operand``. And a
+   template failure **rejects the whole directory**: every public router *and* `policy.yml`'s
+   `/internal` refusal, gone together. Single-quoted YAML scalars need no escaping and avoid it.
+
+2. **An undefined `{{ env "X" }}` renders empty, silently.** The router still loads. Its rule
+   becomes ``Host(``) && PathPrefix(...)`` — valid, and matching no request ever sent. Traefik logs
+   nothing at all. The public API is dead and the configuration looks correct.
+
+`make check-gateway` catches both statically, and goes red if either is reintroduced. It is not a
+substitute for booting Traefik; it is what makes booting it optional for a small change.
 
 **Copy to a fresh directory first.** Bind-mounting the working tree directly gave a reproducible
 false failure: Docker Desktop's file sharing served a stale cached view of a directory that had been
