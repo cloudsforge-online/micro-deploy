@@ -1,20 +1,55 @@
 #!/usr/bin/env bash
-# Drive the running slice and assert the seams that no unit test can reach.
+# Drive the running estate and assert the seams that no unit test can reach.
 #
 #   cd deploy
-#   docker compose -f compose/docker-compose.slice.yml up -d --build
-#   ./scripts/slice-verify.sh
+#   docker compose -f compose/docker-compose.estate.yml up -d --build
+#   ./scripts/estate-bootstrap.sh      # the admin UPDATE, then the service tokens
+#   ./scripts/estate-verify.sh
 #
-# Every check here failed to exist until the slice did. The estate had 41 pushed
-# repositories, ~5,600 passing tests and no way to start one service, so nothing
-# below had ever been true or false — it had never been asked.
+# Every check here failed to exist until the environment did. The estate had 41
+# pushed repositories, ~5,600 passing tests and no way to start one service, so
+# nothing below had ever been true or false — it had never been asked.
+#
+# ── THE BAR ────────────────────────────────────────────────────────────────────
+#
+# A service that boots is not a service that works. Health is checked for all 21
+# services because a service that cannot answer /readyz cannot be in any flow —
+# but every section after that drives a REAL FLOW and asserts a REAL EFFECT:
+# a token minted by one service and accepted by another, an event that crosses
+# the bus and lands in a feed, a deletion that empties rows in two databases.
+# The count of services proves nothing on its own and is not reported as if it
+# did.
+#
+# `set -u` is load-bearing: it already caught an ordering bug here where a
+# variable was read before it was captured.
 set -uo pipefail
 
-IDENTITY=${IDENTITY:-http://127.0.0.1:4401}
-LEDGER=${LEDGER:-http://127.0.0.1:4402}
-ACTIVITY=${ACTIVITY:-http://127.0.0.1:4403}
-NOTIFY=${NOTIFY:-http://127.0.0.1:4404}
-COMPOSE=${COMPOSE:-compose/docker-compose.slice.yml}
+# Host ports are 4100 + the service's index in micro-org's registry (portFor,
+# cfctl.ts:868) — derived from the one list that orders every repository rather
+# than picked, because the estate has twice lost time to a hand-chosen port that
+# already belonged to something else.
+IDENTITY=${IDENTITY:-http://127.0.0.1:4100}
+POLICY=${POLICY:-http://127.0.0.1:4101}
+LEDGER=${LEDGER:-http://127.0.0.1:4102}
+WALLET=${WALLET:-http://127.0.0.1:4103}
+SETTLEMENT=${SETTLEMENT:-http://127.0.0.1:4104}
+PRICING=${PRICING:-http://127.0.0.1:4105}
+BILLING=${BILLING:-http://127.0.0.1:4106}
+CUSTODY=${CUSTODY:-http://127.0.0.1:4107}
+ACTIVITY=${ACTIVITY:-http://127.0.0.1:4109}
+NOTIFY=${NOTIFY:-http://127.0.0.1:4110}
+STUDIO=${STUDIO:-http://127.0.0.1:4111}
+MINT=${MINT:-http://127.0.0.1:4112}
+MARKET=${MARKET:-http://127.0.0.1:4113}
+TRADE=${TRADE:-http://127.0.0.1:4114}
+WORLDS=${WORLDS:-http://127.0.0.1:4115}
+NDA=${NDA:-http://127.0.0.1:4116}
+COMMUNITY=${COMMUNITY:-http://127.0.0.1:4117}
+DEVPLATFORM=${DEVPLATFORM:-http://127.0.0.1:4118}
+HUB=${HUB:-http://127.0.0.1:4119}
+ADMIN=${ADMIN:-http://127.0.0.1:4120}
+ANALYTICS=${ANALYTICS:-http://127.0.0.1:4121}
+COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 fails=0
 
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
@@ -22,7 +57,19 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails+1)); }
 code() { curl -s -o /tmp/slice.body -w '%{http_code}' "$@"; }
 
 echo "── health, over a real socket ───────────────────────────────────────────"
-for pair in "identity $IDENTITY" "ledger $LEDGER"; do
+# Every service in the environment, not a sample. A service that boots is not a
+# service that works — that is what the flows below are for — but a service that
+# does not answer /readyz cannot be in any flow at all, so this is the floor.
+#
+# No `declare -A`: bash on macOS is 3.2 and an associative-array port map once
+# silently broke five suites here. A space-separated pair list works everywhere.
+for pair in \
+  "identity $IDENTITY" "policy $POLICY" "ledger $LEDGER" "wallet $WALLET" \
+  "settlement $SETTLEMENT" "pricing $PRICING" "billing $BILLING" \
+  "custody $CUSTODY" "activity $ACTIVITY" "notify $NOTIFY" "studio $STUDIO" \
+  "mint $MINT" "market $MARKET" "trade $TRADE" "worlds $WORLDS" "nda $NDA" \
+  "community $COMMUNITY" "devplatform $DEVPLATFORM" "hub-api $HUB" \
+  "admin-api $ADMIN" "analytics $ANALYTICS"; do
   set -- $pair
   [ "$(code "$2/livez")"  = 200 ] && ok "$1 /livez"  || bad "$1 /livez"
   # /readyz probes the database. /livez answers while it is unreachable, which is
@@ -60,7 +107,7 @@ mint=$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $utok" 
                   || bad "expected 403 for a non-admin, got $mint"
 
 # The only way through today. If this stops being necessary, delete it.
-docker compose -f compose/docker-compose.slice.yml exec -T postgres \
+docker compose -f compose/docker-compose.estate.yml exec -T postgres \
   psql -qtA -U cloudsforge -d identity \
   -c "update users set roles = array['admin'] where email = '$EMAIL';" >/dev/null 2>&1 \
   && ok "promoted to admin BY DIRECT SQL — the estate has no other path" \

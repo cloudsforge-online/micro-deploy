@@ -1,0 +1,1106 @@
+# The estate environment — every domain service that can be run, running together.
+#
+# ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
+#
+# Before it, `deploy/compose/` defined the telemetry stack and the gateway and
+# NOT ONE OF THE TWENTY-TWO SERVICES. Forty-one repositories were pushed and
+# green, ~5,600 tests passed, and there was no way to start a single service —
+# let alone have two talk to each other. Nothing in this estate had ever been
+# executed against anything else.
+#
+# That matters because of what the record shows. Every defect found in this
+# programme so far was found by READING: six times a downstream consumer caught
+# what an upstream's own suite could not; the reusable CI carried nine defects
+# because it had never run; micro-brand's verifier failed on its own repository;
+# the design system's dE figures cited a validator that did not exist. Things
+# that have never been executed are wrong at a high rate here, and deployment had
+# never been executed at all.
+#
+# This file began as a two-service slice (identity + ledger), grew to four, and
+# is now the whole runnable estate. It kept the same shape at every step, because
+# the shape is the point: a migrator that runs once, a service that asserts its
+# schema and refuses to serve below it, a /readyz that probes the database, and a
+# verification script that drives a REAL FLOW rather than counting containers.
+#
+# ── DEPENDENCY ORDER ───────────────────────────────────────────────────────────
+#
+# identity is upstream of nearly everything, via JWKS. Everything below is
+# ordered by what it needs:
+#
+#   postgres  →  identity  →  { policy, ledger, pricing, activity, notify,
+#                               studio, devplatform, analytics, indexer }
+#                          →  custody (needs policy)
+#                          →  the money and product tier (needs the above)
+#                          →  hub-api, admin-api (BFFs, need almost everything)
+#
+# ── HOST PORTS ARE DERIVED, NOT CHOSEN ─────────────────────────────────────────
+#
+# 4100 + the service's index in micro-org's registry (`portFor`, cfctl.ts:868).
+# The estate has already lost time twice to a hand-picked port that belonged to
+# another service, so the number is derived from the one list that orders every
+# repository. They bind to 127.0.0.1 only.
+#
+# ── HOW TO RUN IT ──────────────────────────────────────────────────────────────
+#
+#   cd deploy && ./scripts/estate-up.sh          # build, migrate, bootstrap, verify
+#
+# Or by hand:
+#   docker compose -f compose/docker-compose.estate.yml up -d --build
+#   ./scripts/estate-bootstrap.sh                # the admin UPDATE and the tokens
+#   ./scripts/estate-verify.sh
+#
+# Every value below is a THROWAWAY for a local environment. The secrets are
+# literal and weak on purpose: a real one in a committed compose file is a real
+# one in the fork network.
+
+name: cloudsforge-estate
+
+# ── shared fragments ───────────────────────────────────────────────────────────
+# Anchors rather than an `env_file:` fan-out. Rule 9 of 03 §2 — "a repo declares
+# the variables it needs; the deploy provides exactly those" — and pricing's
+# env.ts calls the fan-out out by name: handing every container the whole
+# estate's secrets has nothing to justify it. Each service below still lists its
+# own variables; what is shared here is only what is genuinely common to all.
+
+x-build-contexts: &build-contexts
+  runtimepkgs: ../../runtime
+  contractspkgs: ../../contracts
+
+x-common-env: &common-env
+  NODE_ENV: production
+  LOG_LEVEL: info
+  CLOUDSFORGE_TAG: estate
+  PORT: "4000"
+
+# The JWKS seam. Every service that verifies a token fetches identity's keys over
+# a real network here, which is the thing no unit suite could reach.
+x-identity-trust: &identity-trust
+  IDENTITY_ISSUER: http://identity:4000
+  IDENTITY_JWKS_URL: http://identity:4000/.well-known/jwks.json
+
+x-healthcheck: &healthcheck
+  # /readyz, not /livez: liveness answers while the database is unreachable,
+  # which is the whole distinction those two endpoints exist to draw.
+  test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+  interval: 3s
+  timeout: 5s
+  retries: 30
+
+x-migrate-defaults: &migrate-defaults
+  command: ["node", "--import", "tsx", "src/migrator.ts"]
+  restart: "no"
+
+services:
+  # ------------------------------------------------------------------ postgres
+  # One server, one database per service. See compose/estate/initdb.sql for why
+  # that is a dev-only compromise and why it does not break the ownership rule.
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: cloudsforge
+      POSTGRES_PASSWORD: estate-only-not-a-real-password
+      POSTGRES_DB: postgres
+    volumes:
+      - ./estate/initdb.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
+    command:
+      # 21 services x a pool of 10 exceeds the default 100 connections, and the
+      # symptom is a service that boots, passes its first probe and then fails
+      # readiness under no load at all. Raised here rather than by shrinking
+      # every pool, because the pool sizes are each service's own decision.
+      - "postgres"
+      - "-c"
+      - "max_connections=400"
+    healthcheck:
+      # Without this the migrators race the server's first accept and the
+      # failure reads as a flaky stack rather than as a start-order bug.
+      test: ["CMD-SHELL", "pg_isready -U cloudsforge -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # ================================================================== identity
+  # Upstream of everything. Its migrator runs first because every other
+  # service's readiness depends on being able to fetch its JWKS.
+  identity-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../identity
+      additional_contexts: *build-contexts
+    environment:
+      <<: *common-env
+      IDENTITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/identity
+      IDENTITY_ISSUER: http://identity:4000
+      IDENTITY_PUBLIC_URL: http://identity:4000
+      IDENTITY_KEY_SECRET: estate-only-key-secret-not-a-real-one-000
+      IDENTITY_DELETION_GRACE_DAYS: "0"
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: identity-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  identity:
+    build:
+      context: ../../identity
+      additional_contexts: *build-contexts
+    environment:
+      <<: *common-env
+      IDENTITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/identity
+      IDENTITY_ISSUER: http://identity:4000
+      IDENTITY_PUBLIC_URL: http://identity:4000
+      IDENTITY_KEY_SECRET: estate-only-key-secret-not-a-real-one-000
+      # Zero, in this environment only: the erasure drill cannot wait seven days,
+      # and 0 is a value env.ts explicitly allows (integer floor 0). Production
+      # keeps the default 7.
+      IDENTITY_DELETION_GRACE_DAYS: "0"
+      # The scope names are identity's own, from SCOPE_NAMES — not invented here.
+      # The first attempt used `ledger:write`, which does not exist, and identity
+      # refused to start and listed every scope it knows. That refusal is the
+      # design working: configuration is validated at import, so a wrong value is
+      # a dead container rather than a service that runs and denies requests for
+      # a reason nobody can see.
+      #
+      # Every grant below is the set that service's own env demands a token for.
+      # A service absent from this map cannot be issued a token at all, which is
+      # what makes `estate-bootstrap.sh` fail loudly rather than mint a token
+      # with no scopes.
+      IDENTITY_SERVICE_TOKEN_GRANTS: >-
+        {"ledger":["ledger:read","ledger:post","ledger:reserve"],
+         "wallet":["ledger:read","ledger:post","ledger:reserve","custody:address:create","indexer:read","pricing:read","policy:decide"],
+         "settlement":["ledger:read","ledger:post","custody:sign:treasury","custody:treasury:read","indexer:read"],
+         "billing":["ledger:read","ledger:post","ledger:reserve"],
+         "mint":["ledger:read","ledger:post","ledger:reserve","custody:sign:deployer","indexer:read"],
+         "market":["ledger:read","ledger:post","ledger:reserve","indexer:read","policy:decide"],
+         "trade":["ledger:read","ledger:post","ledger:reserve","pricing:read","billing:read","billing:grant"],
+         "worlds":["ledger:read","ledger:post","billing:read","billing:grant"],
+         "nda":["worlds:read","worlds:write","billing:read","billing:grant"],
+         "community":["ledger:read","ledger:post","policy:decide"],
+         "admin-api":["ledger:read","market:read","market:admin","billing:read","admin:read"],
+         "analytics":["analytics:ingest","analytics:read"],
+         "hub-api":["ledger:read","wallet:read","billing:read","pricing:read","policy:decide","notify:read"]}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: identity-estate
+    ports:
+      - "127.0.0.1:4100:4000"
+    depends_on:
+      identity-migrate:
+        condition: service_completed_successfully
+    healthcheck: *healthcheck
+
+  # ================================================ tier 1: database + JWKS only
+  # Nothing here calls another service, so nothing here needs a service token.
+  # This is the tier that can be brought up and verified before the bootstrap
+  # has minted anything.
+
+  # ------------------------------------------------------------------- policy
+  policy-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../policy
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      POLICY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/policy
+      INSTANCE_ID: policy-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  policy:
+    build:
+      context: ../../policy
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      POLICY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/policy
+      INSTANCE_ID: policy-estate
+    ports:
+      - "127.0.0.1:4101:4000"
+    depends_on:
+      policy-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------- ledger
+  ledger-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../ledger
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      LEDGER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/ledger
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: ledger-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  ledger:
+    build:
+      context: ../../ledger
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      LEDGER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/ledger
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: ledger-estate
+    ports:
+      - "127.0.0.1:4102:4000"
+    depends_on:
+      ledger-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------ pricing
+  pricing-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../pricing
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      PRICING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/pricing
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: pricing-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pricing:
+    build:
+      context: ../../pricing
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      PRICING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/pricing
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # One source, because this environment has no outbound network to four
+      # exchanges. env.ts permits 1 explicitly and says why: at this setting the
+      # divergence check is inert because there is nothing to diverge from. It
+      # is NOT a production value.
+      PRICING_MIN_SOURCES: "1"
+      INSTANCE_ID: pricing-estate
+    ports:
+      - "127.0.0.1:4105:4000"
+    depends_on:
+      pricing-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ----------------------------------------------------------------- activity
+  # The EVENT seam — outbox → signed HTTP → inbox — which no pair of unit suites
+  # can reach, and which found two defects on its first composition: both
+  # consumer inboxes demanded a bearer no relay presents (fixed — the MAC is the
+  # gate now), and the topic lists of producer, registry and consumer had
+  # drifted three ways (18 §3.3p).
+  activity-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../activity
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/activity
+      # The same secret identity signs its outbox with: the MAC is the seam.
+      ACTIVITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: activity-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  activity:
+    build:
+      context: ../../activity
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/activity
+      ACTIVITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: activity-estate
+    ports:
+      - "127.0.0.1:4109:4000"
+    depends_on:
+      activity-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------- notify
+  # Holds the most personal data in the estate — addresses, phone numbers, push
+  # tokens, preferences — which is exactly why the registry's erasure SLA names
+  # it first among the services that must forget a deleted user.
+  notify-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../notify
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      NOTIFY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/notify
+      NOTIFY_INGEST_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      NOTIFY_PUBLIC_URL: http://localhost:4110
+      INSTANCE_ID: notify-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  notify:
+    build:
+      context: ../../notify
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      NOTIFY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/notify
+      NOTIFY_INGEST_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      NOTIFY_PUBLIC_URL: http://localhost:4110
+      # SMTP deliberately unset: unconfigured is a supported mode, and the drill
+      # needs rows, not emails.
+      INSTANCE_ID: notify-estate
+    ports:
+      - "127.0.0.1:4110:4000"
+    depends_on:
+      notify-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------- studio
+  studio-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../studio
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      STUDIO_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/studio
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: studio-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  studio:
+    build:
+      context: ../../studio
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      STUDIO_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/studio
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: studio-estate
+    ports:
+      - "127.0.0.1:4111:4000"
+    depends_on:
+      studio-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # -------------------------------------------------------------- devplatform
+  devplatform-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../devplatform
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/devplatform
+      DEVPLATFORM_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: devplatform-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  devplatform:
+    build:
+      context: ../../devplatform
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/devplatform
+      DEVPLATFORM_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: devplatform-estate
+    ports:
+      - "127.0.0.1:4118:4000"
+    depends_on:
+      devplatform-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------ indexer
+  # INDEXER_CHAINS is deliberately unset, so indexer follows NO chain. There is
+  # no Hearth node in this environment, and env.ts refuses to start a follower
+  # for a chain with no provider — "a follower with no provider reports healthy
+  # and indexes nothing". Following nothing is the honest configuration; what
+  # this proves is that indexer boots, migrates and answers, not that it indexes.
+  #
+  # ── WHY IT IS BEHIND A PROFILE, AND WHAT THAT REVEALED ────────────────────────
+  #
+  # `profiles: [indexer]` means the default `up` SKIPS it. Not because indexer is
+  # broken, but because of something this environment is the first thing to
+  # demonstrate: EVERY SERVICE HERE BUILDS FROM A WORKING TREE, not from a
+  # published image. At the time of writing, micro-indexer has uncommitted
+  # changes in src/reads.ts, src/store.ts and src/migrations.ts and a new
+  # src/bitcoin.ts, and `pnpm typecheck` fails inside its Dockerfile on a
+  # RowStatus that has grown a 'conflicted' member the ActivityView type has not.
+  # That is another agent's work in flight; it is not a defect in committed code.
+  #
+  # The lesson is structural, and it is the case FOR the release manifest rather
+  # than against it: an environment built from working trees is only ever as
+  # green as every checkout on the machine, and it fails for reasons that have
+  # nothing to do with the change under test. cfctl's rule — "an image tag cannot
+  # name a working tree" — is the same observation from the other side. Once
+  # `release-up.sh` runs this environment from a manifest, this profile goes
+  # away, because a manifest names images that have already been built and typed.
+  #
+  # To include it anyway:  docker compose --profile indexer -f ... up -d
+  indexer-migrate:
+    profiles: [indexer]
+    <<: *migrate-defaults
+    build:
+      context: ../../indexer
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      INDEXER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/indexer
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: indexer-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  indexer:
+    profiles: [indexer]
+    build:
+      context: ../../indexer
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      INDEXER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/indexer
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: indexer-estate
+    ports:
+      - "127.0.0.1:4108:4000"
+    depends_on:
+      indexer-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ---------------------------------------------------------------- analytics
+  analytics-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../analytics
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/analytics
+      ANALYTICS_DELIVERY_SECRETS: estate-only-outbox-secret-00000000000000
+      ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
+      INSTANCE_ID: analytics-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  analytics:
+    build:
+      context: ../../analytics
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/analytics
+      ANALYTICS_DELIVERY_SECRETS: estate-only-outbox-secret-00000000000000
+      ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
+      INSTANCE_ID: analytics-estate
+    ports:
+      - "127.0.0.1:4121:4000"
+    depends_on:
+      analytics-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ====================================================== tier 2: needs policy
+  # ------------------------------------------------------------------ custody
+  custody-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../custody
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      CUSTODY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/custody
+      POLICY_BASE_URL: http://policy:4000
+      # Enumerated from the environment rather than named in a list, so it does
+      # not appear in any `required(...)` line and was missed when this file was
+      # derived from the env schemas. custody refused to boot and named the
+      # variable, which is the fail-closed design working. Minimum 32 characters.
+      CUSTODY_MASTER_SECRET_V1: estate-only-custody-master-secret-v1-0000
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: custody-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  custody:
+    build:
+      context: ../../custody
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      CUSTODY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/custody
+      POLICY_BASE_URL: http://policy:4000
+      # Enumerated from the environment rather than named in a list, so it does
+      # not appear in any `required(...)` line and was missed when this file was
+      # derived from the env schemas. custody refused to boot and named the
+      # variable, which is the fail-closed design working. Minimum 32 characters.
+      CUSTODY_MASTER_SECRET_V1: estate-only-custody-master-secret-v1-0000
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: custody-estate
+    ports:
+      - "127.0.0.1:4107:4000"
+    depends_on:
+      custody-migrate:
+        condition: service_completed_successfully
+      policy:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ========================================== tier 3: the money and product tier
+  #
+  # Every service below reads a SERVICE TOKEN from its environment and presents
+  # it to an upstream. Those variables are `requiredSecret`, so a 24+ character
+  # placeholder is enough to BOOT — the token is only rejected when the service
+  # actually calls someone. That is why these come up on placeholders and
+  # `estate-bootstrap.sh` replaces them with real, identity-minted tokens before
+  # any flow that crosses a service boundary is verified.
+  #
+  # ── THE TEN-MINUTE CLIFF ──────────────────────────────────────────────────────
+  #
+  # identity issues service tokens with a TTL of 600 seconds
+  # (identity/src/tokens.ts:28). Nothing below re-mints. wallet built the seam for
+  # it — `const token = () => env.serviceToken` (wallet/src/index.ts:90), a
+  # function called per request precisely so a short-TTL token could rotate
+  # without a restart — but the function returns a static environment string, and
+  # its own comment concedes the rotation waits for "when identity starts minting
+  # them". So ten minutes after the bootstrap, every service-to-service call in
+  # this tier starts failing 401 until the bootstrap is run again. This is a real
+  # defect, it belongs to identity and the service repos rather than to this
+  # file, and it is recorded here because a running environment is the only place
+  # it was ever going to be visible.
+
+  # ------------------------------------------------------------------- wallet
+  wallet-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../wallet
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      WALLET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/wallet
+      LEDGER_URL: http://ledger:4000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      PRICING_URL: http://pricing:4000
+      WALLET_CHALLENGE_DOMAIN: localhost
+      WALLET_CHALLENGE_URI: http://localhost:4103
+      WALLET_SERVICE_TOKEN: ${WALLET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: wallet-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  wallet:
+    build:
+      context: ../../wallet
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      WALLET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/wallet
+      LEDGER_URL: http://ledger:4000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      PRICING_URL: http://pricing:4000
+      WALLET_CHALLENGE_DOMAIN: localhost
+      WALLET_CHALLENGE_URI: http://localhost:4103
+      WALLET_SERVICE_TOKEN: ${WALLET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: wallet-estate
+    ports:
+      - "127.0.0.1:4103:4000"
+    depends_on:
+      wallet-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      custody:
+        condition: service_healthy
+      # indexer is behind a profile (see its block) and is NOT waited on. This
+      # service still points INDEXER_URL at http://indexer:4000, so any call it
+      # makes to the indexer fails to resolve. It boots and serves everything
+      # that does not need chain data; it is not whole.
+      pricing:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # --------------------------------------------------------------- settlement
+  settlement-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../settlement
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      SETTLEMENT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/settlement
+      LEDGER_URL: http://ledger:4000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: settlement-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  settlement:
+    build:
+      context: ../../settlement
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      SETTLEMENT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/settlement
+      LEDGER_URL: http://ledger:4000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: settlement-estate
+    ports:
+      - "127.0.0.1:4104:4000"
+    depends_on:
+      settlement-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      custody:
+        condition: service_healthy
+      # indexer is behind a profile (see its block) and is NOT waited on. This
+      # service still points INDEXER_URL at http://indexer:4000, so any call it
+      # makes to the indexer fails to resolve. It boots and serves everything
+      # that does not need chain data; it is not whole.
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------ billing
+  billing-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../billing
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
+      BILLING_LEDGER_URL: http://ledger:4000
+      BILLING_LEDGER_TOKEN: ${BILLING_LEDGER_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: billing-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  billing:
+    build:
+      context: ../../billing
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
+      BILLING_LEDGER_URL: http://ledger:4000
+      BILLING_LEDGER_TOKEN: ${BILLING_LEDGER_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: billing-estate
+    ports:
+      - "127.0.0.1:4106:4000"
+    depends_on:
+      billing-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # --------------------------------------------------------------------- mint
+  mint-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../mint
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      MINT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/mint
+      LEDGER_URL: http://ledger:4000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      MINT_SERVICE_TOKEN: ${MINT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: mint-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  mint:
+    build:
+      context: ../../mint
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      MINT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/mint
+      LEDGER_URL: http://ledger:4000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      MINT_SERVICE_TOKEN: ${MINT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: mint-estate
+    ports:
+      - "127.0.0.1:4112:4000"
+    depends_on:
+      mint-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      custody:
+        condition: service_healthy
+      # indexer is behind a profile (see its block) and is NOT waited on. This
+      # service still points INDEXER_URL at http://indexer:4000, so any call it
+      # makes to the indexer fails to resolve. It boots and serves everything
+      # that does not need chain data; it is not whole.
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------- market
+  market-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../market
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      MARKET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/market
+      LEDGER_URL: http://ledger:4000
+      INDEXER_URL: http://indexer:4000
+      POLICY_URL: http://policy:4000
+      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: market-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  market:
+    build:
+      context: ../../market
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      MARKET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/market
+      LEDGER_URL: http://ledger:4000
+      INDEXER_URL: http://indexer:4000
+      POLICY_URL: http://policy:4000
+      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: market-estate
+    ports:
+      - "127.0.0.1:4113:4000"
+    depends_on:
+      market-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      # indexer is behind a profile (see its block) and is NOT waited on. This
+      # service still points INDEXER_URL at http://indexer:4000, so any call it
+      # makes to the indexer fails to resolve. It boots and serves everything
+      # that does not need chain data; it is not whole.
+      policy:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # -------------------------------------------------------------------- trade
+  trade-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../trade
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      TRADE_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/trade
+      LEDGER_URL: http://ledger:4000
+      PRICING_URL: http://pricing:4000
+      BILLING_URL: http://billing:4000
+      TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: trade-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  trade:
+    build:
+      context: ../../trade
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      TRADE_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/trade
+      LEDGER_URL: http://ledger:4000
+      PRICING_URL: http://pricing:4000
+      BILLING_URL: http://billing:4000
+      TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: trade-estate
+    ports:
+      - "127.0.0.1:4114:4000"
+    depends_on:
+      trade-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      pricing:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------- worlds
+  worlds-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../worlds
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
+      LEDGER_URL: http://ledger:4000
+      BILLING_URL: http://billing:4000
+      WORLDS_SERVICE_TOKEN: ${WORLDS_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: worlds-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worlds:
+    build:
+      context: ../../worlds
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
+      LEDGER_URL: http://ledger:4000
+      BILLING_URL: http://billing:4000
+      WORLDS_SERVICE_TOKEN: ${WORLDS_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: worlds-estate
+    ports:
+      - "127.0.0.1:4115:4000"
+    depends_on:
+      worlds-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ---------------------------------------------------------------------- nda
+  nda-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../nda
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
+      WORLDS_URL: http://worlds:4000
+      BILLING_URL: http://billing:4000
+      NDA_SERVICE_TOKEN: ${NDA_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: nda-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  nda:
+    build:
+      context: ../../nda
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
+      WORLDS_URL: http://worlds:4000
+      BILLING_URL: http://billing:4000
+      NDA_SERVICE_TOKEN: ${NDA_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: nda-estate
+    ports:
+      - "127.0.0.1:4116:4000"
+    depends_on:
+      nda-migrate:
+        condition: service_completed_successfully
+      worlds:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ---------------------------------------------------------------- community
+  community-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../community
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      COMMUNITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/community
+      LEDGER_BASE_URL: http://ledger:4000
+      POLICY_BASE_URL: http://policy:4000
+      COMMUNITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
+      COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: community-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  community:
+    build:
+      context: ../../community
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      COMMUNITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/community
+      LEDGER_BASE_URL: http://ledger:4000
+      POLICY_BASE_URL: http://policy:4000
+      COMMUNITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
+      COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: community-estate
+    ports:
+      - "127.0.0.1:4117:4000"
+    depends_on:
+      community-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      policy:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ====================================================== tier 4: the two BFFs
+  # ---------------------------------------------------------------- admin-api
+  # NOTE: admin-api/src/server.ts returns 501 for bootstrap and identity grants
+  # no admin role, so the FIRST ADMIN IS A MANUAL UPDATE. That is deliberate,
+  # and `estate-bootstrap.sh` does it as an explicit, named step rather than
+  # leaving it as folklore.
+  admin-api-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../admin-api
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      ADMIN_API_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/admin_api
+      IDENTITY_URL: http://identity:4000
+      LEDGER_URL: http://ledger:4000
+      BILLING_URL: http://billing:4000
+      MARKET_URL: http://market:4000
+      ADMIN_API_SERVICE_TOKEN: ${ADMIN_API_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: admin-api-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  admin-api:
+    build:
+      context: ../../admin-api
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      ADMIN_API_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/admin_api
+      IDENTITY_URL: http://identity:4000
+      LEDGER_URL: http://ledger:4000
+      BILLING_URL: http://billing:4000
+      MARKET_URL: http://market:4000
+      ADMIN_API_SERVICE_TOKEN: ${ADMIN_API_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: admin-api-estate
+    ports:
+      - "127.0.0.1:4120:4000"
+    depends_on:
+      admin-api-migrate:
+        condition: service_completed_successfully
+      ledger:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+      market:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------ hub-api
+  # No migrator and no database: it is a BFF that composes other services'
+  # answers and owns no state. It holds SIX separate service tokens, one per
+  # upstream, rather than one token with the union of the scopes — which is the
+  # least-privilege property the scope vocabulary exists to make possible.
+  hub-api:
+    build:
+      context: ../../hub-api
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      IDENTITY_URL: http://identity:4000
+      LEDGER_URL: http://ledger:4000
+      WALLET_URL: http://wallet:4000
+      BILLING_URL: http://billing:4000
+      PRICING_URL: http://pricing:4000
+      POLICY_URL: http://policy:4000
+      ACTIVITY_URL: http://activity:4000
+      HUB_LEDGER_TOKEN: ${HUB_LEDGER_TOKEN:-estate-placeholder-token-0000000000000000}
+      HUB_WALLET_TOKEN: ${HUB_WALLET_TOKEN:-estate-placeholder-token-0000000000000000}
+      HUB_BILLING_TOKEN: ${HUB_BILLING_TOKEN:-estate-placeholder-token-0000000000000000}
+      HUB_PRICING_TOKEN: ${HUB_PRICING_TOKEN:-estate-placeholder-token-0000000000000000}
+      HUB_POLICY_TOKEN: ${HUB_POLICY_TOKEN:-estate-placeholder-token-0000000000000000}
+      HUB_ACTIVITY_TOKEN: ${HUB_ACTIVITY_TOKEN:-estate-placeholder-token-0000000000000000}
+      INSTANCE_ID: hub-api-estate
+    ports:
+      - "127.0.0.1:4119:4000"
+    depends_on:
+      ledger:
+        condition: service_healthy
+      wallet:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+      pricing:
+        condition: service_healthy
+      policy:
+        condition: service_healthy
+      activity:
+        condition: service_healthy
+    healthcheck: *healthcheck
