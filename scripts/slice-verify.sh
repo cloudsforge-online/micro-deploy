@@ -128,5 +128,53 @@ else
   bad "no session_created record reached the feed within 30s — the relay, the inbox gate, or the attribution is broken"
 fi
 
+echo "── THE ERASURE SEAM: the GDPR path, driven end to end ───────────────────"
+# The contracts registry has said since it was written: "identity.user.deleted currently has no
+# subscriber anywhere, which is precisely why there is no GDPR erasure path at all." The bus works
+# now and a subscription is deploy configuration, so this drill makes the sentence false: delete
+# an account and PROVE the consumer forgot the person.
+docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+  "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://activity:4000/ingest') on conflict do nothing" \
+  >/dev/null 2>&1 && ok "subscription seeded: identity.user.deleted → activity" \
+  || bad "could not seed the erasure subscription"
+
+# The subject's id, captured while the account still answers — the token dies with it.
+uid=$(curl -s "$IDENTITY/auth/me" -H "authorization: Bearer $utok" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('user',{}).get('id',''))" 2>/dev/null)
+[ -n "$uid" ] || bad "could not read the drill user's id"
+
+# The user must EXIST in activity first — an erasure of nothing proves nothing.
+before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+  "select count(*) from activity_records where user_id = '$uid'" 2>/dev/null | tr -d ' ')
+[ "${before:-0}" -ge 1 ] && ok "activity holds $before record(s) for $uid before the drill" \
+  || bad "activity holds nothing for the user; the erasure would be vacuous"
+
+# Request deletion (grace is 0 in the slice), then pull the HOURLY tombstone sweep forward.
+# Stated plainly: the drill compresses the sweep's clock; it does not bypass the sweep. The event
+# is still written by the real tombstone path, in the same transaction as the state change.
+curl -s -X DELETE "$IDENTITY/users/me" -H "authorization: Bearer $utok" \
+  -H 'content-type: application/json' -d "{\"password\":\"$PASS\"}" >/dev/null
+docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+  "update jobs set run_at = now() where kind = 'identity.tombstone'" >/dev/null 2>&1
+
+erased=""
+for _ in $(seq 1 30); do
+  ack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+    "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
+  [ "${ack:-0}" -ge 1 ] && { erased="yes"; break; }
+  sleep 1
+done
+if [ -n "$erased" ]; then
+  left=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+    "select count(*) from activity_records where user_id = '$uid'" 2>/dev/null | tr -d ' ')
+  if [ "${left:-1}" -eq 0 ]; then
+    ok "identity.user.deleted crossed the bus and activity forgot $uid ($before → 0; the inbox row is the acknowledgement)"
+  else
+    bad "the deletion event arrived but $left record(s) for $uid remain in activity"
+  fi
+else
+  bad "no identity.user.deleted reached activity within 30s — the tombstone, the relay, or the inbox is broken"
+fi
+
 [ "$fails" -eq 0 ] && { echo "all seams verified"; exit 0; }
 echo "$fails check(s) failed"; exit 1

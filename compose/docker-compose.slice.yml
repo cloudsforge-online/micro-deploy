@@ -91,6 +91,9 @@ services:
       # listed every scope it knows. That refusal is the design working: configuration is
       # validated at import, so a wrong value is a dead container rather than a service that
       # runs and denies requests for a reason nobody can see.
+      # Zero, in the slice only: the erasure drill below cannot wait seven days, and 0 is a
+      # value env.ts explicitly allows (integer floor 0). Production keeps the default 7.
+      IDENTITY_DELETION_GRACE_DAYS: "0"
       IDENTITY_SERVICE_TOKEN_GRANTS: '{"ledger":["ledger:read","ledger:post","ledger:reserve"]}'
       OUTBOX_SIGNING_SECRET: slice-only-outbox-secret-000000000000
       NODE_ENV: production
@@ -142,6 +145,9 @@ services:
       # listed every scope it knows. That refusal is the design working: configuration is
       # validated at import, so a wrong value is a dead container rather than a service that
       # runs and denies requests for a reason nobody can see.
+      # Zero, in the slice only: the erasure drill below cannot wait seven days, and 0 is a
+      # value env.ts explicitly allows (integer floor 0). Production keeps the default 7.
+      IDENTITY_DELETION_GRACE_DAYS: "0"
       IDENTITY_SERVICE_TOKEN_GRANTS: '{"ledger":["ledger:read","ledger:post","ledger:reserve"]}'
       OUTBOX_SIGNING_SECRET: slice-only-outbox-secret-000000000000
       NODE_ENV: production
