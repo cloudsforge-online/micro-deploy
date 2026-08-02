@@ -35,6 +35,123 @@ once — it is the credential files that need creating, not the containers.
 
 ---
 
+## The estate environment
+
+Twenty-one of the twenty-two domain services, running together, each with its own
+database and its own one-shot migrator.
+
+```sh
+cd micro/deploy
+docker compose -f compose/docker-compose.estate.yml up -d --build
+./scripts/estate-bootstrap.sh      # THE MANUAL ADMIN UPDATE, then 17 service tokens
+./scripts/estate-verify.sh         # drives real flows and asserts real effects
+```
+
+Host ports are `4100 + the service's index in micro-org's registry` (`portFor`,
+`cfctl.ts:868`) — derived from the one list that orders every repository rather
+than picked, because a hand-chosen port has already collided twice here. They
+bind to `127.0.0.1` only.
+
+### One Postgres, a database per service — and why that is dev-only
+
+`compose/estate/initdb.sql` creates one database per service on a **single**
+Postgres server. Rule 1 of 03 §2 is that a service owns exactly one database and
+reads no other; that rule is about **ownership**, and it is kept — every service
+has its own database, its own migrator, its own connection string, and no grant
+to anything else. What is shared is the server process, not the data.
+
+**Production isolation is a separate requirement and this does not meet it.** In
+production each of these is its own instance with its own failure domain, backup
+schedule and credentials; here a noisy neighbour takes down all of them. The
+compromise is deliberate: twenty-one Postgres containers on a laptop is a boot
+time long enough that nobody runs the environment, and an environment nobody runs
+is the condition this work exists to end. The one thing it must never become is a
+shared *schema* — separate databases, not separate schemas, so a stray
+cross-service join fails rather than succeeds.
+
+### The bootstrap is a real step, not folklore
+
+A fresh estate **cannot issue its own first credential**. `POST /service-tokens`
+requires the `admin` role, `users.roles` defaults to `'{}'`, no route in identity
+grants a role, and admin-api's bootstrap endpoint returns 501 deliberately. So
+the first admin is a direct `UPDATE` against identity's database.
+`scripts/estate-bootstrap.sh` owns that step and names it, instead of leaving it
+buried in a verification script where a production runbook cannot find it.
+
+> **The ten-minute cliff.** identity issues service tokens with a 600-second TTL
+> (`identity/src/tokens.ts:28`) and nothing re-mints one. wallet built the seam —
+> `const token = () => env.serviceToken` (`wallet/src/index.ts:90`) is a function
+> called per request precisely so a short-lived token could rotate — but it
+> returns a static environment string, and its own comment says the rotation
+> waits for "when identity starts minting them". Ten minutes after the bootstrap,
+> service-to-service calls in the money tier begin failing 401 until it is run
+> again. The fix belongs in identity and the service repos, not here.
+
+### What the verification proves
+
+Not that containers started. `estate-verify.sh` checks `/livez` and `/readyz` for
+all 21 services as a floor — a service that cannot answer cannot be in any flow —
+and then drives flows and asserts effects:
+
+| Flow | What is asserted |
+| --- | --- |
+| JWKS over a real socket | ledger verifies a token identity signed, fetched over the network rather than from an in-process stub |
+| The bootstrap gap | a non-admin is refused (403), and the direct `UPDATE` is the only way through |
+| Money | a balanced `deposit_credited` posts (201), the same idempotency key replays (200, not a double post), an **unbalanced journal is refused**, the trial balance still balances, and the money lands on the subject's account |
+| Events | a sign-in writes an outbox row, the relay signs it, activity's inbox accepts it, and it appears in that user's own feed |
+| Erasure | a deletion crosses the bus and **both** activity and notify drop the subject's rows to zero |
+
+`indexer` is behind a compose profile and skipped by default — not because its
+code is wrong, but because every service here builds from a **working tree**, and
+micro-indexer currently has uncommitted work whose `pnpm typecheck` fails inside
+the Dockerfile. That is the argument for the release manifest, below: an
+environment built from working trees is only ever as green as every checkout on
+the machine.
+
+---
+
+## Releases
+
+A release is a file, not a tag. micro-org owns the format and the generator; this
+repository owns the **consumer**, which did not exist.
+
+```sh
+# in micro-org — generates releases/<version>.yaml from each repo's
+# package.json version and its git HEAD, and refuses a dirty checkout
+pnpm cfctl release 2026.08.1
+
+# here — render it, verify every image, deploy, roll back
+./scripts/release-deploy.sh 2026.08.1 --dry-run
+./scripts/release-deploy.sh 2026.08.1
+./scripts/release-deploy.sh --rollback
+```
+
+`release-render.py` turns a manifest into a compose **overlay** that pins
+`image:` per service and removes `build:` with `!reset`, so a release deploy
+cannot silently fall back to building from a working tree. Migrators are pinned
+to the same image as their service — a migrator running a different build from
+the service that then asserts its schema is the oldest way to brick a deploy.
+
+Deploy and rollback are the same code path with a different manifest, which is
+the point: a rollback that is a different procedure from a deploy is a procedure
+nobody has practised.
+
+Two things are refused rather than warned about, because both are the failure the
+format exists to prevent:
+
+- **A manifest that pins nothing.** "All 0 images exist" is a true sentence and a
+  useless one.
+- **An image that cannot be pulled.** Checked before anything is changed. A
+  `denied` here is usually the GHCR visibility trap — a package that inherited a
+  private repository's visibility — rather than a missing image, and the script
+  says so.
+
+The overlay also **warns about services this environment runs that the release
+does not name**. That is the silent hole the manifest format calls out by name:
+it is how a service gets left on an old image while everything around it moves.
+
+---
+
 ## Port allocation
 
 Everything is in **9xxx**, which was verified clear against `lsof -iTCP -sTCP:LISTEN`

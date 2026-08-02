@@ -74,3 +74,24 @@ check-runbooks: ## THE RUNBOOK RULE — every alert carries a link, and it resol
 
 estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort
+
+# --------------------------------------------------- the estate environment --
+ESTATE := -f compose/docker-compose.estate.yml
+
+.PHONY: estate-up estate-down estate-verify estate-ps check-gateway
+
+estate-up: ## Build and start the 21-service environment, then bootstrap it
+	@docker compose $(ESTATE) up -d --build
+	@./scripts/estate-bootstrap.sh
+
+estate-verify: ## Drive the running environment through every real flow
+	@./scripts/estate-verify.sh
+
+estate-ps: ## What the environment is running, and whether it is healthy
+	@docker compose $(ESTATE) ps
+
+estate-down: ## Stop the environment. Add VOLUMES=1 to delete its databases too
+	@docker compose $(ESTATE) down $(if $(VOLUMES),--volumes,)
+
+check-gateway: ## Compare the public route map against what the services serve
+	@python3 scripts/gateway-check.py
