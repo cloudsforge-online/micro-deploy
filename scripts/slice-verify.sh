@@ -13,6 +13,7 @@ set -uo pipefail
 IDENTITY=${IDENTITY:-http://127.0.0.1:4401}
 LEDGER=${LEDGER:-http://127.0.0.1:4402}
 ACTIVITY=${ACTIVITY:-http://127.0.0.1:4403}
+NOTIFY=${NOTIFY:-http://127.0.0.1:4404}
 COMPOSE=${COMPOSE:-compose/docker-compose.slice.yml}
 fails=0
 
@@ -137,11 +138,25 @@ docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity
   "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://activity:4000/ingest') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: identity.user.deleted → activity" \
   || bad "could not seed the erasure subscription"
+docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+  "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://notify:4000/ingest') on conflict do nothing" \
+  >/dev/null 2>&1 && ok "subscription seeded: identity.user.deleted → notify" \
+  || bad "could not seed notify's erasure subscription"
 
 # The subject's id, captured while the account still answers — the token dies with it.
 uid=$(curl -s "$IDENTITY/auth/me" -H "authorization: Bearer $utok" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('user',{}).get('id',''))" 2>/dev/null)
 [ -n "$uid" ] || bad "could not read the drill user's id"
+
+# notify holds the most personal data in the estate; give it some to forget. A preference is a
+# real, authenticated user act — and the erasure below must remove it.
+curl -s -X PUT "$NOTIFY/preferences" -H "authorization: Bearer $utok" \
+  -H 'content-type: application/json' \
+  -d '{"preferences":[{"category":"security","channel":"in_app","digest":"instant"}]}' >/dev/null
+nbefore=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+  "select count(*) from preferences where user_id = '$uid'" 2>/dev/null | tr -d ' ')
+[ "${nbefore:-0}" -ge 1 ] && ok "notify holds $nbefore preference(s) for the user before the drill" \
+  || bad "notify holds nothing for the user; its half of the drill would be vacuous"
 
 # The user must EXIST in activity first — an erasure of nothing proves nothing.
 before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
@@ -171,6 +186,20 @@ if [ -n "$erased" ]; then
     ok "identity.user.deleted crossed the bus and activity forgot $uid ($before → 0; the inbox row is the acknowledgement)"
   else
     bad "the deletion event arrived but $left record(s) for $uid remain in activity"
+  fi
+  nack=""
+  for _ in $(seq 1 15); do
+    nack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+      "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
+    [ "${nack:-0}" -ge 1 ] && break
+    sleep 1
+  done
+  nleft=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+    "select count(*) from preferences where user_id = '$uid'" 2>/dev/null | tr -d ' ')
+  if [ "${nack:-0}" -ge 1 ] && [ "${nleft:-1}" -eq 0 ]; then
+    ok "and notify forgot the user too ($nbefore preference(s) → 0)"
+  else
+    bad "notify: ack=${nack:-0} remaining=${nleft:-?} — the service holding addresses and push tokens did not forget"
   fi
 else
   bad "no identity.user.deleted reached activity within 30s — the tombstone, the relay, or the inbox is broken"

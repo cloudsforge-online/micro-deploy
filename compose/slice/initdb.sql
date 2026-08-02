@@ -4,3 +4,4 @@
 CREATE DATABASE identity;
 CREATE DATABASE ledger;
 CREATE DATABASE activity;
+CREATE DATABASE notify;
