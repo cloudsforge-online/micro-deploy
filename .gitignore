@@ -2,3 +2,6 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
+
+# Bootstrap-minted service tokens. Real credentials, 10-minute TTL, never committed.
+compose/estate/tokens.env

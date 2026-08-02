@@ -141,6 +141,86 @@ tb=$(curl -s "$LEDGER/trial-balance" -H "authorization: Bearer $stok")
 printf '%s' "$tb" | grep -q '"balanced":true' && ok "trial balance is balanced" || bad "trial balance: $tb"
 
 echo
+echo "── THE MONEY SEAM: a real double-entry posting, and a refusal ───────────"
+# The estate's strongest assertion is a DEFERRED CONSTRAINT in ledger's schema
+# that refuses an unbalanced journal even to a caller holding a database
+# connection. Nothing had ever driven it from outside the process. This does:
+# one balanced entry that must be accepted, one unbalanced entry that must be
+# refused, and a trial balance that must still balance afterwards.
+#
+# Posted with a token minted for `wallet`, carrying ledger:post — a real
+# credential for a real caller, not ledger talking to itself.
+wtok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $utok" \
+  -H 'content-type: application/json' \
+  -d '{"service":"wallet","scopes":["ledger:read","ledger:post"]}' | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+[ -n "$wtok" ] && ok "identity minted a ledger:post token for wallet" || bad "no wallet token issued"
+
+# The subject of the deposit. Captured BEFORE the entry is posted, because
+# `set -u` turns a read-before-capture into an immediate failure rather than a
+# posting against the empty string — which is the ordering bug it already caught
+# once in this file.
+uid=$(curl -s "$IDENTITY/auth/me" -H "authorization: Bearer $utok" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('user',{}).get('id',''))" 2>/dev/null)
+[ -n "$uid" ] && ok "subject resolved: $uid" || bad "could not read the drill user's id"
+
+idem="estate-verify-$$-deposit"
+# deposit_credited: custody gains an asset, the user gains a liability claim on
+# it. Σ debits = Σ credits, which is the only thing the constraint cares about.
+balanced=$(cat <<JSON
+{"kind":"deposit_credited","originatingService":"wallet","actor":"service:wallet",
+ "idempotencyKey":"$idem","description":"estate-verify deposit",
+ "postings":[
+  {"direction":"debit","amount":"1000","assetCode":"SHARD","sequence":0,
+   "account":{"subject":"custody","assetCode":"SHARD","purpose":"available","type":"asset"}},
+  {"direction":"credit","amount":"1000","assetCode":"SHARD","sequence":1,
+   "account":{"subject":"user:$uid","assetCode":"SHARD","purpose":"available","type":"liability"}}]}
+JSON
+)
+post=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
+  -H 'content-type: application/json' -d "$balanced")
+[ "$post" = 201 ] && ok "a balanced deposit_credited posted (201)" \
+                  || bad "balanced entry rejected with $post: $(head -c 200 /tmp/slice.body)"
+
+# The same request again. Idempotency is what makes a retried deploy-time call
+# safe, and ledger answers 200-on-replay rather than posting the money twice.
+replay=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
+  -H 'content-type: application/json' -d "$balanced")
+[ "$replay" = 200 ] && ok "the same idempotency key replayed (200), it did not double-post" \
+                    || bad "expected 200 on replay, got $replay"
+
+# THE REFUSAL. 1000 debited, 1 credited. If this is ever accepted, money has
+# been created, and every downstream reconciliation is reporting on a lie.
+unbalanced=$(cat <<JSON
+{"kind":"adjustment","originatingService":"wallet","actor":"service:wallet",
+ "idempotencyKey":"estate-verify-$$-unbalanced","description":"must be refused",
+ "postings":[
+  {"direction":"debit","amount":"1000","assetCode":"SHARD","sequence":0,
+   "account":{"subject":"custody","assetCode":"SHARD","purpose":"available","type":"asset"}},
+  {"direction":"credit","amount":"1","assetCode":"SHARD","sequence":1,
+   "account":{"subject":"user:$uid","assetCode":"SHARD","purpose":"available","type":"liability"}}]}
+JSON
+)
+refused=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
+  -H 'content-type: application/json' -d "$unbalanced")
+case "$refused" in
+  2*) bad "AN UNBALANCED JOURNAL WAS ACCEPTED ($refused) — the ledger invented money" ;;
+  *)  ok "an unbalanced journal was refused ($refused)" ;;
+esac
+
+# And the books still balance, which is the assertion that would catch a partial
+# write from the refusal above.
+tb2=$(curl -s "$LEDGER/trial-balance" -H "authorization: Bearer $stok")
+printf '%s' "$tb2" | grep -q '"balanced":true' \
+  && ok "trial balance still balances after a real posting and a refusal" \
+  || bad "trial balance after posting: $tb2"
+
+# The money actually landed on the subject's account, not merely in the journal.
+bal=$(curl -s "$LEDGER/accounts/user:$uid/balances" -H "authorization: Bearer $wtok")
+printf '%s' "$bal" | grep -q '1000' \
+  && ok "the user's SHARD balance reflects the deposit" \
+  || bad "the deposit did not reach the subject's balance: $(printf '%s' "$bal" | head -c 200)"
+
+echo
 echo "── THE EVENT SEAM: outbox → signed HTTP → inbox ─────────────────────────"
 # No route creates a subscription — deliberately: who receives which topic is deploy
 # configuration, not something a caller decides. The deploy is this file, so it seeds the row.
@@ -211,7 +291,26 @@ before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge 
 [ "${before:-0}" -ge 1 ] && ok "activity holds $before record(s) for $uid before the drill" \
   || bad "activity holds nothing for the user; the erasure would be vacuous"
 
-# Request deletion (grace is 0 in the slice), then pull the HOURLY tombstone sweep forward.
+# THE INBOX BASELINES, captured BEFORE the deletion.
+#
+# This drill used to poll `select count(*) from inbox where topic =
+# 'identity.user.deleted' >= 1` and treat any row as proof. That was only ever
+# true because the environment was thrown away between runs: the moment this
+# environment persisted across two runs, the PREVIOUS run's acknowledgement
+# satisfied the poll instantly, the script stopped waiting, and it then reported
+# that records "remain" — a false failure produced by an assertion that was
+# never scoped to the subject it was about.
+#
+# The inbox carries only (topic, event_id, received_at) — no payload, so there is
+# nothing in it to scope to this user. So the wait is on a NEW acknowledgement
+# relative to the baseline, and the actual assertion is the property that matters:
+# this subject's rows reach zero.
+inbox_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+  "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
+ninbox_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+  "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
+
+# Request deletion (grace is 0 in this environment), then pull the HOURLY tombstone sweep forward.
 # Stated plainly: the drill compresses the sweep's clock; it does not bypass the sweep. The event
 # is still written by the real tombstone path, in the same transaction as the state change.
 curl -s -X DELETE "$IDENTITY/users/me" -H "authorization: Bearer $utok" \
@@ -219,37 +318,38 @@ curl -s -X DELETE "$IDENTITY/users/me" -H "authorization: Bearer $utok" \
 docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
   "update jobs set run_at = now() where kind = 'identity.tombstone'" >/dev/null 2>&1
 
-erased=""
-for _ in $(seq 1 30); do
-  ack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
-    "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
-  [ "${ack:-0}" -ge 1 ] && { erased="yes"; break; }
-  sleep 1
-done
-if [ -n "$erased" ]; then
+# Wait on the ERASURE ITSELF, not on a proxy for it: this subject's rows reaching
+# zero is the thing the GDPR path promises.
+left=""
+for _ in $(seq 1 45); do
   left=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
     "select count(*) from activity_records where user_id = '$uid'" 2>/dev/null | tr -d ' ')
-  if [ "${left:-1}" -eq 0 ]; then
-    ok "identity.user.deleted crossed the bus and activity forgot $uid ($before → 0; the inbox row is the acknowledgement)"
-  else
-    bad "the deletion event arrived but $left record(s) for $uid remain in activity"
-  fi
-  nack=""
-  for _ in $(seq 1 15); do
-    nack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
-      "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
-    [ "${nack:-0}" -ge 1 ] && break
-    sleep 1
-  done
+  [ "${left:-1}" -eq 0 ] && break
+  sleep 1
+done
+ack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+  "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
+if [ "${left:-1}" -eq 0 ] && [ "${ack:-0}" -gt "${inbox_before:-0}" ]; then
+  ok "identity.user.deleted crossed the bus and activity forgot $uid ($before → 0; a NEW inbox row, ${inbox_before:-0} → ${ack:-0}, is the acknowledgement)"
+elif [ "${left:-1}" -eq 0 ]; then
+  bad "activity holds no records for $uid, but no NEW inbox row arrived (${inbox_before:-0} → ${ack:-0}) — the rows may never have been there"
+else
+  bad "$left record(s) for $uid remain in activity after 45s — the tombstone, the relay, or the inbox is broken"
+fi
+
+nleft=""
+for _ in $(seq 1 30); do
   nleft=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
     "select count(*) from preferences where user_id = '$uid'" 2>/dev/null | tr -d ' ')
-  if [ "${nack:-0}" -ge 1 ] && [ "${nleft:-1}" -eq 0 ]; then
-    ok "and notify forgot the user too ($nbefore preference(s) → 0)"
-  else
-    bad "notify: ack=${nack:-0} remaining=${nleft:-?} — the service holding addresses and push tokens did not forget"
-  fi
+  [ "${nleft:-1}" -eq 0 ] && break
+  sleep 1
+done
+nack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+  "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
+if [ "${nleft:-1}" -eq 0 ] && [ "${nack:-0}" -gt "${ninbox_before:-0}" ]; then
+  ok "and notify forgot the user too ($nbefore preference(s) → 0)"
 else
-  bad "no identity.user.deleted reached activity within 30s — the tombstone, the relay, or the inbox is broken"
+  bad "notify: new ack ${ninbox_before:-0} → ${nack:-0}, remaining=${nleft:-?} — the service holding addresses and push tokens did not forget"
 fi
 
 [ "$fails" -eq 0 ] && { echo "all seams verified"; exit 0; }
