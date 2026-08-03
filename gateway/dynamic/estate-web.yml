@@ -1,0 +1,475 @@
+# The surface route map — where the fifteen browser surfaces are served, and where each one's
+# own API is served BEHIND THE SAME HOSTNAME.
+#
+# ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
+#
+# `public-api.yml` routes the third-party API on `api.<apex>`. `policy.yml` says how a request is
+# treated. NEITHER SERVES A PAGE. Until the frontends joined docker-compose.estate.yml there was
+# nothing to route, and docs/ecosystem/22 §8.7 recorded the consequence precisely: 318 browser
+# scenarios specified, 86 of them tier T3, and not one of them able to run.
+#
+# ── THE ONE THING THIS FILE GETS RIGHT THAT A NAIVE VERSION WOULD NOT ──────────
+#
+# **A surface and its own API share an origin, and the gateway is what makes that true.**
+#
+# Every frontend resolves its API base by COMPARING ORIGINS (`resolveApiBase`, e.g.
+# hub-web/src/lib/hosts.ts:34-42): if its registry host equals the page's origin the base is the
+# EMPTY STRING and every request is relative. Served from `hub.<apex>`, hub-web asks
+# `https://hub.<apex>/v1/dashboard` — not hub-api's hostname, which it does not have one of.
+# micro-network-site states the obligation in as many words: "In production the origin is this
+# page's, so the base is '' and the drip request is relative — which is what the registry asserts
+# **and what the gateway therefore has to route**" (network-site/src/lib/hosts.ts:63-64).
+#
+# So each surface below gets TWO routers where its API exists in this estate: `/v1` to the
+# service, everything else to the bundle. Routing only the bundle would leave every surface
+# loading perfectly and answering nothing — the exact shape of failure that a `GET /` probe
+# cannot see, and that doc 22 §4 built three tiers to catch.
+#
+# ── THE EMPTY-HOST TRAP, WHICH THIS ESTATE HAS ALREADY PAID FOR ────────────────
+#
+# The file provider renders Go templates BEFORE parsing YAML. `CF_API_HOST` was once undefined in
+# the env file the gateway actually loads, so every router in public-api.yml rendered as
+# ``Host(``) && PathPrefix(…)`` — a VALID rule that matches no request ever sent. Traefik logged
+# nothing. The whole public API was dead and the only symptom was a 404 from the catch-all.
+#
+# This file refuses to reproduce that. Every router lives inside a conditional on CF_WEB_APEX (the
+# action at the head of the document below), so an unset variable yields an empty document and NO
+# ROUTERS AT ALL, rather than fifteen routers that silently match nothing.
+# `scripts/estate-verify.sh` then fails on the first surface it cannot reach, which is a symptom
+# pointing at its own cause.
+#
+# ── AND THE TRAP INSIDE THAT TRAP ──────────────────────────────────────────────
+#
+# **A Go template action written inside a YAML COMMENT is still an action.** The file provider
+# renders the whole file as a template before anything parses YAML, and it has no idea what a
+# comment is. This header used to spell the conditional out in prose-with-backticks; that opened a
+# SECOND `if` which nothing closed, and Traefik answered:
+#
+#   ERR Error while building configuration (for the first time)
+#       error="/etc/traefik/dynamic/estate-web.yml: template: :452: unexpected EOF"
+#
+# ── WHAT THAT ONE LINE COST, WHICH IS THE PART WORTH REMEMBERING ───────────────
+#
+# **The file provider is all-or-nothing.** One unparseable file in this directory publishes NO
+# configuration from ANY file in it. `public-api.yml` went dark and `policy.yml` went with it — so
+# the `/internal` refusal, a priority-100000 security rule, silently stopped existing and
+# `GET /internal/x` answered 404 instead of 502. The error is logged ONCE, at startup, in a line
+# that says nothing about the other two files.
+#
+# That is why estate-verify asserts `/internal` on a surface host at the very end of its run: it is
+# the cheapest canary for "this directory did not load", and it costs one request.
+#
+# ── SET IT ─────────────────────────────────────────────────────────────────────
+#
+#   CF_WEB_APEX  the apex the surfaces are served under. `compose/env/traefik.env` defaults it to
+#                `cloudsforge.localtest.me`, a public wildcard resolving to 127.0.0.1, so the dev
+#                estate needs no /etc/hosts entry and no resolver. Production sets the real apex.
+#
+# `cloudsforgeHosts()` derives the apex from `window.location.hostname` by stripping a KNOWN
+# subdomain (ui/packages/ui/src/surfaces.ts, KNOWN_SUBS), so `hub.cloudsforge.localtest.me`
+# resolves its siblings to `nimbus.cloudsforge.localtest.me` and friends — all of which this file
+# routes. It emits `https://` unconditionally, which is why the surfaces are on `websecure` and
+# why the estate terminates TLS at the gateway even on loopback.
+#
+# ── SUBDOMAINS ARE READ, NOT CHOSEN ────────────────────────────────────────────
+#
+# Every host below is the `subdomain` field of that surface's row in
+# `ui/packages/ui/src/surfaces.ts` — the registry whose own header records that this same list was
+# maintained by hand in eight places and had already drifted. Two consequences that look like
+# mistakes and are not:
+#
+#   * Forge Create is `create.`, though the repository is `micro-mint-web`.
+#   * The developer platform is `developers.`, though the repository is `micro-devportal-web`.
+#     policy.yml already carries that correction and the story of how it was found.
+#
+# `foresight-admin` is the ONE host here with no registry row to read. Recorded as a gap for
+# micro-ui in docker-compose.estate.yml beside the container; not invented into surfaces.ts from
+# this repository, because a sixteenth hand-maintained copy is the mistake the registry exists to
+# end.
+
+{{ if env "CF_WEB_APEX" }}
+http:
+  middlewares:
+    # Applied to every SURFACE route below — never to the API routes, which carry the service's
+    # own answer semantics.
+    #
+    # The bundles already set these headers themselves in their own nginx.conf. Set again here
+    # because a surface must not be able to relax the rule that constrains it: the same argument
+    # policy.yml makes for keeping the /internal refusal out of a container label.
+    cf-web-headers:
+      headers:
+        contentTypeNosniff: true
+        referrerPolicy: "strict-origin-when-cross-origin"
+        # SAMEORIGIN rather than DENY: these surfaces carry a session that can move money, so no
+        # foreign frame ancestor — but a surface framing its own page is a legitimate pattern and
+        # frameDeny would break it. Matches what every frontend's nginx.conf already sends.
+        customFrameOptionsValue: "SAMEORIGIN"
+
+  routers:
+    # ─────────────────────────────────────────────────────── hub — AND SIGN-IN ──
+    #
+    # THE SURFACE THE WHOLE BROWSER CATALOGUE WAITS ON.
+    #
+    # `signInRedirect()` sends every signed-out visitor of every product to
+    # `${accountUrl()}/login`, and `accountUrl()` resolves the `signin` registry row, which rides
+    # on Hub at `/account` (ui/packages/ui/src/surfaces.ts, the `signin` entry). Nothing in any
+    # environment served that address: identity renders no HTML, and there is no `account-web`
+    # among the 58 repositories. doc 22 §8.1 calls it the largest blocker in the catalogue.
+    #
+    # hub-web's nginx.conf already enumerates `/account` as a client route, so the moment the
+    # bundle ships a sign-in page this router serves it. That is the environment's half of the
+    # blocker, and it is why estate-verify asserts `hub.<apex>/account/login` by name.
+    cf-web-hub:
+      rule: 'Host(`hub.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-hub
+
+    # hub-api behind Hub's own hostname. hub-web asks `/v1/dashboard`, `/v1/portfolio`,
+    # `/v1/activity`, `/v1/search`, `/v1/next-actions` RELATIVE to the page
+    # (hub-api/src/server.ts:285-421, quoted in hub-web/src/lib/money.ts:7-8).
+    cf-api-hub:
+      rule: 'Host(`hub.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-hub-api
+
+    # ─────────────────────────────────────────────────────────────── the apex ──
+    # `site` has an EMPTY subdomain in the registry, so it is the bare apex rather than
+    # `site.<apex>`. A router matching `Host(`.<apex>`)` would be the empty-host bug wearing a
+    # different hat.
+    cf-web-site:
+      rule: 'Host(`{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-site
+
+    # ──────────────────────────────────────────────────────────────── market ──
+    cf-web-market:
+      rule: 'Host(`market.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-market
+    cf-api-market-host:
+      rule: 'Host(`market.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-market
+
+    # ─────────────────────────────────────────────── create (micro-mint-web) ──
+    cf-web-create:
+      rule: 'Host(`create.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-create
+    cf-api-create:
+      rule: 'Host(`create.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-mint
+
+    # ───────────────────────────────────────────────────────────────── trade ──
+    cf-web-trade:
+      rule: 'Host(`trade.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-trade
+    cf-api-trade-host:
+      rule: 'Host(`trade.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-trade
+
+    # ──────────────────────────────────────────────────────────────── worlds ──
+    cf-web-worlds:
+      rule: 'Host(`worlds.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-worlds
+    cf-api-worlds-host:
+      rule: 'Host(`worlds.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-worlds
+
+    # ────────────────────────────────────────────────────────────── explorer ──
+    # THE BUNDLE ONLY, AND IT IS THE ONE CASE WORTH EXPLAINING.
+    #
+    # `indexer` IS defined in docker-compose.estate.yml and is NOT started: it sits behind
+    # `profiles: [indexer]`, because at the time that profile was added micro-indexer's working
+    # tree failed `pnpm typecheck` inside its own Dockerfile. The estate builds from working
+    # trees, so it is only ever as green as every checkout on the machine.
+    #
+    # So no `/v1` router here either, for the same reason as the five below: a router to a
+    # container that is not running answers 502, which reads as "the indexer fell over" — a wrong
+    # diagnosis, permanently, of a service that was never asked to start. The day it comes off the
+    # profile, this is one router and one service block:
+    #
+    #   cf-api-explorer:  the same shape as cf-api-hub above, with the host templated on
+    #                     explorer, PathPrefix `/v1`, priority 600, and a cf-svc-indexer
+    #                     loadBalancer pointing at http://indexer:4000.
+    #
+    # The rule is not written out literally here on purpose: a Go template action inside a YAML
+    # comment is still an action to the file provider, which renders the file BEFORE anything
+    # parses the YAML and has no idea what a comment is.
+    #
+    # `/v1` is the right prefix when it lands: indexer mounts every route twice — `PREFIXES` is
+    # `['/v1', '']` (indexer/src/server.ts:134) — and explorer-web deliberately uses the `/v1`
+    # form (explorer-web/src/lib/indexer.ts:15-16).
+    cf-web-explorer:
+      rule: 'Host(`explorer.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-explorer
+
+    # ────────────────────────────────────── developers (micro-devportal-web) ──
+    cf-web-developers:
+      rule: 'Host(`developers.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-developers
+    cf-api-developers:
+      rule: 'Host(`developers.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-devplatform
+
+    # ───────────────────────────────────────────────────────────────── admin ──
+    # The console and its API share `admin.<apex>` in production — the fact that hid a wrong
+    # `devPort` in the registry for months, because production worked and `pnpm dev` did not
+    # (ui/packages/ui/src/surfaces.ts, the `admin` row). Both halves are routed here.
+    cf-web-admin:
+      rule: 'Host(`admin.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-admin
+    cf-api-admin:
+      rule: 'Host(`admin.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-admin-api
+
+    # ───────────────────────────────────── surfaces whose service is ABSENT ──
+    #
+    # These five bundles are routed; the services behind them are NOT IN THIS ESTATE.
+    # `micro-foresight`, `micro-emberkin`, `micro-aetherholm`, `micro-faucet`, `micro-beacon` and
+    # the Hearth node have no block in docker-compose.estate.yml — and the first three are absent
+    # from micro-org's registry entirely, which is why no port could be derived for their web
+    # bundles either.
+    #
+    # NO `/v1` ROUTER IS WRITTEN FOR THEM. A router pointing at a container that does not exist
+    # answers 502, which reads as "the service fell over" — a wrong diagnosis, permanently. With
+    # no router the gateway serves the bundle and the bundle's own API call 404s from nginx,
+    # which is what "there is no such service here" honestly looks like. The day one of these
+    # services joins the estate, add its router beside its surface.
+    cf-web-network:
+      rule: 'Host(`network.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-network
+
+    cf-web-status:
+      rule: 'Host(`status.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-status
+
+    cf-web-foresight:
+      rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-foresight
+
+    # The one hostname in this file with no registry row behind it. See the header.
+    cf-web-foresight-admin:
+      rule: 'Host(`foresight-admin.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-foresight-admin
+
+    cf-web-emberkin:
+      rule: 'Host(`emberkin.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-emberkin
+
+    cf-web-aetherholm:
+      rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-aetherholm
+
+    # ──────────────────────────────────────────────────────────────── nimbus ──
+    #
+    # identity, on the hostname every bundle in the estate calls it by.
+    #
+    # THIS IS THE OTHER HALF OF THE SIGN-IN BLOCKER. `consumeAuthCallback` posts the hand-off code
+    # to `${cloudsforgeHosts().nimbus}/auth/handoff/redeem` and the token refresh goes to
+    # `${nimbusUrl()}/auth/refresh` — both CROSS-ORIGIN from every surface, from `hub.<apex>`
+    # included. Without this router the sign-in page loads and every call it makes 404s at the
+    # gateway; with it, and with the CORS entry policy.yml now adds for this apex, the round trip
+    # completes.
+    #
+    # The WHOLE host, not a prefix: identity serves 34 unversioned routes at the root
+    # (identity/src/server.ts:618 onward) and picking prefixes here would be a second, drifting
+    # copy of that list. `/internal` is still refused above every router in this file by
+    # policy.yml's priority-100000 rule, which nothing here can outrank.
+    cf-web-nimbus:
+      rule: 'Host(`nimbus.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      service: cf-svc-identity
+
+    # ────────────────────────────────── pay and vault — the two money hosts ──
+    #
+    # `micro-hub-web` names the gap and could not close it from its own repository:
+    #
+    #   "TWO THINGS IN micro-deploy HAVE TO BE TRUE BEFORE THIS WORKS IN A BROWSER, AND ARE NOT.
+    #    There is no gateway router for `pay.<apex>` or `vault.<apex>` in the working tree, and the
+    #    routers that do exist for wallet are on the API host, which deliberately carries the
+    #    security headers WITHOUT the app CORS allowlist."   (hub-web/src/lib/money.ts:34-41)
+    #
+    # Both halves check out against source. `hosts().pay` → wallet and `hosts().keyvault` →
+    # custody (hub-web/src/lib/money.ts:47-53), and the registry gives `pay` the subdomain `pay`
+    # and `keyvault` the subdomain **`vault`** (ui/packages/ui/src/surfaces.ts) — the one host in
+    # this estate whose name does not match its registry key.
+    #
+    # WHY THESE TWO CANNOT GO ON THE API HOST. Withdrawal and key-export are authorised against
+    # the USER'S OWN token — custody's export ceremony reads `amr` and `auth_time` off it
+    # (custody/src/exports.ts, gates 4 and 6) — so the caller is a first-party browser, and a
+    # first-party browser needs the app CORS allowlist. `api.<apex>` is called by third-party
+    # servers and the SDK and deliberately does not carry it.
+    #
+    # ON THE MIDDLEWARE, PRECISELY. `cf-cors@file` is NOT listed here, and that is not an
+    # oversight: it is applied to every router on this entryPoint by
+    # `--entrypoints.websecure.http.middlewares` in compose/docker-compose.gateway.yml:90. Listing
+    # it again would run the same headers middleware twice on one request. The consequence is
+    # asserted rather than assumed — `scripts/estate-verify.sh` sends a real cross-origin preflight
+    # from Hub's origin to both hosts and requires the allowlist echo, which is the only way to
+    # know. (It also means public-api.yml:66-69's claim that the API host gets the headers
+    # "without the app CORS allowlist" is not true today; the entrypoint gives it one. Recorded
+    # here rather than silently corrected there, because narrowing that chain is a policy change
+    # and policy.yml is the file that owns it.)
+    cf-web-pay:
+      rule: 'Host(`pay.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      service: cf-svc-wallet
+
+    cf-web-vault:
+      rule: 'Host(`vault.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      service: cf-svc-custody
+
+  services:
+    # The bundles. Port 8080 because the images are `nginx-unprivileged`: nothing in those
+    # containers is root and a non-root process cannot bind 80. Read from each frontend's
+    # Dockerfile `EXPOSE`, not chosen — the same rule public-api.yml states for its upstreams.
+    cf-web-hub:
+      loadBalancer:
+        servers: [{ url: "http://hub-web:8080" }]
+    cf-web-site:
+      loadBalancer:
+        servers: [{ url: "http://site:8080" }]
+    cf-web-market:
+      loadBalancer:
+        servers: [{ url: "http://market-web:8080" }]
+    cf-web-create:
+      loadBalancer:
+        servers: [{ url: "http://mint-web:8080" }]
+    cf-web-trade:
+      loadBalancer:
+        servers: [{ url: "http://trade-web:8080" }]
+    cf-web-worlds:
+      loadBalancer:
+        servers: [{ url: "http://worlds-web:8080" }]
+    cf-web-explorer:
+      loadBalancer:
+        servers: [{ url: "http://explorer-web:8080" }]
+    cf-web-network:
+      loadBalancer:
+        servers: [{ url: "http://network-site:8080" }]
+    cf-web-developers:
+      loadBalancer:
+        servers: [{ url: "http://devportal-web:8080" }]
+    cf-web-admin:
+      loadBalancer:
+        servers: [{ url: "http://admin-web:8080" }]
+    cf-web-status:
+      loadBalancer:
+        servers: [{ url: "http://status-web:8080" }]
+    cf-web-foresight:
+      loadBalancer:
+        servers: [{ url: "http://foresight-web:8080" }]
+    cf-web-foresight-admin:
+      loadBalancer:
+        servers: [{ url: "http://foresight-admin-web:8080" }]
+    cf-web-emberkin:
+      loadBalancer:
+        servers: [{ url: "http://emberkin-web:8080" }]
+    cf-web-aetherholm:
+      loadBalancer:
+        servers: [{ url: "http://aetherholm-web:8080" }]
+
+    # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
+    # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are
+    # host ports on one developer machine and are a different fact.
+    cf-svc-hub-api:
+      loadBalancer:
+        servers: [{ url: "http://hub-api:4000" }]
+    cf-svc-admin-api:
+      loadBalancer:
+        servers: [{ url: "http://admin-api:4000" }]
+    cf-svc-market:
+      loadBalancer:
+        servers: [{ url: "http://market:4000" }]
+    cf-svc-mint:
+      loadBalancer:
+        servers: [{ url: "http://mint:4000" }]
+    cf-svc-trade:
+      loadBalancer:
+        servers: [{ url: "http://trade:4000" }]
+    cf-svc-worlds:
+      loadBalancer:
+        servers: [{ url: "http://worlds:4000" }]
+    cf-svc-devplatform:
+      loadBalancer:
+        servers: [{ url: "http://devplatform:4000" }]
+    cf-svc-identity:
+      loadBalancer:
+        servers: [{ url: "http://identity:4000" }]
+
+    # wallet and custody, on the two hostnames Hub calls them by. custody is the only service in
+    # this estate that holds private keys; it is reachable here because the key-export ceremony is
+    # driven by the user's own browser and by nothing else. Note that the gateway is deliberately
+    # NOT on the `cf-micro-vault` network (docker-compose.gateway.yml:140-146) — this route works
+    # because the estate runs custody on its own default network in this dev environment, which is
+    # the same dev-only compromise compose/estate/initdb.sql records for the database.
+    cf-svc-wallet:
+      loadBalancer:
+        servers: [{ url: "http://wallet:4000" }]
+    cf-svc-custody:
+      loadBalancer:
+        servers: [{ url: "http://custody:4000" }]
+{{ else }}
+# CF_WEB_APEX is unset, so this file contributes NOTHING rather than fifteen routers whose rules
+# read `Host(``)` and match no request ever sent. That distinction is the whole of the comment at
+# the top of compose/env/traefik.env, and it cost this estate a dead public API once already.
+{}
+{{ end }}

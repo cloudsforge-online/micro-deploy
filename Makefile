@@ -76,13 +76,21 @@ estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort
 
 # --------------------------------------------------- the estate environment --
-ESTATE := -f compose/docker-compose.estate.yml
+ESTATE  := -f compose/docker-compose.estate.yml
+# The gateway, wired to the estate's network and bound to 443. Needed by every
+# browser surface: a bundle derives its sibling hosts as `https://<sub>.<apex>`
+# with NO PORT, so 9096 is unreachable to the page that was served on it.
+GW_ESTATE := -f compose/docker-compose.telemetry.yml \
+             -f compose/docker-compose.gateway.yml \
+             -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-ps check-gateway
+.PHONY: estate-up estate-down estate-verify estate-ps check-gateway estate-gateway
 
-estate-up: ## Build and start the 21-service environment, then bootstrap it
-	@docker compose $(ESTATE) up -d --build
-	@./scripts/estate-bootstrap.sh
+estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
+	@./scripts/estate-up.sh
+
+estate-gateway: ## Just the gateway half, against an estate that is already up
+	@docker compose -p $(COMPOSE_PROJECT_NAME) $(GW_ESTATE) up -d
 
 estate-verify: ## Drive the running environment through every real flow
 	@./scripts/estate-verify.sh
@@ -91,6 +99,7 @@ estate-ps: ## What the environment is running, and whether it is healthy
 	@docker compose $(ESTATE) ps
 
 estate-down: ## Stop the environment. Add VOLUMES=1 to delete its databases too
+	@docker compose -p $(COMPOSE_PROJECT_NAME) $(GW_ESTATE) down
 	@docker compose $(ESTATE) down $(if $(VOLUMES),--volumes,)
 
 check-gateway: ## Compare the public route map against what the services serve

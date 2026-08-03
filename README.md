@@ -37,20 +37,87 @@ once — it is the credential files that need creating, not the containers.
 
 ## The estate environment
 
-Twenty-one of the twenty-two domain services, running together, each with its own
-database and its own one-shot migrator.
+Twenty-one of the twenty-two domain services and **all fifteen browser
+surfaces**, running together, each service with its own database and its own
+one-shot migrator.
 
 ```sh
 cd micro/deploy
-docker compose -f compose/docker-compose.estate.yml up -d --build
-./scripts/estate-bootstrap.sh      # THE MANUAL ADMIN UPDATE, then 17 service tokens
+./scripts/estate-up.sh             # build, migrate, bootstrap, gateway, verify
+```
+
+or by hand, in the one order that works:
+
+```sh
+export CF_WEB_APEX=cloudsforge.localtest.me
+docker compose -f compose/docker-compose.estate.yml up -d --build --wait
+./scripts/estate-bootstrap.sh      # THE MANUAL ADMIN UPDATE, then the tokens
+docker compose -p cfmicro \
+  -f compose/docker-compose.telemetry.yml \
+  -f compose/docker-compose.gateway.yml \
+  -f compose/docker-compose.estate-gateway.yml up -d
 ./scripts/estate-verify.sh         # drives real flows and asserts real effects
 ```
 
 Host ports are `4100 + the service's index in micro-org's registry` (`portFor`,
 `cfctl.ts:868`) — derived from the one list that orders every repository rather
 than picked, because a hand-chosen port has already collided twice here. They
-bind to `127.0.0.1` only.
+bind to `127.0.0.1` only. The frontends continue that sequence at 4122.
+
+### The fifteen frontends, and the hostnames that make them a product
+
+Until they joined, this file defined 22 domain services and **no frontend
+container at all**. `docs/ecosystem/22-browser-journeys.md` §8.7 named the
+consequence: 318 browser scenarios specified, 86 of them tier T3 needing the
+estate, and **not one of them able to run**.
+
+They are reachable two ways, and only one of them is a product:
+
+| | Address | What works |
+| --- | --- | --- |
+| Direct | `127.0.0.1:4122` … `:4139` | the bundle, its assets, its 404 semantics |
+| Through the gateway | `https://hub.$CF_WEB_APEX` and the other fourteen | **all of the above plus every API call the page makes** |
+
+The distinction is not cosmetic. `cloudsforgeHosts()` reads
+`window.location.hostname`, strips a known subdomain to derive the apex, and
+rebuilds every sibling host as `https://<sub>.<apex>` — **no port**
+(`ui/packages/ui/src/surfaces.ts`). A bundle opened on `127.0.0.1:4122`
+therefore resolves identity to `http://localhost:4001`, which nothing here
+serves. The loopback ports are for debugging one bundle; the hostnames are the
+environment.
+
+`CF_WEB_APEX` defaults to `cloudsforge.localtest.me`, a public wildcard that
+resolves to `127.0.0.1`, so no `/etc/hosts` entry and no `sudo` are needed. TLS
+is Traefik's self-signed default: right for loopback, wrong to ship. `curl -k`,
+and `playwright-core`'s `ignoreHTTPSErrors`.
+
+**A surface and its own API share an origin, and the gateway is what makes that
+true.** Every frontend compares origins to decide its API base
+(`resolveApiBase`), so served from its registry host it sends every request
+*relative*: hub-web asks `https://hub.<apex>/v1/dashboard`, not hub-api's own
+hostname — which it does not have one of. `gateway/dynamic/estate-web.yml`
+routes `/v1` on each surface host to that surface's service, and everything else
+to the bundle. Seven services are wired this way; the rest of the surfaces are
+served with no `/v1` router at all, deliberately, because a router pointing at a
+container that is not running answers 502 and that reads as "the service fell
+over" rather than "there is no such service here".
+
+### Cross-surface sign-in, and the variable that was set nowhere
+
+`IDENTITY_HANDOFF_ORIGINS` defaulted to `''` and no compose file in this
+repository set it. `isAllowedOrigin` is `env.handoffOrigins.includes(origin)`
+over an empty array (`identity/src/handoff.ts:32`), so `createHandoffCode`
+returned null for **every** origin and `POST /auth/handoff` answered 403 to
+everyone. A person could sign in at Hub and reach **no other surface** — which
+is where most of the 86 tier-T3 scenarios go on their second step.
+
+Nothing caught it because nothing in this repository had ever minted a hand-off
+code: identity's own suite sets the variable in `testsupport.ts:47`, so the
+empty-by-default case was only ever exercised by a deployment, and there had
+never been one. It is now set on identity to the fifteen surface origins this
+file serves, and `estate-verify.sh` drives the whole hand-off — mint at Hub,
+redeem at Market, and prove a code minted for one origin is refused from
+another.
 
 ### One Postgres, a database per service — and why that is dev-only
 
@@ -87,6 +154,37 @@ buried in a verification script where a production runbook cannot find it.
 > service-to-service calls in the money tier begin failing 401 until it is run
 > again. The fix belongs in identity and the service repos, not here.
 
+### What the environment still cannot do, and who owns each
+
+Written down rather than left to be rediscovered. None of these is a defect in
+this repository, and none is worked around here.
+
+| What | Where it lives | Evidence |
+| --- | --- | --- |
+| **No scenario executes a bundle.** `estate-verify.sh` fetches every asset a page references and checks the design system reached the CSS, but nothing here runs JavaScript. A module that throws on line one passes every check. | `micro-beacon` — the tier-3 harness in `docs/ecosystem/22` §4 | by construction: this is a bash script |
+| **`micro-admin-api` cannot be rebuilt.** Its Dockerfile copies the `runtimepkgs` build context and **not** `contractspkgs`, so the `@cloudsforge/contracts-events` import added in its `24fb2c7` cannot resolve. `pnpm typecheck` fails in the image and takes the whole `up --build` with it. | `micro-admin-api` | `src/server.ts(122,66): error TS2307: Cannot find module '@cloudsforge/contracts-events'`; `admin-api/Dockerfile` has no `COPY --from=contractspkgs` |
+| **`indexer` is behind a profile** and so is `explorer.<apex>/v1`. | `micro-indexer` | `profiles: [indexer]` and the note above it |
+| **micro-org's registry is 12 repositories short.** 46 entries against a 58-directory tree; `foresight`, `foresight-admin-web`, `emberkin*`, `aetherholm*`, `conformance`, `brand`, `docs` and `deploy` are all absent, so no port can be *derived* for four of the fifteen frontends. | `micro-org` | `deployableRepos()` stops at `faucet` (4135) |
+| **`foresight-admin` has no surface-registry row**, so its hostname is the one in this estate that was chosen rather than read. | `micro-ui` | no `foresight-admin` key in `ui/packages/ui/src/surfaces.ts` |
+| **A missing asset 404s with `text/html`.** Every frontend's `nginx.conf` states the opposite intent ("a JavaScript request answered with HTML fails with a syntax error that names the wrong file"), but `error_page 404 /index.html` is server-level and catches the `/assets/` location's `=404` too. The status is right, so a browser still refuses to execute it; the content type is not. | the fifteen `*-web` repos | `curl -i http://127.0.0.1:4122/assets/nope.js` |
+| **The Traefik Docker provider has never worked here.** v3.2.3 pins its Docker API version to 1.24; Docker Desktop's daemon refuses anything under 1.40. Label-based discovery — the gateway's stated design — is dead, and every route comes from the file provider. Neither `DOCKER_API_VERSION` nor v3.3.7 changes it; both were tried. | this repo, unfixed on purpose — see the note in `compose/docker-compose.gateway.yml` | `ERR ... client version 1.24 is too old`, every ten seconds, since the gateway first started |
+
+### One malformed file in `gateway/dynamic/` deletes every route
+
+Found by making the mistake. The file provider is **all-or-nothing**: a template
+error in *one* file publishes no configuration from *any* file in the directory.
+`estate-web.yml` had an unclosed conditional, and the visible result was that
+`public-api.yml` and `policy.yml` were gone too — so `/internal`, a
+priority-100000 security refusal, silently stopped existing and answered 404
+instead of 502. Traefik logs it **once**, at startup, in a line that names one
+file and says nothing about the others.
+
+The mistake itself is worth naming: **a Go template action inside a YAML comment
+is still an action.** The provider renders the whole file before anything parses
+YAML, and it does not know what a comment is. `estate-verify.sh` therefore ends
+by asserting `/internal` on a surface host — the cheapest possible canary for
+"this directory did not load", at the cost of one request.
+
 ### What the verification proves
 
 Not that containers started. `estate-verify.sh` checks `/livez` and `/readyz` for
@@ -100,6 +198,10 @@ and then drives flows and asserts effects:
 | Money | a balanced `deposit_credited` posts (201), the same idempotency key replays (200, not a double post), an **unbalanced journal is refused**, the trial balance still balances, and the money lands on the subject's account |
 | Events | a sign-in writes an outbox row, the relay signs it, activity's inbox accepts it, and it appears in that user's own feed |
 | Erasure | a deletion crosses the bus and **both** activity and notify drop the subject's rows to zero |
+| **The fifteen surfaces** | each page carries the release this compose file asked for (a stale artefact is named as one), every asset it references is 200, its CSS carries `--cf-ember` so the design system survived the `link:` symlink into `../ui`, its entry chunk is over 50 kB, an enumerated route survives a hard refresh, and **an address it does not own answers 404 while still serving the shell** |
+| **The gateway** | all fifteen bundles on their registry hostnames, seven services' `/v1` behind their own surface's host, `pay.` → wallet and `vault.` → custody with Hub's origin allowed on both, and `/internal` still refused at priority 100000 |
+| **Sign-in** | `hub.<apex>/account/login` is served, `POST nimbus.<apex>/auth/handoff/redeem` reaches identity, and a real CORS preflight from Hub's origin is answered with that origin |
+| **Cross-surface SSO** | a code minted at Hub for Market is redeemed at Market and yields a session; the same code is refused from a foreign origin; an origin off the allowlist is refused a code at all |
 
 `indexer` is behind a compose profile and skipped by default — not because its
 code is wrong, but because every service here builds from a **working tree**, and

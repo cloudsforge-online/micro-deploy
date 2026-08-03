@@ -90,6 +90,72 @@ x-migrate-defaults: &migrate-defaults
   command: ["node", "--import", "tsx", "src/migrator.ts"]
   restart: "no"
 
+# ── the frontends ──────────────────────────────────────────────────────────────
+#
+# `uipkg` is the named build context every frontend's Dockerfile expects, and it
+# is the whole reason a frontend could not be containerised from a single
+# checkout: `@cloudsforge/ui` is consumed as `link:../ui/packages/ui`, a symlink
+# into a SIBLING REPOSITORY, so a build context rooted at the app contains a
+# dangling link and nothing else. The reusable web CI workflow carried exactly
+# this defect — one checkout, zero callers, and unable to work if it had any.
+#
+# The named context is what makes the symlink resolvable: the Dockerfile copies
+# `packages/ui` to /ui/packages/ui and `tsconfig.base.json` to /ui, which is
+# precisely where `link:../ui/packages/ui` points from /app. If this anchor is
+# ever dropped, every frontend build fails at `pnpm install --frozen-lockfile`
+# rather than producing an image that boots and serves nothing — which is the
+# failure mode micro-service-template shipped for months.
+x-web-contexts: &web-contexts
+  uipkg: ../../ui
+
+x-web-defaults: &web-defaults
+  restart: unless-stopped
+  # The image already carries a HEALTHCHECK, at a 30-second interval that is
+  # right for production and useless to `--wait`. Overridden here for cadence
+  # only: the probe is nginx's own /healthz, exactly as the image defines it.
+  #
+  # IT PROVES NGINX IS ANSWERING AND NOTHING MORE. Every frontend nginx.conf
+  # says so in its own words ("it says the server is up — never that the app
+  # works"). A container that answers 200 on /healthz can be serving an
+  # index.html whose bundle 404s, which leaves the network idle and every
+  # server-side probe green. That is what `scripts/estate-verify.sh` §"the
+  # frontends" exists to catch, and why nothing here is treated as proof.
+  healthcheck:
+    test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+    interval: 3s
+    timeout: 5s
+    retries: 30
+
+# The build identity, stamped into the `cf-release` meta tag by each frontend's
+# Dockerfile and read back by estate-verify. It is the cheapest possible defence
+# against the failure that cost this estate an hour once already: Docker Desktop
+# keeps a stale bind-mount cache, and a container serving a file that no longer
+# matches disk looks exactly like a configuration bug. A served page that does
+# not carry the release this compose file asked for is a stale artefact, and the
+# verifier says so by name rather than leaving three wrong theories to be
+# written down first.
+x-web-build-args: &web-build-args
+  RELEASE: ${CLOUDSFORGE_RELEASE:-estate}
+
+# ── the apex the browser sees ──────────────────────────────────────────────────
+#
+# `cloudsforge.localtest.me` is a PUBLIC wildcard that resolves to 127.0.0.1, so the dev estate
+# needs no /etc/hosts entry, no sudo and no resolver of its own. Every subdomain of it
+# — hub., market., nimbus. — resolves to loopback, which is exactly the shape
+# `ui/packages/ui/src/surfaces.ts` derives: `cloudsforgeHosts()` strips a KNOWN subdomain from
+# `window.location.hostname` to get the apex and rebuilds every sibling host from it, so a bundle
+# served at `hub.cloudsforge.localtest.me` addresses identity at `nimbus.cloudsforge.localtest.me`
+# without being told anything.
+#
+# `CF_WEB_APEX` is read TWICE, by two mechanisms that cannot see each other's files: compose
+# interpolation here, and Traefik's file-provider Go template in gateway/dynamic/estate-web.yml
+# via compose/env/traefik.env. Set it in one place — the shell, or deploy/.env — and both follow.
+# `scripts/estate-up.sh` exports it once for exactly this reason.
+#
+# It is spelled out at every use below rather than hidden behind a YAML anchor: an anchor can
+# alias a whole scalar but cannot be interpolated into a longer string, so
+# `https://hub.<anchor>` is not a thing YAML can express.
+
 services:
   # ------------------------------------------------------------------ postgres
   # One server, one database per service. See compose/estate/initdb.sql for why
@@ -153,6 +219,51 @@ services:
       # and 0 is a value env.ts explicitly allows (integer floor 0). Production
       # keeps the default 7.
       IDENTITY_DELETION_GRACE_DAYS: "0"
+
+      # ── CROSS-SURFACE SSO: the variable that was set nowhere ─────────────────
+      #
+      # `IDENTITY_HANDOFF_ORIGINS` defaulted to '' and this file never set it.
+      # `isAllowedOrigin` is `env.handoffOrigins.includes(origin)`
+      # (identity/src/handoff.ts:32) over an empty frozen array, so
+      # `createHandoffCode` returned null for EVERY origin and `POST /auth/handoff`
+      # answered 403 to every caller (identity/src/server.ts, the handoff route).
+      #
+      # WHAT THAT COST. Signing in at Hub worked; moving to any second surface did
+      # not. Every one of the 86 tier-T3 scenarios in
+      # docs/ecosystem/22-browser-journeys.md begins with a sign-in and most then
+      # cross to another surface, so an empty allowlist stopped the catalogue at
+      # its second step — while every server-side check in this repository stayed
+      # green, because nothing here had ever minted a hand-off code.
+      #
+      # WHY IT IS A LIST OF ORIGINS AND NOT A WILDCARD. The code is BOUND to the
+      # origin it was minted for and redeemed only from that origin, matched
+      # against the browser's own `Origin` header (identity/src/handoff.ts:73-86).
+      # That binding is the entire security property of the hand-off; an allowlist
+      # that admitted anything would mint codes redeemable from an attacker's page.
+      # env.ts refuses a value carrying a path, query or fragment (`origin()`,
+      # identity/src/env.ts:92-106), so a wrong entry is a dead container rather
+      # than a silently-ignored line.
+      #
+      # These are the fifteen surfaces this compose file serves, at the apex the
+      # gateway routes them on. `site` is the bare apex — it has an empty
+      # `subdomain` in the registry — which is why the first entry has no label.
+      IDENTITY_HANDOFF_ORIGINS: >-
+        https://${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://hub.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://market.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://create.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://trade.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://worlds.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://explorer.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://network.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://developers.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://status.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://foresight.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://foresight-admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me}
+
       # The scope names are identity's own, from SCOPE_NAMES — not invented here.
       # The first attempt used `ledger:write`, which does not exist, and identity
       # refused to start and listed every scope it knows. That refusal is the
@@ -1104,3 +1215,221 @@ services:
       activity:
         condition: service_healthy
     healthcheck: *healthcheck
+
+  # ══════════════════════════════════════════ tier 5: the fifteen frontends ════
+  #
+  # ── WHY THEY ARE HERE ─────────────────────────────────────────────────────────
+  #
+  # Until this section, this file defined 22 domain services and NOT ONE FRONTEND
+  # CONTAINER, and `docs/ecosystem/22-browser-journeys.md` §8.7 named that as the
+  # blocker it is: 318 browser scenarios are specified, 86 of them are tier T3 and
+  # need the estate, and *none of them could run* because nothing in the estate
+  # served a bundle. A T3 harness was being built in micro-beacon against an
+  # environment that could not host it.
+  #
+  # ── THE HOST PORTS ARE DERIVED, LIKE EVERY OTHER PORT HERE ────────────────────
+  #
+  # 4100 + the repository's index in micro-org's registry — the same `portFor`
+  # rule the 21 services above obey (org/tools/cfctl.ts:868, over
+  # `deployableRepos()` in org/tools/registry.ts:134). Read out of the registry
+  # rather than typed:
+  #
+  #   node --import tsx -e "import {deployableRepos} from './tools/registry.ts'; \
+  #     deployableRepos().forEach((r,i)=>console.log(4100+i, r.name))"   # in micro-org
+  #
+  # ── FOUR SURFACES micro-org's REGISTRY DOES NOT KNOW ──────────────────────────
+  #
+  # That command yields 4122–4132 for eleven frontends and stops. `foresight-web`,
+  # `foresight-admin-web`, `emberkin-web` and `aetherholm-web` are ABSENT FROM THE
+  # REGISTRY — as are the `foresight`, `emberkin` and `aetherholm` services and
+  # eight other directories: micro-org's REGISTRY carries 46 entries against a
+  # 58-directory working tree. That is a defect in micro-org, not here, and it is
+  # recorded rather than papered over: this file cannot derive a port for a repo
+  # the registry has never heard of.
+  #
+  # They take 4136–4139 — after 4135 (`faucet`, the registry's last deployable) —
+  # in the order docs/ecosystem/22 §5 lists them. THESE FOUR NUMBERS ARE THE ONLY
+  # CHOSEN PORTS IN THIS FILE. The day micro-org's registry carries the four
+  # repositories, recompute all fifteen with the command above; `scripts/
+  # web-check.py` fails when this file and the registry disagree, so the drift
+  # cannot be silent.
+  #
+  # ── WHAT A GREEN HEALTHCHECK HERE IS WORTH ────────────────────────────────────
+  #
+  # Nothing on its own. See the note on `x-web-defaults`. The proof is in
+  # `scripts/estate-verify.sh`.
+
+  # -------------------------------------------------------------- hub-web (hub)
+  # THE MOST LOAD-BEARING FRONTEND IN THE ESTATE, for a reason that is not its own
+  # feature set: it serves the SIGN-IN SURFACE. `signInRedirect()` sends every
+  # product's signed-out visitor to `${accountUrl()}/login`, and the `signin`
+  # registry row resolves that to `hub.<apex>/account`
+  # (ui/packages/ui/src/surfaces.ts, the `signin` entry). Nothing served that
+  # address in any environment, which is why docs/ecosystem/22 §8.1 calls it the
+  # largest blocker in the catalogue. Bringing this container up is what closes
+  # the environment's half of it.
+  hub-web:
+    <<: *web-defaults
+    build:
+      context: ../../hub-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4122:8080"
+
+  # ------------------------------------------------------------- site (apex)
+  # The apex. It has no subdomain in the registry, which is why the gateway routes
+  # it on the bare apex host rather than on `site.<apex>`.
+  site:
+    <<: *web-defaults
+    build:
+      context: ../../site
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4123:8080"
+
+  # --------------------------------------------------------- admin-web (admin)
+  admin-web:
+    <<: *web-defaults
+    build:
+      context: ../../admin-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4124:8080"
+
+  # --------------------------------------------------------- mint-web (create)
+  # `create.<apex>`, not `mint.`: the repository is micro-mint-web and the surface
+  # is Forge Create. The registry's subdomain is the address; the repository name
+  # is not. The CORS allowlist in gateway/dynamic/policy.yml still names
+  # `mint.cloudsforge.online`, which is a separate defect recorded there.
+  mint-web:
+    <<: *web-defaults
+    build:
+      context: ../../mint-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4125:8080"
+
+  # --------------------------------------------------------- trade-web (trade)
+  trade-web:
+    <<: *web-defaults
+    build:
+      context: ../../trade-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4126:8080"
+
+  # ------------------------------------------------------- worlds-web (worlds)
+  worlds-web:
+    <<: *web-defaults
+    build:
+      context: ../../worlds-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4127:8080"
+
+  # --------------------------------------------------- explorer-web (explorer)
+  explorer-web:
+    <<: *web-defaults
+    build:
+      context: ../../explorer-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4128:8080"
+
+  # ------------------------------------------------------ network-site (network)
+  network-site:
+    <<: *web-defaults
+    build:
+      context: ../../network-site
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4129:8080"
+
+  # ------------------------------------------------------- market-web (market)
+  market-web:
+    <<: *web-defaults
+    build:
+      context: ../../market-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4130:8080"
+
+  # -------------------------------------------------- devportal-web (developers)
+  # `developers.<apex>`, from the registry — NOT `devportal.`, which is the
+  # repository name. gateway/dynamic/policy.yml already carries the correction and
+  # the reason it was found.
+  devportal-web:
+    <<: *web-defaults
+    build:
+      context: ../../devportal-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4131:8080"
+
+  # ------------------------------------------------------- status-web (status)
+  status-web:
+    <<: *web-defaults
+    build:
+      context: ../../status-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4132:8080"
+
+  # --------------------------------------------- foresight-web (foresight) 4136
+  # From here down, the four surfaces micro-org's registry does not carry. See the
+  # section header.
+  foresight-web:
+    <<: *web-defaults
+    build:
+      context: ../../foresight-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4136:8080"
+
+  # ------------------------------------------ foresight-admin-web (no reg. row)
+  # `ui/packages/ui/src/surfaces.ts` has NO ROW for this surface, so it has no
+  # registry subdomain either. It is served at `foresight-admin.<apex>` — a name
+  # chosen here, and the only surface hostname in this estate that is not read out
+  # of the registry. Recorded as a gap for micro-ui rather than fixed here: the
+  # registry's own header says the list was maintained by hand in eight places and
+  # had already drifted, and adding a sixteenth copy would be that mistake again.
+  foresight-admin-web:
+    <<: *web-defaults
+    build:
+      context: ../../foresight-admin-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4137:8080"
+
+  # ------------------------------------------ emberkin-web (emberkin)      4138
+  emberkin-web:
+    <<: *web-defaults
+    build:
+      context: ../../emberkin-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4138:8080"
+
+  # ------------------------------------------ aetherholm-web (aetherholm)  4139
+  aetherholm-web:
+    <<: *web-defaults
+    build:
+      context: ../../aetherholm-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4139:8080"

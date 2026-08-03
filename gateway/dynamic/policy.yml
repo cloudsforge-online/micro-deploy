@@ -45,7 +45,13 @@ http:
           - https://cloudsforge.online
           - https://hub.cloudsforge.online
           - https://market.cloudsforge.online
-          - https://mint.cloudsforge.online
+          # `create`, not `mint`: `micro-mint-web` serves Forge Create, and the registry's
+          # subdomain for that surface is `create` (ui/packages/ui/src/surfaces.ts, the `create`
+          # row). `mint.cloudsforge.online` is a host NOTHING SERVES — the same defect, from the
+          # same cause, as the `devportal`/`developers` line below: a CORS entry written from the
+          # repository name rather than from the registry. It fails closed and in silence: the
+          # browser refuses the response and nothing server-side records a refusal.
+          - https://create.cloudsforge.online
           - https://trade.cloudsforge.online
           - https://worlds.cloudsforge.online
           - https://explorer.cloudsforge.online
@@ -62,6 +68,55 @@ http:
           # nothing server-side records that anything was refused.
           - https://network.cloudsforge.online
           - https://foresight.cloudsforge.online
+          # Three surfaces this estate now SERVES and this list had never named. All three are
+          # bundles under docker-compose.estate.yml with a router in estate-web.yml, and every one
+          # of them calls identity cross-origin on boot — `consumeAuthCallback` posts to
+          # `nimbus.<apex>/auth/handoff/redeem` from whatever origin the page is on
+          # (ui/packages/ui/src/index.tsx). An origin missing here cannot complete a sign-in.
+          #
+          # `foresight-admin` is the one entry with no registry row behind it; see the note beside
+          # its container in compose/docker-compose.estate.yml.
+          - https://emberkin.cloudsforge.online
+          - https://aetherholm.cloudsforge.online
+          - https://foresight-admin.cloudsforge.online
+{{ if env "CF_WEB_APEX" }}
+          # ── THE ESTATE APEX ────────────────────────────────────────────────
+          #
+          # The same fifteen surfaces, at whatever apex this deployment serves them on. Present
+          # only when `CF_WEB_APEX` is set, which production does not set — with it unset this
+          # block renders to nothing and the list above is byte-for-byte what it always was.
+          #
+          # It has to be here rather than in a second middleware: `cf-cors` is applied to every
+          # router on `websecure` by the entryPoint chain
+          # (compose/docker-compose.gateway.yml:90), so a second CORS middleware would run beside
+          # this one on the same request rather than instead of it, and two middlewares each
+          # setting `Access-Control-Allow-Origin` is not a configuration anyone should have to
+          # reason about at 3am.
+          #
+          # The file provider renders this Go template BEFORE parsing the YAML, which is why a
+          # conditional can sit mid-list at all — and why the indentation below is load-bearing
+          # in a way a YAML-aware editor will not warn about.
+          #
+          # For the same reason NOTHING in this file may write a template action inside a
+          # comment: the renderer does not know what a comment is, and an unclosed one takes
+          # every file in this directory down with it. See the header of estate-web.yml for the
+          # incident and for the canary that catches it.
+          - https://{{ env "CF_WEB_APEX" }}
+          - https://hub.{{ env "CF_WEB_APEX" }}
+          - https://market.{{ env "CF_WEB_APEX" }}
+          - https://create.{{ env "CF_WEB_APEX" }}
+          - https://trade.{{ env "CF_WEB_APEX" }}
+          - https://worlds.{{ env "CF_WEB_APEX" }}
+          - https://explorer.{{ env "CF_WEB_APEX" }}
+          - https://network.{{ env "CF_WEB_APEX" }}
+          - https://developers.{{ env "CF_WEB_APEX" }}
+          - https://admin.{{ env "CF_WEB_APEX" }}
+          - https://status.{{ env "CF_WEB_APEX" }}
+          - https://foresight.{{ env "CF_WEB_APEX" }}
+          - https://foresight-admin.{{ env "CF_WEB_APEX" }}
+          - https://emberkin.{{ env "CF_WEB_APEX" }}
+          - https://aetherholm.{{ env "CF_WEB_APEX" }}
+{{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:
           - content-type

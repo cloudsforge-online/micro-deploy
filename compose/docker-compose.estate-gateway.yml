@@ -1,0 +1,75 @@
+# The gateway, wired to the estate — the overlay that makes a BROWSER work.
+#
+#   docker compose -p cfmicro \
+#     -f compose/docker-compose.telemetry.yml \
+#     -f compose/docker-compose.gateway.yml \
+#     -f compose/docker-compose.estate-gateway.yml up -d
+#
+# `scripts/estate-up.sh` does exactly that; this header exists so the ordering is written down
+# somewhere that is not a script.
+#
+# ── WHY IT IS A SEPARATE FILE ──────────────────────────────────────────────────
+#
+# `docker-compose.gateway.yml` must keep working on its own. It joins `cf-micro-edge`,
+# `cf-micro-app` and nothing else, and it can be brought up beside the telemetry plane with no
+# estate running at all — which is how its own configuration is checked (`make config`). The two
+# additions below both create a HARD DEPENDENCY on a running estate, so they live here rather
+# than in the file that must not have one.
+#
+# ── ADDITION 1: THE GATEWAY COULD NOT REACH A SINGLE SERVICE ───────────────────
+#
+# `docker-compose.estate.yml` declares NO `networks:` section, so all 37 of its containers sit on
+# the project default network, `cloudsforge-estate_default`. The gateway sits on `cf-micro-edge`
+# and `cf-micro-app`. **They have never shared a network.**
+#
+# Every upstream in `gateway/dynamic/public-api.yml` is a DNS name — `http://identity:4000`,
+# `http://wallet:4000` — resolved from inside the gateway container. From `cf-micro-edge` none of
+# those names resolves, so the entire public API route map, the one that had never once loaded
+# because of an unset `CF_API_HOST`, would have answered 502 on every route even after that fix.
+# Nothing had noticed because nothing had ever run the gateway and the estate at the same time.
+#
+# Joining the estate's network is the smallest change that makes those names resolve, and it is
+# the reason `estate-web.yml` can address the fifteen bundles the same way.
+#
+# ── ADDITION 2: 443, BECAUSE A BUNDLE DERIVES ITS SIBLINGS WITHOUT A PORT ──────
+#
+# `cloudsforgeHosts()` builds every sibling host as `https://<sub>.<apex>` — scheme and host, and
+# **no port** (ui/packages/ui/src/surfaces.ts, the non-local branch). So a page served on
+# `https://hub.<apex>:9096` asks for `https://nimbus.<apex>` on 443 and gets connection-refused,
+# and the symptom is a sign-in that silently does nothing.
+#
+# The base file publishes 9095/9096/9097 on loopback deliberately — "public exposure is the
+# tunnel's job". That stays true; this adds 443 ON LOOPBACK ONLY, beside them, because a browser
+# is the one client that cannot be told to use a different port. 80 is not added: the redirect to
+# websecure is what an http request needs, and it is already reachable on 9095.
+#
+# TLS is Traefik's self-signed default here, which is correct for loopback and wrong to ship. A
+# browser will warn; `playwright-core` takes `ignoreHTTPSErrors`, and `curl` takes `-k`, which is
+# what `scripts/estate-verify.sh` uses.
+
+services:
+  gateway:
+    ports:
+      # Merged with the base file's three, not replacing them. Compose appends `ports` across
+      # files, so 9095/9096/9097 are still bound and every existing recipe still works.
+      - "127.0.0.1:443:443"
+    networks:
+      - estate
+
+networks:
+  edge:
+    external: true
+    name: cf-micro-edge
+  app:
+    external: true
+    name: cf-micro-app
+  vault:
+    external: true
+    name: cf-micro-vault
+  # `external` means compose attaches and never creates: the estate owns this network and this
+  # file must not be able to bring a second one into existence under the same intent. If the
+  # estate is not up, `docker compose up` fails HERE with a named missing network rather than
+  # starting a gateway that resolves nothing.
+  estate:
+    external: true
+    name: cloudsforge-estate_default

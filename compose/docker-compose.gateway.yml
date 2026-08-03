@@ -60,6 +60,33 @@ services:
       - --accesslog.fields.headers.names.Cookie=drop
 
       # --- discovery ---------------------------------------------------------
+      #
+      # ⚠ THE DOCKER PROVIDER DOES NOT WORK ON DOCKER DESKTOP, AND HAS NEVER
+      #   WORKED HERE. Every ~10 seconds, for the life of the container:
+      #
+      #     ERR Failed to retrieve information of the docker client and server
+      #         host  error="client version 1.24 is too old. Minimum supported
+      #         API version is 1.40"  providerName=docker
+      #
+      #   Traefik v3.2.3 pins its Docker API version to 1.24 in code; Docker
+      #   Desktop's daemon (API 1.54 on this machine) refuses anything below
+      #   1.40. Neither `DOCKER_API_VERSION` in the env file nor v3.3.7 changes
+      #   it — both were tried and the error is byte-identical.
+      #
+      #   SO EVERY ROUTE THIS GATEWAY SERVES COMES FROM THE **FILE** PROVIDER,
+      #   and the header above — "LABEL-BASED DISCOVERY, which is the whole
+      #   point" — describes an intention rather than this deployment. Nothing
+      #   was broken by it because nothing has ever carried a routing label:
+      #   `gateway/dynamic/` addresses every upstream by DNS name instead. The
+      #   consequence the header draws is still unpaid, though: `deploy.replicas`
+      #   is still illegal for anything routed by name.
+      #
+      #   Fixing it is a Traefik upgrade past the pinned constant, or a socket
+      #   proxy in front of the daemon. Recorded rather than attempted here: the
+      #   estate has no label-routed container to regress, so it is a real defect
+      #   with no live symptom, and a version bump with no test for what it buys
+      #   is the wrong trade at 3am.
+      #
       # Only containers that opt in with `traefik.enable=true` are routed.
       # Exposing everything by default is how an admin surface ends up on the
       # internet because somebody added a label for an unrelated reason.

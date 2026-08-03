@@ -465,5 +465,474 @@ revoke_code=$(code -X POST "$IDENTITY/service-credentials/$cred_id/revoke" \
   && ok "a revoked credential mints nothing (401) — a compromised service is contained" \
   || bad "a REVOKED credential could still mint a token"
 
-[ "$fails" -eq 0 ] && { echo "all seams verified"; exit 0; }
-echo "$fails check(s) failed"; exit 1
+echo
+echo "── THE FIFTEEN FRONTENDS: served, and proved to be more than a 200 ──────"
+#
+# ── THE TRAP THIS SECTION EXISTS FOR ───────────────────────────────────────────
+#
+# **A bundle that 404s leaves the network perfectly idle, and the page still
+# loads.** nginx answers 200 on `/` because index.html is on disk; the browser
+# then asks for a script that is not there, gets nothing, and renders a blank
+# body. `domcontentloaded` fires anyway. A check that the container answers 200
+# on `/` — which is what "the frontend is up" usually means — passes against a
+# completely broken application, and so does the container's own /healthz, which
+# every frontend's nginx.conf says in its own words: "it says the server is up —
+# never that the app works".
+#
+# The legacy estate solved this with a real browser
+# (stack/infra/beacon/src/journeys/web.js:41-55: wait for network idle, then
+# assert the body has text the application itself produced). There is no browser
+# here and adding one to a bash script would be the wrong place for it — that is
+# the T3 harness being built in micro-beacon, per docs/ecosystem/22 §4.
+#
+# ── SO WHAT IS ASSERTED, AND WHAT IS NOT ───────────────────────────────────────
+#
+# Every assertion below is about the ARTEFACT the browser would receive:
+#
+#   1. `/` is 200 AND carries THIS BUILD's release stamp. Docker Desktop keeps a
+#      stale bind-mount cache and a container serving a file that no longer
+#      matches disk looks exactly like a config bug — an hour went into that
+#      once, with three wrong theories written down before the cause was found.
+#      A page not carrying the release compose asked for is a stale artefact and
+#      is named as one here rather than left to be diagnosed.
+#   2. EVERY asset index.html references is fetched and must be 200. This is the
+#      one that catches a 404ing bundle.
+#   3. The CSS carries `--cf-ember`. That token lives in
+#      `@cloudsforge/ui`'s tokens.css, a package consumed through a `link:`
+#      SYMLINK INTO A SIBLING REPOSITORY. If the `uipkg` build context were ever
+#      dropped from docker-compose.estate.yml, or the design system failed to
+#      resolve the way micro-service-template's `/contracts` did, the build would
+#      emit a stylesheet without it. This is the check that the symlink survived
+#      containerisation, and it is asserted on all fifteen because the failure
+#      would be estate-wide and silent.
+#   4. The JS bundle is over 50 kB. An empty or stub entry chunk is served with a
+#      200 and a correct content type.
+#   5. An ENUMERATED client route answers 200 and serves the shell — the address
+#      survives a hard refresh, which is what client-side routing means.
+#   6. AN ADDRESS THE SURFACE DOES NOT OWN ANSWERS **404**, and serves the shell
+#      anyway. This is the estate's standing rule and doc 22 asserts it once per
+#      surface as `BJ-<KEY>-404`: `error_page 404 /index.html`, never
+#      `try_files $uri /index.html`, because a "page not found" delivered as a
+#      200 is indexed by search engines, called healthy by uptime checks and
+#      passed by link checkers — and a deploy that drops a route then looks
+#      exactly like a deploy that did not.
+#
+# WHAT IS STILL NOT COVERED, said plainly: nothing here executes the bundle. A
+# module that throws on line one passes all six. That is precisely the gap the
+# T3 harness closes, and pretending otherwise would be the second time this
+# estate believed an image worked because CI read its metadata without ever
+# running it.
+#
+# Ports are 4100 + the repo's index in micro-org's registry, as everywhere else;
+# the four surfaces that registry does not carry are documented beside their
+# containers in compose/docker-compose.estate.yml.
+#
+# No `declare -A` — bash here is 3.2, and an associative-array port map once
+# silently broke five suites in this repository.
+
+WEB_RELEASE=${CLOUDSFORGE_RELEASE:-estate}
+# A path no surface enumerates, on purpose. If a surface ever claims it, this
+# check starts passing for the wrong reason, so it is deliberately unlovely.
+WEB_MISSING=/cf-estate-verify-no-such-page
+
+# Fields: name  port  a-route-the-surface-DOES-own
+#
+# Each route below is read out of that repo's own nginx.conf enumeration (the one
+# `location ~ ^/(…)` block, which its test/routes.test.ts pins against app.tsx),
+# not out of doc 22 — a document is a lead, never evidence.
+web_surface() {
+  name=$1; port=$2; owned=$3
+  base="http://127.0.0.1:$port"
+  notes=""
+
+  # 1. the shell, and the build identity
+  body=$(curl -s -w '\n%{http_code}' "$base/")
+  status=$(printf '%s' "$body" | tail -1)
+  html=$(printf '%s' "$body" | sed '$d')
+  if [ "$status" != 200 ]; then
+    bad "$name: GET / returned $status"
+    return
+  fi
+  if printf '%s' "$html" | grep -q "name=\"cf-release\" content=\"$WEB_RELEASE\""; then
+    notes="release=$WEB_RELEASE"
+  else
+    bad "$name: the page does not carry release '$WEB_RELEASE' — a STALE ARTEFACT is being served, not a configuration bug"
+    return
+  fi
+
+  # 2. every asset the shell references
+  assets=$(printf '%s' "$html" | python3 -c "
+import sys, re
+html = sys.stdin.read()
+# src= on <script>, href= on <link>. Only same-origin absolute paths: a CDN URL
+# would be a different claim and this estate serves none.
+urls = re.findall(r'<(?:script|link)\b[^>]*?(?:src|href)=\"(/[^\"]+)\"', html)
+print('\n'.join(sorted(set(urls))))
+" 2>/dev/null)
+  if [ -z "$assets" ]; then
+    bad "$name: index.html references no assets at all — the build produced a shell with nothing in it"
+    return
+  fi
+  count=0; broken=""
+  for a in $assets; do
+    ac=$(curl -s -o /dev/null -w '%{http_code}' "$base$a")
+    [ "$ac" = 200 ] && count=$((count+1)) || broken="$broken $a($ac)"
+  done
+  if [ -n "$broken" ]; then
+    bad "$name: the page points at asset(s) that do not exist —$broken. The container answers 200 on / and the application cannot start."
+    return
+  fi
+  notes="$notes, $count asset(s)"
+
+  # 3. the design system reached the bundle, through the sibling-repo symlink
+  css=$(printf '%s' "$assets" | grep '\.css$' | head -1)
+  if [ -z "$css" ]; then
+    bad "$name: no stylesheet in the shell — @cloudsforge/ui's tokens cannot have been bundled"
+    return
+  fi
+  if curl -s "$base$css" | grep -q -- '--cf-ember'; then
+    notes="$notes, design system"
+  else
+    bad "$name: $css carries no --cf-ember token — @cloudsforge/ui did not reach the bundle (the link: symlink into ../ui)"
+    return
+  fi
+
+  # 4. the entry chunk is real code
+  js=$(printf '%s' "$assets" | grep '\.js$' | head -1)
+  if [ -z "$js" ]; then
+    bad "$name: the shell references no script — there is no application to mount"
+    return
+  fi
+  bytes=$(curl -s "$base$js" | wc -c | tr -d ' ')
+  if [ "${bytes:-0}" -gt 50000 ]; then
+    notes="$notes, ${bytes}B of js"
+  else
+    bad "$name: $js is only ${bytes}B — a stub or an error page, not an application bundle"
+    return
+  fi
+
+  # 5. an enumerated client route survives a hard refresh
+  owned_body=$(curl -s -w '\n%{http_code}' "$base$owned")
+  owned_status=$(printf '%s' "$owned_body" | tail -1)
+  if [ "$owned_status" != 200 ]; then
+    bad "$name: $owned answered $owned_status — an enumerated client route does not survive a hard refresh"
+    return
+  fi
+  if ! printf '%s' "$owned_body" | sed '$d' | grep -q "$js"; then
+    bad "$name: $owned answered 200 without the app shell — nginx served something that is not index.html"
+    return
+  fi
+  notes="$notes, $owned 200"
+
+  # 6. THE 404 RULE. Status AND body, because either alone passes the wrong way:
+  #    `try_files $uri /index.html` gives the shell with a 200, and a bare nginx
+  #    error page gives a 404 with no application in it. Both are wrong and they
+  #    are wrong in opposite directions.
+  missing_body=$(curl -s -w '\n%{http_code}' "$base$WEB_MISSING")
+  missing_status=$(printf '%s' "$missing_body" | tail -1)
+  if [ "$missing_status" != 404 ]; then
+    bad "$name: $WEB_MISSING answered $missing_status, not 404 — an unknown address is being reported as a success"
+    return
+  fi
+  if ! printf '%s' "$missing_body" | sed '$d' | grep -q "$js"; then
+    bad "$name: $WEB_MISSING answered 404 without the app shell — the visitor gets nginx's error page, not NotFoundPage"
+    return
+  fi
+  notes="$notes, $WEB_MISSING 404-with-shell"
+
+  # A missing ASSET must 404 rather than resolve to something. It currently
+  # answers 404 with the shell's HTML body, because `error_page 404 /index.html`
+  # is a server-level directive and catches the `/assets/` location's `=404` too
+  # — so every frontend's nginx.conf states an intent ("a JavaScript request
+  # answered with HTML fails with a syntax error that names the wrong file") that
+  # its own configuration does not achieve. The STATUS is what stops a browser
+  # executing it, so the status is what is asserted here; the content type is
+  # recorded as a finding for the fifteen frontend repositories rather than
+  # asserted in a suite that cannot fix it.
+  ac=$(curl -s -o /dev/null -w '%{http_code}' "$base/assets/cf-estate-verify-missing.js")
+  if [ "$ac" != 404 ]; then
+    bad "$name: a missing asset answered $ac — a broken deploy would serve the shell as JavaScript"
+    return
+  fi
+
+  ok "$name ($port): $notes"
+}
+
+for rec in \
+  "hub-web 4122 /portfolio" \
+  "site 4123 /products" \
+  "admin-web 4124 /approvals" \
+  "mint-web 4125 /launch" \
+  "trade-web 4126 /bots" \
+  "worlds-web 4127 /player" \
+  "explorer-web 4128 /chains" \
+  "network-site 4129 /faucet" \
+  "market-web 4130 /listings" \
+  "devportal-web 4131 /apps" \
+  "status-web 4132 /history" \
+  "foresight-web 4136 /rules" \
+  "foresight-admin-web 4137 /categories" \
+  "emberkin-web 4138 /party" \
+  "aetherholm-web 4139 /cities"; do
+  set -- $rec
+  web_surface "$1" "$2" "$3"
+done
+
+echo
+echo "── THE GATEWAY: the surfaces on the hostnames a browser will use ────────"
+#
+# Everything above reaches a container on a loopback port. NO BROWSER EVER WILL.
+# `cloudsforgeHosts()` reads `window.location.hostname`, strips a known
+# subdomain to get the apex, and rebuilds every sibling host as
+# `https://<sub>.<apex>` — no port. So a bundle opened on 127.0.0.1:4122 resolves
+# identity to `http://localhost:4001`, which nothing in this estate serves. The
+# hostnames below are the only addresses under which the estate is a working
+# product rather than fifteen isolated static servers.
+#
+# `--resolve` rather than DNS: the default apex is a public wildcard pointing at
+# 127.0.0.1, but a suite that needs the internet to answer a question about
+# loopback is a suite that goes red on a train.
+#
+# `-k`: the gateway serves Traefik's self-signed default here, which is right for
+# loopback and wrong to ship.
+WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
+GW_PORT=${CF_GATEWAY_HTTPS_PORT:-443}
+
+gw() {
+  gw_host=$1; gw_path=$2; shift 2
+  curl -sk -o /tmp/estate-gw.body -w '%{http_code}' \
+    --resolve "$gw_host:$GW_PORT:127.0.0.1" "https://$gw_host:$GW_PORT$gw_path" "$@"
+}
+
+# The gateway has to be up. NOT skipped when it is not: half the estate's browser
+# surface is the routing, and a suite that quietly stops checking it reports green
+# on an environment no browser can use.
+if [ "$(gw "hub.$WEB_APEX" /healthz)" = 200 ]; then
+  ok "the gateway is answering on :$GW_PORT"
+else
+  bad "no gateway on https://…:$GW_PORT — run ./scripts/estate-up.sh, or 'docker compose -p cfmicro -f compose/docker-compose.telemetry.yml -f compose/docker-compose.gateway.yml -f compose/docker-compose.estate-gateway.yml up -d'"
+fi
+
+# Every surface on its registry hostname. The subdomain is the `subdomain` field
+# of that surface's row in ui/packages/ui/src/surfaces.ts — which is why Forge
+# Create is `create.` though its repository is micro-mint-web, and the developer
+# platform is `developers.` though its repository is micro-devportal-web.
+for rec in \
+  "hub hub-web" \
+  ". site" \
+  "market market-web" \
+  "create mint-web" \
+  "trade trade-web" \
+  "worlds worlds-web" \
+  "explorer explorer-web" \
+  "network network-site" \
+  "developers devportal-web" \
+  "admin admin-web" \
+  "status status-web" \
+  "foresight foresight-web" \
+  "foresight-admin foresight-admin-web" \
+  "emberkin emberkin-web" \
+  "aetherholm aetherholm-web"; do
+  set -- $rec
+  sub=$1; repo=$2
+  # `site` has an EMPTY subdomain in the registry: it is the bare apex.
+  if [ "$sub" = "." ]; then host="$WEB_APEX"; else host="$sub.$WEB_APEX"; fi
+  gwc=$(gw "$host" /)
+  if [ "$gwc" = 200 ] && grep -q "name=\"cf-release\" content=\"$WEB_RELEASE\"" /tmp/estate-gw.body; then
+    ok "https://$host → $repo"
+  else
+    bad "https://$host answered $gwc and did not serve $repo's shell"
+  fi
+done
+
+echo "── the surfaces' own APIs, behind the same hostname ─────────────────────"
+# Every frontend resolves its API base by comparing origins (`resolveApiBase`,
+# e.g. hub-web/src/lib/hosts.ts:34-42): served from its registry host, the base is
+# the EMPTY STRING and every request is relative. micro-network-site states the
+# obligation outright — "the base is '' and the drip request is relative, which is
+# what the registry asserts AND WHAT THE GATEWAY THEREFORE HAS TO ROUTE"
+# (network-site/src/lib/hosts.ts:63-64).
+#
+# Routing only the bundle leaves every surface loading beautifully and answering
+# nothing. A 401 is the RIGHT answer here — it proves the service replied — and it
+# is asserted as such: what must never happen is a 404 (no router) or a 502 (a
+# router pointing at nothing).
+for rec in \
+  "hub /v1/dashboard hub-api" \
+  "admin /v1/approvals admin-api" \
+  "market /v1/listings market" \
+  "create /v1/catalogue mint" \
+  "trade /v1/bots trade" \
+  "worlds /v1/titles worlds" \
+  "developers /v1/scopes devplatform"; do
+  set -- $rec
+  sub=$1; path=$2; svc=$3
+  apic=$(gw "$sub.$WEB_APEX" "$path")
+  case "$apic" in
+    404|502|000) bad "https://$sub.$WEB_APEX$path answered $apic — $svc is not routed behind its own surface's hostname" ;;
+    *) ok "https://$sub.$WEB_APEX$path → $svc ($apic)" ;;
+  esac
+done
+
+echo "── THE SIGN-IN SEAM: the blocker doc 22 §8.1 calls the largest ──────────"
+#
+# Every estate-level browser journey begins with signing in, and until today
+# NOTHING IN THE ESTATE SERVED A SIGN-IN PAGE. `signInRedirect()` sends every
+# signed-out visitor of every product to `${accountUrl()}/login`; `accountUrl()`
+# resolved `account.<apex>`, which no repository serves and which identity would
+# refuse to render HTML for. micro-ui added a `signin` registry row riding on Hub
+# at `/account`, and micro-hub-web now serves the page. This is the environment's
+# half: the address has to be REACHABLE, on the hostname the redirect names.
+if [ "$(gw "hub.$WEB_APEX" /account/login)" = 200 ]; then
+  ok "https://hub.$WEB_APEX/account/login is served — the redirect every SPA makes now lands somewhere"
+else
+  bad "hub.$WEB_APEX/account/login is not served; every 'Sign in' button in the estate leads nowhere"
+fi
+
+# identity, on the hostname the shared UI calls it by. `consumeAuthCallback` posts
+# to `${cloudsforgeHosts().nimbus}/auth/handoff/redeem` (ui/packages/ui/src/
+# index.tsx) — a route that did not exist under its old name and 404'd everywhere,
+# returning null exactly as it does for a stale code, so it read as an expiry
+# rather than as a wrong address. A 404 here would reproduce that silently.
+redeem=$(gw "nimbus.$WEB_APEX" /auth/handoff/redeem -X POST -H 'content-type: application/json' \
+  -H "origin: https://hub.$WEB_APEX" -d '{"code":"not-a-real-code"}')
+case "$redeem" in
+  404) bad "POST nimbus.$WEB_APEX/auth/handoff/redeem is 404 — the route the SSO callback posts to is unreachable" ;;
+  000|502) bad "nimbus.$WEB_APEX is not routed to identity ($redeem)" ;;
+  *) ok "POST nimbus.$WEB_APEX/auth/handoff/redeem reaches identity and refuses a forged code ($redeem)" ;;
+esac
+
+# THE CORS PREFLIGHT. The sign-in page is on `hub.<apex>` and identity is on
+# `nimbus.<apex>`: every call it makes is cross-origin, and identity sends no CORS
+# headers of its own — it has no CORS setting at all. The gateway is the only
+# thing that can permit this, and a missing allowlist entry fails CLOSED and in
+# silence: the browser discards the response and nothing server-side records that
+# anything was refused.
+allow=$(curl -sk -D - -o /dev/null -X OPTIONS \
+  --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
+  -H "origin: https://hub.$WEB_APEX" \
+  -H 'access-control-request-method: POST' \
+  -H 'access-control-request-headers: content-type' \
+  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  | tr -d '\r' | grep -i '^access-control-allow-origin:' | head -1)
+case "$allow" in
+  *"https://hub.$WEB_APEX"*) ok "the gateway permits hub.$WEB_APEX to call identity ($allow)" ;;
+  *) bad "no CORS allowance for https://hub.$WEB_APEX on nimbus.$WEB_APEX (got '${allow:-nothing}') — sign-in cannot complete in a browser" ;;
+esac
+
+# pay. and vault. — the two hostnames micro-hub-web named as missing and could not
+# add from its own repository (hub-web/src/lib/money.ts:34-41). `hosts().pay` is
+# wallet and `hosts().keyvault` is custody, and both are called with the USER'S
+# OWN token from Hub's origin, so both need the app CORS allowlist that the API
+# host deliberately does not carry.
+# The paths are the ones hub-web actually calls, read off its own call sites
+# (hub-web/src/lib/money.ts:140 and :192) rather than picked: `/health` was tried
+# first here and answered 404 from custody, which is indistinguishable at a glance
+# from the router being absent. A 401 is the pass — it proves the service replied.
+for rec in "pay /v1/deposits wallet" "vault /v1/exports custody"; do
+  set -- $rec
+  sub=$1; path=$2; svc=$3
+  pc=$(gw "$sub.$WEB_APEX" "$path")
+  case "$pc" in
+    404|000|502) bad "https://$sub.$WEB_APEX$path answered $pc — $svc is not reachable on the hostname Hub calls it by" ;;
+    *) ok "https://$sub.$WEB_APEX → $svc ($pc)" ;;
+  esac
+  pa=$(curl -sk -D - -o /dev/null -X OPTIONS --resolve "$sub.$WEB_APEX:$GW_PORT:127.0.0.1" \
+    -H "origin: https://hub.$WEB_APEX" -H 'access-control-request-method: POST' \
+    -H 'access-control-request-headers: content-type,authorization' \
+    "https://$sub.$WEB_APEX:$GW_PORT$path" | tr -d '\r' \
+    | grep -i '^access-control-allow-origin:' | head -1)
+  case "$pa" in
+    *"https://hub.$WEB_APEX"*) ok "  …and Hub's origin is allowed to call it" ;;
+    *) bad "  …but hub.$WEB_APEX may not call $sub.$WEB_APEX (got '${pa:-nothing}')" ;;
+  esac
+done
+
+echo "── CROSS-SURFACE SSO: the hand-off, driven end to end ───────────────────"
+#
+# THE DEFECT THIS SECTION EXISTS FOR. `IDENTITY_HANDOFF_ORIGINS` defaulted to ''
+# and no compose file in this repository set it. `isAllowedOrigin` is
+# `env.handoffOrigins.includes(origin)` over an empty array
+# (identity/src/handoff.ts:32), so `createHandoffCode` returned null for EVERY
+# origin and `POST /auth/handoff` answered 403 to everyone. A person could sign in
+# at Hub and reach NO OTHER SURFACE — which is where most of the 86 tier-T3
+# scenarios in doc 22 go on their second step.
+#
+# Nothing caught it because nothing in this repository had ever minted a hand-off
+# code: identity's own suite sets the variable in `testsupport.ts:47`, so the
+# empty-by-default case was only ever exercised by a deployment, and there had
+# never been one.
+#
+# Driven through the gateway rather than the loopback port, because the origins
+# on the allowlist are gateway origins and a check against 127.0.0.1:4100 would
+# prove something the browser cannot do.
+so_email="sso-$$@example.test"
+so_reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
+  -d "{\"email\":\"$so_email\",\"handle\":\"sso$$\",\"password\":\"$PASS\"}")
+so_tok=$(printf '%s' "$so_reg" | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
+[ -n "$so_tok" ] && ok "a second account for the hand-off drill" || bad "could not register the hand-off drill user"
+
+# Hub mints a code for Market — one real surface handing a session to another.
+so_code=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
+  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+  -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
+  -H "origin: https://hub.$WEB_APEX" \
+  -d "{\"redirectOrigin\":\"https://market.$WEB_APEX\"}" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
+if [ -n "$so_code" ]; then
+  ok "identity minted a hand-off code for https://market.$WEB_APEX"
+else
+  bad "identity refused to mint a hand-off code — IDENTITY_HANDOFF_ORIGINS does not name market.$WEB_APEX, and cross-surface SSO is dead"
+fi
+
+# Market redeems it, presenting the Origin a browser would send. This is the
+# assertion that proves the whole path: the code is bound to the origin it was
+# minted for and matched against the browser's own header
+# (identity/src/handoff.ts:73-86).
+so_new=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
+  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  -H 'content-type: application/json' -H "origin: https://market.$WEB_APEX" \
+  -d "{\"code\":\"${so_code:-nothing-was-minted}\"}" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
+if [ -n "$so_new" ]; then
+  ok "market.$WEB_APEX redeemed it and holds a session — A USER CAN CROSS SURFACES"
+else
+  bad "the hand-off code could not be redeemed from https://market.$WEB_APEX"
+fi
+
+# THE BINDING ITSELF. A code minted for Market must be worthless from anywhere
+# else, or the allowlist is decoration. Minted fresh: the one above is spent.
+so_code2=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
+  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+  -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
+  -d "{\"redirectOrigin\":\"https://market.$WEB_APEX\"}" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
+so_theft=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
+  --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
+  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  -H 'content-type: application/json' -H 'origin: https://not-a-cloudsforge-surface.example' \
+  -d "{\"code\":\"${so_code2:-nothing-was-minted}\"}")
+case "$so_theft" in
+  2*) bad "A HAND-OFF CODE MINTED FOR MARKET WAS REDEEMED FROM ANOTHER ORIGIN ($so_theft) — the origin binding is not enforced" ;;
+  *)  ok "the same code is refused from a foreign origin ($so_theft) — the binding holds" ;;
+esac
+
+# And an origin that is not a surface must not get a code at all.
+so_bad=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
+  --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
+  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+  -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
+  -d '{"redirectOrigin":"https://not-a-cloudsforge-surface.example"}')
+[ "$so_bad" = 403 ] && ok "an origin off the allowlist is refused a code (403)" \
+  || bad "expected 403 for an unlisted redirectOrigin, got $so_bad"
+
+# The /internal refusal, still winning over every router this work added. It is a
+# router at priority 100000 pointed at an unreachable service, so 502 is the pass.
+# Asserted on a SURFACE host, because the routers added for the fifteen bundles
+# are the ones that could have shadowed it.
+[ "$(gw "hub.$WEB_APEX" /internal/anything)" = 502 ] \
+  && ok "/internal is still refused on a surface host — nothing added here outranks it" \
+  || bad "/internal on hub.$WEB_APEX was not refused; the priority-100000 rule has been shadowed"
+
+[ "$fails" -eq 0 ] && { echo; echo "all seams verified"; exit 0; }
+echo; echo "$fails check(s) failed"; exit 1

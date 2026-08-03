@@ -11,7 +11,8 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PROJECT="${COMPOSE_PROJECT_NAME:-cfmicro}"
-FILES=(-f compose/docker-compose.telemetry.yml)
+TELEMETRY=(-f compose/docker-compose.telemetry.yml)
+FILES=("${TELEMETRY[@]}")
 [[ "${1:-}" == "--gateway" ]] && FILES+=(-f compose/docker-compose.gateway.yml)
 
 # ---------------------------------------------------------------- secrets ---
@@ -62,6 +63,24 @@ fi
 if ! docker network inspect stack_default >/dev/null 2>&1; then
   echo "warning: network 'stack_default' not found — the existing estate is not running." >&2
   echo "         The telemetry plane will come up, but the Beacon scrape will fail." >&2
+fi
+
+# ------------------------------------------------- networks, then the rest ---
+# THE TELEMETRY FILE GOES UP ON ITS OWN FIRST, and `--gateway` was broken without
+# it on any machine where the networks did not already exist.
+#
+# `docker-compose.telemetry.yml` CREATES `cf-micro-edge`, `cf-micro-app` and
+# `cf-micro-vault`. `docker-compose.gateway.yml` declares the same three as
+# `external: true`. Compose merges the top-level `networks:` map across `-f`
+# files and the LAST declaration wins — so passing both in one invocation turned
+# the creator into an attacher, and the command died with "network cf-micro-app
+# declared as external, but could not be found".
+#
+# The gateway file's header has always said "the telemetry file must be up
+# first: it creates the three networks this one attaches to as external". This is
+# what "first" has to mean: a separate invocation, not an earlier `-f`.
+if [[ "${1:-}" == "--gateway" ]]; then
+  docker compose -p "$PROJECT" "${TELEMETRY[@]}" up -d
 fi
 
 docker compose -p "$PROJECT" "${FILES[@]}" up -d --remove-orphans
