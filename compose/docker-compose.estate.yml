@@ -643,6 +643,61 @@ services:
     healthcheck: *healthcheck
 
   # ------------------------------------------------------------------- studio
+  #
+  # ── THE ASSET ROOT, AND WHY IT NEEDED A CONTAINER OF ITS OWN ──────────────────
+  #
+  # `STUDIO_ASSET_ROOT` was UNSET here, and `studio/src/env.ts:322` defaults it to
+  # `./out` — resolved against WORKDIR, so `/app/out`. `/app` is root-owned
+  # (`drwxr-xr-x root root`, every layer COPYed as root) and the image drops to
+  # `USER node` (uid 1000). So the first thing every generation did was
+  #
+  #     EACCES: permission denied, mkdir '/app/out'
+  #
+  # for EVERY kind, flux and placeholder alike — while `/readyz` answered 200 and
+  # compose reported the container `healthy`. Nothing in the service probes the
+  # directory it exists to write, so the environment held a studio that could not
+  # studio and said nothing. Driven, not read: a `mark` generation through
+  # `POST /v1/brand-kits/:id/generate` returned that exact string in
+  # `job.errorDetail`. micro-studio should refuse to be ready in this state; that
+  # is its change to make and is filed rather than done here.
+  #
+  # The image's own comment states the contract this satisfies: the asset root
+  # "must be a mounted volume THE DEPLOY MAKES WRITABLE — it is deliberately NOT
+  # baked into the image, because an asset written into a container layer is an
+  # asset lost on the next deploy" (studio/Dockerfile:68).
+  #
+  # ── WHY THE INIT CONTAINER IS NOT CEREMONY ────────────────────────────────────
+  #
+  # Naming a volume is NOT enough, and both obvious fixes reproduce the bug
+  # exactly. Docker creates a fresh named volume's mount point root:root unless
+  # the image already has that path with other ownership, so
+  # `studio-assets:/assets` and `studio-assets:/home/node/assets` BOTH land
+  # `drwxr-xr-x root root` and still EACCES as uid 1000. Both were run against
+  # this image before this block was written.
+  #
+  # A host bind mount appears to work — and only here. Docker Desktop maps
+  # ownership across virtiofs so the write lands whoever owns the host directory;
+  # on Linux the same YAML gives a genuinely root-owned directory and the
+  # original failure returns. A fix that is true on one operator's laptop and
+  # false on the CI runner is the estate's signature defect wearing a fix's
+  # clothes, so it is not used.
+  #
+  # One root one-shot that chowns the volume to 1000:1000 is portable, is the
+  # standard pattern for exactly this, and keeps `USER node` intact — the
+  # alternative, running studio as root, would trade a visible failure for a
+  # permanently weaker container.
+  studio-assets-init:
+    image: busybox:1.37
+    # The ONLY container here that runs as root, and it runs for milliseconds and
+    # then exits. It holds no credential, opens no socket and reaches no network.
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - studio-assets:/assets
+    # 1000:1000 is `node` in node:22-slim, which is what studio's final stage
+    # selects. Idempotent: re-running it on a populated volume is a no-op.
+    command: ["sh", "-c", "mkdir -p /assets && chown -R 1000:1000 /assets && chmod 755 /assets"]
+
   studio-migrate:
     <<: *migrate-defaults
     build:
@@ -665,10 +720,23 @@ services:
       <<: [*common-env, *identity-trust]
       STUDIO_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/studio
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # The variable this whole block exists for. See the header above.
+      STUDIO_ASSET_ROOT: /var/lib/studio/assets
+      # STUDIO_ASSET_BASE_URL is deliberately left unset: no HTTP server in this
+      # environment serves that directory, so a base URL here would mint
+      # `storageUrl`s that look fetchable and 404 — a zero wearing a status code.
+      # Unset, `assets.ts:101` stores a `file://` URL, which is honest about where
+      # the bytes actually are. Read them with
+      #   docker compose -f compose/docker-compose.estate.yml run --rm \
+      #     -v studio-assets:/a busybox:1.37 find /a -type f
       INSTANCE_ID: studio-estate
+    volumes:
+      - studio-assets:/var/lib/studio/assets
     ports:
       - "127.0.0.1:4111:4000"
     depends_on:
+      studio-assets-init:
+        condition: service_completed_successfully
       studio-migrate:
         condition: service_completed_successfully
       identity:
@@ -1845,3 +1913,19 @@ services:
     # failure the nginx block is written to avoid.
     volumes:
       - ${CF_WORLD_ASSETS:-./estate/world-assets}:/usr/share/nginx/html/world-assets:ro
+
+# ── named volumes ──────────────────────────────────────────────────────────────
+#
+# The first one in this file, and the reason is worth stating: everything else
+# here is deliberately ephemeral — postgres included, so that `down -v` and a
+# fresh `up` is always a clean-room run of every migrator. Generated assets are
+# the exception. They cost money to make (a FLUX.2-pro call at
+# STUDIO_IMAGE_PRICE_USD each) and studio's rows point at them with
+# `on delete restrict`, so bytes that vanish on restart leave the database
+# referencing files that no longer exist. That is the state the content-addressed
+# store is built to avoid.
+#
+# NOTE FOR ANYONE CLEANING UP: this volume is NOT ephemeral scratch. `docker
+# compose down -v` destroys paid artefacts and orphans every `assets` row.
+volumes:
+  studio-assets:
