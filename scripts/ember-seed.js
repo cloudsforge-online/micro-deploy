@@ -301,6 +301,33 @@ async function custodyTotal() {
 }
 
 // ── main ─────────────────────────────────────────────────────────────────────
+/**
+ * The faucet's funding address, read from the file the bootstrap writes it to.
+ *
+ * `estate-bootstrap.sh` §5e appends `FAUCET_FUNDING_ADDRESS=0x…` to
+ * `compose/estate/tokens.env` — the same generated file the compose `--env-file`
+ * reads — so this script and the container get the value from one place. Absent
+ * is a supported state and it means "the bootstrap has not run yet", which the
+ * caller reports rather than treating as an error: a chain seeder that refused
+ * to run because a faucet was unconfigured would block the whole of `up`.
+ */
+function readFaucetAddress() {
+  const file = path.join(process.cwd(), 'compose', 'estate', 'tokens.env');
+  try {
+    const line = fs
+      .readFileSync(file, 'utf8')
+      .split('\n')
+      .reverse()
+      .find((l) => l.startsWith('FAUCET_FUNDING_ADDRESS='));
+    const value = line ? line.slice('FAUCET_FUNDING_ADDRESS='.length).trim() : '';
+    // Validated rather than trusted: a malformed value here would be sent real
+    // coin, and `transfer` would encode whatever it was handed.
+    return /^0x[0-9a-fA-F]{40}$/.test(value) ? value : '';
+  } catch {
+    return '';
+  }
+}
+
 async function main() {
   const statusOnly = process.argv.includes('--status');
 
@@ -349,6 +376,53 @@ async function main() {
       for (const t of short) {
         const hash = await transfer(key, t.address, t.want - t.have, chainId);
         ok(`funded ${t.address} with ${ember(t.want - t.have)} EMBER (${hash.slice(0, 18)}…)`);
+      }
+    }
+
+    // ── the faucet's float ─────────────────────────────────────────────────
+    //
+    // WHY IT IS HERE AND NOT IN THE BLOCK ABOVE, WHICH IS THE WHOLE POINT.
+    //
+    // `micro-faucet` holds no key: it asks custody to sign out of a treasury-
+    // purpose address minted for it by `estate-bootstrap.sh` §5e. That address
+    // starts empty, and an empty faucet refuses every drip at the balance check
+    // while reporting a perfectly healthy `/readyz` — the estate's usual failure
+    // shape, and the reason a container answering `/livez` proves nothing.
+    //
+    // **IT MUST NOT BE REGISTERED AS A CUSTODY ADDRESS WITH THE INDEXER.** The
+    // block below registers the seed set so `custodyTotal` can sum it, and the
+    // chain-backing check then requires that sum to equal the LEDGER's custody
+    // total to the wei — the "clean, drift exactly 0" assertion. A faucet float
+    // has no ledger position behind it: it is coin the platform is giving away,
+    // not coin it owes anybody. Watching it would add its balance to one side of
+    // that comparison and nothing to the other, and every reconciliation from
+    // then on would record a non-zero drift and FREEZE EMBER — an invented
+    // insolvency, caused by the seeder, in the one check this estate leans on
+    // hardest. So it is funded here and deliberately not watched.
+    //
+    // Idempotent by target balance, exactly like the block above: a re-run tops
+    // up a faucet that has paid drips out and does nothing to a full one.
+    const faucetAddr = process.env.FAUCET_FUNDING_ADDRESS || readFaucetAddress();
+    if (!faucetAddr) {
+      note('no FAUCET_FUNDING_ADDRESS — run ./scripts/estate-bootstrap.sh to mint one; the faucet cannot pay until then');
+    } else {
+      // 200 EMBER: twenty drips at the configured 10, comfortably under the
+      // 1000-EMBER rolling budget the faucet enforces on itself, and small
+      // enough that a re-seed does not drain a laptop's miner. The faucet's own
+      // reserve stops it at 1 EMBER, so this is 199 spendable.
+      const want = 200n * WEI;
+      const have = hexToBig(await rpc('eth_getBalance', [faucetAddr, 'latest']));
+      if (have >= want) {
+        ok(`the faucet holds ${ember(have)} EMBER — already funded, nothing sent`);
+      } else {
+        const key = ownerKey();
+        const balance = hexToBig(await rpc('eth_getBalance', [key.address, 'latest']));
+        if (balance < want - have + WEI) {
+          bad(`the miner holds ${ember(balance)} EMBER and the faucet needs ${ember(want - have)} — let it mine longer`);
+        } else {
+          const hash = await transfer(key, faucetAddr, want - have, chainId);
+          ok(`funded the faucet ${faucetAddr} with ${ember(want - have)} EMBER (${hash.slice(0, 18)}…)`);
+        }
       }
     }
 

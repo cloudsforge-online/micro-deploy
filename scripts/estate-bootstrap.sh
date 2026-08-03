@@ -59,6 +59,11 @@ cd "$(dirname "$0")/.." || exit 1
 
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 IDENTITY=${IDENTITY:-http://127.0.0.1:4100}
+# Section 5e's operator call. 4107 is DERIVED, not chosen: index 7 in
+# `deployableRepos()`, the same rule every host port in the compose file follows,
+# and `make check-web` recomputes it. Reached on loopback rather than through the
+# gateway because this script runs before the gateway is guaranteed to be up.
+CUSTODY=${CUSTODY:-http://127.0.0.1:4107}
 TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 
 # A throwaway operator for a throwaway environment. Overridable so a developer
@@ -355,6 +360,7 @@ COMMUNITY_SERVICE_CREDENTIAL|community|
 ADMIN_API_SERVICE_TOKEN|admin-api|
 TESSERA_SERVICE_CREDENTIAL|tessera|
 EMBERKIN_SERVICE_TOKEN|emberkin|
+FAUCET_CUSTODY_TOKEN|faucet|
 "
 
 # The grants, read from the compose file the estate actually runs with. `python3`
@@ -675,6 +681,101 @@ if [ -n "$analytics_topics" ]; then
   subscribe_all analytics http://analytics:4000/ingest $analytics_topics
 else
   bad "could not read EVENT_TOPICS from analytics' catalogue — analytics stays unsubscribed"
+fi
+
+echo "── 5e. the faucet's own custody address — minted once, then reused ──────"
+#
+# ── WHY THIS IS A BOOTSTRAP STEP AND NOT A COMPOSE VALUE ─────────────────────
+#
+# `micro-faucet` holds NO key. It sends an unsigned legacy transfer to
+# `micro-custody` and receives bytes back (`faucet/src/custodyclient.ts`), so what
+# the deploy has to supply is not a secret but an ADDRESS — plus the two fields
+# custody binds it to. That address cannot be written into the compose file
+# because it does not exist until custody derives it, and it cannot be derived
+# here because `POST /v1/addresses` takes the next BIP-44 index off a seed whose
+# state lives in custody's database.
+#
+# ── IT MUST BE THE FAUCET'S OWN, AND NOT THE PINNED TREASURY ─────────────────
+#
+# custody's pinned `(ember, testnet)` treasury is SETTLEMENT'S. Signing the
+# faucet's drips out of it would put two services on one nonce, which
+# `settlement/src/worker.ts:8-18` exists because is how a payment is permanently
+# lost. So this mints a SECOND treasury-purpose address. That is allowed and is
+# not a second pin: `getTreasuryPin` is consulted only for `purpose: 'deposit'`
+# (`custody/src/keys.ts:307`), so the pin plays no part in signing a transfer.
+#
+# ── AND IT MUST NOT MINT A NEW ONE EVERY RUN ────────────────────────────────
+#
+# `POST /v1/addresses` is NOT idempotent — every call derives a fresh index and
+# returns a different address. This script runs several times an hour, so minting
+# unconditionally would strand the faucet's balance on a previous address after
+# every bootstrap and leave a trail of funded keys nothing can spend. The lookup
+# below is therefore the primary path and the mint is the exception: an address
+# is REUSED when one already carries this (userId, orderId) binding.
+#
+# The binding fields are read out of the compose file rather than repeated here.
+# custody compares seven identity fields character for character and its 403
+# deliberately does not name the one that disagreed (`custody/src/keys.ts:277`),
+# so a second hand-typed copy of `faucet-estate-treasury-1` would be a 403 that
+# cannot be debugged from any response.
+faucet_user=$(grep -m1 'FAUCET_CUSTODY_USER_ID:' "$COMPOSE" | sed 's/.*: *//')
+faucet_order=$(grep -m1 'FAUCET_CUSTODY_ORDER_ID:' "$COMPOSE" | sed 's/.*: *//')
+if [ -z "$faucet_user" ] || [ -z "$faucet_order" ]; then
+  bad "could not read the faucet's custody binding out of $COMPOSE — the faucet cannot sign"
+else
+  # The operator surface, which serves userId and orderId. The SIGNING surface
+  # deliberately does not (`GET /v1/addresses/:address` publishes existence and
+  # placement only), because publishing the binding under the same credential
+  # that uses it would make the /sign check circular.
+  faucet_addr=$(curl -s "$CUSTODY/v1/admin/keys" -H "authorization: Bearer $utok" | \
+    USER_ID="$faucet_user" ORDER_ID="$faucet_order" python3 -c "
+import sys, json, os
+try: keys = json.load(sys.stdin).get('keys', [])
+except Exception: keys = []
+for k in keys:
+    if (k.get('userId') == os.environ['USER_ID'] and k.get('orderId') == os.environ['ORDER_ID']
+            and k.get('purpose') == 'treasury' and k.get('chain') == 'ember'
+            and k.get('network') == 'testnet'):
+        print(k['address']); break" 2>/dev/null)
+
+  if [ -n "$faucet_addr" ]; then
+    ok "the faucet already has a treasury address: $faucet_addr"
+  else
+    # `custody:address:create` is minted for this one call rather than taken from
+    # the faucet's own grant, which is `custody:sign:treasury` and nothing else.
+    # The faucet does not provision its own key and must not be able to: an
+    # address-creating faucet is a faucet that can mint itself a fresh unfunded
+    # signer and report a balance problem as a configuration one.
+    op_scopes='["custody:address:create"]'
+    op_tok=$(curl -s -X POST "$IDENTITY/service-tokens" \
+      -H "authorization: Bearer $utok" -H 'content-type: application/json' \
+      -d "{\"service\":\"wallet\",\"scopes\":$op_scopes}" | jsonfield token)
+    if [ -z "$op_tok" ]; then
+      bad "identity would not mint custody:address:create — the faucet gets no address"
+    else
+      created=$(curl -s -X POST "$CUSTODY/v1/addresses" \
+        -H "authorization: Bearer $op_tok" -H 'content-type: application/json' \
+        -d "{\"chain\":\"ember\",\"network\":\"testnet\",\"purpose\":\"treasury\",\"scheme\":\"hd_bip44\",\"userId\":\"$faucet_user\",\"orderId\":\"$faucet_order\"}")
+      faucet_addr=$(printf '%s' "$created" | python3 -c "
+import sys, json
+try: print(json.load(sys.stdin).get('key', {}).get('address', ''))
+except Exception: print('')" 2>/dev/null)
+      if [ -n "$faucet_addr" ]; then
+        ok "minted the faucet a treasury-purpose address: $faucet_addr"
+      else
+        bad "custody would not mint the faucet an address: $(printf '%s' "$created" | head -c 200)"
+      fi
+    fi
+  fi
+
+  # Appended to the tokens file so section 6's `--env-file` hands it to the
+  # container. It is NOT a secret — the address is public on chain the moment the
+  # first drip lands, and `GET /v1/faucet` publishes it deliberately so an
+  # operator can top the faucet up — but it belongs in the same generated file as
+  # the tokens because it is generated by the same run and consumed the same way.
+  if [ -n "$faucet_addr" ]; then
+    echo "FAUCET_FUNDING_ADDRESS=$faucet_addr" >> "$TOKENS_FILE"
+  fi
 fi
 
 echo "── 6. hand the tokens to the services that need them ────────────────────"

@@ -116,3 +116,19 @@ CREATE DATABASE emberkin;
 -- was made without the service whose job is to judge it.
 CREATE DATABASE beacon;
 
+-- The testnet faucet. It holds NO key — `faucet/src/custodyclient.ts` sends an
+-- unsigned legacy transfer to micro-custody and receives bytes — so what lives in
+-- this database is dispense state and the rate-limit ledger: `dispenses` with the
+-- two partial unique indexes that make two in-flight transactions on one nonce
+-- impossible, and the budget CHECK. Those are exactly the objects the migrator
+-- must create BEFORE the service boots, which is why the one-shot is not
+-- optional here in a way it is merely tidy elsewhere.
+CREATE DATABASE faucet;
+
+-- Prediction markets. The last of the five, and the one with a frontend
+-- (`foresight-web`, `foresight-admin-web`) that this estate has been serving
+-- against nothing at all. It deploys contracts to the EMBER testnet through
+-- custody's `deployer` purpose, so this database holds the market registry, the
+-- proposal queue and the settlement record for each.
+CREATE DATABASE foresight;
+

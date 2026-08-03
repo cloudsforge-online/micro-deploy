@@ -84,7 +84,7 @@ GW_ESTATE := -f compose/docker-compose.telemetry.yml \
              -f compose/docker-compose.gateway.yml \
              -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web estate-gateway
+.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
@@ -107,6 +107,19 @@ estate-down: ## Stop the environment. Add VOLUMES=1 to delete its databases too
 
 check-gateway: ## Compare the public route map against what the services serve
 	@python3 scripts/gateway-check.py
+
+check-surfaces: ## Every registry surface has a gateway route, and every route a surface
+	@# The drift this ends was live three times in one night: `worlds-api` (a
+	@# surface worlds-web resolves its whole API against, with no router),
+	@# `beacon` (service deployed, router never written), and both title APIs.
+	@# Each was introduced by an edit to a DIFFERENT file from the one that was
+	@# wrong, which is exactly why a comment could never have caught it.
+	@python3 scripts/surface-routes.py
+
+check-cert: ## Mint the gateway's local CA and leaf, and verify the chain
+	@# The estate was only ever verified with `curl -k` and `ignoreHTTPSErrors`,
+	@# so its transport had never been exercised the way a person exercises it.
+	@./scripts/gateway-cert.sh
 
 check-web: ## Recompute every host port from micro-org's registry and compare
 	@# The ports here are POSITIONAL — `4100 + index in deployableRepos()` — so a

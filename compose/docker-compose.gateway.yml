@@ -142,6 +142,21 @@ services:
       # mount read-only.
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - ../gateway/dynamic:/etc/traefik/dynamic:ro
+      # The estate's own CA and leaf, minted by `scripts/gateway-cert.sh` and
+      # referenced by `gateway/dynamic/tls.yml`. Read-only, and never committed:
+      # `.gitignore` refuses `gateway/certs/`.
+      #
+      # WITHOUT THIS MOUNT Traefik serves `CN=TRAEFIK DEFAULT CERT`, and the
+      # estate is unusable in a real browser while every verifier in this
+      # repository reports green — `curl -k` and `ignoreHTTPSErrors: true` were
+      # the only two clients it had ever had. A page loads after a click-through
+      # and then every CROSS-ORIGIN call fails, because no browser offers an
+      # interstitial for an XHR. See tls.yml for the whole diagnosis.
+      #
+      # Docker creates the host directory if it is absent rather than failing, so
+      # a stack brought up without the certificate script degrades to the old
+      # self-signed default instead of refusing to start.
+      - ../gateway/certs:/etc/traefik/certs:ro
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s

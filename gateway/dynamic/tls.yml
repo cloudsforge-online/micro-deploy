@@ -1,0 +1,56 @@
+# The certificate the gateway actually serves.
+#
+# ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
+#
+# Without it Traefik terminates every one of this estate's twenty-one hostnames
+# with its BUILT-IN SELF-SIGNED DEFAULT — `CN=TRAEFIK DEFAULT CERT`, issued by
+# itself, trusted by nothing. That is not a cosmetic warning. It is why the estate
+# was unusable in a real browser while reporting 183 green assertions and sixteen
+# green browser journeys, and the reason is worth stating exactly once:
+#
+#   **every verification path in this repository had certificate checking turned
+#   off.** `estate-verify.sh` used `curl -k`. `estate-browser.sh` passed
+#   `ignoreHTTPSErrors: true`. `docker-compose.estate-gateway.yml` wrote the
+#   trade-off down and called it correct. So the transport was the one layer of
+#   this estate that had never been exercised the way a person exercises it, and
+#   it was broken.
+#
+# A person's browser fails differently from `curl -k`, and worse. Navigating to
+# `hub.<apex>` shows an interstitial that can be clicked through — so the PAGE
+# loads and the estate looks fine. The sign-in form then POSTs cross-origin to
+# `nimbus.<apex>`, a hostname no interstitial has ever been offered for, **and no
+# browser offers one for an XHR**. Chrome refuses it with
+# `net::ERR_CERT_AUTHORITY_INVALID`, `fetch` rejects with `TypeError: Failed to
+# fetch`, and every frontend maps that to "Cannot reach the server. Check your
+# connection and try again." A certificate fault wearing a network fault's words.
+#
+# ── WHAT IS SERVED, AND HOW IT GETS HERE ───────────────────────────────────────
+#
+# `scripts/gateway-cert.sh` mints a local CA and one leaf covering `<apex>` and
+# `*.<apex>`, into `gateway/certs/`, which `.gitignore` refuses — the CA's private
+# key is a real key and must never reach the fork network. `estate-up.sh` runs it
+# before the gateway starts, so the files below exist by the time Traefik reads
+# this. The owner trusts the CA once, with the command that script prints, and
+# every host under the apex is clean in one step, including ones added later.
+#
+# `defaultCertificate` rather than a `certificates:` list with SNI entries: one
+# wildcard leaf answers for every hostname this gateway serves, and enumerating
+# them here would be the sixteenth copy of the registry — the drift this estate
+# has paid for four times.
+#
+# ── IF THE FILES ARE ABSENT ────────────────────────────────────────────────────
+#
+# Traefik logs `unable to add a certificate to the store` and falls back to its
+# self-signed default, i.e. exactly the previous behaviour. It does NOT invalidate
+# the directory the way a template or YAML error does — that all-or-nothing
+# failure is a PARSE failure, and this file parses whether or not the paths
+# resolve. So a stack brought up without running the certificate script degrades
+# to where it was rather than losing `policy.yml`'s `/internal` refusal with it.
+# `estate-verify.sh` asserts the good case with `--cacert` and no `-k`, which is
+# an assertion that can fail.
+tls:
+  stores:
+    default:
+      defaultCertificate:
+        certFile: /etc/traefik/certs/estate.crt
+        keyFile: /etc/traefik/certs/estate.key

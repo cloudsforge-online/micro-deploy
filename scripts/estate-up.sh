@@ -100,6 +100,72 @@ if [ "$gateway_apex" != "$CF_WEB_APEX" ]; then
 fi
 echo "  apex agrees in both files: $CF_WEB_APEX"
 
+# ── PREFLIGHT 2: CF_API_HOST must live UNDER that apex ────────────────────────
+#
+# Defect 1 above has a quieter sibling and it was live in this estate. The
+# variable was DEFINED — so no `Host(``)` and no silence to look for — and set to
+# `api.cloudsforge.online` while the apex was `cloudsforge.localtest.me`. Every
+# router in `public-api.yml` was therefore live on a hostname nothing in this
+# estate resolves, and `api.<apex>` — a surface the registry DECLARES, which the
+# SDK and the developer portal both compose from it — answered 404. A route map
+# that had "never once loaded" for one reason had stopped loading again for
+# another.
+#
+# Checked rather than overwritten: a real deployment may genuinely serve its
+# public API outside its web apex, and this script has no business rewriting a
+# committed env file. It refuses to start and says which line to change.
+gateway_api_host=$(grep -E '^CF_API_HOST=' "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
+if [ -z "$gateway_api_host" ]; then
+  echo "FATAL: $TRAEFIK_ENV defines no CF_API_HOST." >&2
+  echo "       Every router in gateway/dynamic/public-api.yml would render Host(\`\`) and match" >&2
+  echo "       no request ever sent, with nothing in Traefik's log. Add: CF_API_HOST=api.$CF_WEB_APEX" >&2
+  exit 1
+fi
+case "$gateway_api_host" in
+  *".$CF_WEB_APEX")
+    echo "  public API host is under the apex: $gateway_api_host" ;;
+  *)
+    echo "FATAL: CF_API_HOST is not under CF_WEB_APEX." >&2
+    echo "         CF_API_HOST : $gateway_api_host" >&2
+    echo "         CF_WEB_APEX : $CF_WEB_APEX" >&2
+    echo "       The whole public API would be routed on a host this estate does not resolve," >&2
+    echo "       and https://api.$CF_WEB_APEX — which the registry declares and every bundle" >&2
+    echo "       composes — would 404 at the gateway. Set: CF_API_HOST=api.$CF_WEB_APEX" >&2
+    exit 1 ;;
+esac
+
+# ── PREFLIGHT 3: the registry and the gateway must agree about what exists ────
+#
+# `scripts/surface-routes.py` compares `ui/packages/ui/src/surfaces.ts` against
+# the routers in `gateway/dynamic/`. It is here rather than only in CI because
+# the failure it catches is invisible from every server-side probe: a surface
+# with no router serves its bundle perfectly and answers no API call, which is a
+# green estate and a broken product. Three such gaps were live at once the first
+# time the estate was opened in a browser — `worlds-api`, `beacon`, and both
+# title APIs — and each had been introduced by an edit to a DIFFERENT file.
+#
+# Not fatal. It reads sibling checkouts, and a missing one must not stop an
+# estate from starting; it is loud, and `make check-surfaces` is the gate.
+if ! python3 scripts/surface-routes.py; then
+  echo "  !! the surface registry and the gateway disagree — surfaces above will not answer"
+fi
+
+# ── PREFLIGHT 4: a certificate a BROWSER will accept ──────────────────────────
+#
+# Before this, the gateway served Traefik's self-signed default and every
+# verification path in this repository turned certificate checking off to reach
+# it — `curl -k` in estate-verify, `ignoreHTTPSErrors: true` in estate-browser.
+# So the transport was the one layer never exercised the way a person exercises
+# it, and it was broken: a page loads after a click-through, and then every
+# CROSS-ORIGIN call fails, because no browser offers an interstitial for an XHR.
+# Sign-in reported "Cannot reach the server" with the whole estate healthy.
+#
+# Idempotent and unattended: it mints nothing that already exists and never
+# prompts. The one step that needs a password — trusting the CA — is printed.
+echo
+echo "── 0a. the gateway's certificate, so a real browser can use this estate ─"
+./scripts/gateway-cert.sh || exit 1
+
 
 # EVERY SERVICE HERE BUILDS FROM A WORKING TREE, not from a published image, so
 # the environment is only ever as green as every checkout on this machine — and a

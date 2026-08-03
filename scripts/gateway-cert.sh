@@ -1,0 +1,244 @@
+#!/usr/bin/env bash
+# A local certificate authority and one wildcard leaf, so a REAL BROWSER can use this estate.
+#
+#   cd deploy && ./scripts/gateway-cert.sh          # idempotent; regenerates only what is missing
+#   cd deploy && ./scripts/gateway-cert.sh --force  # start again
+#
+# ── WHY THIS EXISTS: THE ESTATE WAS ONLY EVER VERIFIED IN A MODE NO PERSON HAS ─
+#
+# The gateway terminated TLS on **Traefik's built-in self-signed default** —
+# `CN=TRAEFIK DEFAULT CERT`, an authority nothing trusts. Every verification path
+# in this repository turned certificate checking OFF to talk to it:
+#
+#   * `scripts/estate-verify.sh`  — `curl -k`, 183 times
+#   * `scripts/estate-browser.sh` — `ignoreHTTPSErrors: true`
+#   * `compose/docker-compose.estate-gateway.yml` — wrote the trade-off down and
+#     called it "correct for loopback": "A browser will warn; `playwright-core`
+#     takes `ignoreHTTPSErrors`, and `curl` takes `-k`".
+#
+# That is this estate's own named defect class — **a check that cannot fail** —
+# in the one place it hurts most. `-k` does not merely tolerate a warning: it
+# makes the entire transport layer untestable, so the estate reported 183 green
+# assertions and 16 green browser journeys while being unusable in Chrome.
+#
+# ── WHAT ACTUALLY BREAKS, AND WHY IT LOOKS LIKE A NETWORK FAULT ───────────────
+#
+# A person opens `https://hub.<apex>`, gets the interstitial, clicks through. The
+# PAGE loads, so the estate looks fine. Then the sign-in form posts to
+# `https://nimbus.<apex>/auth/login` — a **different hostname**, cross-origin, and
+# one the person has never been shown an interstitial for. **A browser never
+# offers an interstitial for a subresource or an XHR.** Chrome fails the request
+# outright with `net::ERR_CERT_AUTHORITY_INVALID`, `fetch` rejects with
+# `TypeError: Failed to fetch`, and every frontend in this estate maps that to
+# one string:
+#
+#     "Cannot reach the server. Check your connection and try again."
+#
+# Which is what the owner saw, on sign-in, on the Forge Worlds registry, and on
+# every cross-origin call in the estate. It reads as a connection failure and it
+# is a certificate failure. Reproduced with headless Chromium against the running
+# gateway, twice — `ignoreHTTPSErrors: true` navigates fine, `false` fails with
+# `net::ERR_CERT_AUTHORITY_INVALID` before a byte of HTML arrives.
+#
+# ── WHY A CA, AND NOT JUST A SELF-SIGNED WILDCARD ─────────────────────────────
+#
+# A browser exception is keyed PER HOST. This estate serves twenty-one hostnames
+# under one apex and a single page talks to four of them, so a self-signed leaf
+# would need twenty-one separate click-throughs — and the cross-origin ones can
+# never be clicked at all, because the interstitial is never offered. One CA
+# trusted once covers every host under the apex, today and for every host added
+# later, with no further interaction.
+#
+# The CA is generated HERE, on this machine, and its private key never leaves
+# `gateway/certs/` — which `.gitignore` refuses. It is a development CA for a
+# development apex and it must never be installed anywhere that matters; the
+# apex it signs, `*.localtest.me`, is a public wildcard that resolves to
+# 127.0.0.1, so a leaf under it can only ever address loopback.
+#
+# ── mkcert IS NOT USED, DELIBERATELY ──────────────────────────────────────────
+#
+# `mkcert` does this well and is not installed here, and installing a tool at 3am
+# to obtain four PEM files that `openssl` — already present on every machine that
+# can run Docker — produces in one pass is a dependency bought for nothing. What
+# mkcert adds over this script is `-install`, which writes to the system trust
+# store and needs a password; that step is the owner's and is printed, not run.
+#
+# ── WHAT IS AUTOMATED AND WHAT IS NOT ─────────────────────────────────────────
+#
+# Generating and serving the certificate is automated, and it is most of the
+# value: `curl --cacert` now works, so `estate-verify.sh` can make an assertion
+# about TLS that is CAPABLE OF FAILING, and the browser tier can drop
+# `ignoreHTTPSErrors`. Trusting the CA in the login keychain is NOT automated —
+# it needs an interactive administrator password, and a script that asks for one
+# unattended is a script that gets run with `sudo` out of habit. The one command
+# is printed at the end.
+set -uo pipefail
+
+cd "$(dirname "$0")/.." || exit 1
+
+APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
+CERTS=${CF_CERT_DIR:-gateway/certs}
+FORCE=0
+[ "${1:-}" = "--force" ] && FORCE=1
+
+# The CA outlives leaves: a re-run for a new apex must not invalidate a CA the
+# owner has already trusted, or the trust step would have to be repeated every
+# time. 10 years on the CA, 825 days on the leaf — Apple refuses a leaf longer
+# than 825 days outright, and a certificate the platform rejects for its LIFETIME
+# fails with the same opaque error as one signed by an unknown authority.
+CA_DAYS=3650
+LEAF_DAYS=825
+
+if ! command -v openssl >/dev/null 2>&1; then
+  echo "FATAL: openssl is not on PATH. It is what generates the certificate." >&2
+  exit 1
+fi
+
+mkdir -p "$CERTS" || exit 1
+chmod 700 "$CERTS"
+
+ca_key="$CERTS/ca.key"
+ca_crt="$CERTS/ca.crt"
+leaf_key="$CERTS/estate.key"
+leaf_crt="$CERTS/estate.crt"
+
+if [ "$FORCE" = 1 ]; then
+  rm -f "$ca_key" "$ca_crt" "$leaf_key" "$leaf_crt"
+fi
+
+# ── the authority ─────────────────────────────────────────────────────────────
+if [ ! -s "$ca_crt" ] || [ ! -s "$ca_key" ]; then
+  echo "  generating a local development CA (${CA_DAYS}d)"
+  # `-nodes` deliberately: an encrypted CA key would prompt for a passphrase
+  # inside `estate-up.sh`, which runs unattended. The key's protection is the
+  # 0600 mode and the .gitignore rule, both asserted by estate-verify.
+  if ! openssl req -x509 -nodes -newkey rsa:4096 -sha256 -days "$CA_DAYS" \
+      -keyout "$ca_key" -out "$ca_crt" \
+      -subj "/CN=CloudsForge Estate Local CA/O=CloudsForge (development only)" \
+      -addext "basicConstraints=critical,CA:TRUE,pathlen:0" \
+      -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/tmp/gateway-cert-ca.log; then
+    echo "FATAL: could not generate the CA:" >&2
+    tail -5 /tmp/gateway-cert-ca.log >&2
+    exit 1
+  fi
+  chmod 600 "$ca_key"
+  chmod 644 "$ca_crt"
+else
+  echo "  CA already present — kept, because the owner may have trusted it already"
+fi
+
+# ── the leaf ──────────────────────────────────────────────────────────────────
+#
+# A leaf is regenerated whenever it is missing OR does not cover the current
+# apex. That second condition is the one that matters: `CF_WEB_APEX` is
+# overridable, and a leaf for the old apex would serve a certificate whose SAN
+# does not match the host — `ERR_CERT_COMMON_NAME_INVALID`, a DIFFERENT opaque
+# browser error from the one this script exists to remove, and one that
+# `--cacert` alone would not catch either.
+needs_leaf=1
+if [ -s "$leaf_crt" ] && [ -s "$leaf_key" ] && [ "$FORCE" = 0 ]; then
+  if openssl x509 -in "$leaf_crt" -noout -text 2>/dev/null | grep -q "DNS:\*\.$APEX"; then
+    # Also require it to still be valid for a week, so a stack that has been up
+    # for two years does not hand a browser an expired certificate.
+    if openssl x509 -in "$leaf_crt" -noout -checkend 604800 >/dev/null 2>&1; then
+      needs_leaf=0
+      echo "  leaf certificate already covers *.$APEX and is not expiring"
+    else
+      echo "  leaf certificate expires within a week — regenerating"
+    fi
+  else
+    echo "  leaf certificate does not cover *.$APEX — regenerating"
+  fi
+fi
+
+if [ "$needs_leaf" = 1 ]; then
+  echo "  generating a leaf for $APEX, *.$APEX (${LEAF_DAYS}d)"
+  ext=$(mktemp)
+  # ── THE SAN LIST, AND THE ONE ENTRY THAT IS NOT OBVIOUS ─────────────────────
+  #
+  # `*.$APEX` matches ONE label only — `hub.<apex>` yes, `a.b.<apex>` no — which
+  # is exactly the shape `cloudsforgeHosts()` composes, so one wildcard covers
+  # every surface in the registry including ones not written yet. The bare apex
+  # is listed SEPARATELY because a wildcard does not match its own parent: `site`
+  # is served at `<apex>` with an empty subdomain (ui/packages/ui/src/surfaces.ts,
+  # the `site` row), and a certificate for `*.<apex>` alone would fail on the
+  # front door and nowhere else — the hardest kind of partial failure to read.
+  #
+  # `localhost` and `127.0.0.1` are there because the loopback ports
+  # (9095/9096/9097) are addressed that way by `make config` and by anything
+  # driving the gateway without DNS.
+  cat > "$ext" <<EXT
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:$APEX,DNS:*.$APEX,DNS:localhost,IP:127.0.0.1,IP:::1
+EXT
+  csr=$(mktemp)
+  if ! openssl req -nodes -newkey rsa:2048 -sha256 \
+        -keyout "$leaf_key" -out "$csr" -subj "/CN=$APEX" 2>/tmp/gateway-cert-leaf.log \
+     || ! openssl x509 -req -in "$csr" -CA "$ca_crt" -CAkey "$ca_key" -CAcreateserial \
+        -out "$leaf_crt" -days "$LEAF_DAYS" -sha256 -extfile "$ext" 2>>/tmp/gateway-cert-leaf.log; then
+    echo "FATAL: could not generate the leaf certificate:" >&2
+    tail -5 /tmp/gateway-cert-leaf.log >&2
+    rm -f "$ext" "$csr"
+    exit 1
+  fi
+  rm -f "$ext" "$csr"
+  chmod 600 "$leaf_key"
+  chmod 644 "$leaf_crt"
+fi
+
+# ── THE ASSERTION, BECAUSE A CERTIFICATE THAT DOES NOT VERIFY IS THE WHOLE BUG ─
+#
+# `openssl verify` against the CA that signed it. This is cheap and it is the
+# only step here that can catch a leaf built from a stale CA — the state a
+# `--force` on one file and not the other leaves behind, which produces a
+# certificate that looks perfect in every field and chains to nothing.
+if ! openssl verify -CAfile "$ca_crt" "$leaf_crt" >/tmp/gateway-cert-verify.log 2>&1; then
+  echo "FATAL: the leaf does not verify against the CA in the same directory:" >&2
+  cat /tmp/gateway-cert-verify.log >&2
+  echo "       run: ./scripts/gateway-cert.sh --force" >&2
+  exit 1
+fi
+
+echo "  ok   $leaf_crt verifies against $ca_crt"
+echo "       SAN: $(openssl x509 -in "$leaf_crt" -noout -ext subjectAltName 2>/dev/null | tail -1 | tr -d ' ')"
+
+# ── the step that is the owner's, and is printed rather than run ──────────────
+#
+# Checked rather than announced blindly: on macOS `security verify-cert` says
+# whether the system already trusts this CA, so a re-run after the owner has
+# done it stays quiet instead of nagging.
+trusted=0
+if [ "$(uname -s)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
+  security verify-cert -c "$ca_crt" >/dev/null 2>&1 && trusted=1
+fi
+
+if [ "$trusted" = 1 ]; then
+  echo "  ok   this machine already trusts the estate CA — a browser will be clean"
+else
+  echo
+  echo "  ─────────────────────────────────────────────────────────────────────"
+  echo "  ONE COMMAND IS LEFT AND IT NEEDS YOUR PASSWORD, so it is not run here."
+  echo "  Until it is run, pages load after a click-through and every CROSS-ORIGIN"
+  echo "  call still fails — a browser never offers an interstitial for an XHR, so"
+  echo "  sign-in reports \"Cannot reach the server\" with the estate perfectly healthy."
+  echo
+  if [ "$(uname -s)" = "Darwin" ]; then
+    echo "      security add-trusted-cert -d -r trustRoot \\"
+    echo "        -k ~/Library/Keychains/login.keychain-db \\"
+    echo "        \"$(pwd)/$ca_crt\""
+    echo
+    echo "  (-d is the admin domain and prompts once. To undo:"
+    echo "      security delete-certificate -c 'CloudsForge Estate Local CA' \\"
+    echo "        ~/Library/Keychains/login.keychain-db )"
+  else
+    echo "      sudo cp $(pwd)/$ca_crt /usr/local/share/ca-certificates/cloudsforge-estate.crt"
+    echo "      sudo update-ca-certificates"
+  fi
+  echo
+  echo "  Firefox keeps its OWN store and ignores the system one: Settings →"
+  echo "  Privacy & Security → Certificates → View Certificates → Authorities →"
+  echo "  Import, then tick \"Trust this CA to identify websites\"."
+  echo "  ─────────────────────────────────────────────────────────────────────"
+fi

@@ -980,6 +980,24 @@ services:
 
   # ====================================================== tier 2: needs policy
   # ------------------------------------------------------------------ custody
+  # A named volume is created ROOT-OWNED 755, and custody runs as `node` (uid
+  # 1000) — so mounting one is only half the fix and the other half fails
+  # identically. This is `studio-assets-init`'s pattern, used for the same reason
+  # and pointed at a directory that matters far more: milliseconds as root, then
+  # gone, holding no credential and reaching no network. Idempotent, so a re-run
+  # against a populated vault is a no-op and never touches the seeds inside.
+  custody-keys-init:
+    image: busybox:1.37
+    user: "0:0"
+    restart: "no"
+    volumes:
+      - custody-keys:/vault
+    # 1000:1000 is `node` in node:22-slim, which custody's final stage selects
+    # (`custody/Dockerfile:77`). 700 rather than studio's 755: this directory
+    # holds every key the platform custodies, and nothing but custody has any
+    # business reading it.
+    command: ["sh", "-c", "mkdir -p /vault/keys && chown -R 1000:1000 /vault && chmod 700 /vault /vault/keys"]
+
   custody-migrate:
     <<: *migrate-defaults
     build:
@@ -1015,10 +1033,23 @@ services:
       CUSTODY_MASTER_SECRET_V1: estate-only-custody-master-secret-v1-0000
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: custody-estate
+    # THE VAULT. Without it `POST /v1/addresses` fails with EACCES on the first
+    # write and this estate cannot mint a key at all — which was true until the
+    # faucet asked for one. See the `custody-keys` block at the foot of this file
+    # for the whole finding and for why `down -v` is not a safe habit here.
+    #
+    # `/var/lib/custody`, the PARENT of `CUSTODY_DATA_DIR`'s default
+    # (`/var/lib/custody/keys`, custody/src/env.ts:203): the service creates its
+    # own `keys/` subdirectory, and mounting the leaf would leave the parent
+    # unwritable and reproduce the same EACCES one level up.
+    volumes:
+      - custody-keys:/var/lib/custody
     ports:
       - "127.0.0.1:4107:4000"
     depends_on:
       custody-migrate:
+        condition: service_completed_successfully
+      custody-keys-init:
         condition: service_completed_successfully
       policy:
         condition: service_healthy
@@ -1864,6 +1895,160 @@ services:
         condition: service_healthy
     healthcheck: *healthcheck
 
+  # ------------------------------------------------------------------ faucet
+  #
+  # The fourth of the five never-run deployables, and the one that decides
+  # whether this testnet is usable by anybody who is not holding the miner's
+  # key. Until it is here, "a real EMBER testnet" means a chain the owner can
+  # spend on and nobody else can.
+  #
+  # HOST PORT 4144 IS DERIVED: index 44 in `deployableRepos()`, the last row.
+  # Re-derived rather than inherited — `node --import tsx -e "import
+  # {deployableRepos} from './tools/registry.ts'; …"` in micro-org prints
+  # `4144 faucet ops`, and `make check-web` recomputes it on every run.
+  #
+  # It BINDS 4013 by default (`faucet/src/env.ts:311`, `Dockerfile:84`), which
+  # is not a number this file hands to anybody — but it is normalised to 4000
+  # anyway, by `x-common-env`'s `PORT`. That follows `nda` and `aetherholm` and
+  # not `tessera`: tessera's 4022 is argued from sitting BELOW the derived 4100+
+  # block where no new repository can ever collide with it, and every other
+  # service in this file binds 4000 so that ONE healthcheck anchor covers them.
+  # A second bind port is a second anchor and a second thing to get wrong.
+  #
+  # ── CUSTODY_TOKEN IS PRESENTED, NOT EXCHANGED, AND THAT WAS CHECKED ─────────
+  #
+  # The fourth variable in this file whose authority had to be read out of the
+  # source rather than off its name. `faucet/src/index.ts:137` is
+  # `token: () => env.custodyToken`, handed straight to `HttpClient`, which sets
+  # `authorization: Bearer <that value>` verbatim (`runtime/packages/http/src/
+  # index.ts:342`). There is no `ServiceTokenProvider` anywhere in this
+  # repository. So the value must be a ten-minute JWT from
+  # `POST /service-tokens` — NOT `FAUCET_IDENTITY_CREDENTIAL`, which section 5b
+  # of the bootstrap also mints and which is sitting in `tokens.env` looking
+  # like the obvious answer. A `cfsc_…` secret here would 401 every signature
+  # request with nothing in either log naming the cause.
+  #
+  # It is fed from `FAUCET_CUSTODY_TOKEN` rather than from a variable called
+  # `CUSTODY_TOKEN`: the container's variable is generic, `tokens.env` is one
+  # flat file shared by every service, and a bare `CUSTODY_TOKEN=` line there
+  # would be a token belonging to one service under a name that reads like it
+  # belongs to all of them.
+  #
+  # THE TEN-MINUTE CLIFF IS REAL HERE AND IS WORSE THAN EMBERKIN'S, because the
+  # call site is a TIMER and not a request path. `driveChain` runs on the job
+  # queue (`faucet/src/jobs.ts`), so a drip requested more than ten minutes
+  # after a bootstrap reaches custody with an expired bearer — the exact shape
+  # that froze EMBER reconciliation through ledger. What it costs here is
+  # bounded and visible rather than silent: the dispense stays `queued`, the
+  # row is retried, and it completes on the next bootstrap. The honest fix
+  # belongs to micro-faucet — adopt `ServiceTokenProvider` and read
+  # `FAUCET_IDENTITY_CREDENTIAL`, which the bootstrap already mints — and is
+  # reported there rather than papered over here.
+  #
+  # ── THE FUNDING ADDRESS IS MINTED, NOT CHOSEN ──────────────────────────────
+  #
+  # `custodyclient.ts` is explicit that the faucet must get its OWN
+  # treasury-purpose address and must not use custody's PINNED `(ember,
+  # testnet)` treasury, which is settlement's: two services on one nonce is how
+  # a payment is permanently lost. `POST /v1/addresses` is not idempotent —
+  # every call derives a fresh BIP-44 index — so `estate-bootstrap.sh` §5d looks
+  # the address up by its `(userId, orderId)` binding on `GET /v1/admin/keys`
+  # first and mints only when there is none, then writes
+  # `FAUCET_FUNDING_ADDRESS` into `tokens.env` beside the tokens.
+  #
+  # The default below is the ZERO ADDRESS, and it is a placeholder that boots
+  # rather than one that works: `env.ts` validates the SHAPE (0x + 40 hex) and
+  # nothing else, so the container starts, serves `/v1/faucet`, and refuses
+  # every drip at the balance check. That is the right failure — a faucet that
+  # cannot pay says so, and the bootstrap replaces it on its first run.
+  #
+  # `FAUCET_CUSTODY_ORDER_ID` / `_USER_ID` are the other half of that binding.
+  # Custody compares seven identity fields character for character and its 403
+  # deliberately does not name which one disagreed (`custody/src/keys.ts:277`),
+  # so these cannot be debugged from a response: they are written here, read by
+  # the bootstrap from this same file, and never typed twice.
+  #
+  # ── AND THE CHAIN, WHICH THIS SERVICE WILL NOT LET THE DEPLOY CHOOSE ───────
+  #
+  # There is NO chain-id variable. `faucet/src/env.ts` reads 7412 from
+  # `@cloudsforge/contracts-chain` and exits if `FAUCET_CHAIN_ID` is set to
+  # anything else — the frozen `hearth/tools/faucet` compared the node against a
+  # variable that DEFAULTED TO 7411, EMBER MAINNET, which verifies agreement
+  # rather than identity. So the only chain input here is the RPC URL, and it is
+  # the same expression `indexer` uses: `host.docker.internal` plus
+  # `extra_hosts`, because hearth is frozen and attaching it to this project's
+  # network would mean editing it.
+  faucet-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../faucet
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      FAUCET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/faucet
+      # The migrator imports the same `env.ts`, which builds the WHOLE config
+      # before it opens a connection — so every required value is supplied here
+      # too. It dials none of them and signs nothing.
+      FAUCET_TOKEN: estate-only-faucet-operator-token-00000
+      FAUCET_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
+      CUSTODY_URL: http://custody:4000
+      CUSTODY_TOKEN: ${FAUCET_CUSTODY_TOKEN:-estate-placeholder-token-0000000000000000}
+      FAUCET_FUNDING_ADDRESS: ${FAUCET_FUNDING_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FAUCET_CUSTODY_USER_ID: faucet-estate
+      FAUCET_CUSTODY_ORDER_ID: faucet-estate-treasury-1
+      INSTANCE_ID: faucet-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  faucet:
+    build:
+      context: ../../faucet
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      FAUCET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/faucet
+      # Inbound, not outbound: the credential Prometheus presents in
+      # `x-faucet-token` to read `/metrics`, which publishes the REMAINING
+      # BUDGET and is gated for exactly that reason. Never identity-minted —
+      # asking identity for it would produce a token that opens nothing, which
+      # is the mistake `analytics` was removed from the CREDENTIALS list for.
+      FAUCET_TOKEN: estate-only-faucet-operator-token-00000
+      FAUCET_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
+      CUSTODY_URL: http://custody:4000
+      CUSTODY_TOKEN: ${FAUCET_CUSTODY_TOKEN:-estate-placeholder-token-0000000000000000}
+      FAUCET_FUNDING_ADDRESS: ${FAUCET_FUNDING_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FAUCET_CUSTODY_USER_ID: faucet-estate
+      FAUCET_CUSTODY_ORDER_ID: faucet-estate-treasury-1
+      # The browser origin that posts a drip. `faucet` is a SURFACE on the
+      # Network site — `subdomain: 'network'`, `basePath: '/faucet'`
+      # (`ui/packages/ui/src/surfaces.ts`) — not a host of its own, so the
+      # Origin header on a real drip is `https://network.<apex>` and nothing
+      # else. The allowlist has no wildcard and fails closed, so naming the
+      # wrong host here is a faucet that answers every browser with 403 while
+      # every server-side probe stays green.
+      FAUCET_CORS_ORIGINS: https://network.${CF_WEB_APEX:-cloudsforge.localtest.me}
+      # 60 confirmations is `contracts-chain`'s EMBER depth and is NOT
+      # configurable from here. On a laptop chain that is minutes per drip; the
+      # dispense is `sent` long before it is `confirmed`, and both states are
+      # readable at `GET /v1/drips/:id`.
+      INSTANCE_ID: faucet-estate
+    # Docker Desktop resolves `host.docker.internal`; the Linux daemon does not,
+    # and there the faucet would boot, warn that the node is unreachable, serve
+    # anyway, and queue every drip for ever. Same reason as `indexer`.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:4144:4000"
+    depends_on:
+      faucet-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+      custody:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
   # ====================================================== tier 4: the two BFFs
   # ---------------------------------------------------------------- admin-api
   # NOTE: admin-api/src/server.ts returns 501 for bootstrap and identity grants
@@ -2482,3 +2667,47 @@ services:
 # compose down -v` destroys paid artefacts and orphans every `assets` row.
 volumes:
   studio-assets:
+
+  # ── custody-keys — THE VOLUME THIS ESTATE HAD NEVER HAD, AND THE DEFECT IT HID ──
+  #
+  # `custody/Dockerfile:93` says it in capitals: "CUSTODY_DATA_DIR MUST BE A
+  # MOUNTED VOLUME, and it must be writable by uid 1000. Nothing else in this
+  # image is written to at runtime; that directory holds every key the platform
+  # custodies, so a container losing it loses the coins."
+  #
+  # There was no such volume. custody runs as `node` (uid 1000) against a
+  # read-only image layer, so `FileVault.write` fell over on the FIRST WRITE:
+  #
+  #     EACCES: permission denied, mkdir '/var/lib/custody'
+  #       at FileVault.write (custody/src/vault.ts:72)
+  #       at ensureSeed (custody/src/keys.ts:213)
+  #       at provisionAddress (custody/src/keys.ts:122)
+  #
+  # `select count(*) from custody_keys` returned **0**. Not "few" — none. **The
+  # key service in this estate had never successfully minted a key**, for the
+  # whole life of the environment, and every check stayed green because nothing
+  # had ever called `POST /v1/addresses`. It surfaced the moment the faucet needed
+  # a treasury address of its own, which is the argument for deploying a service
+  # rather than reasoning about one, made a second time in one night.
+  #
+  # WHY IT LOOKED FINE. custody's `/readyz` probes Postgres, not the vault, which
+  # is correct — the vault is not a dependency it can usefully report on — and the
+  # three "registered custody addresses" the chain-backing section counts are
+  # INDEXER LABELS seeded by `scripts/ember-seed.js`, which never asks custody to
+  # derive anything. Two facts that both mention custody addresses, neither of
+  # which touches the code path that was broken.
+  #
+  # A NAMED VOLUME, NOT A BIND MOUNT, and the reason is the same one the miner's
+  # wallet is kept outside every work tree for: a bind mount would put private key
+  # material — encrypted, but key material — inside a git repository, one
+  # `.gitignore` edit away from the fork network. A named volume cannot be
+  # committed by accident.
+  #
+  # NOTE FOR ANYONE CLEANING UP: like `studio-assets`, this is NOT ephemeral
+  # scratch. `docker compose down -v` destroys every seed in it, and every
+  # `custody_keys` row then points at a vault slot that no longer exists — the
+  # addresses survive in the database and become permanently unspendable. On a
+  # testnet that costs a re-seed; the same command in an environment holding
+  # anything real loses the coins, which is what the Dockerfile line above is
+  # warning about.
+  custody-keys:

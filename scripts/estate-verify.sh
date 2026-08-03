@@ -1615,8 +1615,6 @@ echo "── THE GATEWAY: the surfaces on the hostnames a browser will use ─�
 # 127.0.0.1, but a suite that needs the internet to answer a question about
 # loopback is a suite that goes red on a train.
 #
-# `-k`: the gateway serves Traefik's self-signed default here, which is right for
-# loopback and wrong to ship.
 WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
 GW_PORT=${CF_GATEWAY_HTTPS_PORT:-443}
 
@@ -1625,6 +1623,56 @@ gw() {
   curl -sk -o /tmp/estate-gw.body -w '%{http_code}' \
     --resolve "$gw_host:$GW_PORT:127.0.0.1" "https://$gw_host:$GW_PORT$gw_path" "$@"
 }
+
+# ── THE TLS ASSERTION, AND WHY IT IS THE FIRST ONE IN THIS SECTION ────────────
+#
+# **`gw()` above uses `-k`, and for months that was the only client this estate
+# had.** This section's own comment used to end "the gateway serves Traefik's
+# self-signed default here, which is right for loopback and wrong to ship", and
+# `estate-browser.sh` passed `ignoreHTTPSErrors: true` for the same reason. So
+# 183 assertions and sixteen browser journeys all ran with certificate
+# verification DISABLED — this repository's named defect class, a check that
+# cannot fail, sitting under every other check in the file.
+#
+# It was not a cosmetic gap. A person opens `https://hub.<apex>`, clicks through
+# the interstitial, and the PAGE loads — so the estate looks fine. The sign-in
+# form then POSTs cross-origin to `https://nimbus.<apex>`, a hostname no
+# interstitial has ever been offered for, and **no browser offers one for an
+# XHR**. Chrome refuses it outright with `net::ERR_CERT_AUTHORITY_INVALID`,
+# `fetch` rejects with `TypeError: Failed to fetch`, and every frontend in this
+# estate maps that to "Cannot reach the server. Check your connection and try
+# again." Reproduced with headless Chromium: `ignoreHTTPSErrors: true` navigates,
+# `false` fails before a byte of HTML arrives.
+#
+# So this block does the one thing `-k` cannot: it VERIFIES. `--cacert` against
+# the CA `scripts/gateway-cert.sh` mints, with no `-k` anywhere on the line, so a
+# certificate from the wrong issuer, one whose SAN does not cover the host, or an
+# expired one all FAIL here. `-k` stays on `gw()` below deliberately — those
+# assertions are about routing, and making 183 of them depend on the certificate
+# would report one fault as 183 — but the transport is now checked once, for
+# real, and the estate can no longer be green while unusable in a browser.
+CA_FILE=${CF_CA_FILE:-gateway/certs/ca.crt}
+if [ ! -s "$CA_FILE" ]; then
+  bad "no CA at $CA_FILE — the gateway is serving Traefik's self-signed default, so every CROSS-ORIGIN call from a real browser fails with ERR_CERT_AUTHORITY_INVALID while every check here passes. Run ./scripts/gateway-cert.sh"
+else
+  tls_fails=""
+  # Four hosts, not one, and each is a different SAN case: the bare apex (which a
+  # wildcard does NOT match — its own certificate entry), a surface, an
+  # API-only host, and the identity host every bundle calls cross-origin.
+  for tls_host in "$WEB_APEX" "hub.$WEB_APEX" "nimbus.$WEB_APEX" "worlds-api.$WEB_APEX"; do
+    tls_code=$(curl -s --cacert "$CA_FILE" -o /dev/null -w '%{http_code}' \
+      --resolve "$tls_host:$GW_PORT:127.0.0.1" "https://$tls_host:$GW_PORT/livez" 2>/dev/null)
+    # 000 is curl's "the transfer never completed", which is what a rejected
+    # certificate produces. Any HTTP status at all means the handshake VERIFIED —
+    # a 404 from a host that serves no /livez still proves the certificate.
+    [ "$tls_code" = "000" ] && tls_fails="$tls_fails $tls_host"
+  done
+  if [ -z "$tls_fails" ]; then
+    ok "TLS verifies against $CA_FILE on the apex and three subdomains — no -k, no ignoreHTTPSErrors"
+  else
+    bad "the gateway's certificate does NOT verify for:$tls_fails — a browser will fail every cross-origin call to them with ERR_CERT_AUTHORITY_INVALID and the page will report 'Cannot reach the server'. Run ./scripts/gateway-cert.sh --force"
+  fi
+fi
 
 # The gateway has to be up. NOT skipped when it is not: half the estate's browser
 # surface is the routing, and a suite that quietly stops checking it reports green

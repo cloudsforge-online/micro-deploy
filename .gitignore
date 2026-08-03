@@ -25,3 +25,17 @@ compose/docker-compose.release.yml
 # that has never been tested is a rule nobody knows is wrong.
 *.env.local
 .env.local
+
+# The gateway's local CA and leaf, minted by scripts/gateway-cert.sh.
+#
+# `ca.key` is a REAL certificate-authority private key. A CA the owner has
+# installed in their login keychain will be trusted by every browser on the
+# machine, so anyone holding this file could issue a certificate for any host
+# that machine visits. It is generated locally, it never has to move, and there
+# is no version of "convenient" that justifies committing it.
+#
+# The whole directory rather than `*.key`: `ca.srl` is the serial counter and a
+# committed one silently reissues duplicate serials across clones, and the .crt
+# files are derived — a committed certificate outliving the key that signed it is
+# the stale-artefact failure this repository keeps finding.
+gateway/certs/

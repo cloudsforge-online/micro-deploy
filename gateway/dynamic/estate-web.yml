@@ -198,6 +198,40 @@ http:
       entryPoints: [websecure]
       service: cf-svc-worlds
 
+    # ──────────────────────────────────────────────── worlds-api — THE MISSING DOOR ──
+    #
+    # **`worlds-web` DOES NOT CALL `worlds.<apex>`, AND THIS FILE ASSUMED IT DID.**
+    #
+    # `worlds-web/src/lib/hosts.ts:80` is `export const API_SURFACE: SurfaceKey = 'worlds-api'`,
+    # and `PRODUCT` is `worlds` — two DIFFERENT registry keys on purpose, so `resolveApiBase`
+    # never collapses to `''` and every request the bundle makes is absolute, cross-origin, to
+    # `https://worlds-api.<apex>/v1/...`. The router above matches `Host(worlds.<apex>)`, a
+    # different hostname, so it caught nothing the app ever sent. Measured against the running
+    # gateway before this was written:
+    #
+    #     https://worlds.<apex>/v1/titles      -> 401   (routed; the API is fine)
+    #     https://worlds-api.<apex>/v1/titles  -> 404   (no router; what the app asks for)
+    #
+    # The frontend named this gap in its own header and could not close it — "There is no gateway
+    # router for `worlds-api.` yet … No router matches `worlds-api.<apex>`" (hosts.ts:47-50) —
+    # and deliberately did not shim it by pointing at `worlds` instead, because the registry is
+    # the thing that decides and a local override is a second copy of it.
+    #
+    # `api.` is the same service under a different promise: the registry says `api.<apex>` is "The
+    # public, versioned surface … today `api.` still points at the game API, which is renamed to
+    # `worlds-api.` first" (`ui/packages/ui/src/surfaces.ts`, the `api` row). `public-api.yml`
+    # owns `api.` and routes it per path prefix across seven services; this router owns the game
+    # platform's own hostname and points at one.
+    #
+    # THE WHOLE HOST, not `PathPrefix(/v1)`. Nothing serves a bundle at `worlds-api.<apex>` — it
+    # is an API hostname with no surface on it — so there is no second router for a path to lose a
+    # priority tie against, and enumerating prefixes would be a copy of worlds' route table.
+    cf-api-worlds:
+      rule: 'Host(`worlds-api.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      service: cf-svc-worlds
+
     # ────────────────────────────────────────────────────────────── explorer ──
     # THE BUNDLE ONLY, AND IT IS THE ONE CASE WORTH EXPLAINING.
     #
@@ -258,25 +292,46 @@ http:
       entryPoints: [websecure]
       service: cf-svc-admin-api
 
-    # ───────────────────────────────────── surfaces whose service is ABSENT ──
+    # ──────────────────── surfaces whose service WAS absent — four have arrived ──
     #
-    # These five bundles are routed; the services behind them are NOT IN THIS ESTATE.
-    # `micro-foresight`, `micro-emberkin`, `micro-aetherholm`, `micro-faucet`, `micro-beacon` and
-    # the Hearth node have no block in docker-compose.estate.yml — and the first three are absent
-    # from micro-org's registry entirely, which is why no port could be derived for their web
-    # bundles either.
+    # This section used to read "these five bundles are routed; the services behind them are NOT
+    # IN THIS ESTATE", and said what to do when that changed: "The day one of these services
+    # joins the estate, add its router beside its surface." **That day has come for four of the
+    # five.** `aetherholm`, `emberkin`, `beacon` and `faucet` now have containers in
+    # docker-compose.estate.yml, and `foresight` is the last one outstanding.
     #
-    # NO `/v1` ROUTER IS WRITTEN FOR THEM. A router pointing at a container that does not exist
-    # answers 502, which reads as "the service fell over" — a wrong diagnosis, permanently. With
-    # no router the gateway serves the bundle and the bundle's own API call 404s from nginx,
-    # which is what "there is no such service here" honestly looks like. The day one of these
-    # services joins the estate, add its router beside its surface.
+    # The rule the section was built on still governs every router below and is unchanged: a
+    # router pointing at a container that does not exist answers 502, which reads as "the service
+    # fell over" — a wrong diagnosis, permanently. So a `/v1` router is written HERE ONLY WHEN the
+    # container exists, and a surface whose backend is still absent keeps the bundle-only
+    # treatment, where its API call 404s from nginx and honestly means "there is no such service".
+    #
+    # ── network — the bundle AND the faucet, which is a ROUTE on this host ──────
+    #
+    # `faucet` is not a hostname. The registry makes it a surface with
+    # `subdomain: 'network'` and `basePath: '/faucet'` — "a route on the Network site rather than
+    # a host of its own" — so `resolveApiBase` compares origins, finds them equal, and
+    # `network-site` posts a drip to a RELATIVE `/v1/drips`. `network-site/src/lib/hosts.ts:63`
+    # states the obligation this router discharges in as many words: "In production the origin is
+    # this page's, so the base is '' and the drip request is relative — which is what the registry
+    # asserts **and what the gateway therefore has to route**".
+    #
+    # `micro-faucet` serves `/v1/faucet`, `/v1/drips` and `/v1/drips/:id` and nothing else outside
+    # the health endpoints, so `PathPrefix(/v1)` is its whole public surface. Priority 600 over
+    # the bundle's 500, for the reason the tessera block gives: both rules match, and without the
+    # higher number the SPA would answer the drip request with index.html — a 200 carrying HTML
+    # where JSON was expected, which fails in the client as a parse error naming the wrong file.
     cf-web-network:
       rule: 'Host(`network.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
       entryPoints: [websecure]
       middlewares: [cf-web-headers]
       service: cf-web-network
+    cf-api-network:
+      rule: 'Host(`network.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-faucet
 
     cf-web-status:
       rule: 'Host(`status.{{ env "CF_WEB_APEX" }}`)'
@@ -284,6 +339,35 @@ http:
       entryPoints: [websecure]
       middlewares: [cf-web-headers]
       service: cf-web-status
+
+    # ── beacon — a declared surface with no door, found by scripts/surface-routes.py ──
+    #
+    # `beacon` is a registry SERVICE with `subdomain: 'beacon'`, so every bundle in the
+    # estate composes `https://beacon.<apex>` from the registry — and nothing answered
+    # there. It is also what `status-web` reads: its own hosts.ts says the status page's
+    # API base "is neither `hosts().status` — nothing serves an API there — nor
+    # unconditionally `hosts().beacon`", which is only a decision it can make if the
+    # second address exists.
+    #
+    # The container joined this estate earlier tonight and this file was not opened, which
+    # is the third time in one night that a service arrived without its router. That is
+    # what `scripts/surface-routes.py` now fails on, and this line is the first thing it
+    # caught.
+    #
+    # THE WHOLE HOST, like nimbus and lantern: no bundle is served at `beacon.<apex>`, so
+    # there is no priority tie for a path prefix to break, and beacon serves `/v1` reads,
+    # `/metrics` and the health endpoints — enumerating them here would be a second,
+    # drifting copy of its route table.
+    #
+    # NOT A PUBLIC READ SURFACE: every `/v1` route on beacon is gated on `BEACON_TOKEN` or
+    # an identity token, checked inside the service. Routing the host does not open it —
+    # and `/internal` stays refused above every router here by policy.yml's priority-100000
+    # rule, which nothing in this file can outrank.
+    cf-web-beacon:
+      rule: 'Host(`beacon.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      service: cf-svc-beacon
 
     cf-web-foresight:
       rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`)'
@@ -300,12 +384,29 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-foresight-admin
 
+    # ── emberkin and aetherholm — their backends ARRIVED, and their bundles were still
+    #    talking to nginx ──────────────────────────────────────────────────────
+    #
+    # Both call their OWN registry host and not a sibling: `emberkin-web/src/lib/hosts.ts:102` is
+    # `new URL(hosts().emberkin).origin` and aetherholm-web:52 the same for `aetherholm`. Since
+    # both bundles are served AT those hosts, that origin is the page's own — so every request is
+    # `/v1/...` on this hostname, and until now `cf-web-emberkin` was the only router matching it.
+    # The bundle answered its own API calls with its own index.html.
+    #
+    # Written now rather than when the containers landed, because that is the drift this section
+    # was created to prevent and it recurred inside one night: the compose file gained a service
+    # and this file was not opened. `scripts/gateway-check.py --surfaces` now fails on it.
     cf-web-emberkin:
       rule: 'Host(`emberkin.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
       entryPoints: [websecure]
       middlewares: [cf-web-headers]
       service: cf-web-emberkin
+    cf-api-emberkin:
+      rule: 'Host(`emberkin.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-emberkin
 
     cf-web-aetherholm:
       rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`)'
@@ -313,6 +414,11 @@ http:
       entryPoints: [websecure]
       middlewares: [cf-web-headers]
       service: cf-web-aetherholm
+    cf-api-aetherholm:
+      rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-aetherholm
 
     # ─────────────────────────────── tessera — THE FIRST TITLE WITH A SERVICE ──
     #
@@ -551,6 +657,27 @@ http:
     cf-svc-lantern:
       loadBalancer:
         servers: [{ url: "http://lantern:4000" }]
+
+    # ── the backends that arrived tonight ────────────────────────────────────
+    #
+    # All 4000, through `*common-env`'s `PORT: "4000"`, and all three bind something
+    # else by default — emberkin 4100, aetherholm 4120, faucet 4013. Those are the
+    # numbers `ui/packages/ui/src/surfaces.ts` carries as devPorts, because a devPort
+    # is a fact about the service and the compose file normalises the CONTAINER port
+    # on top of it. Writing a devPort here would be a connection refused that looks
+    # exactly like a container that has not started.
+    cf-svc-emberkin:
+      loadBalancer:
+        servers: [{ url: "http://emberkin:4000" }]
+    cf-svc-aetherholm:
+      loadBalancer:
+        servers: [{ url: "http://aetherholm:4000" }]
+    cf-svc-faucet:
+      loadBalancer:
+        servers: [{ url: "http://faucet:4000" }]
+    cf-svc-beacon:
+      loadBalancer:
+        servers: [{ url: "http://beacon:4000" }]
 {{ else }}
 # CF_WEB_APEX is unset, so this file contributes NOTHING rather than fifteen routers whose rules
 # read `Host(``)` and match no request ever sent. That distinction is the whole of the comment at
