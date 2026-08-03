@@ -407,6 +407,66 @@ services:
       <<: [*common-env, *identity-trust]
       LEDGER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/ledger
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # ══════════════════════════════════════════════════════════════════════
+      # THE ASSETS RECONCILIATION SWEEPS — WRITTEN OUT RATHER THAN INHERITED
+      # FROM THE DEFAULT, BECAUSE THIS IS A DECISION AND EMBER WILL FREEZE.
+      #
+      # `SHARD,EMBER` is also ledger's default (ledger/src/env.ts:208). It is
+      # spelled here anyway so that the decision is attributable in the manifest
+      # instead of being an absence somebody has to know about.
+      #
+      # EMBER IS ON-CHAIN AND WILL FAIL EVERY RUN IN THIS ENVIRONMENT. That is
+      # intended. `reconcileAsset` demands a chain observation for any asset in
+      # ON_CHAIN_ASSETS and records `unavailable` / `failed` without one, which
+      # freezes EMBER withdrawals on the first sweep after boot. Here it fails
+      # because INDEXER_CHAINS is unset (see the indexer block): there is no
+      # Hearth node, the indexer follows nothing, and the custody route answers
+      # 503 `chain_not_followed`. THAT IS THE HONEST ANSWER — if Hearth has not
+      # launched then no EMBER is backed by anything, which is
+      # docs/ecosystem/00-current-state.md:22 rather than an inconvenience on
+      # the way to fixing it. EMBER custody here is zero, so the freeze costs
+      # nothing; were it non-zero the freeze would be correct rather than
+      # regrettable. There is no third case.
+      #
+      # THE ONLY LEGITIMATE EXEMPTION IS REMOVING EMBER FROM THIS LINE. It is
+      # deliberately the only one: it makes the asset stop being CHECKED rather
+      # than making it LOOK checked, it is attributable and reviewable here, and
+      # the freeze it leaves behind stays until an exactly-clean observed run
+      # lifts it — so the decision cannot be quietly forgotten. A code exemption
+      # would be an `if (asset === 'EMBER')` on the one asset this whole release
+      # is about, which is the defect it removed wearing a new name.
+      LEDGER_RECONCILE_ASSETS: "SHARD,EMBER"
+      LEDGER_RECONCILE_NETWORK: testnet
+      # ── the indexer call, and the one rule it must hold ───────────────────
+      #
+      # URL and timeout for `GET /v1/custody/:chain/:network/total`. UNREACHABLE
+      # MUST ARRIVE AT `reconcileAsset` AS `undefined`, NEVER AS `0n`: a zero is
+      # a claim that the chain holds nothing, and the whole defect this release
+      # removed was a zero masquerading as knowledge. The reference client that
+      # holds that line — every non-200, every timeout, every body that is not a
+      # decimal string maps to `undefined` — is `observedTotalFor` in
+      # indexer/src/chainbacking.test.ts, which proves it against a real socket.
+      #
+      # THESE TWO ARE PROVISIONED AHEAD OF THE CODE THAT READS THEM, and that is
+      # said plainly rather than left to be discovered: micro-ledger's job
+      # handler (ledger/src/jobs.ts:213) does not make this call yet, so today
+      # these are inert. They are set now because the alternative is a deploy
+      # edit racing a code deploy, and because a URL and a timeout are not
+      # secrets — rule 9's concern is the `env_file: .env` fan-out that put the
+      # custody master secret in a game container, not a service address.
+      #
+      # WHEN THAT CALL LANDS IT WILL 401 UNTIL LEDGER HOLDS A GRANT. The custody
+      # route is the one read on the indexer that demands `indexer:read`, and
+      # IDENTITY_SERVICE_TOKEN_GRANTS above is DERIVED from the `*_SCOPES`
+      # constants the services export — ledger declares none, so it has no entry
+      # and is issued no token. Adding one by hand here would fail
+      # `derive-grants.mjs --check`. The correct sequence is: ledger's client
+      # exports `INDEXER_SCOPES = ['indexer:read']`, the map is regenerated, the
+      # grant appears. Until then the 401 maps to `undefined` and EMBER freezes,
+      # which is failing closed in the only direction that is safe.
+      INDEXER_URL: http://indexer:4000
+      LEDGER_INDEXER_DEADLINE_MS: "5000"
+      # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: ledger-estate
     ports:
       - "127.0.0.1:4102:4000"
@@ -658,6 +718,33 @@ services:
       <<: [*common-env, *identity-trust]
       INDEXER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/indexer
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # ══════════════════════════════════════════════════════════════════════
+      # THE CUSTODY SET, which is what `GET /v1/custody/:chain/:network/total`
+      # sums and what micro-ledger reconciles its custody accounts against.
+      #
+      # `deposit:` is the label micro-wallet writes for every assigned deposit
+      # address (wallet/src/deposits.ts:284), and coin arriving there is debited
+      # to the ledger's custody asset account — so those addresses ARE the
+      # custody position.
+      #
+      # `treasury:` IS CARRIED AND NOTHING WRITES IT. micro-settlement sweeps
+      # deposits to a pinned treasury address (settlement/src/bitcoin.ts:814)
+      # and its grant below has no `indexer:write`, so treasury addresses are
+      # not registered with the indexer at all. On a deployment that has swept,
+      # the aggregate therefore UNDER-reports, which reads at the ledger as
+      # positive drift and freezes the asset. That is the safe direction and it
+      # is loud; the repair is a registration in micro-settlement, not a change
+      # to this value. Named here so the gap is visible in the manifest.
+      #
+      # An empty value is not "everything" — indexer's env.ts refuses it,
+      # because a set matching nothing sums to zero over zero addresses, which
+      # is "we did not look" reported as "the chain holds nothing".
+      INDEXER_CUSTODY_LABEL_PREFIXES: "deposit:,treasury:"
+      # Above this the route answers 503 rather than summing a page. A page of a
+      # custody set is a partial sum, and a partial sum freezes withdrawals.
+      INDEXER_CUSTODY_MAX_ADDRESSES: "2000"
+      INDEXER_CUSTODY_CONCURRENCY: "8"
+      # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: indexer-estate
     ports:
       - "127.0.0.1:4108:4000"

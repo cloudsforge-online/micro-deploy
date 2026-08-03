@@ -1350,5 +1350,76 @@ so_bad=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
   && ok "/internal is still refused on a surface host — nothing added here outranks it" \
   || bad "/internal on hub.$WEB_APEX was not refused; the priority-100000 rule has been shadowed"
 
+echo
+echo "── the chain-backing loop: solvency, or a refusal ───────────────────────"
+# THE CHECK THAT THE LEDGER'S RECONCILIATION HAD NO INPUT FOR.
+#
+# ledger/src/reconcile.ts takes an optional `indexerObservedTotal` and, until
+# `GET /v1/custody/:chain/:network/total` existed, NOTHING in the estate could
+# produce one — it was supplied in exactly one place in 58 repositories, a test.
+# Every scheduled run therefore took the `liability_sum` branch and compared the
+# ledger against the ledger, on the one asset the check exists for.
+#
+# What is asserted here is the REFUSAL, because that is what this environment is
+# entitled to: INDEXER_CHAINS is unset, so indexer follows no chain and has no
+# provider for ember:testnet. The route must say so, with a code, and must not
+# answer 200 (a number nobody measured) or 404 (a zero wearing a status code).
+INDEXER=${INDEXER:-http://127.0.0.1:4108}
+
+cb_anon=$(code "$INDEXER/v1/custody/ember/testnet/total")
+[ "$cb_anon" = 401 ] && ok "the custody total refuses an anonymous caller (401)" \
+  || bad "the custody total answered $cb_anon to no token — every other read here is public because chain facts are; Sigma over a set only the platform knows is not"
+
+# A token the estate actually mints. `community` is used because its DERIVED
+# grant already carries `indexer:read` — ledger's does not, and cannot until its
+# client exports the scope for `derive-grants.mjs` to find. So this drives the
+# route with the credential shape ledger will eventually hold, without pretending
+# ledger holds one today.
+cb_tok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+  -H 'content-type: application/json' -d '{"service":"community","scopes":["indexer:read"]}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+
+if [ -z "$cb_tok" ]; then
+  bad "could not obtain a service token carrying indexer:read; the custody route cannot be driven"
+else
+  cb_status=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/testnet/total")
+  cb_code=$(python3 -c "import sys,json;print(json.load(open('/tmp/slice.body')).get('error',{}).get('code',''))" 2>/dev/null)
+  case "$cb_status" in
+    200)
+      # Only legitimate if a chain is genuinely followed. Then the number must be
+      # a STRING — a JSON number has already dropped the low digits of an
+      # 18-decimal balance, and those digits are where a drift lives.
+      cb_total=$(python3 -c "import sys,json;b=json.load(open('/tmp/slice.body'));print(type(b.get('total')).__name__)" 2>/dev/null)
+      [ "$cb_total" = str ] && ok "the custody total answered a string total — the loop has a real input" \
+        || bad "the custody total answered a $cb_total, not a string; an 18-decimal balance does not survive a JSON number"
+      ;;
+    404)
+      bad "the custody total answered 404 — a consumer files that as 'no custody here', which is a zero wearing a status code"
+      ;;
+    50*)
+      [ -n "$cb_code" ] \
+        && ok "the custody total refuses with a reason ($cb_status $cb_code) rather than a number nobody measured" \
+        || bad "the custody total answered $cb_status with no error code; an operator cannot act on it"
+      ;;
+    *)
+      bad "the custody total answered $cb_status to a token carrying indexer:read"
+      ;;
+  esac
+fi
+
+# AND THE CONSEQUENCE, IN THE LEDGER. With no observation available, EMBER must
+# be recorded `unavailable` / `failed` and frozen — never `liability_sum`, which
+# is the vacuous branch, and never `clean`. `LEDGER_RECONCILE_ASSETS` names EMBER
+# deliberately; see the compose comment for why it is not exempted.
+cb_src=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d ledger \
+  -c "select observed_source||'/'||status from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1" 2>/dev/null | tr -d '[:space:]')
+case "$cb_src" in
+  "")                 ok "no EMBER reconciliation has run yet in this environment (the sweep is 15-minutely)" ;;
+  liability_sum/*)    bad "AN EMBER RUN RECORDED liability_sum — the ledger compared itself against itself on a chain asset; migration 11 was supposed to make that impossible" ;;
+  unavailable/failed) ok "EMBER records unavailable/failed and freezes — correct here, because no chain is followed" ;;
+  indexer/*)          ok "EMBER was reconciled against a real chain observation ($cb_src)" ;;
+  *)                  bad "an EMBER run recorded $cb_src, which is neither an observation nor an honest refusal" ;;
+esac
+
 [ "$fails" -eq 0 ] && { echo; echo "all seams verified"; exit 0; }
 echo; echo "$fails check(s) failed"; exit 1
