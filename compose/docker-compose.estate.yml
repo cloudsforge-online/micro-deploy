@@ -335,6 +335,7 @@ services:
          "mint":["custody:address:create","custody:sign:deployer","indexer:read","ledger:post"],
          "nda":["billing:read","worlds:title"],
          "settlement":["custody:sign:deposit","custody:sign:treasury","custody:treasury:read","indexer:read","ledger:post"],
+         "tessera":["ledger:post","studio:read","studio:write"],
          "trade":["ledger:post","ledger:read","ledger:reserve","pricing:read"],
          "wallet":["custody:address:create","indexer:read","indexer:write","ledger:post","ledger:read","ledger:reserve","pricing:read","settlement:read"],
          "worlds":["aetherholm:provision","billing:read","ledger:post"]}
@@ -788,7 +789,6 @@ services:
       PRICING_URL: http://pricing:4000
       WALLET_CHALLENGE_DOMAIN: localhost
       WALLET_CHALLENGE_URI: http://localhost:4103
-      WALLET_SERVICE_TOKEN: ${WALLET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: wallet-migrate
     depends_on:
@@ -808,7 +808,6 @@ services:
       PRICING_URL: http://pricing:4000
       WALLET_CHALLENGE_DOMAIN: localhost
       WALLET_CHALLENGE_URI: http://localhost:4103
-      WALLET_SERVICE_TOKEN: ${WALLET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # ── THE LONG-LIVED CREDENTIAL, WHICH THIS FILE NEVER HANDED OVER ──────
       # estate-bootstrap.sh has been minting these into compose/estate/tokens.env
@@ -902,7 +901,6 @@ services:
       <<: [*common-env, *identity-trust]
       BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
-      BILLING_LEDGER_TOKEN: ${BILLING_LEDGER_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: billing-migrate
     depends_on:
@@ -917,7 +915,6 @@ services:
       <<: [*common-env, *identity-trust]
       BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
-      BILLING_LEDGER_TOKEN: ${BILLING_LEDGER_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       BILLING_IDENTITY_CREDENTIAL: ${BILLING_IDENTITY_CREDENTIAL:-}
@@ -943,7 +940,6 @@ services:
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
-      MINT_SERVICE_TOKEN: ${MINT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: mint-migrate
     depends_on:
@@ -960,7 +956,6 @@ services:
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
-      MINT_SERVICE_TOKEN: ${MINT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       MINT_IDENTITY_CREDENTIAL: ${MINT_IDENTITY_CREDENTIAL:-}
@@ -1085,7 +1080,6 @@ services:
       WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
-      WORLDS_SERVICE_TOKEN: ${WORLDS_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: worlds-migrate
     depends_on:
@@ -1101,7 +1095,6 @@ services:
       WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
-      WORLDS_SERVICE_TOKEN: ${WORLDS_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       WORLDS_IDENTITY_CREDENTIAL: ${WORLDS_IDENTITY_CREDENTIAL:-}
@@ -1128,7 +1121,6 @@ services:
       NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
       WORLDS_URL: http://worlds:4000
       BILLING_URL: http://billing:4000
-      NDA_SERVICE_TOKEN: ${NDA_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: nda-migrate
     depends_on:
@@ -1144,7 +1136,6 @@ services:
       NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
       WORLDS_URL: http://worlds:4000
       BILLING_URL: http://billing:4000
-      NDA_SERVICE_TOKEN: ${NDA_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
@@ -1273,13 +1264,16 @@ services:
       PRICING_URL: http://pricing:4000
       POLICY_URL: http://policy:4000
       ACTIVITY_URL: http://activity:4000
-      HUB_LEDGER_TOKEN: ${HUB_LEDGER_TOKEN:-estate-placeholder-token-0000000000000000}
-      HUB_WALLET_TOKEN: ${HUB_WALLET_TOKEN:-estate-placeholder-token-0000000000000000}
-      HUB_BILLING_TOKEN: ${HUB_BILLING_TOKEN:-estate-placeholder-token-0000000000000000}
-      HUB_PRICING_TOKEN: ${HUB_PRICING_TOKEN:-estate-placeholder-token-0000000000000000}
-      HUB_POLICY_TOKEN: ${HUB_POLICY_TOKEN:-estate-placeholder-token-0000000000000000}
-      HUB_ACTIVITY_TOKEN: ${HUB_ACTIVITY_TOKEN:-estate-placeholder-token-0000000000000000}
-      # The long-lived credential. See wallet's block for what it replaces.
+      # ── SIX NARROW TOKENS WERE HERE, AND THEIR ABSENCE IS THE POINT ───────
+      # HUB_LEDGER_TOKEN, HUB_WALLET_TOKEN, HUB_BILLING_TOKEN, HUB_PRICING_TOKEN,
+      # HUB_POLICY_TOKEN and HUB_ACTIVITY_TOKEN were six separate 10-minute
+      # tokens, deliberately narrow — the AD-05 separation, so a process reached
+      # by an attacker held six read tokens and not one that could move money.
+      # hub-api has RETIRED all six: env.ts keeps them only as
+      # `legacyServiceTokenPresent`, a presence check it reports and never obeys.
+      # The narrowing did not go away with them; it moved into the exchange,
+      # which mints per upstream from the one credential below. Passing them
+      # anyway meant this deploy minted six live JWTs nothing would ever present.
       HUB_API_IDENTITY_CREDENTIAL: ${HUB_API_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: hub-api-estate
     ports:

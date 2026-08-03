@@ -271,23 +271,36 @@ echo "── 5. mint one service token per credential ────────�
 # outbound service call — `ANALYTICS_TOKEN` is an inbound `/metrics` secret and
 # was never an identity-minted token. Asking identity to mint one produced a
 # token that opened nothing.
+# ── ELEVEN LINES REMOVED, AND WHY THIS IS A SECRET FIX AND NOT A TIDY-UP ──────
+#
+# `WALLET_SERVICE_TOKEN`, `WORLDS_SERVICE_TOKEN`, `MINT_SERVICE_TOKEN`,
+# `NDA_SERVICE_TOKEN`, `BILLING_LEDGER_TOKEN` and hub-api's six were all still
+# being minted for services that RETIRED them. Each of those repositories now
+# holds a long-lived `*_IDENTITY_CREDENTIAL` and exchanges it at
+# POST /service-tokens/exchange, and each detects the old variable only to
+# complain about it: `legacyServiceTokenPresent` in its env.ts, and an ERROR line
+# at boot — "WORLDS_SERVICE_TOKEN is set and is IGNORED". Four of those errors
+# were read off the running containers of this estate, not inferred.
+#
+# So every run of this script was minting ELEVEN REAL, LIVE JWTs that nothing
+# would ever present, and writing them to disk. A credential that no code reads
+# is not a harmless leftover: it is a bearer token with a real `sub` and real
+# scopes, sitting in a file, whose only remaining function is to be stolen. The
+# smallest possible blast radius for a secret is not to have minted it.
+#
+# What stays is what a service still calls `requiredSecret` on — checked in each
+# repository's env.ts rather than assumed from the variable's name:
+#   settlement, market, trade, admin-api  still read a 10-minute token.
+#   community                             reads a long-lived CREDENTIAL.
+# hub-api's six narrow tokens are gone because hub-api itself retired them, NOT
+# because the AD-05 separation they expressed was wrong; its credential is
+# exchanged for tokens per upstream and the narrowing moved into that exchange.
 CREDENTIALS="
-WALLET_SERVICE_TOKEN|wallet|
 SETTLEMENT_SERVICE_TOKEN|settlement|
-BILLING_LEDGER_TOKEN|billing|
-MINT_SERVICE_TOKEN|mint|
 MARKET_SERVICE_TOKEN|market|
 TRADE_SERVICE_TOKEN|trade|
-WORLDS_SERVICE_TOKEN|worlds|
-NDA_SERVICE_TOKEN|nda|
 COMMUNITY_SERVICE_CREDENTIAL|community|
 ADMIN_API_SERVICE_TOKEN|admin-api|
-HUB_LEDGER_TOKEN|hub-api|ledger:read
-HUB_WALLET_TOKEN|hub-api|wallet:read
-HUB_BILLING_TOKEN|hub-api|billing:read
-HUB_PRICING_TOKEN|hub-api|pricing:read
-HUB_POLICY_TOKEN|hub-api|policy:decide
-HUB_ACTIVITY_TOKEN|hub-api|notify:read
 "
 
 # The grants, read from the compose file the estate actually runs with. `python3`
