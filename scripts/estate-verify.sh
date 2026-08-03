@@ -94,33 +94,126 @@ reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/js
 utok=$(printf '%s' "$reg" | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
 [ -n "$utok" ] && ok "register issues an access token" || bad "register: $(printf '%s' "$reg" | head -c 120)"
 
-echo "── THE BOOTSTRAP GAP ────────────────────────────────────────────────────"
+echo "── THE BOOTSTRAP GAP, AND THE GUARD THAT NOW CLOSES IT ──────────────────"
 # A fresh deployment cannot issue its first service token. /service-tokens
-# requires the `admin` role; users.roles defaults to '{}'; and NO route in
-# identity grants a role. So no service can authenticate to another until
-# somebody edits the database by hand. Asserted rather than worked around,
-# because the day identity grows a bootstrap this check should fail and be
-# deleted.
+# requires the `admin` role and users.roles defaults to '{}', so no service can
+# authenticate to another until an operator exists. That much is unchanged.
 mint=$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $utok" \
   -H 'content-type: application/json' -d '{"service":"ledger","scopes":["ledger:read"]}')
 [ "$mint" = 403 ] && ok "a normal user cannot mint a service token (403) — expected, and the gap" \
                   || bad "expected 403 for a non-admin, got $mint"
 
-# The only way through today. If this stops being necessary, delete it.
-docker compose -f compose/docker-compose.estate.yml exec -T postgres \
-  psql -qtA -U cloudsforge -d identity \
-  -c "update users set roles = array['admin'] where email = '$EMAIL';" >/dev/null 2>&1 \
-  && ok "promoted to admin BY DIRECT SQL — the estate has no other path" \
-  || bad "could not promote via SQL"
+# ── WHAT CHANGED, AND WHY THIS FILE NO LONGER PROMOTES ANYBODY ────────────────
+#
+# This block used to run `update users set roles = array['admin']` against the
+# drill user, with `>/dev/null 2>&1` on it. `micro-identity` migration 12 refuses
+# that statement — `users_roles_need_a_grant` is a deferred constraint trigger
+# that rejects, at COMMIT, any row gaining a privileged role without a
+# `platform_role_grants` row written in the same transaction. Discarded output is
+# how that would have looked exactly like success.
+#
+# It is NOT re-implemented here with a grant row, for a reason worth stating: the
+# bootstrap grant is capped at one per database for ever by a partial unique
+# index, and spending it on a throwaway drill user would consume the estate's one
+# unapproved administrator on a verification run. So this file now signs in as the
+# operator `estate-bootstrap.sh` created, and the drill user stays unprivileged —
+# which is also truer, because the erasure drill below DELETES the drill user and
+# deleting the estate's only operator is not a thing a verification should do.
+#
+# The two identities are kept strictly apart from here on: `atok` mints, `utok` is
+# the subject of the user-facing flows.
+ADMIN_EMAIL=${ADMIN_EMAIL:-estate-admin@example.test}
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-correct-horse-battery-staple-42}
+
+# ── MIGRATION 12'S CONTROLS, EXERCISED RATHER THAN TRUSTED ────────────────────
+#
+# Both are asserted on SQLSTATE, not on message text, and both run from a psql
+# prompt — the client the threat model assumes an attacker already has.
+#
+# 1. The bare UPDATE this file used to run must now fail. Wrapped in a transaction
+#    and rolled back; the trigger is DEFERRED so it fires at COMMIT, which is why
+#    this commits rather than rolls back and then asserts the commit was refused.
+# Fed on STDIN, not `-c`. `psql -c` treats its whole argument as SQL, so a leading
+# `\set VERBOSITY verbose` becomes part of the statement and psql answers
+# `unrecognized value "verbosebegin;update…" for "VERBOSITY"`. That IS an error,
+# so a check for "did this fail" would have passed for entirely the wrong reason —
+# the assertion would have been green while testing nothing. Caught by running it.
+psql_identity_verbose() {
+  docker compose -f "$COMPOSE" exec -T postgres \
+    psql -qtA -U cloudsforge -d identity 2>&1
+}
+
+bare=$(psql_identity_verbose <<SQL
+\set VERBOSITY verbose
+begin;
+update users set roles = array['player','admin'] where email = lower(btrim('$EMAIL'));
+commit;
+SQL
+)
+printf '%s' "$bare" | grep -q '23514' \
+  && ok "a bare 'update users set roles' is refused at COMMIT (23514) — the promotion lever is gone" \
+  || bad "the bare admin UPDATE was NOT refused; anyone with psql can mint an operator: $(printf '%s' "$bare" | head -c 200)"
+
+# 2. A second bootstrap grant must be refused for ever by the partial unique index.
+second=$(psql_identity_verbose <<SQL
+\set VERBOSITY verbose
+begin;
+insert into platform_role_grants (user_id, role, source, actor, reason)
+select id, 'admin', 'bootstrap', 'estate-verify.sh', 'a second bootstrap, which must be refused'
+  from users where email = lower(btrim('$ADMIN_EMAIL'));
+rollback;
+SQL
+)
+printf '%s' "$second" | grep -q '23505' \
+  && ok "a second bootstrap grant is refused (23505) — one unapproved administrator, for ever" \
+  || bad "a SECOND bootstrap grant was accepted: $(printf '%s' "$second" | head -c 200)"
+
+# 3. The grant table is append-only, so the one-shot index above cannot be re-armed
+#    by deleting the row that arms it.
+appendonly=$(psql_identity_verbose <<SQL
+\set VERBOSITY verbose
+begin;
+delete from platform_role_grants where source = 'bootstrap';
+rollback;
+SQL
+)
+printf '%s' "$appendonly" | grep -q 'append-only' \
+  && ok "deleting a grant row is refused — the one-shot index cannot be re-armed" \
+  || bad "a grant row could be DELETED, which re-arms the bootstrap: $(printf '%s' "$appendonly" | head -c 200)"
 
 echo "── a service token crosses the wire ─────────────────────────────────────"
-utok=$(curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
-  -d "{\"identifier\":\"$EMAIL\",\"password\":\"$PASS\"}" \
+# The operator, not the drill user. Captured before anything reads it; `set -u`
+# is what turns a missed capture here into an immediate failure.
+atok=$(curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
+  -d "{\"identifier\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
-stok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $utok" \
-  -H 'content-type: application/json' -d '{"service":"ledger","scopes":["ledger:read"]}' \
+if [ -n "$atok" ]; then
+  ok "signed in as the bootstrapped operator $ADMIN_EMAIL"
+else
+  bad "could not sign in as $ADMIN_EMAIL — run ./scripts/estate-bootstrap.sh first"
+  echo; echo "$fails failure(s)"; exit 1
+fi
+# Minted for `beacon`, not for `ledger`. This used to name `ledger` as the caller,
+# which was always a fiction — a service token names WHO IS CALLING, and ledger
+# does not call itself. It only ever worked because the hand-written grant map
+# happened to list `ledger`, and the derived map does not: ledger makes no tokened
+# outbound call, so it holds no grant and identity now refuses to mint for it.
+#
+# `beacon` is the honest caller here and its whole derived grant is `ledger:read`,
+# from the scopes it names at its own exchange call site
+# (beacon/src/ecosystem.ts:563). A monitor reading the trial balance is exactly
+# this request.
+stok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+  -H 'content-type: application/json' -d '{"service":"beacon","scopes":["ledger:read"]}' \
   | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or d.get('serviceToken') or d.get('accessToken') or '')" 2>/dev/null)
-[ -n "$stok" ] && ok "identity minted a service token for ledger" || bad "no service token issued"
+[ -n "$stok" ] && ok "identity minted a ledger:read token for beacon" || bad "no service token issued"
+
+# ledger holds no grant, so it cannot be named as a caller at all. This is the
+# derivation's effect made visible rather than left as an absence.
+[ "$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+     -H 'content-type: application/json' -d '{"service":"ledger","scopes":["ledger:read"]}')" = 403 ] \
+  && ok "identity refuses to mint for ledger — it makes no outbound call, so it has no grant" \
+  || bad "identity minted a token naming ledger as the caller"
 
 echo "── THE SEAM: ledger verifies identity's token over a real JWKS fetch ────"
 # Until this ran, every test of @cloudsforge/auth fetched a JWKS from a stub in
@@ -150,7 +243,7 @@ echo "── THE MONEY SEAM: a real double-entry posting, and a refusal ──�
 #
 # Posted with a token minted for `wallet`, carrying ledger:post — a real
 # credential for a real caller, not ledger talking to itself.
-wtok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $utok" \
+wtok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
   -H 'content-type: application/json' \
   -d '{"service":"wallet","scopes":["ledger:read","ledger:post"]}' | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
 [ -n "$wtok" ] && ok "identity minted a ledger:post token for wallet" || bad "no wallet token issued"
@@ -383,7 +476,7 @@ echo "── THE TEN-MINUTE CLIFF: a call made AFTER its token expired ───
 CLIFF_TTL=3
 CLIFF_SLEEP=12
 
-cred=$(curl -s -X POST "$IDENTITY/service-credentials" -H "authorization: Bearer $utok" \
+cred=$(curl -s -X POST "$IDENTITY/service-credentials" -H "authorization: Bearer $atok" \
   -H 'content-type: application/json' \
   -d '{"service":"wallet","label":"estate-verify cliff drill"}')
 cred_secret=$(printf '%s' "$cred" | python3 -c "import sys,json;print(json.load(sys.stdin).get('secret',''))" 2>/dev/null)
@@ -458,7 +551,7 @@ greedy_ttl=$(curl -s -X POST "$IDENTITY/service-tokens/exchange" \
 
 # Revocation — the containment lever a bearer JWT cannot have.
 revoke_code=$(code -X POST "$IDENTITY/service-credentials/$cred_id/revoke" \
-  -H "authorization: Bearer $utok")
+  -H "authorization: Bearer $atok")
 [ "$revoke_code" = 200 ] && ok "the drill credential was revoked" || bad "revoke returned $revoke_code"
 [ "$(code -X POST "$IDENTITY/service-tokens/exchange" -H "authorization: Bearer $cred_secret" \
      -H 'content-type: application/json' -d '{}')" = 401 ] \
@@ -492,6 +585,171 @@ if [ "${areg:-0}" -ge 1 ]; then
 else
   bad "no identity.user.registered reached activity in 30s — the topic still has no working consumer"
 fi
+
+echo
+echo "── THE GRANTS ARE DERIVED, AND THE COMPOSE FILE STILL AGREES ────────────"
+#
+# `IDENTITY_SERVICE_TOKEN_GRANTS` is generated by `scripts/derive-grants.mjs`
+# from the services' own declarations. This asserts the generated block still
+# matches what the services say — a hand-edit here is reverted by the next run
+# rather than quietly kept, which is the property that stops the grant map going
+# stale again.
+#
+# Its exit status is read directly rather than piped through `grep`, because a
+# `grep` on the output would pass when the tool crashed and printed nothing.
+if (cd "$(dirname "$0")/.." && node scripts/derive-grants.mjs --check) >/tmp/derive-grants.out 2>&1; then
+  ok "$(tail -1 /tmp/derive-grants.out)"
+else
+  bad "the compose grants disagree with the services: $(head -c 400 /tmp/derive-grants.out)"
+fi
+
+echo
+echo "── THE CROSS-TITLE ACHIEVEMENT: the grant, driven end to end ────────────"
+#
+# ── WHY THIS IS A FLOW AND NOT A STRING MATCH ─────────────────────────────────
+#
+# A grant that is present and WRONG looks identical to a grant that is present
+# and right, so asserting the compose file contains `worlds:title` proves
+# nothing. `nda` held `worlds:read,worlds:write` for months — both present, both
+# real scopes, both useless for this call.
+#
+# This drives the exact path `emberkin/src/worldsclient.ts` drives: resolve the
+# title id from worlds' public registry, PUT the definition (worlds refuses an
+# unlock for an achievement it has never been told about), then POST the unlock.
+# Every request carries a token minted for `emberkin` from the DERIVED grant.
+#
+# It matters more than usual right now. The clients used to post to
+# `/internal/achievements`, a route worlds does not serve, and classified the 404
+# as "the peer refused" — so every cross-title badge was discarded, not delayed.
+# That is fixed, and a 404 is now a wiring fault that retries loudly. So until
+# this grant works, badges pile up retrying instead of vanishing: a better
+# failure, still a failure.
+etok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+  -H 'content-type: application/json' -d '{"service":"emberkin","scopes":["worlds:title"]}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+[ -n "$etok" ] && ok "identity minted worlds:title for emberkin — it had no grant at all before" \
+  || bad "identity would not mint worlds:title for emberkin"
+
+# The title must be registered before it has an id. Registration is an operator
+# action (`worlds:admin` for a service, role:admin for a user), which is why this
+# uses the operator's token and not emberkin's — a title cannot register itself.
+# `serviceUrl` is REQUIRED — worlds answers 400 "serviceUrl is required" without
+# it, which is the registry refusing to record a title it could never reach. The
+# URL names where the emberkin SERVICE would be; nothing in this section calls it,
+# because the achievement path is title → worlds, never the reverse.
+curl -s -X POST "$WORLDS/v1/titles" -H "authorization: Bearer $atok" \
+  -H 'content-type: application/json' \
+  -d '{"slug":"emberkin","name":"Emberkin","serviceUrl":"http://emberkin:4000","capabilities":[]}' >/dev/null 2>&1
+tid=$(curl -s "$WORLDS/v1/titles" \
+  | python3 -c "
+import sys, json
+try: titles = json.load(sys.stdin).get('titles', [])
+except Exception: titles = []
+print(next((t['id'] for t in titles if t.get('slug') == 'emberkin'), ''))" 2>/dev/null)
+# Captured BEFORE it is read into a URL. `set -u` is what turns a missed capture
+# here into a failure rather than a request against `/v1/titles//achievements`.
+[ -n "$tid" ] && ok "emberkin is registered in worlds: $tid" \
+  || bad "emberkin is not in worlds' title registry — the badge path cannot be driven"
+
+akey="estate-verify-$$"
+if [ -n "$tid" ] && [ -n "$etok" ]; then
+  # The definition. `PUT` is an upsert, so this is idempotent.
+  defc=$(code -X PUT "$WORLDS/v1/titles/$tid/achievements" -H "authorization: Bearer $etok" \
+    -H 'content-type: application/json' \
+    -d "{\"key\":\"$akey\",\"name\":\"Estate Verify\",\"description\":\"\",\"points\":10,\"rewardShards\":\"0\"}")
+  [ "$defc" = 200 ] && ok "worlds accepted the achievement definition under worlds:title" \
+    || bad "defining the achievement returned $defc (401/403 means the grant is wrong; 404 means the route is)"
+
+  # THE UNLOCK. 201 on a fresh badge, 200 on one that had already happened.
+  unlock=$(code -X POST "$WORLDS/v1/titles/$tid/achievements/unlock" \
+    -H "authorization: Bearer $etok" -H 'content-type: application/json' \
+    -d "{\"userId\":\"$uid\",\"key\":\"$akey\"}")
+  [ "$unlock" = 201 ] && ok "a cross-title achievement UNLOCKED (201) — the badge exists in worlds" \
+    || bad "the unlock returned $unlock, expected 201"
+
+  # Replayed. The delivery job retries with a stable idempotency key, so the
+  # second attempt must be accepted and must not create a second badge.
+  replay=$(code -X POST "$WORLDS/v1/titles/$tid/achievements/unlock" \
+    -H "authorization: Bearer $etok" -H 'content-type: application/json' \
+    -d "{\"userId\":\"$uid\",\"key\":\"$akey\"}")
+  [ "$replay" = 200 ] && ok "replaying the unlock is 200, not a second badge — the retry is safe" \
+    || bad "the replayed unlock returned $replay, expected 200"
+fi
+
+# ── THE NEGATIVE, WHICH IS WHAT MAKES THE POSITIVE MEAN ANYTHING ──────────────
+#
+# A token minted for a service whose grant does NOT include `worlds:title` must
+# be refused by the same route. Without this, the checks above would also pass if
+# worlds had stopped checking scopes altogether.
+#
+# `community` is used because its derived grant is ledger/policy/indexer only, so
+# identity will mint it a real, valid, correctly-signed token that simply does not
+# carry this authority — which is precisely the case that must 403 rather than 401.
+ctok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+  -H 'content-type: application/json' -d '{"service":"community","scopes":["ledger:post"]}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+if [ -n "$tid" ] && [ -n "$ctok" ]; then
+  # Captured into a variable and THEN compared, rather than `[ "$(code …)" = 403 ]`.
+  # The body here carries escaped quotes, and wrapping that command substitution
+  # in a further layer of double quotes makes bash re-process them before `[` ever
+  # runs — which produced `[: too many arguments` and, because `[` failing is
+  # indistinguishable from the assertion failing, reported that worlds had
+  # ACCEPTED an unauthorised unlock. It had not: worlds answered 403 with
+  # "missing required authority: worlds:title" throughout. A false red, but the
+  # same shape as a false green, so it is fixed rather than worked around.
+  refused=$(code -X POST "$WORLDS/v1/titles/$tid/achievements/unlock" \
+    -H "authorization: Bearer $ctok" -H 'content-type: application/json' \
+    -d "{\"userId\":\"$uid\",\"key\":\"$akey\"}")
+  [ "$refused" = 403 ] \
+    && ok "a valid token without worlds:title is refused (403) — the scope is doing the work" \
+    || bad "worlds answered $refused to an unlock from a credential with no worlds:title, expected 403"
+fi
+
+# identity must also refuse to MINT a scope outside a service's derived grant.
+# `worlds:title` is held by title services; `community` is not one.
+[ "$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+     -H 'content-type: application/json' \
+     -d '{"service":"community","scopes":["worlds:title"]}')" = 403 ] \
+  && ok "identity refuses to mint worlds:title for community — the allowlist is enforced at the mint" \
+  || bad "identity minted a scope outside community's grant"
+
+# `worlds` gained `aetherholm:provision`, the provisioning bridge's authority.
+# The aetherholm SERVICE is not deployed in this estate — only its frontend — so
+# the call it authorises cannot be driven here, and this asserts the half that
+# can be: identity mints it for worlds and for nobody else. Said plainly rather
+# than dressed up as an end-to-end proof it is not.
+wtok2=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+  -H 'content-type: application/json' -d '{"service":"worlds","scopes":["aetherholm:provision"]}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+[ -n "$wtok2" ] && ok "identity mints aetherholm:provision for worlds (the call itself needs the aetherholm service, which this estate does not run)" \
+  || bad "worlds cannot be minted aetherholm:provision"
+[ "$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+     -H 'content-type: application/json' \
+     -d '{"service":"nda","scopes":["aetherholm:provision"]}')" = 403 ] \
+  && ok "nda is refused aetherholm:provision — the registry says worlds alone holds it" \
+  || bad "a service other than worlds was minted aetherholm:provision"
+
+echo
+echo "── THE AUDIT MIRROR: admin-api receives the audited topics ──────────────"
+#
+# Claim 9 of the eleven "one platform" tests — an operator answers "where did this
+# user's money go" from admin-web alone — needs these rows to exist and the relay
+# to reach them.
+#
+# `POST /v1/events` used to demand `admin:audit:write`, which no outbox relay in
+# this estate can present, so the mirror received nothing at all. admin-api now
+# verifies the signature the relay actually sends and reads no bearer, so the
+# subscription works. The ledger posting earlier in this file is the event under
+# test: `ledger.entry.posted` is one of the audited topics.
+for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+  mirror=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge \
+    -d admin_api -c "select count(*) from audit_events where action = 'ledger.entry.posted'" 2>/dev/null | tr -d ' ')
+  [ "${mirror:-0}" -ge 1 ] && break
+  sleep 1
+done
+[ "${mirror:-0}" -ge 1 ] \
+  && ok "ledger.entry.posted reached admin-api's audit mirror ($mirror row(s)) — the operator log is no longer empty" \
+  || bad "no audited event reached admin-api in 15s — the mirror is still not receiving"
 
 echo
 echo "── THE FIFTEEN FRONTENDS: served, and proved to be more than a 200 ──────"

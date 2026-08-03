@@ -322,7 +322,7 @@ services:
       # correct answer for `devplatform`, which forwards the developer's own bearer
       # and derives an empty set — absent, not `[]`.
       IDENTITY_SERVICE_TOKEN_GRANTS: >-
-        {"admin-api":["ledger:post","ledger:read"],
+        {"admin-api":["identity:admin","ledger:post","ledger:read"],
          "beacon":["ledger:read"],
          "billing":["admin:read","ledger:post"],
          "community":["indexer:read","ledger:post","policy:decide"],

@@ -3,8 +3,8 @@
 
   "admin-api/src/upstreams.ts": {
     "service": "admin-api",
-    "scopes": ["ledger:read", "ledger:post"],
-    "reason": "micro-admin-api owns this. Its header carries a full route-and-guard table but no exported constant. The scopes are read off that table: this service's own service token is used for LEDGER ALONE — GET /trial-balance and GET /accounts/:subject/balances (ledger:read), POST /entries and POST /entries/:id/reverse (ledger:post) — because ledger's authorise() refuses a user principal outright. Its market and billing calls deliberately forward THE OPERATOR'S OWN BEARER so those services record which administrator acted (SD-11), which is why market:read, market:admin and billing:read are absent here despite being in the old hand-written compose map: no service token ever carried them."
+    "scopes": ["ledger:read", "ledger:post", "identity:admin"],
+    "reason": "micro-admin-api owns this. Its header carries a full route-and-guard table but no exported constant. The scopes are read off that table: this service's own service token is used for LEDGER ALONE — GET /trial-balance and GET /accounts/:subject/balances (ledger:read), POST /entries and POST /entries/:id/reverse (ledger:post) — because ledger's authorise() refuses a user principal outright. It also needs identity:admin for PUT /internal/users/:id/roles (admin-api/src/upstreams.ts:464, identity/src/server.ts:1584), the route the identity.role.grant executor calls and the path by which EVERY administrator after the first is promoted; admin-api/src/actions.ts:116 names this as still owed by micro-deploy. Its market and billing calls deliberately forward THE OPERATOR'S OWN BEARER so those services record which administrator acted (SD-11), which is why market:read, market:admin and billing:read are absent here despite being in the old hand-written compose map: no service token ever carried them."
   },
 
   "devplatform/src/membership.ts": {
