@@ -169,6 +169,46 @@ this repository, and none is worked around here.
 | **A missing asset 404s with `text/html`.** Every frontend's `nginx.conf` states the opposite intent ("a JavaScript request answered with HTML fails with a syntax error that names the wrong file"), but `error_page 404 /index.html` is server-level and catches the `/assets/` location's `=404` too. The status is right, so a browser still refuses to execute it; the content type is not. | the fifteen `*-web` repos | `curl -i http://127.0.0.1:4122/assets/nope.js` |
 | **The Traefik Docker provider has never worked here.** v3.2.3 pins its Docker API version to 1.24; Docker Desktop's daemon refuses anything under 1.40. Label-based discovery — the gateway's stated design — is dead, and every route comes from the file provider. Neither `DOCKER_API_VERSION` nor v3.3.7 changes it; both were tried. | this repo, unfixed on purpose — see the note in `compose/docker-compose.gateway.yml` | `ERR ... client version 1.24 is too old`, every ten seconds, since the gateway first started |
 
+### The relay cannot authenticate, so two consumers can never be fed
+
+**`event_subscriptions` has no column for a credential, and the relay sends
+none.** `identity/src/outbox.ts:320` attaches exactly `cf-signature` and
+`cf-event-id`; the table is `(topic, url, active, created_at)`
+(`identity/src/migrations.ts:58`). Two consumers gate their bus intake behind a
+scoped token, so no subscription row can ever work for them:
+
+| Consumer | Route | Demands | Consequence |
+| --- | --- | --- | --- |
+| `analytics` | `POST /ingest` | `authenticate()` + `SCOPE_INGEST` before it reads a byte (`analytics/src/server.ts:468`) | `identity.user.registered` is "the denominator of every onboarding cohort" (`analytics/src/catalogue.ts:307`) and never arrives — **every onboarding metric in the estate is structurally zero** |
+| `admin-api` | `POST /v1/events` | `authenticate()` + `admin:audit:write` (`server.ts:554`, `scopes.ts:52`) | the audit mirror for all 26 `AUDITED_TOPICS` is never fed, so 17 §7 claim 9 cannot pass |
+
+Measured rather than predicted: seeding the analytics row first produced
+`attempts=67, last_error=POST http://analytics:4000/ingest → 401` against an
+empty analytics inbox. The rows are therefore **not written**, because a
+permanent 401 retry loop is worse than a named gap. `activity` and `notify`
+verify the signature and nothing else, which is why the erasure drill has always
+worked and these two never could.
+
+The fix is a capability nothing has: a credential per subscription, exchanged at
+`POST /service-tokens/exchange` like every other caller — or a change to those
+two routes. It belongs to the outbox in `micro-identity` (and every producer's
+copy of it), `micro-analytics` and `micro-admin-api`.
+
+### Two things asked for here that could not be done
+
+* **A transactional bootstrap against `platform_role_grants`, asserting that a
+  re-run fails.** `grep -rn platform_role_grants identity/src/` returns nothing:
+  the table does not exist in the working tree. Writing the procedure now would
+  mean shipping a bootstrap against a schema that is not there, which stops the
+  estate rather than hardening it. It is one commit's work the day the migration
+  lands, and `scripts/estate-bootstrap.sh` §3 is where it goes.
+* **A hard template failure when `CF_WEB_APEX` is unset.** Rejected on evidence:
+  the file provider is all-or-nothing (below), so a template error to announce a
+  missing *web* variable would also delete the `/internal` refusal. The loud
+  failure lives in `scripts/estate-up.sh` instead, which refuses to start
+  anything when the variable is empty **or when the two files that read it
+  disagree** — that second case is the one no single-file check could catch.
+
 ### One malformed file in `gateway/dynamic/` deletes every route
 
 Found by making the mistake. The file provider is **all-or-nothing**: a template

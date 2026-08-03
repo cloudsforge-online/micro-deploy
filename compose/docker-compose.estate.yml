@@ -275,6 +275,18 @@ services:
       # A service absent from this map cannot be issued a token at all, which is
       # what makes `estate-bootstrap.sh` fail loudly rather than mint a token
       # with no scopes.
+      #
+      # `beacon` was absent and said so in its own files: "IDENTITY_SERVICE_TOKEN_
+      # GRANTS names thirteen services and `beacon` is not among them, so POST
+      # /service-credentials answers 500 'no scopes are configured for service
+      # beacon'" (beacon/.env.example:153-155, beacon/src/env.ts:232). Its estate
+      # journeys therefore could not be DECLARED at all — absent rather than
+      # declared-and-skipping, which is beacon's own rule.
+      #
+      # `ledger:read` and nothing else: that is the single scope beacon exchanges
+      # for (`body: { scopes: ['ledger:read'] }`, beacon/src/ecosystem.ts:563), and
+      # identity de-duplicates but never widens, so a monitor that reads the trial
+      # balance gets a token that says exactly that.
       IDENTITY_SERVICE_TOKEN_GRANTS: >-
         {"ledger":["ledger:read","ledger:post","ledger:reserve"],
          "wallet":["ledger:read","ledger:post","ledger:reserve","custody:address:create","indexer:read","pricing:read","policy:decide"],
@@ -288,6 +300,7 @@ services:
          "community":["ledger:read","ledger:post","policy:decide"],
          "admin-api":["ledger:read","market:read","market:admin","billing:read","admin:read"],
          "analytics":["analytics:ingest","analytics:read"],
+         "beacon":["ledger:read"],
          "hub-api":["ledger:read","wallet:read","billing:read","pricing:read","policy:decide","notify:read"]}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: identity-estate

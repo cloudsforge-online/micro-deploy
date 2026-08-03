@@ -239,12 +239,80 @@ done
 mv "$tmp" "$TOKENS_FILE"
 ok "minted $minted token(s) and $credentialled credential(s) into $TOKENS_FILE"
 
+echo "── 5c. event subscriptions — WHO RECEIVES WHAT IS DEPLOY CONFIGURATION ──"
+#
+# No route in any service creates a subscription, deliberately: which consumer
+# receives which topic is a deployment decision, not something a caller makes at
+# runtime. The deploy is this script, so this is where the rows belong — they
+# were previously seeded by `estate-verify.sh`, which meant the estate only had a
+# working event bus while a verification was running.
+#
+# A row lives in the PRODUCER's database, because that is where the outbox and its
+# relay are. `on conflict do nothing` against the (topic, url) unique constraint
+# makes a re-run a no-op.
+#
+# ── TWO CONSUMERS THAT CANNOT BE SUBSCRIBED, AND ARE NOT ──────────────────────
+#
+# **The relay cannot authenticate, so a consumer that demands a token can never
+# be fed by the bus.** `identity/src/outbox.ts:320` sends exactly two headers —
+# `cf-signature` and `cf-event-id` — and `event_subscriptions` has no column for a
+# credential (topic, url, active, created_at; identity/src/migrations.ts:58).
+#
+#   * **analytics** `POST /ingest` calls `authenticate(ctx, deps)` then
+#     `requireExactScope(principal, SCOPE_INGEST)` before it reads a byte
+#     (analytics/src/server.ts:468-469).
+#   * **admin-api** `POST /v1/events`, the audit mirror for the 26 audited topics
+#     (`AUDITED_TOPICS`, contracts/packages/events/src/audit.ts), does the same
+#     with `admin:audit:write` (admin-api/src/server.ts:554-557, scopes.ts:52).
+#
+# A subscription row for either produces a PERMANENT 401 RETRY LOOP — measured,
+# not predicted: seeding analytics here first gave `attempts=67, last_error=POST
+# http://analytics:4000/ingest → 401` and an empty analytics inbox. The rows are
+# therefore not written. activity and notify take a signature alone, which is why
+# the erasure drill has always worked and these two never could.
+#
+# The fix is a capability the relay does not have — a credential per subscription,
+# exchanged at `POST /service-tokens/exchange` like every other caller — or a
+# change to those two routes. It belongs to micro-identity's outbox (and every
+# other producer's copy of it), micro-analytics and micro-admin-api. Recorded
+# rather than half-configured; see deploy/README.md.
+subscribe() {
+  db=$1; topic=$2; url=$3
+  docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d "$db" -c \
+    "insert into event_subscriptions (topic, url) values ('$topic', '$url') on conflict do nothing" \
+    >/dev/null 2>&1 \
+    && ok "$db → $topic → $url" \
+    || bad "could not seed $topic → $url in $db"
+}
+
+# identity.user.registered had NO SUBSCRIBER, and two services classify it:
+# activity turns it into a feed record (activity/src/classify.ts:190) and
+# analytics counts it as "the denominator of every onboarding cohort"
+# (analytics/src/catalogue.ts:307). Both were consumers with no producer.
+#
+# Only activity is subscribed. analytics is one of the two consumers the relay
+# cannot authenticate to — see above. Its onboarding denominator stays zero, and
+# that is now a named gap in another repository rather than a silence here.
+subscribe identity identity.user.registered http://activity:4000/ingest
+
+# The two estate-verify already relied on, moved to where a deploy belongs. They
+# stay idempotent, so the copies still in the verifier are no-ops.
+subscribe identity identity.session.created http://activity:4000/ingest
+subscribe identity identity.user.deleted   http://activity:4000/ingest
+subscribe identity identity.user.deleted   http://notify:4000/ingest
+
 echo "── 6. hand the tokens to the services that need them ────────────────────"
 # `--env-file` rather than `env_file:` on each service. The compose file names
 # each variable on exactly the service that reads it, so this fills those in
 # without handing every container the whole estate's secrets — the fan-out that
 # pricing/src/env.ts calls out by name.
-if docker compose --env-file "$TOKENS_FILE" -f "$COMPOSE" up -d >/tmp/estate-bootstrap-up.log 2>&1; then
+# `--wait`, not a bare `up -d`. Without it this returns as soon as the daemon has
+# ACCEPTED the recreate, and a verification started immediately afterwards asks a
+# service that is still booting: `nda /livez` and `nda /readyz` both failed here
+# once for exactly that reason, on a container that was healthy forty seconds
+# later. A start-order race that reads as a flaky estate is the most expensive
+# kind of green-then-red there is.
+if docker compose --env-file "$TOKENS_FILE" -f "$COMPOSE" up -d --wait >/tmp/estate-bootstrap-up.log 2>&1; then
   ok "services recreated with real credentials"
 else
   bad "recreate failed; see /tmp/estate-bootstrap-up.log"

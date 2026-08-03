@@ -50,6 +50,49 @@ GW_PROJECT=${COMPOSE_PROJECT_NAME:-cfmicro}
 export CF_WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
 export CLOUDSFORGE_RELEASE=${CLOUDSFORGE_RELEASE:-estate}
 
+# ── PREFLIGHT: the two copies of CF_WEB_APEX must agree, BEFORE anything starts ─
+#
+# This is the third time a gateway configuration in this repository has been
+# wrong in a way that produced SILENCE rather than an error:
+#
+#   1. `CF_API_HOST` undefined in the env file the gateway loads → every public
+#      router rendered `Host(``)`, a valid rule matching no request ever sent.
+#      Traefik logged nothing; the whole public API was dead.
+#   2. A Go template action inside a YAML COMMENT → one unparseable file, and the
+#      file provider published NO configuration from ANY file in the directory,
+#      including the priority-100000 `/internal` refusal. Logged once, at start.
+#   3. The variable below, read by two mechanisms that cannot see each other:
+#      COMPOSE interpolates it into identity's IDENTITY_HANDOFF_ORIGINS, and
+#      TRAEFIK's file provider renders it into every surface router and the CORS
+#      allowlist from compose/env/traefik.env. Drift is invisible: the surfaces
+#      answer, and cross-surface sign-in 403s somewhere else entirely.
+#
+# So it is checked here, loudly, before a container starts.
+#
+# WHY THE TEMPLATE DOES NOT SIMPLY HARD-FAIL INSTEAD. Because of defect 2: a
+# template error takes down every file in `gateway/dynamic/`, and losing the
+# `/internal` refusal to a missing web variable is a worse outcome than serving
+# no surfaces. The conditional in estate-web.yml therefore renders NOTHING when
+# the variable is unset — and this check, plus estate-verify's per-surface
+# failure, is what makes that absence loud instead of quiet.
+TRAEFIK_ENV=compose/env/traefik.env
+gateway_apex=$(grep -E '^CF_WEB_APEX=' "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
+if [ -z "$gateway_apex" ]; then
+  echo "FATAL: $TRAEFIK_ENV defines no CF_WEB_APEX." >&2
+  echo "       The gateway would render fifteen routers with an empty Host() and serve nothing," >&2
+  echo "       silently. Add: CF_WEB_APEX=$CF_WEB_APEX" >&2
+  exit 1
+fi
+if [ "$gateway_apex" != "$CF_WEB_APEX" ]; then
+  echo "FATAL: CF_WEB_APEX disagrees between the two files that read it." >&2
+  echo "         shell / compose : $CF_WEB_APEX" >&2
+  echo "         $TRAEFIK_ENV : $gateway_apex" >&2
+  echo "       The surfaces would be served on one apex and identity's hand-off allowlist" >&2
+  echo "       written for another, so sign-in works at Hub and 403s everywhere else." >&2
+  exit 1
+fi
+echo "  apex agrees in both files: $CF_WEB_APEX"
+
 
 # EVERY SERVICE HERE BUILDS FROM A WORKING TREE, not from a published image, so
 # the environment is only ever as green as every checkout on this machine — and a

@@ -466,6 +466,34 @@ revoke_code=$(code -X POST "$IDENTITY/service-credentials/$cred_id/revoke" \
   || bad "a REVOKED credential could still mint a token"
 
 echo
+echo "── THE ONBOARDING TOPIC THAT HAD NO SUBSCRIBER ──────────────────────────"
+# `identity.user.registered` is consumed by TWO services — activity turns it into
+# a feed record (activity/src/classify.ts:190) and analytics counts it as "the
+# denominator of every onboarding cohort" (analytics/src/catalogue.ts:307) — and
+# nothing subscribed either of them, so both were consumers with no producer and
+# every onboarding metric in the estate was structurally zero.
+#
+# `estate-bootstrap.sh` now seeds the row as deploy configuration. THIS ASSERTS
+# THE DELIVERY, NOT THE ROW: a subscription that exists and never delivers is the
+# same outage with a tidier database — which is exactly what seeding analytics
+# proved, at `attempts=67, last_error=… → 401`, because its `/ingest` demands a
+# scoped token the relay has no way to present. activity takes a signature alone,
+# so activity is the consumer this asserts and analytics is a named gap in
+# another repository.
+areg=""
+for _ in $(seq 1 30); do
+  areg=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+    "select count(*) from inbox where topic = 'identity.user.registered'" 2>/dev/null | tr -d ' ')
+  [ "${areg:-0}" -ge 1 ] && break
+  sleep 1
+done
+if [ "${areg:-0}" -ge 1 ]; then
+  ok "identity.user.registered crossed the bus into activity ($areg acknowledgement(s)) — it had no subscriber at all"
+else
+  bad "no identity.user.registered reached activity in 30s — the topic still has no working consumer"
+fi
+
+echo
 echo "── THE FIFTEEN FRONTENDS: served, and proved to be more than a 200 ──────"
 #
 # ── THE TRAP THIS SECTION EXISTS FOR ───────────────────────────────────────────
