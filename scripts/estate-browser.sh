@@ -110,18 +110,42 @@ fi
 echo "  gateway answering, sign-in surface served on hub.${APEX}"
 echo
 
-# ── --insecure-tls, AND WHY IT IS NOT A DEFAULT IN BEACON ─────────────────────
+# ── --insecure-tls, WHAT IT NOW COSTS, AND WHERE THE FIX BELONGS ──────────────
 #
-# The gateway terminates TLS with Traefik's built-in `CN=TRAEFIK DEFAULT CERT`,
-# because `ui/packages/ui/src/surfaces.ts` emits `https://` unconditionally and
-# there is no CA on a laptop. Chromium refuses it with
-# ERR_CERT_AUTHORITY_INVALID, and Node's `fetch` refuses it with the far less
-# helpful `TypeError: fetch failed`.
+# **THE PREMISE OF THIS FLAG HAS CHANGED AND THE FLAG HAS NOT.**
 #
-# So the flag is passed HERE, by the script that knows this estate's certificate
-# is self-signed, and beacon's own default stays strict. A production browser
-# journey must fail on an expired certificate — that is one of the few outages a
-# synthetic monitor sees before a customer does.
+# It used to read: "the gateway terminates TLS with Traefik's built-in
+# `CN=TRAEFIK DEFAULT CERT` … there is no CA on a laptop". Both halves are now
+# false. `scripts/gateway-cert.sh` mints `CN=CloudsForge Estate Local CA` and a
+# wildcard leaf, `gateway/dynamic/tls.yml` serves it, and `estate-verify.sh`
+# asserts the chain with `--cacert` and no `-k`. There IS a CA on this laptop,
+# and its public key can be pinned.
+#
+# That matters because `--insecure-tls` is not a warning suppressant. In
+# `beacon/src/cli.ts:294` it sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide
+# AND passes `ignoreHttpsErrors: true` to every browser context — validation off
+# for every host, every error, for ever. Pointed at staging, this suite would
+# report green through an expired certificate, one issued for the wrong
+# hostname, and an active man-in-the-middle. It is the estate's signature defect
+# in the suite written to end it, and it is the reason the whole estate could be
+# green while unusable in Chrome.
+#
+# THE FIX IS NOT HERE, AND IS NOT A LOCAL SHIM. `micro-beacon` has already built
+# the narrow lever — `src/browser/estatecert.ts`, which reads the certificate the
+# gateway is really serving, refuses to pin anything that fails for a reason
+# OTHER than an untrusted root (so expiry and a wrong hostname still fail), and
+# pins one SPKI through Chromium's `--ignore-certificate-errors-spki-list`. Its
+# header already names this CA. But `collectPins` is wired into `beacon smoke`
+# only; the `beacon browser` command this script calls still takes
+# `--insecure-tls` and nothing else.
+#
+# So: reported to micro-beacon, which owns both the flag and the module —
+# `runBrowser` should take the `collectPins` path `runSmokeCommand` already
+# does, and `--insecure-tls` should stop implying `ignoreHttpsErrors`. Until it
+# does, the flag stays, because the alternative is sixteen journeys that die at
+# `page.goto` and report nothing about the product. It is recorded here rather
+# than quietly kept, because a stale justification is how a shortcut becomes a
+# policy.
 
 # ── AND WHY THIS `cd`s RATHER THAN PASSING A PATH ─────────────────────────────
 #
