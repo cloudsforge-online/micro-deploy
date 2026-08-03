@@ -66,3 +66,18 @@ CREATE DATABASE admin_api;
 -- no per-user simulation process, so an object placed IS a row, and this
 -- database is the entire authoritative world.
 CREATE DATABASE tessera;
+
+-- -- the observability sink (docs/ecosystem/13-operational-model.md) ------------
+-- micro-lantern, and it was ABSENT FROM THIS ENVIRONMENT ENTIRELY: `grep -c
+-- lantern` over the estate compose file returned 0. Every frontend in the estate
+-- has been posting browser telemetry for months to a service that was not
+-- deployed, and the failure was invisible from the page — a cross-origin POST to
+-- a host that is not there is reported to the script as `TypeError: Failed to
+-- fetch`, which is indistinguishable from the wrong-path 404 the bundles were
+-- also sending. Both defects were live at once, and neither could be seen
+-- without fixing the other.
+--
+-- The service holds four planes: normalised log events, deduplicated issues,
+-- rollups, and `rum_samples` — the browser sink. Everything here expires; the
+-- RUM plane at thirty days, and by policy it carries NO `user_id` column at all.
+CREATE DATABASE lantern;

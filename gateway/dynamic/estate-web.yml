@@ -414,6 +414,36 @@ http:
       entryPoints: [websecure]
       service: cf-svc-custody
 
+    # ──────────────────────────────── lantern — where the browsers report to ──
+    #
+    # THE ADDRESS SIXTEEN BUNDLES HAVE BEEN POSTING TO WITH NOTHING BEHIND IT.
+    #
+    # `src/lib/obs.ts` sends browser errors and page timings to
+    # `${hosts().lantern}/ingest/client`, and `hosts().lantern` on any surface
+    # served by this gateway is `https://lantern.<apex>` — the registry gives the
+    # service the subdomain `lantern`. There was no router for that host and no
+    # container behind it, so every post failed at DNS/connect and the page was
+    # told `TypeError: Failed to fetch`, which is what it is also told for a
+    # cross-origin 404. Two distinct faults, one indistinguishable symptom; that
+    # is why this survived unnoticed for months.
+    #
+    # The WHOLE host, like nimbus above: the browser sink is `POST /ingest/client`
+    # but the service also answers `/otlp/v1/logs` and the `/v1` reads an operator
+    # uses, and enumerating prefixes here would be a second copy of that route
+    # list with its own drift. `/internal` stays refused by policy.yml's
+    # priority-100000 rule, which nothing in this file can outrank.
+    #
+    # The sink itself is NOT protected by this router — it answers without a
+    # credential by design, because a browser holds none. It is defended by
+    # lantern's own origin allowlist (`LANTERN_RUM_ORIGINS`, set in
+    # docker-compose.estate.yml) and a per-client quota. Its `/v1` read routes and
+    # `/metrics` DO require a token, checked inside the service.
+    cf-web-lantern:
+      rule: 'Host(`lantern.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      service: cf-svc-lantern
+
   services:
     # The bundles. Port 8080 because the images are `nginx-unprivileged`: nothing in those
     # containers is root and a non-root process cannot bind 80. Read from each frontend's
@@ -514,6 +544,13 @@ http:
     cf-svc-custody:
       loadBalancer:
         servers: [{ url: "http://custody:4000" }]
+    # 4000, like every other service here: the estate sets `PORT: "4000"` through
+    # `*common-env`. Lantern's own DEFAULT is 4010 — the number the registry
+    # carries as its devPort, and the one a bundle resolves on a loopback origin —
+    # but in this environment it binds 4000 like the rest.
+    cf-svc-lantern:
+      loadBalancer:
+        servers: [{ url: "http://lantern:4000" }]
 {{ else }}
 # CF_WEB_APEX is unset, so this file contributes NOTHING rather than fifteen routers whose rules
 # read `Host(``)` and match no request ever sent. That distinction is the whole of the comment at
