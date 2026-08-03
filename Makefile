@@ -84,7 +84,7 @@ GW_ESTATE := -f compose/docker-compose.telemetry.yml \
              -f compose/docker-compose.gateway.yml \
              -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-ps check-gateway check-web estate-gateway
+.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web estate-gateway
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
@@ -94,6 +94,9 @@ estate-gateway: ## Just the gateway half, against an estate that is already up
 
 estate-verify: ## Drive the running environment through every real flow
 	@./scripts/estate-verify.sh
+
+estate-browser: ## Drive the tier-3 BROWSER journeys in a real Chromium
+	@./scripts/estate-browser.sh
 
 estate-ps: ## What the environment is running, and whether it is healthy
 	@docker compose $(ESTATE) ps

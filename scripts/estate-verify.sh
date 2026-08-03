@@ -1237,42 +1237,99 @@ print('yes' if any(k in banned for r in rows if isinstance(r, dict) for k in r) 
   fi
 fi
 
-# ── THE SPRITE PATH: 404, AND 404 WITHOUT THE SHELL ───────────────────────────
+# ── THE SPRITE PATH: WHICHEVER STATE THE MOUNT IS IN, ASSERTED ────────────────
 #
 # micro-tessera-web named this the item most likely to be missed. `/world-assets/` is served
 # same-origin because a ward costs several hundred image requests and a cross-origin path puts a
 # CORS preflight in front of every one; the bytes are NOT in the bundle image, they are mounted
 # from wherever micro-tessera-assets is materialised.
 #
-# THEY ARE NOT MATERIALISED YET — `micro-tessera-assets` has no `materialise.py` — so the mount
-# points at an empty directory and every sprite 404s. That is the CORRECT state, and it is what
-# `tessera-web/nginx.conf:64-67` says to expect. What is asserted here is not that a sprite
-# exists; it is that the path fails the RIGHT WAY, because the two wrong ways are both silent:
+# THESE LINES USED TO SAY "micro-tessera-assets has no materialise.py". It has one now, so there
+# are two legitimate states rather than one, and asserting only the empty one would go red the
+# first time somebody mounted a set — which is a check that punishes the thing it exists to
+# encourage. Which state applies is READ FROM THE MOUNT'S OWN RECEIPT rather than from a variable
+# this script is told, because the question worth answering is what the CONTAINER is serving.
 #
-#   * 200 with index.html — what `try_files $uri /index.html` would give. The browser decodes HTML
-#     as a PNG and reports a corrupt image naming the wrong file.
-#   * 404 with nginx's own error page — indistinguishable to the client from a network fault.
+#   no SET.json   no art mounted. Every sprite 404s, which is what tessera-web/nginx.conf:64-67
+#                 says to expect, and the two wrong ways to fail are both silent:
+#                   * 200 with index.html — the browser decodes HTML as a PNG and reports a
+#                     corrupt image naming the wrong file.
+#                   * 404 with nginx's own error page — indistinguishable from a network fault.
+#   a SET.json    a set is mounted. Then the receipt names files, and A FILE THE RECEIPT NAMES
+#                 MUST BE SERVED — a complete mount that nginx cannot reach is the same outage as
+#                 no mount, arriving as a world full of holes.
 #
-# ── WHAT IS ASSERTED, AND THE HALF THAT IS ONLY RECORDED ──────────────────────
-#
-# THE STATUS IS ASSERTED. It is what stops a browser treating the bytes as an image at all.
-#
-# THE BODY IS MEASURED AND REPORTED, NOT ASSERTED — the same call this file already makes for
-# `/assets/` a few hundred lines above, and for the same cause. `error_page 404 /index.html` is a
-# SERVER-level directive in every frontend's nginx.conf, so it catches this location's `=404` too:
-# tessera-web/nginx.conf:64-72 states an intent ("a sprite request answered with index.html
-# decodes as a corrupt PNG") that its own configuration does not achieve, exactly as the other
-# fifteen do. Measured here rather than asserted, because it is a defect in a repository this
-# suite cannot fix, and a red that nobody is able to clear is a red everybody learns to ignore.
-wa_body=$(curl -s -w '\n%{http_code}' "$TESSERA_WEB/world-assets/objects/seating-stool.png")
-wa_status=$(printf '%s' "$wa_body" | tail -1)
-wa_note=""
-printf '%s' "$wa_body" | sed '$d' | grep -q 'id="root"' \
-  && wa_note=" (and it carries the app shell — server-level error_page catches this location too, a finding for micro-tessera-web, not a failure here)"
-if [ "$wa_status" = 404 ]; then
-  ok "/world-assets/ 404s a sprite that is not materialised — the mount is wired and the art has not landed$wa_note"
+# THE STATUS IS ASSERTED either way. THE BODY IS MEASURED AND REPORTED, NOT ASSERTED — the same
+# call this file already makes for `/assets/`, and for the same cause: `error_page 404 /index.html`
+# is a SERVER-level directive in every frontend's nginx.conf, so it catches this location's `=404`
+# too. tessera-web/nginx.conf:64-72 states an intent its own configuration does not achieve,
+# exactly as the other fifteen do. A red nobody is able to clear is a red everybody learns to
+# ignore.
+wa_set=$(curl -s -o /dev/null -w '%{http_code}' "$TESSERA_WEB/world-assets/SET.json")
+if [ "$wa_set" = 200 ]; then
+  # A set is mounted. Take a path OUT OF THE RECEIPT — never one written here, which would be a
+  # copy of micro-tessera-assets' naming convention in a repository that does not own it, and
+  # would pass or fail for reasons that have nothing to do with the mount.
+  wa_first=$(curl -s "$TESSERA_WEB/world-assets/SET.json" \
+    | python3 -c "import sys,json;f=[x for x in json.load(sys.stdin)['files'] if x.get('shipped')];print(f[0]['path'] if f else '')" 2>/dev/null)
+  wa_provider=$(curl -s "$TESSERA_WEB/world-assets/SET.json" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('provider',''))" 2>/dev/null)
+  if [ -z "$wa_first" ]; then
+    bad "/world-assets/SET.json is served but names no shipped file — the receipt is not one materialise.py wrote"
+  else
+    wa_code=$(curl -s -o /tmp/sprite.png -w '%{http_code}' "$TESSERA_WEB/world-assets/$wa_first")
+    if [ "$wa_code" = 200 ]; then
+      ok "/world-assets/ serves the '$wa_provider' set — $wa_first is $(wc -c </tmp/sprite.png | tr -d ' ') bytes"
+    else
+      bad "/world-assets/SET.json names $wa_first and the mount answered $wa_code for it — the receipt and the bytes disagree, so the world renders with holes"
+    fi
+  fi
+
+  # ── THE MISMATCH THIS SECTION EXISTS TO STOP BEING SILENT ───────────────────
+  #
+  # A mount can be complete, byte-correct and validated, and EVERY SPRITE THE CLIENT ASKS FOR CAN
+  # STILL 404 — because the two sides do not agree on the filename.
+  #
+  #   tessera-web/src/render/terrain.ts:110  `sprite: `tiles/${archetype}-${tile}``
+  #   tessera-web/src/lib/sprites.ts:80      fetch(`${assetBase()}/${path}.png`)
+  #                                          → GET /world-assets/tiles/ashfield-ground-a.png
+  #   tessera-assets MANIFEST.json           "path": "assets/tiles/ashfield-ground-a-256x128.png"
+  #                                          → the mount holds  tiles/ashfield-ground-a-256x128.png
+  #
+  # The client's "stable path" carries NO SIZE; every materialised filename does. Neither
+  # repository is wrong on its own and neither can see the other, which is why this only appears
+  # when something drives the two together — the same shape as `/auth/exchange` against
+  # `/auth/handoff/redeem`, and as `/ingest/browser` against `/ingest/client`.
+  #
+  # RECORDED, NOT ASSERTED. The fix belongs in micro-tessera-web or micro-tessera-assets, and
+  # micro-deploy must not paper over it with an nginx rewrite: a path rewrite here would bake one
+  # repository's naming convention into the deploy, where the next person to change it cannot see
+  # it. What must not happen is that it stays invisible.
+  wa_client=$(curl -s -o /dev/null -w '%{http_code}' "$TESSERA_WEB/world-assets/tiles/ashfield-ground-a.png")
+  if [ "$wa_client" = 200 ]; then
+    ok "  …and the path tessera-web's own renderer asks for resolves"
+  else
+    echo "  NOTE the mount is complete and the CLIENT'S OWN PATH 404s ($wa_client)."
+    echo "       terrain.ts:110 asks for tiles/ashfield-ground-a.png; the set holds"
+    echo "       tiles/ashfield-ground-a-256x128.png. The client's stable path carries no size and"
+    echo "       every materialised filename does, so every ground tile and every object is a hole."
+    echo "       A finding for micro-tessera-web / micro-tessera-assets — micro-deploy must not"
+    echo "       rewrite the path here, which would hide the disagreement in the one place neither"
+    echo "       repository would look."
+  fi
 else
-  bad "/world-assets/ answered $wa_status for a sprite that is not materialised — a missing sprite must 404, not resolve to something. Check the CF_WORLD_ASSETS mount"
+  wa_body=$(curl -s -w '\n%{http_code}' "$TESSERA_WEB/world-assets/objects/seating-stool.png")
+  wa_status=$(printf '%s' "$wa_body" | tail -1)
+  wa_note=""
+  printf '%s' "$wa_body" | sed '$d' | grep -q 'id="root"' \
+    && wa_note=" (and it carries the app shell — server-level error_page catches this location too, a finding for micro-tessera-web, not a failure here)"
+  if [ "$wa_status" = 404 ]; then
+    ok "/world-assets/ 404s a sprite with no set mounted — the mount is wired and empty, the supported default$wa_note"
+    echo "       To serve one:  python3 materialise.py --provider flux-2-pro --into <dir>   # micro-tessera-assets"
+    echo "                      CF_WORLD_ASSETS=<dir> ./scripts/estate-up.sh"
+  else
+    bad "/world-assets/ answered $wa_status with no set mounted — a missing sprite must 404, not resolve to something. Check the CF_WORLD_ASSETS mount"
+  fi
 fi
 
 echo

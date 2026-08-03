@@ -1881,7 +1881,7 @@ services:
     ports:
       - "127.0.0.1:4141:8080"
     # ── `/world-assets/`, THE ONE micro-tessera-web NAMED AS MOST LIKELY TO BE
-    #    MISSED, AND IT IS NOT POINTED AT THE ASSET REPOSITORY YET ────────────
+    #    MISSED — AND `materialise.py` HAS SINCE LANDED ────────────────────────
     #
     # `tessera-web/nginx.conf:73` serves `location /world-assets/` with
     # `try_files $uri =404` and NO index.html fallback — deliberately, because a
@@ -1889,30 +1889,114 @@ services:
     # a 404, and the client would report a decode failure for a file that simply
     # is not there. Its own comment says the bytes are "NOT served from this
     # image. micro-deploy maps it … to wherever micro-tessera-assets is
-    # materialised", and that "until that mapping exists this location 404s,
-    # which is the correct answer".
+    # materialised".
     #
-    # THIS IS THAT MOUNT, AND IT DELIBERATELY DOES NOT POINT AT
-    # `../../tessera-assets` TODAY. That repository has no `materialise.py` — it
-    # is still generating, and the on-disk layout the client resolves against
-    # does not exist to be pointed at. Mounting `assets/` in its place would put
-    # SOME bytes under the path and turn "there is no materialised art here"
-    # into "the art is there and every sprite 404s", which is the same class of
-    # error as a zero wearing a status code. Worse, a bind mount of a path that
-    # does not exist makes docker CREATE it — an empty directory written into a
-    # repository micro-deploy does not own.
+    # THESE LINES USED TO SAY micro-tessera-assets "HAS NO materialise.py" and
+    # described what to do "the day it lands". IT LANDED (its af1aa98). That is
+    # the same defect as the `web-check.py` this file once claimed to have and
+    # did not: a comment describing the present as the future, sitting directly
+    # above the thing it describes. Corrected by wiring it, not by deleting the
+    # sentence.
     #
-    # So it points at an empty, documented directory in THIS repository, and the
-    # default is overridable in one place. The day `materialise.py` lands:
+    #     python3 materialise.py --provider flux-2-pro --into <dir>   # in micro-tessera-assets
+    #     CF_WORLD_ASSETS=<dir> ./scripts/estate-up.sh
     #
-    #     CF_WORLD_ASSETS=../../tessera-assets/materialised ./scripts/estate-up.sh
+    # Switching sets is the whole point and is why this is MOUNTED rather than
+    # baked, unlike the chrome every web app carries in its own `public/`: a set
+    # is 392 files, and comparing FLUX against a challenger by rebuilding the
+    # image would be a rebuild per comparison. The client makes that safe — it
+    # resolves by stable relative path and there is NO code path in the bundle
+    # that can name a provider (`tessera-web/src/lib/hosts.ts:100-112`), so the
+    # directory behind the path is the only variable.
     #
-    # and nothing else changes. Until then the location 404s, which is what the
+    # THE DEFAULT IS STILL THE EMPTY DIRECTORY, and that is a supported state,
+    # not a stopgap: with no art mounted the location 404s, which is what the
     # bundle expects and what `scripts/estate-verify.sh` asserts — including
-    # that it 404s WITHOUT the app shell, because serving index.html here is the
-    # failure the nginx block is written to avoid.
+    # that it 404s WITHOUT the app shell.
     volumes:
       - ${CF_WORLD_ASSETS:-./estate/world-assets}:/usr/share/nginx/html/world-assets:ro
+    depends_on:
+      tessera-assets-check:
+        condition: service_completed_successfully
+
+  # ------------------------------------------ the world-art mount, VALIDATED ──
+  #
+  # ── WHY A HALF-POPULATED MOUNT IS THE DANGEROUS CASE, AND THE ONLY ONE ────────
+  #
+  # `micro-tessera-assets`' `materialise.py` already refuses an incomplete set:
+  # it resolves all 392 entries before writing a byte, names every gap, and
+  # materialises NOTHING on a miss — because "a directory that is mostly Qwen and
+  # quietly partly FLUX" makes every judgement about the art a judgement about a
+  # blend nobody chose. THAT GUARANTEE ENDS AT THE DIRECTORY. Nothing downstream
+  # re-checks it, and a mount is trivially easy to get half right: a copy
+  # interrupted, a subdirectory excluded, a path pointed one level too deep.
+  #
+  # And the symptom is the worst kind. `tessera-web/src/lib/sprites.ts` has NO
+  # FALLBACK SPRITE by design — a missing sprite is "a visible hole with a name,
+  # not a substitute" — so a 90%-populated mount renders a world with holes while
+  # nginx answers 200 on everything it does have and every healthcheck in this
+  # file stays green. That is exactly the shape of `STUDIO_ASSET_ROOT` being
+  # unset, which EACCES'd every generation while the container reported healthy
+  # and nothing in the service probed the directory it exists to write.
+  #
+  # So the mount is asserted before tessera-web serves, and there are three
+  # states rather than two:
+  #
+  #   empty     no SET.json and no PNG. The documented default: no art here, the
+  #             location 404s, the bundle expects it. PASSES, loudly.
+  #   complete  SET.json present AND the PNG count equals its own
+  #             `materialisedCount`. PASSES.
+  #   anything  a receipt without its files, files without a receipt, or a count
+  #   else      that disagrees. FAILS, and tessera-web does not start.
+  #
+  # The count is compared against the RECEIPT the writer left, not against a
+  # number typed here. A literal 392 in this file would be a second copy of a
+  # fact micro-tessera-assets owns, and it would be wrong the first time a set
+  # gains an asset — which is the drift this estate has already paid for twice.
+  tessera-assets-check:
+    image: busybox:1.37
+    restart: "no"
+    volumes:
+      - ${CF_WORLD_ASSETS:-./estate/world-assets}:/world-assets:ro
+    # `sh -c`, single-quoted in YAML so `$` reaches the shell rather than compose.
+    # busybox has no jq: `materialisedCount` is read with grep -o, which is
+    # sufficient for a number this file did not write and does not parse further.
+    command:
+      - sh
+      - -c
+      - |
+        set -e
+        pngs=$$(find /world-assets -name '*.png' | wc -l)
+        if [ -f /world-assets/SET.json ]; then
+          want=$$(grep -o '"materialisedCount"[^0-9]*[0-9]*' /world-assets/SET.json | grep -o '[0-9]*$$')
+          if [ -z "$$want" ]; then
+            echo "FATAL: /world-assets/SET.json has no materialisedCount." >&2
+            echo "       It was not written by materialise.py, so nothing can say what a" >&2
+            echo "       complete mount is. Re-run: python3 materialise.py --provider <id> --into <dir>" >&2
+            exit 1
+          fi
+          if [ "$$pngs" != "$$want" ]; then
+            echo "FATAL: the world-art mount is HALF POPULATED." >&2
+            echo "       SET.json says $$want file(s) were materialised; the mount holds $$pngs." >&2
+            echo "       tessera-web has no fallback sprite, so serving this renders a world with" >&2
+            echo "       holes while every healthcheck stays green. Refusing to start." >&2
+            exit 1
+          fi
+          set_id=$$(grep -o '"provider"[^,]*' /world-assets/SET.json | head -1)
+          echo "world art: $$pngs file(s), $$set_id — complete against its own receipt"
+          exit 0
+        fi
+        if [ "$$pngs" != 0 ]; then
+          echo "FATAL: /world-assets holds $$pngs PNG(s) and NO SET.json." >&2
+          echo "       Nothing records which asset set this is, and nothing can check it is" >&2
+          echo "       whole. The sets are deliberately the same shapes in the same colours," >&2
+          echo "       so 'which model is this?' is not answerable by eye. Materialise it:" >&2
+          echo "         python3 materialise.py --provider <id> --into <dir>   # micro-tessera-assets" >&2
+          exit 1
+        fi
+        echo "world art: none mounted. /world-assets/ will 404, which is the supported default."
+        echo "           To serve a set:  CF_WORLD_ASSETS=<dir> ./scripts/estate-up.sh"
+        exit 0
 
 # ── named volumes ──────────────────────────────────────────────────────────────
 #

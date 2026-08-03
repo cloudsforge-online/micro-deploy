@@ -168,4 +168,29 @@ sleep 3
 
 echo
 echo "── 4. verify — the only step that decides whether any of it worked ──────"
-exec ./scripts/estate-verify.sh
+# NOT `exec`, so that step 5 can be reached. `exec` replaced this shell with the
+# verifier, which is why nothing has ever been printed after it.
+./scripts/estate-verify.sh
+verify_status=$?
+
+echo
+echo "── 5. and the tier that verify cannot reach ─────────────────────────────"
+# ── WHY THIS IS A LINE OF TEXT AND NOT A FIFTH STEP ───────────────────────────
+#
+# `estate-verify.sh` is 183 curl assertions in under a minute. The browser tier
+# launches a Chromium per journey, with a 120-second deadline each, and needs
+# Node, tsx, playwright-core and a browser binary out of `../beacon/node_modules`
+# — none of which this repository's verifier depends on today, deliberately, so
+# that the estate can be verified from a clean machine. Running it here would
+# make the cheap check as expensive as the expensive one, and a verifier that
+# takes twenty minutes gets run less than one that takes two.
+#
+# So it is named rather than run. The cost of being beside is being forgotten,
+# and this line plus `make estate-browser` is what that costs instead.
+echo "  Nothing above executed a bundle. A module that throws on line one passes"
+echo "  every assertion in estate-verify. To drive the sixteen surfaces in a real"
+echo "  browser — sign-in, a refusal, a deep link, the product switcher:"
+echo
+echo "      make estate-browser"
+echo
+exit $verify_status
