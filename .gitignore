@@ -9,3 +9,19 @@ compose/estate/tokens.env
 # Rendered from a release manifest by scripts/release-render.py. Generated, never
 # authored: committing it would let a stale overlay outlive the manifest it came from.
 compose/docker-compose.release.yml
+
+# ── ANYTHING LOCAL, AND ESPECIALLY ANYTHING WITH A KEY IN IT ──────────────────
+#
+# The EMBER miner's wallet does NOT live here — it is at
+# `~/.cloudsforge/ember-testnet/miner/coinbase-key.json`, outside every git work
+# tree, so there is no ignore rule that can be edited away and no `git add -A`
+# that can reach it. That is the primary defence and `estate-verify.sh` asserts
+# it, along with the file's 0600 mode.
+#
+# This pattern is the second one, for the case that defence does not cover: a
+# person following the estate's `.env.local` convention and putting an operator
+# secret beside the compose file that reads it. `estate-verify.sh` checks this
+# line with `git check-ignore -v` rather than assuming it, because an ignore rule
+# that has never been tested is a rule nobody knows is wrong.
+*.env.local
+.env.local

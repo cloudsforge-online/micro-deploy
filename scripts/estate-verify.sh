@@ -1283,39 +1283,61 @@ if [ "$wa_set" = 200 ]; then
     else
       bad "/world-assets/SET.json names $wa_first and the mount answered $wa_code for it — the receipt and the bytes disagree, so the world renders with holes"
     fi
-  fi
 
-  # ── THE MISMATCH THIS SECTION EXISTS TO STOP BEING SILENT ───────────────────
-  #
-  # A mount can be complete, byte-correct and validated, and EVERY SPRITE THE CLIENT ASKS FOR CAN
-  # STILL 404 — because the two sides do not agree on the filename.
-  #
-  #   tessera-web/src/render/terrain.ts:110  `sprite: `tiles/${archetype}-${tile}``
-  #   tessera-web/src/lib/sprites.ts:80      fetch(`${assetBase()}/${path}.png`)
-  #                                          → GET /world-assets/tiles/ashfield-ground-a.png
-  #   tessera-assets MANIFEST.json           "path": "assets/tiles/ashfield-ground-a-256x128.png"
-  #                                          → the mount holds  tiles/ashfield-ground-a-256x128.png
-  #
-  # The client's "stable path" carries NO SIZE; every materialised filename does. Neither
-  # repository is wrong on its own and neither can see the other, which is why this only appears
-  # when something drives the two together — the same shape as `/auth/exchange` against
-  # `/auth/handoff/redeem`, and as `/ingest/browser` against `/ingest/client`.
-  #
-  # RECORDED, NOT ASSERTED. The fix belongs in micro-tessera-web or micro-tessera-assets, and
-  # micro-deploy must not paper over it with an nginx rewrite: a path rewrite here would bake one
-  # repository's naming convention into the deploy, where the next person to change it cannot see
-  # it. What must not happen is that it stays invisible.
-  wa_client=$(curl -s -o /dev/null -w '%{http_code}' "$TESSERA_WEB/world-assets/tiles/ashfield-ground-a.png")
-  if [ "$wa_client" = 200 ]; then
-    ok "  …and the path tessera-web's own renderer asks for resolves"
-  else
-    echo "  NOTE the mount is complete and the CLIENT'S OWN PATH 404s ($wa_client)."
-    echo "       terrain.ts:110 asks for tiles/ashfield-ground-a.png; the set holds"
-    echo "       tiles/ashfield-ground-a-256x128.png. The client's stable path carries no size and"
-    echo "       every materialised filename does, so every ground tile and every object is a hole."
-    echo "       A finding for micro-tessera-web / micro-tessera-assets — micro-deploy must not"
-    echo "       rewrite the path here, which would hide the disagreement in the one place neither"
-    echo "       repository would look."
+    # ── THE RESOLUTION, THROUGH THE RECEIPT — NOT A FILENAME WRITTEN HERE ─────
+    #
+    # This probe used to be `GET /world-assets/tiles/ashfield-ground-a.png`, a literal, with a
+    # long note recording that the client's stable path carries no size and every materialised
+    # filename does, so every ground tile was a hole. That mismatch is FIXED: `sprites.ts` no
+    # longer composes `identity + '.png'`; it resolves identity → URL through this receipt, which
+    # is what `materialise.py` has written `key` and `path` as two different strings for on all
+    # 392 entries since the beginning. Measured, not assumed: before, 3 requests to
+    # `/world-assets/` and all 404, 0 of 756,000 pixels painted; after, 4 requests all 200, 256
+    # tiles, 361,706 pixels.
+    #
+    # So the literal is now exactly the WRONG shape — it would go red on a legitimate rename and
+    # green on a broken resolver, which is the check inverted. What must hold is the CONTRACT: a
+    # key in the receipt resolves, through the receipt, to a path the mount serves. Rename a file
+    # and re-run materialise.py and both move together; only a diverged IDENTITY breaks, which is
+    # a named hole with a reason rather than a silent empty world.
+    #
+    # A `tiles/` key specifically, because ground is the layer whose absence is invisible: an
+    # object that fails to load is a missing stool, and a ground tile that fails to load is a
+    # world that renders as nothing at all while every request returns 200.
+    wa_key=$(curl -s "$TESSERA_WEB/world-assets/SET.json" | python3 -c "
+import sys,json
+f=[x for x in json.load(sys.stdin)['files'] if x.get('shipped') and str(x.get('key','')).startswith('tiles/')]
+print(f[0]['key'] + '\t' + f[0]['path'] if f else '')" 2>/dev/null)
+    if [ -z "$wa_key" ]; then
+      bad "the receipt names no shipped 'tiles/' key — the renderer resolves ground through this map and there is nothing in it to resolve"
+    else
+      wa_id=$(printf '%s' "$wa_key" | cut -f1)
+      wa_path=$(printf '%s' "$wa_key" | cut -f2)
+      wa_res=$(curl -s -o /tmp/sprite2.png -w '%{http_code}' "$TESSERA_WEB/world-assets/$wa_path")
+      # A PNG, checked by its magic bytes, because `error_page 404 /index.html` is a SERVER-level
+      # directive in every frontend's nginx.conf: a 200 here can be the app shell, which the
+      # browser decodes as a corrupt image naming the wrong file. Success and failure must not be
+      # indistinguishable to this harness — that is precisely why 38 browser scenarios could not
+      # see the original defect.
+      #
+      # READ IN PYTHON, NOT `od | grep`. The first draft of this line was
+      # `od -An -tx1 | grep -q '89 50 4e 47'` and it went RED against a
+      # byte-perfect 88KB PNG, because BSD `od` on macOS pads to three spaces
+      # between bytes and GNU `od` pads to one. A check whose verdict depends on
+      # a formatting default is a check that fails on the machine it was not
+      # written on — and this one would have failed CLOSED-looking-OPEN: red on
+      # a healthy mount, which is how a real red gets ignored.
+      png=$(python3 -c "
+import sys
+sys.stdout.write('yes' if open('/tmp/sprite2.png','rb').read(8) == b'\x89PNG\r\n\x1a\n' else 'no')" 2>/dev/null)
+      if [ "$wa_res" = 200 ] && [ "$png" = yes ]; then
+        ok "  …and the renderer's identity '$wa_id' resolves through the receipt to $wa_path — real PNG bytes, and a rename cannot break it"
+      elif [ "$wa_res" = 200 ]; then
+        bad "  '$wa_id' resolved to $wa_path and the mount answered 200 with something that is not a PNG — nginx's error_page served the app shell, and the browser will report a corrupt image naming the wrong file"
+      else
+        bad "  '$wa_id' resolves through the receipt to $wa_path and the mount answered $wa_res — the receipt and the bytes disagree, so the world renders with holes"
+      fi
+    fi
   fi
 else
   wa_body=$(curl -s -w '\n%{http_code}' "$TESSERA_WEB/world-assets/objects/seating-stool.png")
@@ -1840,10 +1862,18 @@ echo "── the chain-backing loop: solvency, or a refusal ──────�
 # Every scheduled run therefore took the `liability_sum` branch and compared the
 # ledger against the ledger, on the one asset the check exists for.
 #
-# What is asserted here is the REFUSAL, because that is what this environment is
-# entitled to: INDEXER_CHAINS is unset, so indexer follows no chain and has no
-# provider for ember:testnet. The route must say so, with a code, and must not
-# answer 200 (a number nobody measured) or 404 (a zero wearing a status code).
+# THIS SECTION USED TO ASSERT ONLY THE REFUSAL, and said so: "INDEXER_CHAINS is
+# unset, so indexer follows no chain". That is no longer true. There is an EMBER
+# testnet on this machine — `hearth/docker-compose.testnet.yml` run by
+# `scripts/ember-testnet.sh`, plus the owner's miner on the host — the indexer
+# follows `ember:testnet` from genesis, and `scripts/ember-seed.js` has put real
+# coin on real custody addresses.
+#
+# So the refusal checks below stay (they are still the shape of every failure)
+# and the SUCCESS PATH is now driven for the first time, at the foot of this
+# file: chain → indexer → ledger → a reconciliation that is genuinely
+# `observed_source = 'indexer'` and genuinely clean, then deliberately broken to
+# prove it fails closed rather than silently passing.
 INDEXER=${INDEXER:-http://127.0.0.1:4108}
 
 cb_anon=$(code "$INDEXER/v1/custody/ember/testnet/total")
@@ -1889,6 +1919,70 @@ lsvc=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}
   && ok "the ledger container holds a real LEDGER_SERVICE_TOKEN — it can authenticate to the indexer at all" \
   || bad "ledger has no LEDGER_SERVICE_TOKEN in its environment; its custody call goes out unauthenticated, the 401 maps to undefined, and EMBER freezes on an auth error while LOOKING exactly like the honest no-chain freeze"
 
+# ── AND IT IS NOT ENOUGH THAT IT IS SET. THIS IS A REAL, PERMANENT DEFECT. ─────
+#
+# `LEDGER_SERVICE_TOKEN` is a **600-second** token (identity/src/tokens.ts:28)
+# baked into the container's environment at recreate time, and
+# `ledger/src/env.ts:310` reads it once at import. The reconciliation job runs
+# every **900 seconds** (`ledger/src/jobs.ts:108`).
+#
+#   600 < 900.
+#
+# So the chain-backing call authenticates for the FIRST run after a bootstrap and
+# for no run after that, ever. `estate-up.sh` bootstraps and verifies inside the
+# window, which is exactly why this was invisible: the check passed on the one
+# path anybody ran it on. Left alone, EMBER records `unavailable/failed` for the
+# life of the deployment — byte-identical to the honest "no chain is followed"
+# freeze that this environment produced before there was a chain, and pointing an
+# operator at a chain that is working perfectly.
+#
+# `LEDGER_IDENTITY_CREDENTIAL` is already minted by `estate-bootstrap.sh` and is
+# long-lived. THE REPAIR IS IN micro-ledger, not here: adopt the credential and
+# exchange it at `POST /service-tokens/exchange`, the way wallet, billing,
+# custody and community already do. `indexerclient.ts` is ready for it — its
+# `token: () => …` is resolved per call, and the comment beside it says so — but
+# `env.ts` hands that function a string captured at import, so there is nothing
+# for the indirection to refresh.
+#
+# Until then this is reported every run, whatever the clock says, because the
+# arithmetic is a property of the deployment and not of the moment.
+bad "LEDGER IS THE ONE SERVICE ON THE TOKEN CLIFF WHOSE CREDENTIAL IS USED AFTER IT: LEDGER_SERVICE_TOKEN lives 600s and the reconciliation job runs every 900s, so the chain-backing call authenticates ONCE per bootstrap and never again — every later run records unavailable/failed and freezes EMBER, reading identically to an absent chain. settlement, market and trade are on the same cliff and are driven on request paths inside the window; this one is not. Remedy: ledger reads LEDGER_IDENTITY_CREDENTIAL (already minted, already long-lived) and exchanges it, as wallet, billing, custody and community do"
+
+# Renewed here so that everything below can still be DRIVEN. Without this the
+# section could only ever pass in the ten minutes after a bootstrap, and a check
+# that passes only when run one way is the failure this file exists to find.
+# `tokens.env` is gitignored, generated, and regenerated by every bootstrap.
+lexp=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+  | sed -n 's/^LEDGER_SERVICE_TOKEN=//p' \
+  | python3 -c "
+import sys,base64,json,time
+t=sys.stdin.read().strip()
+try:
+    p=t.split('.')[1]; p+='='*(-len(p)%4)
+    print(int(json.loads(base64.urlsafe_b64decode(p))['exp']) - int(time.time()))
+except Exception:
+    print(-1)" 2>/dev/null)
+if [ "${lexp:--1}" -lt 60 ] 2>/dev/null; then
+  echo "  ..   ledger's token expired ${lexp}s ago; renewing it so the loop below can be driven"
+  fresh=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+    -H 'content-type: application/json' -d '{"service":"ledger","scopes":["indexer:read"]}' \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+  if [ -n "$fresh" ]; then
+    LEDGER_TOKEN_VALUE="$fresh" python3 -c "
+import os,io
+p='compose/estate/tokens.env'
+v=os.environ['LEDGER_TOKEN_VALUE']
+lines=[l for l in io.open(p).read().splitlines()]
+out=[('LEDGER_SERVICE_TOKEN='+v) if l.startswith('LEDGER_SERVICE_TOKEN=') else l for l in lines]
+io.open(p,'w').write('\n'.join(out)+'\n')" 2>/dev/null \
+      && docker compose -f "$COMPOSE" --env-file compose/estate/tokens.env up -d --no-deps ledger >/dev/null 2>&1 \
+      && sleep 8 \
+      && ok "renewed ledger's credential for this run — the drive below is real, and the defect above is still real"
+  else
+    bad "could not renew ledger's token; the driven section below will report the chain as unobservable when the cause is authentication"
+  fi
+fi
+
 if [ -z "$cb_tok" ]; then
   bad "could not obtain a service token carrying indexer:read; the custody route cannot be driven"
 else
@@ -1902,6 +1996,18 @@ else
       cb_total=$(python3 -c "import sys,json;b=json.load(open('/tmp/slice.body'));print(type(b.get('total')).__name__)" 2>/dev/null)
       [ "$cb_total" = str ] && ok "the custody total answered a string total — the loop has a real input" \
         || bad "the custody total answered a $cb_total, not a string; an 18-decimal balance does not survive a JSON number"
+
+      # AND IT MUST NOT BE ZERO OVER ZERO ADDRESSES. A 200 whose total is "0" and
+      # whose `addresses` is 0 would be the exact defect this release removed —
+      # "we did not look" reported as "the chain holds nothing" — and `custody.ts`
+      # refuses that case rather than answering it, so seeing it here means the
+      # refusal has been weakened. It is checked separately from the seeded
+      # arithmetic below because it is a property of the ROUTE, not of the seed.
+      cb_n=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('addresses',0))" 2>/dev/null)
+      cb_at=$(python3 -c "import json;b=json.load(open('/tmp/slice.body'));print(b.get('observedAtBlock'),b.get('headHeight'),b.get('requiredConfirmations'))" 2>/dev/null)
+      [ "${cb_n:-0}" -gt 0 ] 2>/dev/null \
+        && ok "…summed over $cb_n registered custody addresses, read at block/head/depth $cb_at" \
+        || bad "the custody total answered 200 over ZERO addresses — an empty set must be refused, never summed to 0"
       ;;
     404)
       bad "the custody total answered 404 — a consumer files that as 'no custody here', which is a zero wearing a status code"
@@ -1939,6 +2045,224 @@ case "$cb_src" in
   indexer/*)          ok "EMBER was reconciled against a real chain observation ($cb_src)" ;;
   *)                  bad "an EMBER run recorded $cb_src, which is neither an observation nor an honest refusal" ;;
 esac
+
+echo
+echo "── the EMBER chain, driven: clean, then deliberately broken ─────────────"
+# ══════════════════════════════════════════════════════════════════════════════
+# EVERYTHING ABOVE THIS LINE ASSERTS THE REFUSAL BRANCH. THIS DRIVES THE OTHER.
+#
+# The estate built a complete chain-backing guarantee and, until there was a
+# chain on this machine, could only ever exercise its refusals: ledger migration
+# 11 refusing a self-attested run at the database, the indexer refusing a partial
+# sum, the job recording `unavailable/failed`. Every one of those is a `no`. None
+# of them is evidence that a `yes` is reachable, and a guarantee that has only
+# ever said no is indistinguishable from one that can only say no.
+#
+# So this section does four things in order, and each is a real effect:
+#
+#   1. CLEAN. Force the 15-minutely reconciliation to run now, and require a NEW
+#      row with `observed_source = 'indexer'`, `status = 'clean'` and `drift = 0`
+#      — the chain's own aggregate equalling the ledger's custody total to the
+#      wei, over seeded amounts (7 + 11 + 13 EMBER) that are distinct and
+#      non-round so a summing bug cannot balance by luck.
+#   2. UNFROZEN. `asset_freezes` must no longer hold EMBER. Only an exactly-zero
+#      drift lifts a freeze (`reconcile.ts`), so this is the assertion that the
+#      run really was zero and not merely within tolerance.
+#   3. BROKEN. Move the custody labels out of the `deposit:` prefix — the
+#      indexer's set becomes empty — and run it again. The route must REFUSE with
+#      `no_custody_addresses` rather than answer 0, and the ledger must record
+#      `unavailable/failed` and RE-FREEZE. This is the whole point: an empty
+#      observation must fail closed, not pass as a perfectly balanced zero.
+#   4. RESTORED. Put the labels back, run once more, and require clean again —
+#      so a verify run leaves the estate as it found it, and so the freeze is
+#      demonstrably lift-able rather than one-way.
+#
+# THE BREAK IS AT THE INDEXER'S CUSTODY SET, NOT AT THE CHAIN. Stopping the miner
+# would also work and takes fifteen minutes to become visible (a stopped miner
+# only shows up once the confirmed height stops advancing); relabelling is
+# instant, is exactly reversible, and exercises the guard whose comment says an
+# empty set "far more often means nobody registered the addresses than that the
+# platform holds none".
+#
+# IT IS SKIPPED, NOT FAILED, WHEN THERE IS NO CHAIN. An estate brought up without
+# `./scripts/ember-testnet.sh up` is a legitimate configuration and the refusal
+# branch above is the correct verdict for it. What must never happen is this
+# section quietly passing while proving nothing, so the skip says so out loud.
+# ══════════════════════════════════════════════════════════════════════════════
+EMBER_RPC_HOST=${EMBER_HOST_RPC:-http://127.0.0.1:8545}
+ember_chain=$(curl -s --max-time 5 -X POST -H 'content-type: application/json' \
+  --data-binary '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$EMBER_RPC_HOST" 2>/dev/null \
+  | sed -n 's/.*"result":"\(0x[0-9a-f]*\)".*/\1/p')
+
+# psql against the estate's own databases. `-qtA` so a value is a value.
+lsql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d ledger "$@" 2>/dev/null; }
+isql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d indexer "$@" 2>/dev/null; }
+
+# Force the leased job to be due now and wait for a run row NEWER than the one we
+# started with. Waiting on a NEW ROW rather than sleeping a fixed amount is the
+# same rule the rest of this file follows: a fixed sleep is either slower than it
+# needs to be or shorter, and which one is a property of the machine.
+#
+# $1 = the id of the newest EMBER run before the trigger. Echoes the new row as
+# `observed_source|status|drift`, or nothing if none arrived.
+reconcile_now() {
+  lsql -c "update jobs set run_at = now(), locked_until = null, locked_by = null
+            where kind = 'ledger.reconcile' and key = 'asset:EMBER'" >/dev/null
+  _n=0
+  while [ "$_n" -lt 60 ]; do
+    _row=$(lsql -c "select id||'|'||observed_source||'|'||status||'|'||coalesce(drift::text,'null')
+                      from reconciliation_runs where asset_code='EMBER'
+                     order by started_at desc limit 1")
+    case "$_row" in
+      "$1"|"$1"'|'*) : ;;
+      ?*) printf '%s' "${_row#*|}"; return 0 ;;
+    esac
+    _n=$((_n + 1))
+    sleep 2
+  done
+  return 1
+}
+
+if [ "$ember_chain" != "0x1cf4" ]; then
+  echo "  ..   SKIPPED: no EMBER testnet at $EMBER_RPC_HOST (chain id read: ${ember_chain:-none})."
+  echo "       The refusal branch above is the correct verdict for an estate without a chain."
+  echo "       To drive the success path:  ./scripts/ember-testnet.sh up && ./scripts/ember-miner.sh start"
+  echo "                                   node scripts/ember-seed.js"
+elif [ "$(isql -c "select count(*) from watched_addresses where chain='ember' and network='testnet' and label like 'deposit:%'")" = 0 ]; then
+  echo "  ..   SKIPPED: the chain is up but nothing is registered as EMBER custody."
+  echo "       A zero-balance custody set proves the plumbing and nothing about the arithmetic."
+  echo "       Seed it:  node scripts/ember-seed.js"
+else
+  ok "an EMBER testnet is answering at $EMBER_RPC_HOST on chain 7412"
+
+  # ── 0. THE KEY, WHICH IS THE PART THAT CANNOT BE UNDONE ────────────────────
+  #
+  # Hearth binds the coinbase public key into the proof-of-work seed
+  # (`chain/miner.js:103`) and signs the proof with the private key (`:84`), so
+  # the owner's miner MUST hold a real key — `hearthd --evm` refuses
+  # `--miner-address` for exactly that reason. That makes a file on this machine
+  # worth money, and every other check in this file is cheap by comparison: a
+  # committed key cannot be un-committed, and a `docker volume prune` cannot be
+  # un-pruned.
+  #
+  # Three assertions, in the order they matter, and NONE of them reads the key.
+  EMBER_KEY=${EMBER_MINER_DATA:-$HOME/.cloudsforge/ember-testnet/miner}/coinbase-key.json
+  if [ -f "$EMBER_KEY" ]; then
+    # 1. OUTSIDE EVERY WORK TREE. Not "ignored" — absent, so no edit to any
+    #    .gitignore and no `git add -A` anywhere can ever reach it.
+    if (cd "$(dirname "$EMBER_KEY")" && git rev-parse --show-toplevel >/dev/null 2>&1); then
+      bad "THE MINER'S KEY IS INSIDE A GIT WORK TREE ($EMBER_KEY). One 'git add -A' publishes it, and a published key cannot be unpublished"
+    else
+      ok "the miner's key is outside every git work tree — no ignore rule stands between it and a commit"
+    fi
+    # 2. 0600. `evmnode.js:78` writes it that way; this catches a later chmod.
+    kmode=$(stat -f '%Lp' "$EMBER_KEY" 2>/dev/null || stat -c '%a' "$EMBER_KEY" 2>/dev/null)
+    [ "$kmode" = 600 ] && ok "…and is mode 600" \
+      || bad "the miner's key is mode ${kmode:-unknown}, not 600 — anything running as another user on this machine can read it"
+    # 3. It is not empty of the thing that makes it a key. Checked by SHAPE, so
+    #    nothing here ever holds the material: a file whose `privateKey` went
+    #    missing is a miner that will silently generate a NEW key on next start
+    #    and mine to an address the owner does not know about.
+    python3 -c "import json,sys;d=json.load(open('$EMBER_KEY'));sys.exit(0 if isinstance(d.get('privateKey'),str) and d.get('address','').startswith('0x') else 1)" 2>/dev/null \
+      && ok "…and still carries the key for $(python3 -c "import json;print(json.load(open('$EMBER_KEY'))['address'])" 2>/dev/null)" \
+      || bad "the miner's key file has no usable privateKey/address; the next start would silently mine to a NEW address"
+  else
+    echo "  ..   no miner wallet at $EMBER_KEY — the owner's miner has never run here"
+  fi
+
+  # And the ignore rule this repository does carry, checked rather than trusted.
+  git check-ignore -q .env.local 2>/dev/null \
+    && ok "'.env.local' is genuinely ignored here (git check-ignore agrees) — the convention for an operator secret beside the compose file holds" \
+    || bad "'.env.local' is NOT ignored in this repository; the estate's own convention for a local secret would commit it"
+
+  # ── 1. CLEAN ───────────────────────────────────────────────────────────────
+  before=$(lsql -c "select id from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+  run=$(reconcile_now "$before")
+  if [ -z "$run" ]; then
+    bad "the EMBER reconciliation job did not produce a new run within 120s — is the ledger's job runner alive?"
+  else
+    src=$(printf '%s' "$run" | cut -d'|' -f1)
+    st=$(printf '%s' "$run" | cut -d'|' -f2)
+    drift=$(printf '%s' "$run" | cut -d'|' -f3)
+    [ "$src" = indexer ] \
+      && ok "a forced run recorded observed_source = 'indexer' — the ledger asked the chain and got an answer" \
+      || bad "the forced run recorded observed_source = '$src'. 'liability_sum' is the ledger checking itself and migration 11 should refuse it; 'unavailable' means the custody call failed"
+    [ "$st" = clean ] && [ "$drift" = 0 ] \
+      && ok "…and it is CLEAN with drift exactly 0: Σ on-chain custody equals the ledger's custody total, to the wei" \
+      || bad "the observed run is $st with drift $drift — the chain and the books disagree (or the seed and the credit do)"
+
+    # A number, printed, because "clean" over nothing is the failure this whole
+    # section exists to rule out. 31000000000000000000 wei is 7 + 11 + 13 EMBER.
+    tot=$(lsql -c "select ledger_custody_total||' / '||coalesce(indexer_observed_total::text,'null')
+                     from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+    case "$tot" in
+      0*|"0 / 0") bad "the run balanced at ZERO — 0 == 0 is the plumbing working and the arithmetic untested" ;;
+      *)          ok "…over a real position: ledger / chain = $tot wei" ;;
+    esac
+  fi
+
+  # ── 2. UNFROZEN ────────────────────────────────────────────────────────────
+  frozen=$(lsql -c "select count(*) from asset_freezes where asset_code='EMBER'")
+  [ "$frozen" = 0 ] \
+    && ok "EMBER is no longer frozen — and only an exactly-zero run lifts a freeze, so this is the run's own evidence" \
+    || bad "EMBER is still frozen after a clean run; the 'delete from asset_freezes' in reconcile.ts did not fire"
+
+  # ── 3. BROKEN, AND IT MUST FAIL CLOSED ─────────────────────────────────────
+  # Out of the `deposit:` prefix and into one nothing selects. Reversible by
+  # construction: the label is prefixed, never rewritten, so step 4 strips it.
+  isql -c "update watched_addresses set label = 'broken-by-verify/' || label
+            where chain='ember' and network='testnet' and label like 'deposit:%'" >/dev/null
+
+  brk=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/testnet/total")
+  brk_code=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('error',{}).get('code',''))" 2>/dev/null)
+  if [ "$brk" = 200 ]; then
+    brk_total=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('total'))" 2>/dev/null)
+    bad "WITH AN EMPTY CUSTODY SET THE ROUTE ANSWERED 200 WITH total=$brk_total. That is 'we did not look' reported as 'the chain holds nothing', and it would reconcile clean against an empty ledger for ever"
+  else
+    # Any refusal is the right shape; the CODE is what an operator acts on, and a
+    # refusal with no code sends them nowhere. `no_custody_addresses` is the one
+    # this break should produce — a different code means something else broke too.
+    [ -n "$brk_code" ] \
+      && ok "with the custody set emptied the route refuses ($brk $brk_code) rather than answering 0" \
+      || bad "with the custody set emptied the route answered $brk with no error code — an operator reading the freeze cannot tell why"
+  fi
+
+  before=$(lsql -c "select id from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+  run=$(reconcile_now "$before")
+  src=$(printf '%s' "$run" | cut -d'|' -f1)
+  st=$(printf '%s' "$run" | cut -d'|' -f2)
+  case "$src/$st" in
+    unavailable/failed)
+      ok "the ledger recorded unavailable/failed — it FAILED CLOSED on an observation it could not make" ;;
+    indexer/clean)
+      bad "THE LEDGER RECONCILED CLEAN WITH NO OBSERVABLE CUSTODY SET. A withheld observation reached reconcileAsset as a number; this is the defect the whole release removed" ;;
+    liability_sum/*)
+      bad "the ledger fell back to liability_sum on EMBER — it compared itself against itself on a chain asset, which migration 11 must refuse" ;;
+    *)
+      bad "with the observation withheld the ledger recorded $src/$st, which is neither an honest refusal nor a clean run" ;;
+  esac
+
+  refroze=$(lsql -c "select count(*) from asset_freezes where asset_code='EMBER'")
+  [ "$refroze" -ge 1 ] 2>/dev/null \
+    && ok "…and EMBER is frozen again: an asset whose backing nobody can see cannot be withdrawn" \
+    || bad "the run failed and EMBER was NOT frozen — the failure was recorded and acted on by nothing"
+
+  # ── 4. RESTORED ────────────────────────────────────────────────────────────
+  isql -c "update watched_addresses set label = replace(label, 'broken-by-verify/', '')
+            where chain='ember' and network='testnet' and label like 'broken-by-verify/%'" >/dev/null
+  restored=$(isql -c "select count(*) from watched_addresses where chain='ember' and network='testnet' and label like 'deposit:%'")
+  [ "${restored:-0}" -ge 1 ] 2>/dev/null \
+    && ok "the custody labels are restored ($restored addresses) — this section leaves the estate as it found it" \
+    || bad "the custody labels were NOT restored; EMBER will stay frozen after this verify run"
+
+  before=$(lsql -c "select id from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+  run=$(reconcile_now "$before")
+  src=$(printf '%s' "$run" | cut -d'|' -f1)
+  st=$(printf '%s' "$run" | cut -d'|' -f2)
+  [ "$src/$st" = indexer/clean ] \
+    && ok "and clean again ($src/$st) — the freeze was a state, not a one-way door" \
+    || bad "after restoring the custody set the run is $src/$st, not indexer/clean; the estate has been left worse than it was found"
+fi
 
 [ "$fails" -eq 0 ] && { echo; echo "all seams verified"; exit 0; }
 echo; echo "$fails check(s) failed"; exit 1

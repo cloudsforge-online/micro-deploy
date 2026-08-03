@@ -18,6 +18,10 @@
 #
 # ── THE ORDER, AND WHY EACH STEP IS WHERE IT IS ────────────────────────────────
 #
+#   0. the EMBER testnet     hearth's own compose file plus the owner's miner on
+#                            the host. FIRST, because the indexer verifies the
+#                            chain id at boot and a follower with no provider is
+#                            a service that reports healthy and indexes nothing.
 #   1. the estate            postgres, 22 services, 16 frontends. It creates the
 #                            network `cloudsforge-estate_default` that step 3
 #                            attaches to, so it cannot be later.
@@ -27,6 +31,9 @@
 #   3. telemetry + gateway   telemetry owns the three `cf-micro-*` networks and
 #                            declares them; the gateway file attaches to them as
 #                            external, so telemetry cannot be later either.
+#   3c. the seeders          custody addresses that actually hold coin, so the
+#                            solvency check compares two real numbers. AFTER the
+#                            bootstrap, because it needs a service token.
 #   4. estate-verify         the only step that decides whether any of it worked.
 #
 # ── ONE VARIABLE, READ BY TWO MECHANISMS ───────────────────────────────────────
@@ -114,6 +121,37 @@ else
   BUILD_FLAG="--build"
 fi
 
+# ── 0. THE CHAIN, AND WHY IT IS PART OF "UP" RATHER THAN BESIDE IT ────────────
+#
+# "The full stack includes the EMBER chain." Until it did, `LEDGER_RECONCILE_ASSETS`
+# named EMBER, every scheduled reconciliation recorded `unavailable/failed`, and
+# the estate's whole chain-backing guarantee — ledger migration 11, the indexer's
+# confirmed-only aggregate, the job that joins them — had only ever exercised its
+# REFUSAL branch. A guarantee that has only ever said no is indistinguishable
+# from one that can only say no.
+#
+# FIRST, not last: `indexer` verifies the chain id against `contracts-chain` at
+# boot, and starting it against nothing is the failure its own env.ts names — "a
+# follower with no provider reports healthy and indexes nothing".
+#
+# `CF_EMBER=0` skips it. That is a legitimate configuration — the refusal branch
+# is the correct verdict for an estate without a chain and `estate-verify.sh`
+# says so out loud rather than passing quietly — but it is not the default,
+# because the default is the whole stack.
+if [ "${CF_EMBER:-1}" = 0 ]; then
+  echo "!! CF_EMBER=0 — no EMBER testnet. Every EMBER reconciliation will record"
+  echo "!! unavailable/failed and freeze, which is correct and proves nothing."
+else
+  echo "── 0. the EMBER testnet, and the owner's miner outside the stack ────────"
+  ./scripts/ember-testnet.sh up || exit 1
+  # The miner is deliberately NOT a compose service. It holds the owner's key —
+  # Hearth binds the coinbase public key into the PoW seed, so a miner that mines
+  # to you must hold your key — and that wallet must outlive `down -v`, a volume
+  # prune, and the VM being resized. On the host it does.
+  ./scripts/ember-miner.sh start || exit 1
+  echo
+fi
+
 echo "── 1. the estate: 22 services, 16 frontends, one database each ──────────"
 echo "     apex: $CF_WEB_APEX   release: $CLOUDSFORGE_RELEASE"
 # --wait blocks on every healthcheck rather than on the daemon accepting the
@@ -165,6 +203,28 @@ fi
 # Three seconds, not a retry loop: the file provider is not slow, it is just not
 # instantaneous, and a loop here would hide a genuinely dead provider.
 sleep 3
+
+# ── 3c. THE SEEDERS ───────────────────────────────────────────────────────────
+#
+# A chain alone makes the solvency check compare 0 against 0, which is the
+# plumbing working and the arithmetic untested — and `0 == 0` is the exact shape
+# of the defect this release removed one service downstream. The seeder puts real,
+# distinct amounts on real custody addresses and credits the ledger with the same
+# numbers, so `clean` means two independently-computed 31-EMBER totals agreed.
+#
+# AFTER the bootstrap, because it mints a `wallet` token to register the
+# addresses and post the credits. Idempotent by target balance, so re-running
+# `estate-up.sh` tops up nothing and posts nothing twice.
+#
+# NOT FATAL. It waits for 60 confirmations, which on a chain mined from scratch
+# is minutes; an estate that is otherwise healthy should not be reported as
+# broken because a seed is still maturing. `estate-verify.sh` skips its driven
+# EMBER section with a message that names this script when the set is empty.
+if [ "${CF_EMBER:-1}" != 0 ]; then
+  echo
+  echo "── 3c. seeding EMBER custody, so the solvency check has real arithmetic ─"
+  node scripts/ember-seed.js || echo "  (the seed is not complete; estate-verify will say so rather than pass quietly)"
+fi
 
 echo
 echo "── 4. verify — the only step that decides whether any of it worked ──────"

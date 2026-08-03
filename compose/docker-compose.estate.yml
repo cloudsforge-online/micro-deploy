@@ -861,7 +861,55 @@ services:
       INDEXER_CUSTODY_MAX_ADDRESSES: "2000"
       INDEXER_CUSTODY_CONCURRENCY: "8"
       # ══════════════════════════════════════════════════════════════════════
+      # THE CHAIN THIS ESTATE FOLLOWS — and it is a real one now.
+      #
+      # `hearth/docker-compose.testnet.yml`, run AS IS by
+      # `scripts/ember-testnet.sh`: a non-mining seed plus two miners on chain
+      # id 7412, network `hearth-testnet`. Nothing about it is tuned for this
+      # environment, and that is deliberate. `contracts/packages/chain` has
+      # exactly two networks — `mainnet | testnet` — so a third "devnet"
+      # vocabulary would have had nowhere to live in the type system, and
+      # EMBER's 60 confirmations are described there as "the number Hearth
+      # publishes to exchanges". An environment that indexed a chain with
+      # different constants from the ones `chainSpec()` reads would be testing
+      # a chain that does not exist.
+      #
+      # HOST NETWORKING, NOT A COMPOSE LINK, and the reason is ownership.
+      # `hearth` is the frozen legacy repository: it is read, run and never
+      # modified. Attaching its seed to this project's network would mean
+      # editing its compose file. `host.docker.internal` reaches the port that
+      # file already publishes, and costs this estate nothing but a hostname.
+      #
+      # The endpoint is NAMED `hearth-testnet-seed` rather than left to derive
+      # from the host, because the name is the primary key of `provider_health`
+      # and the `provider` label of `indexer_provider_failures_total` — and
+      # `host.docker.internal` as a health row identifies the machine, not the
+      # node.
+      #
+      # WITH THE CHAIN DOWN this service still boots and still reports healthy:
+      # env.ts validates the URL, not the socket. What changes is only WHICH
+      # honest refusal the custody route gives — `nothing_indexed` instead of
+      # `chain_not_followed`. Both reach ledger as `undefined`, both freeze
+      # EMBER, and neither is a number nobody measured.
+      INDEXER_CHAINS: "ember:testnet"
+      INDEXER_RPC_EMBER_TESTNET: "hearth-testnet-seed=${EMBER_RPC_URL:-http://host.docker.internal:8545}"
+      # FROM GENESIS, and this one is load-bearing rather than tidy. With no
+      # start height the follower cold-starts at `tip − 2 × depth` = `tip − 120`,
+      # which on a chain younger than 120 blocks is a window that does not
+      # reach back to the confirmed height — and `custodyTotal` then refuses
+      # with `depth_not_walked` because it cannot vouch for the node's block
+      # where it must read the balances. A testnet mined from scratch on a
+      # laptop is exactly that chain. Indexing from 0 is cheap here and is the
+      # only setting under which the aggregate can be produced at all.
+      INDEXER_START_HEIGHT_EMBER_TESTNET: "0"
+      # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: indexer-estate
+    # Docker Desktop resolves `host.docker.internal` for free; the Linux daemon
+    # does not, and there the indexer would report a healthy follower that can
+    # reach no provider — the exact failure env.ts's mirror check exists to stop.
+    # `host-gateway` is a no-op where the name already resolves.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:4108:4000"
     depends_on:
