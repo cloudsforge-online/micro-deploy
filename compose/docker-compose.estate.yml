@@ -497,11 +497,33 @@ services:
       #
       # THE THIRD HALF WAS MISSING AND IS THE LINE BELOW. A grant says what
       # identity MAY mint for a service; it does not hand the service anything.
-      # ledger reads `LEDGER_SERVICE_TOKEN` (ledger/src/env.ts:310, via
-      # `optionalSecret`, into `indexerToken`) and nothing was ever setting it —
-      # so the call went out with no bearer, the indexer answered 401, the 401
-      # maps to `undefined`, the reconciliation ran unobserved, and EMBER froze.
+      # ledger read `LEDGER_SERVICE_TOKEN` and nothing was ever setting it — so
+      # the call went out with no bearer, the indexer answered 401, the 401 maps
+      # to `undefined`, the reconciliation ran unobserved, and EMBER froze.
       # `ledger/src/index.ts:170` logs that at FATAL.
+      #
+      # AND SETTING IT WAS NOT ENOUGH, WHICH IS WHY THE VARIABLE BELOW CHANGED.
+      # `LEDGER_SERVICE_TOKEN` carried a token that lives 600s
+      # (identity/src/tokens.ts:28), read once at import, while the
+      # reconciliation job runs every 900s (ledger/src/jobs.ts:108). 600 < 900,
+      # so the chain-backing call authenticated on the FIRST run after a
+      # bootstrap and on no run ever again — and the resulting freeze was
+      # byte-identical to the honest "no chain is followed" one. It passed
+      # verification only because `estate-up.sh` bootstraps and verifies inside
+      # the window: a check that could only be run the one way that passes.
+      #
+      # micro-ledger fixed it at the layer that owns it. `ledger/src/env.ts:362`
+      # now reads `LEDGER_IDENTITY_CREDENTIAL` — long-lived, `cfsc_…`, already
+      # minted by `estate-bootstrap.sh` — and exchanges it for a fresh token per
+      # call at `POST /service-tokens/exchange` via `@cloudsforge/auth`'s
+      # `ServiceTokenProvider`, as wallet, billing, custody and community do.
+      # `env.ts:363` keeps `legacyServiceTokenPresent` purely to COMPLAIN about
+      # the old variable, so handing it back would be silently ignored rather
+      # than obeyed. That is why this is a rename and not an addition.
+      #
+      # ORDER MATTERS HERE. The new image freezes EMBER with `no_credential` if
+      # it is started against the old variable, so this line and the ledger
+      # image must move together; rebuilding first breaks a running estate.
       #
       # THE TWO FREEZES LOOK IDENTICAL AND ARE NOT THE SAME FACT. EMBER frozen
       # because no Hearth node is followed is CORRECT and is argued beside
@@ -513,7 +535,7 @@ services:
       # asserting the answer is 503 `chain_not_followed` rather than 401.
       INDEXER_URL: http://indexer:4000
       LEDGER_INDEXER_DEADLINE_MS: "5000"
-      LEDGER_SERVICE_TOKEN: ${LEDGER_SERVICE_TOKEN:-}
+      LEDGER_IDENTITY_CREDENTIAL: ${LEDGER_IDENTITY_CREDENTIAL:-}
       # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: ledger-estate
     ports:
@@ -1883,6 +1905,32 @@ services:
   # of the registry. Recorded as a gap for micro-ui rather than fixed here: the
   # registry's own header says the list was maintained by hand in eight places and
   # had already drifted, and adding a sixteenth copy would be that mistake again.
+  #
+  # ── THAT GAP HAS NOW BEEN OBSERVED BREAKING SIGN-OUT, AND IT IS STILL NOT
+  #    OURS TO FIX ────────────────────────────────────────────────────────────
+  #
+  # `cloudsforgeHosts()` (ui/packages/ui/src/index.tsx:156) derives the apex by
+  # stripping the leftmost label ONLY when that label is in `KNOWN_SUBS`, and
+  # `KNOWN_SUBS` (ui/packages/ui/src/surfaces.ts:688) is built from the SURFACES
+  # registry's `subdomain` values. `foresight-admin` is in no such row, so the
+  # label is NOT stripped, the whole host is taken to be the apex, and every
+  # address that bundle composes gains a level:
+  #
+  #     at    foresight-admin.<apex>
+  #     wrong https://hub.foresight-admin.<apex>/account/logout   ← 404
+  #     right https://hub.<apex>/account/logout
+  #
+  # Reproduced against the built `dist/surfaces.js` rather than inferred. It is
+  # NOT a prefixing bug and NOT gateway routing — this file's own routes for
+  # `foresight-admin.<apex>` are correct, and nothing in the gateway composes
+  # that URL. Falling back to the full host is DELIBERATE (a preview at
+  # `pr-42.example.dev` is its own apex); the fault is the missing registry row.
+  #
+  # Sign-out is only the loudest symptom: identity, billing and telemetry are
+  # composed the same way, which is exactly the Emberkin defect recorded at
+  # surfaces.ts:445 and fixed there by adding the row. A gateway rewrite here
+  # would hide one 404 and leave the other three, so it is deliberately not
+  # done. THE FIX IS ONE `subdomain: 'foresight-admin'` ROW IN micro-ui.
   foresight-admin-web:
     <<: *web-defaults
     build:

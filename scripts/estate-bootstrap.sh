@@ -292,21 +292,31 @@ echo "── 5. mint one service token per credential ────────�
 # repository's env.ts rather than assumed from the variable's name:
 #   settlement, market, trade, admin-api  still read a 10-minute token.
 #   community                             reads a long-lived CREDENTIAL.
-#   ledger, tessera                       read a 10-minute token; see below.
+#   tessera                               reads a 10-minute token; see below.
+#   ledger                                reads a long-lived CREDENTIAL; see below.
 #
-# ── LEDGER IS BACK ON THIS LIST, AND ITS ABSENCE WAS FREEZING AN ASSET ────────
+# ── LEDGER IS OFF THIS LIST AGAIN, AND THIS TIME IT IS THE FIX ────────────────
 #
-# The note above records that ledger lost its entry because "neither makes a
-# tokened outbound call". That was true when it was written and is not true now:
-# `ledger/src/jobs.ts:251` calls the indexer's custody aggregate, and
-# `ledger/src/env.ts:310` reads `LEDGER_SERVICE_TOKEN` into `indexerToken`.
+# It was added here because `ledger/src/jobs.ts:251` calls the indexer's custody
+# aggregate and nothing was handing it a bearer: the call went out
+# unauthenticated, the indexer answered 401, ledger mapped that to `undefined`,
+# the run was UNOBSERVED, and EMBER froze — on an authentication error, while
+# reporting the same state it correctly reports when no chain is followed.
 #
-# With nothing setting it the call went out unauthenticated, the indexer answered
-# 401, and ledger maps a 401 to `undefined` — an UNOBSERVED reconciliation run,
-# which is recorded `failed`, which FREEZES EMBER. `ledger/src/index.ts:170` logs
-# it at fatal. Failing closed, which is the safe direction, and still a defect:
-# the estate was frozen on an authentication error while reporting the same state
-# it correctly reports when no chain is followed at all.
+# Handing it a token from this list fixed that for exactly 600 seconds. The token
+# minted here lives 600s (identity/src/tokens.ts:28) and ledger's reconciliation
+# job runs every 900s (`ledger/src/jobs.ts:108`), so it authenticated on the first
+# run after a bootstrap and never again. Ledger was the one service on that cliff
+# whose credential is used AFTER it — settlement, market and trade are driven on
+# request paths inside the window; a background job on a 900s timer cannot be.
+#
+# So the entry is deleted rather than renewed. `ledger/src/env.ts:362` now reads
+# `LEDGER_IDENTITY_CREDENTIAL` and exchanges it per call, and section 5b below
+# already mints that credential for every service in the grants map — ledger
+# included, with no edit here, which is the point of deriving SERVICES from the
+# grants rather than listing them. Leaving the line in would keep minting a real,
+# live JWT with a real `sub` and real scopes, writing it to disk, for no reader:
+# the smallest blast radius for a secret is not to have minted it.
 #
 # The GRANT was never the missing piece and must not be added by hand — ledger
 # declares `INDEXER_SCOPES = ['indexer:read']` in its own source and
@@ -338,7 +348,6 @@ TRADE_SERVICE_TOKEN|trade|
 COMMUNITY_SERVICE_CREDENTIAL|community|
 ADMIN_API_SERVICE_TOKEN|admin-api|
 TESSERA_SERVICE_CREDENTIAL|tessera|
-LEDGER_SERVICE_TOKEN|ledger|
 "
 
 # The grants, read from the compose file the estate actually runs with. `python3`

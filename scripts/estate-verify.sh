@@ -1916,78 +1916,60 @@ cb_tok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $a
   && ok "identity minted indexer:read for LEDGER — the principal that actually makes the custody call, not a stand-in" \
   || bad "identity would not mint indexer:read for ledger; its INDEXER_SCOPES declaration has not reached the grants map"
 
-# And the container is HOLDING it, which is a different fact from being allowed to mint it. This is
-# the line whose absence froze EMBER: a grant says what identity MAY mint, `LEDGER_SERVICE_TOKEN`
-# is what ledger was actually handed, and nothing was setting it.
+# And the container is HOLDING one, which is a different fact from being allowed to mint it. This
+# is the line whose absence froze EMBER: a grant says what identity MAY mint, the credential is what
+# ledger is actually handed, and nothing was setting it.
+#
+# The variable CHANGED, and the check follows the variable rather than being dropped with it.
+# `ledger/src/env.ts:362` reads `LEDGER_IDENTITY_CREDENTIAL` — long-lived, `cfsc_…` — and exchanges
+# it per call. A JWT here would be the retired `LEDGER_SERVICE_TOKEN`, so the prefix is asserted:
+# `cfsc_` and not `ey`, which is the difference between a credential that outlives the job's timer
+# and a token that does not.
 lsvc=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
-  | grep -c '^LEDGER_SERVICE_TOKEN=ey' || true)
+  | grep -c '^LEDGER_IDENTITY_CREDENTIAL=cfsc_' || true)
 [ "${lsvc:-0}" -ge 1 ] \
-  && ok "the ledger container holds a real LEDGER_SERVICE_TOKEN — it can authenticate to the indexer at all" \
-  || bad "ledger has no LEDGER_SERVICE_TOKEN in its environment; its custody call goes out unauthenticated, the 401 maps to undefined, and EMBER freezes on an auth error while LOOKING exactly like the honest no-chain freeze"
+  && ok "the ledger container holds a real long-lived LEDGER_IDENTITY_CREDENTIAL — it can authenticate to the indexer on EVERY run, not just the first" \
+  || bad "ledger has no LEDGER_IDENTITY_CREDENTIAL in its environment; its custody call goes out unauthenticated, the 401 maps to undefined, and EMBER freezes on an auth error while LOOKING exactly like the honest no-chain freeze"
 
-# ── AND IT IS NOT ENOUGH THAT IT IS SET. THIS IS A REAL, PERMANENT DEFECT. ─────
-#
-# `LEDGER_SERVICE_TOKEN` is a **600-second** token (identity/src/tokens.ts:28)
-# baked into the container's environment at recreate time, and
-# `ledger/src/env.ts:310` reads it once at import. The reconciliation job runs
-# every **900 seconds** (`ledger/src/jobs.ts:108`).
-#
-#   600 < 900.
-#
-# So the chain-backing call authenticates for the FIRST run after a bootstrap and
-# for no run after that, ever. `estate-up.sh` bootstraps and verifies inside the
-# window, which is exactly why this was invisible: the check passed on the one
-# path anybody ran it on. Left alone, EMBER records `unavailable/failed` for the
-# life of the deployment — byte-identical to the honest "no chain is followed"
-# freeze that this environment produced before there was a chain, and pointing an
-# operator at a chain that is working perfectly.
-#
-# `LEDGER_IDENTITY_CREDENTIAL` is already minted by `estate-bootstrap.sh` and is
-# long-lived. THE REPAIR IS IN micro-ledger, not here: adopt the credential and
-# exchange it at `POST /service-tokens/exchange`, the way wallet, billing,
-# custody and community already do. `indexerclient.ts` is ready for it — its
-# `token: () => …` is resolved per call, and the comment beside it says so — but
-# `env.ts` hands that function a string captured at import, so there is nothing
-# for the indirection to refresh.
-#
-# Until then this is reported every run, whatever the clock says, because the
-# arithmetic is a property of the deployment and not of the moment.
-bad "LEDGER IS THE ONE SERVICE ON THE TOKEN CLIFF WHOSE CREDENTIAL IS USED AFTER IT: LEDGER_SERVICE_TOKEN lives 600s and the reconciliation job runs every 900s, so the chain-backing call authenticates ONCE per bootstrap and never again — every later run records unavailable/failed and freezes EMBER, reading identically to an absent chain. settlement, market and trade are on the same cliff and are driven on request paths inside the window; this one is not. Remedy: ledger reads LEDGER_IDENTITY_CREDENTIAL (already minted, already long-lived) and exchanges it, as wallet, billing, custody and community do"
+# AND THE RETIRED VARIABLE MUST BE GONE, not merely unused. `ledger/src/env.ts:363` keeps
+# `legacyServiceTokenPresent` only to COMPLAIN about it: handing it back would be ignored, so a
+# deploy that still set it would look configured and behave unconfigured. It is also a live JWT with
+# a real `sub` and real scopes sitting in a file for no reader.
+lleg=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+  | grep -c '^LEDGER_SERVICE_TOKEN=ey' || true)
+[ "${lleg:-0}" -eq 0 ] \
+  && ok "the retired LEDGER_SERVICE_TOKEN is not in ledger's environment — nothing mints a credential no code reads" \
+  || bad "ledger still holds a LEDGER_SERVICE_TOKEN; it is IGNORED by env.ts:363 and is a live bearer token minted for no reader"
 
-# Renewed here so that everything below can still be DRIVEN. Without this the
-# section could only ever pass in the ten minutes after a bootstrap, and a check
-# that passes only when run one way is the failure this file exists to find.
-# `tokens.env` is gitignored, generated, and regenerated by every bootstrap.
-lexp=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
-  | sed -n 's/^LEDGER_SERVICE_TOKEN=//p' \
-  | python3 -c "
-import sys,base64,json,time
-t=sys.stdin.read().strip()
-try:
-    p=t.split('.')[1]; p+='='*(-len(p)%4)
-    print(int(json.loads(base64.urlsafe_b64decode(p))['exp']) - int(time.time()))
-except Exception:
-    print(-1)" 2>/dev/null)
-if [ "${lexp:--1}" -lt 60 ] 2>/dev/null; then
-  echo "  ..   ledger's token expired ${lexp}s ago; renewing it so the loop below can be driven"
-  fresh=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
-    -H 'content-type: application/json' -d '{"service":"ledger","scopes":["indexer:read"]}' \
-    | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
-  if [ -n "$fresh" ]; then
-    LEDGER_TOKEN_VALUE="$fresh" python3 -c "
-import os,io
-p='compose/estate/tokens.env'
-v=os.environ['LEDGER_TOKEN_VALUE']
-lines=[l for l in io.open(p).read().splitlines()]
-out=[('LEDGER_SERVICE_TOKEN='+v) if l.startswith('LEDGER_SERVICE_TOKEN=') else l for l in lines]
-io.open(p,'w').write('\n'.join(out)+'\n')" 2>/dev/null \
-      && docker compose -f "$COMPOSE" --env-file compose/estate/tokens.env up -d --no-deps ledger >/dev/null 2>&1 \
-      && sleep 8 \
-      && ok "renewed ledger's credential for this run — the drive below is real, and the defect above is still real"
-  else
-    bad "could not renew ledger's token; the driven section below will report the chain as unobservable when the cause is authentication"
-  fi
-fi
+# ── THE 600s CLIFF THAT USED TO BE REPORTED HERE IS FIXED, AND IS NOW DRIVEN ───
+#
+# This block used to end in an unconditional `bad`, and beneath it a workaround
+# that re-minted ledger's token and recreated the container so the section below
+# could be driven at all. Both are DELETED AS OBSOLETE, not as inconvenient: the
+# defect they described no longer exists in the code they described it in.
+#
+# What it was: `LEDGER_SERVICE_TOKEN` carried a 600-second token
+# (identity/src/tokens.ts:28) read once at import, and the reconciliation job
+# runs every 900 seconds (`ledger/src/jobs.ts:108`). 600 < 900, so the
+# chain-backing call authenticated for the FIRST run after a bootstrap and for no
+# run after that, ever — and `estate-up.sh` bootstraps and verifies inside the
+# window, which is exactly why it was invisible.
+#
+# What fixed it: `ledger/src/env.ts:362` reads the long-lived
+# `LEDGER_IDENTITY_CREDENTIAL` and exchanges it for a fresh token PER CALL at
+# `POST /service-tokens/exchange`. There is no expiry to outrun and nothing for
+# this script to renew, so the workaround has no subject left.
+#
+# THE ASSERTION DID NOT GO AWAY WITH IT — IT MOVED, AND IT GOT STRONGER. A
+# comment claiming the cliff is gone proves nothing; the two checks above assert
+# the credential is the long-lived kind and the expiring one is absent, and the
+# section below now drives a SECOND reconciliation more than 600 seconds after
+# boot, which is the only evidence that distinguishes a fix from a first run.
+#
+# `ledger` migration 12 adds `unobserved_reason`, so the two freezes that used to
+# be byte-identical are now separable AT THE ROW: `no_credential`, `unauthorized`
+# and `not_configured` are deployment defects; `indexer_error` is the chain. That
+# column is asserted below rather than described here.
 
 if [ -z "$cb_tok" ]; then
   bad "could not obtain a service token carrying indexer:read; the custody route cannot be driven"
@@ -2197,6 +2179,19 @@ else
       && ok "…and it is CLEAN with drift exactly 0: Σ on-chain custody equals the ledger's custody total, to the wei" \
       || bad "the observed run is $st with drift $drift — the chain and the books disagree (or the seed and the credit do)"
 
+    # AND THE ROW MUST SAY IT DID NOT FAIL, not merely fail to say it did.
+    # Migration 12 adds `unobserved_reason`, which is what finally separates the
+    # two freezes that used to be byte-identical: `no_credential`, `unauthorized`
+    # and `not_configured` are DEPLOYMENT defects (this file's business),
+    # `indexer_error` is the chain (not this file's business). On an observed run
+    # it must be NULL — a non-null reason beside `observed_source = 'indexer'`
+    # would mean the column is being written by something other than the failure
+    # path, which would make every assertion on it worthless.
+    ureason=$(lsql -c "select coalesce(unobserved_reason,'(null)') from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+    [ "$ureason" = "(null)" ] \
+      && ok "…and unobserved_reason is NULL, as an observed run requires" \
+      || bad "the run observed the chain and STILL recorded unobserved_reason = '$ureason'; migration 12's column is being written outside the failure path, so no verdict read from it can be trusted"
+
     # A number, printed, because "clean" over nothing is the failure this whole
     # section exists to rule out. 31000000000000000000 wei is 7 + 11 + 13 EMBER.
     tot=$(lsql -c "select ledger_custody_total||' / '||coalesce(indexer_observed_total::text,'null')
@@ -2248,6 +2243,26 @@ else
       bad "with the observation withheld the ledger recorded $src/$st, which is neither an honest refusal nor a clean run" ;;
   esac
 
+  # AND IT MUST SAY WHICH KIND OF FAILURE IT WAS. This is the whole point of
+  # migration 12's column and the reason it is asserted on a DRIVEN break rather
+  # than described: the failure induced here is a CHAIN failure — the custody set
+  # was emptied, ledger's credential was never touched — so the row must read
+  # `indexer_error`. If it reads `no_credential`, `unauthorized` or
+  # `not_configured` then the deployment is broken as well and the freeze above
+  # is being produced by the wrong cause while looking identical, which is
+  # precisely the confusion this release exists to end.
+  breason=$(lsql -c "select coalesce(unobserved_reason,'(null)') from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+  case "$breason" in
+    indexer_error)
+      ok "…and it recorded unobserved_reason = 'indexer_error' — the row names the CHAIN as the cause, which is the truth here" ;;
+    no_credential|unauthorized|not_configured)
+      bad "the induced break was a CHAIN failure but the row recorded unobserved_reason = '$breason', a CREDENTIAL failure. ledger cannot authenticate to the indexer, and that defect has been hiding underneath a freeze that reads identically to the honest one" ;;
+    "(null)")
+      bad "the run failed with no unobserved_reason at all; migration 12's column is not being written on the failure path, so the two freezes are still indistinguishable" ;;
+    *)
+      bad "the failed run recorded an unrecognised unobserved_reason = '$breason'" ;;
+  esac
+
   refroze=$(lsql -c "select count(*) from asset_freezes where asset_code='EMBER'")
   [ "$refroze" -ge 1 ] 2>/dev/null \
     && ok "…and EMBER is frozen again: an asset whose backing nobody can see cannot be withdrawn" \
@@ -2268,6 +2283,64 @@ else
   [ "$src/$st" = indexer/clean ] \
     && ok "and clean again ($src/$st) — the freeze was a state, not a one-way door" \
     || bad "after restoring the custody set the run is $src/$st, not indexer/clean; the estate has been left worse than it was found"
+
+  # ── 5. AND IT STILL AUTHENTICATES PAST THE 600-SECOND CLIFF ────────────────
+  #
+  # EVERY CHECK ABOVE PASSES ON A BROKEN DEPLOYMENT IF IT IS RUN SOON ENOUGH.
+  # That is not a hypothetical: it is exactly how the cliff stayed invisible.
+  # `LEDGER_SERVICE_TOKEN` lived 600s, the reconciliation job runs every 900s,
+  # and `estate-up.sh` bootstraps and verifies inside the window — so the one
+  # path anybody ran produced a clean run and a lifted freeze while the estate
+  # was guaranteed to freeze again at minute 15 and stay frozen for ever.
+  #
+  # A run at minute 0 therefore proves nothing about the fix, and this is the
+  # check that proves something: wait until the container has been up longer
+  # than the retired token would have lived, force ANOTHER reconciliation, and
+  # require it to observe the chain. With `LEDGER_IDENTITY_CREDENTIAL` exchanged
+  # per call there is no expiry to outrun and this costs only the wait; with the
+  # old variable this is the run that returns `unauthorized`.
+  #
+  # The wait is real time and is spent rather than skipped, because the cheap
+  # version of this check — asserting the variable's name and calling it proved —
+  # is the class of check this file exists to eliminate. It can be skipped
+  # explicitly for a fast local loop, and skipping SAYS SO instead of passing.
+  cliff=${CF_VERIFY_TOKEN_CLIFF_SECONDS:-600}
+  started=$(docker inspect cloudsforge-estate-ledger-1 --format '{{.State.StartedAt}}' 2>/dev/null)
+  up=$(STARTED="$started" python3 -c "
+import os,datetime,sys
+s=os.environ['STARTED']
+try:
+    s=s[:26].rstrip('Z') if '.' in s else s.rstrip('Z')
+    t=datetime.datetime.fromisoformat(s).replace(tzinfo=datetime.timezone.utc)
+    print(int((datetime.datetime.now(datetime.timezone.utc)-t).total_seconds()))
+except Exception:
+    print(-1)" 2>/dev/null)
+  if [ "${CF_VERIFY_SKIP_TOKEN_CLIFF:-0}" = 1 ]; then
+    echo "  ..   SKIPPED BY REQUEST (CF_VERIFY_SKIP_TOKEN_CLIFF=1): the post-${cliff}s reconciliation is NOT proved."
+    echo "       Every clean run above is also what a token-cliff deployment produces in its first ${cliff}s."
+  elif [ "${up:--1}" -lt 0 ] 2>/dev/null; then
+    bad "could not read the ledger container's start time, so the post-${cliff}s reconciliation cannot be proved"
+  else
+    if [ "$up" -lt "$cliff" ]; then
+      wait_for=$((cliff - up + 15))
+      echo "  ..   ledger has been up ${up}s; waiting ${wait_for}s to cross the ${cliff}s mark that the retired token died on"
+      sleep "$wait_for"
+    fi
+    before=$(lsql -c "select id from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+    run=$(reconcile_now "$before")
+    src=$(printf '%s' "$run" | cut -d'|' -f1)
+    st=$(printf '%s' "$run" | cut -d'|' -f2)
+    drift=$(printf '%s' "$run" | cut -d'|' -f3)
+    lreason=$(lsql -c "select coalesce(unobserved_reason,'(null)') from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+    case "$lreason" in
+      no_credential|unauthorized|not_configured)
+        bad "MORE THAN ${cliff}s AFTER BOOT THE RECONCILIATION FAILED TO AUTHENTICATE (unobserved_reason = '$lreason'). This is the token cliff, alive: the clean runs above happened inside the window and prove nothing. EMBER will freeze and stay frozen, reading identically to an absent chain" ;;
+      *)
+        [ "$src/$st" = indexer/clean ] && [ "$drift" = 0 ] \
+          && ok "MORE THAN ${cliff}s AFTER BOOT a fresh reconciliation still authenticated: $src/$st, drift $drift, unobserved_reason $lreason — the credential is exchanged per call and the 600s cliff is genuinely gone" \
+          || bad "the post-${cliff}s run recorded $src/$st drift $drift (unobserved_reason $lreason) — it authenticated, but the loop no longer closes" ;;
+    esac
+  fi
 fi
 
 echo
