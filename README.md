@@ -1,5 +1,8 @@
 # The telemetry plane
 
+[![ci](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml)
+![runbooks](https://img.shields.io/badge/runbooks-17-EF6C00)
+
 AD-20, built. A **parallel** stack: it runs beside the existing eighteen-container
 estate without touching it, shares no port, no container name and no volume with
 it, and joins exactly one of its networks — read-only, to scrape Beacon.
@@ -700,3 +703,10 @@ against a byte-identical copy - same md5, both files - which is what proved it.
 The error it produced pointed at a line ninety lines away from any edit and blamed a construct that
 was correct. Every hypothesis drawn from it was wrong, because the input was a ghost. If a gateway
 error does not survive a fresh copy, it is not real.
+
+---
+
+## Provenance
+
+The code in this repository was written by **Claude Opus 5** and **Claude Fable 5**, assets
+generated with **FLUX 2 Pro**, under human direction and review.
