@@ -1,6 +1,7 @@
 # The telemetry plane
 
 [![ci](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml)
+![licence](https://img.shields.io/badge/licence-MIT-97CA00)
 ![runbooks](https://img.shields.io/badge/runbooks-17-EF6C00)
 
 AD-20, built. A **parallel** stack: it runs beside the existing eighteen-container
