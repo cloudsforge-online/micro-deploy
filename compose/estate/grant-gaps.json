@@ -1,0 +1,63 @@
+{
+  "//": "The modules that PRESENT a credential and DECLARE no scopes. Read by scripts/derive-grants.mjs. Each entry names a FILE, not a service, so it cannot quietly widen into a service's whole grant the way the old hand-maintained compose map did. An entry whose module has since grown an exported *_SCOPES constant is STALE and FAILS the derivation, so this file shrinks as the repositories that own these modules do the work — it cannot be padded. A reason under 40 characters fails, the same rule service-ci.yml applies to scope-exemptions.json. NONE OF THESE ARE MICRO-DEPLOY'S TO FIX; each names the repository that owns it.",
+
+  "admin-api/src/upstreams.ts": {
+    "service": "admin-api",
+    "scopes": ["ledger:read", "ledger:post"],
+    "reason": "micro-admin-api owns this. Its header carries a full route-and-guard table but no exported constant. The scopes are read off that table: this service's own service token is used for LEDGER ALONE — GET /trial-balance and GET /accounts/:subject/balances (ledger:read), POST /entries and POST /entries/:id/reverse (ledger:post) — because ledger's authorise() refuses a user principal outright. Its market and billing calls deliberately forward THE OPERATOR'S OWN BEARER so those services record which administrator acted (SD-11), which is why market:read, market:admin and billing:read are absent here despite being in the old hand-written compose map: no service token ever carried them."
+  },
+
+  "devplatform/src/membership.ts": {
+    "service": "devplatform",
+    "scopes": [],
+    "reason": "micro-devplatform owns this. It builds an HttpClient and forwards the DEVELOPER'S OWN bearer token verbatim, and its header says why in as many words: it 'needs no service token that can read anybody's membership — which is the shape of the two omnipotent tokens SD-05 exists to retire'. An empty list is the truthful derivation, not a placeholder, and granting it anything would recreate exactly what SD-05 retired."
+  },
+
+  "mint/src/index.ts": {
+    "service": "mint",
+    "scopes": [],
+    "reason": "micro-mint owns this. The HttpClient built here dials PUBLIC CHAIN NODES outside this estate, and the file says so at :92 — 'NOT given a token: they dial public chain nodes outside this estate.' No CloudsForge scope applies to an external RPC endpoint. Mint's real upstream scopes come from its three declared client modules and are derived normally."
+  },
+
+  "market/src/policyclient.ts": {
+    "service": "market",
+    "scopes": ["policy:decide"],
+    "reason": "micro-market owns this, and this entry is a CORRECTION rather than a gap. The module declares POLICY_SCOPES = ['policy:evaluate'], which @cloudsforge/contracts-auth does not register — identity refuses to boot on an unknown scope, so taking it at face value would kill the identity container. The route it calls is POST /decisions, gated on DECIDE_SCOPE = policy:decide (policy/src/server.ts:83, 343). The declaration has never been checked against the registry because service-ci.yml's scope-audit reads inbound GATES, and this is an outbound constant. Reported to micro-market."
+  },
+
+  "wallet/src/custodyclient.ts": {
+    "service": "wallet",
+    "scopes": ["custody:address:create"],
+    "reason": "micro-wallet owns this, and this entry is a CORRECTION rather than a gap. The module declares CUSTODY_SCOPES = ['custody:address'], which is not in the registry; the real scope is custody:address:create, demanded by POST /v1/addresses (custody/src/server.ts:320-323). The hand-written compose map happened to grant the correct spelling, so the wrong constant never caused an outage — it simply meant the source and the deploy disagreed and nothing compared them. Reported to micro-wallet."
+  },
+
+  "billing/src/ledger.ts": {
+    "service": "billing",
+    "scopes": ["ledger:post"],
+    "reason": "micro-billing owns this. It builds a token-bearing HttpClient for ledger and exports no scope constant, unlike billing/src/adminapi.ts in the same repository which does. Derived by reading its two call sites: POST /entries (ledger/src/server.ts:346) and POST /entries/:id/reverse (:394), both gated on POST_SCOPE = ledger:post. It reaches no other ledger route, so ledger:read and ledger:reserve — which the old hand-written compose map granted it — were never used by anything and are dropped here."
+  },
+
+  "custody/src/policy.ts": {
+    "service": "custody",
+    "scopes": ["policy:decide"],
+    "reason": "micro-custody owns this. It posts to policy's POST /v1/decisions (custody/src/policy.ts:70) with a token-bearing client and declares no constant. custody had NO entry at all in the hand-written compose map, so this scope has never been grantable and every policy decision custody asked for would have been refused the moment it was wired up — a defect the derivation found rather than the four agents who hit grant failures by hand."
+  },
+
+  "foresight/src/proposer.ts": {
+    "service": "foresight",
+    "scopes": [],
+    "reason": "micro-foresight owns this. It is the one token-bearing client in the estate whose peers are NOT CloudsForge services: it calls an external search API and an external model endpoint, both configured by URL, so no scope in @cloudsforge/contracts-auth applies and an empty list is the truthful answer rather than a placeholder. Its bearer is a third-party API key, not an identity-minted service token."
+  },
+
+  "wallet/src/settlement.ts": {
+    "service": "wallet",
+    "scopes": ["settlement:read"],
+    "reason": "micro-wallet owns this. It reads settlement's GET /v1/fees/:chain/:network/:assetCode (wallet/src/settlement.ts:112), which authenticates and demands READ_SCOPE = settlement:read for a service principal (settlement/src/server.ts:455-468). The hand-written compose map granted wallet seven scopes and this was not among them, so the withdrawal fee quote would 403 — a live missing grant nobody had reported."
+  },
+
+  "worlds/src/titleclient.ts": {
+    "service": "worlds",
+    "scopes": ["aetherholm:provision"],
+    "reason": "micro-worlds owns this. It is the provisioning bridge and the reason it declares no constant is structural rather than an oversight: its base URL is per registered title, resolved at runtime from worlds' own registry, so there is no single named peer to hang a FOO_SCOPES constant on. It calls POST /v1/provision, gated on PROVISION_SCOPE = aetherholm:provision (aetherholm/src/server.ts:130, 400); its other call, GET /v1/title, is deliberately public. The registry states this scope is held by worlds alone."
+  }
+}

@@ -264,44 +264,80 @@ services:
         https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me}
 
-      # The scope names are identity's own, from SCOPE_NAMES — not invented here.
-      # The first attempt used `ledger:write`, which does not exist, and identity
-      # refused to start and listed every scope it knows. That refusal is the
-      # design working: configuration is validated at import, so a wrong value is
-      # a dead container rather than a service that runs and denies requests for
-      # a reason nobody can see.
+      # ══════════════════════════════════════════════════════════════════════════
+      # GENERATED — `node scripts/derive-grants.mjs --write`. Do not hand-edit.
       #
-      # Every grant below is the set that service's own env demands a token for.
-      # A service absent from this map cannot be issued a token at all, which is
-      # what makes `estate-bootstrap.sh` fail loudly rather than mint a token
-      # with no scopes.
+      # `scripts/estate-verify.sh` runs `--check` and FAILS if this block and the
+      # services disagree, so an edit here is reverted by the next verification
+      # rather than quietly kept. (The word GENERATED is load-bearing and has been
+      # false in this repository before — commit 05e9284, "the map said GENERATED
+      # by a command that has never written it". This one is written by that
+      # command; the check is what keeps the claim true.)
+      # ══════════════════════════════════════════════════════════════════════════
       #
-      # `beacon` was absent and said so in its own files: "IDENTITY_SERVICE_TOKEN_
-      # GRANTS names thirteen services and `beacon` is not among them, so POST
-      # /service-credentials answers 500 'no scopes are configured for service
-      # beacon'" (beacon/.env.example:153-155, beacon/src/env.ts:232). Its estate
-      # journeys therefore could not be DECLARED at all — absent rather than
-      # declared-and-skipping, which is beacon's own rule.
+      # WHY THIS IS DERIVED AND NO LONGER HAND-WRITTEN. This was fourteen lines of
+      # hand-maintained JSON describing what OTHER repositories need, and it went
+      # stale the way every such copy in this estate has: four separate agents hit
+      # a missing grant in one week. `nda` held `worlds:read,worlds:write` while
+      # the achievement-unlock route demands `worlds:title`; `emberkin`, `beacon`,
+      # `custody`, `faucet` and `foresight` had no entry at all.
       #
-      # `ledger:read` and nothing else: that is the single scope beacon exchanges
-      # for (`body: { scopes: ['ledger:read'] }`, beacon/src/ecosystem.ts:563), and
-      # identity de-duplicates but never widens, so a monitor that reads the trial
-      # balance gets a token that says exactly that.
+      # The fact lives in the SERVICES, which already declare the scopes their
+      # deploy must mint — `community/src/index.ts:130` says so outright: "The
+      # scopes it needs are named in `LEDGER_SCOPES`, `POLICY_SCOPES` and
+      # `INDEXER_SCOPES` so the deploy can mint exactly those." Twenty repositories
+      # follow that convention and nothing consumed it until now.
+      #
+      # The derivation reads two seams — an exported `*_SCOPES` constant in a
+      # module that presents a credential, and the `scopes:` body of a
+      # `POST /service-tokens/exchange` call (which is how `beacon` states its
+      # demand, beacon/src/ecosystem.ts:563). It refuses to guess: a module that
+      # presents a credential and declares nothing FAILS unless it is named, with
+      # a written reason, in `compose/estate/grant-gaps.json` — ten such modules,
+      # each naming the repository that owns it. See that file and the tool header.
+      #
+      # WHAT THE DERIVATION CHANGED, beyond filling the gaps above. Every one of
+      # these is a narrowing the hand-written map got wrong in the permissive
+      # direction, and each was checked against the peer's actual gate:
+      #
+      #   * `worlds`, `nda` and `trade` lost `billing:grant`, and `trade` also lost
+      #     `billing:read`. Their billing clients are read-only `EntitlementReader`s
+      #     (list/owns) and `trade` has no billing client at all.
+      #   * `admin-api` lost `market:read`, `market:admin` and `billing:read`. Those
+      #     calls deliberately forward THE OPERATOR'S OWN BEARER so the upstream
+      #     records which administrator acted (SD-11); no service token carried them.
+      #   * `wallet` lost `policy:decide` (it has no policy client) and GAINED
+      #     `settlement:read`, which it genuinely needs for the withdrawal fee quote
+      #     and never had — a live 403 nobody had reported.
+      #   * `ledger` and `analytics` lost their entries entirely. Neither makes a
+      #     tokened outbound call; `ANALYTICS_TOKEN` is an inbound `/metrics` secret.
+      #
+      # The scope names are identity's own, from SCOPE_NAMES. Configuration is
+      # validated at import, so a wrong value is a dead container rather than a
+      # service that runs and denies requests for a reason nobody can see — and the
+      # derivation checks every scope against that same registry before writing, so
+      # the container-killing failure is caught here instead.
+      #
+      # A service absent from this map cannot be issued a token at all. That is the
+      # correct answer for `devplatform`, which forwards the developer's own bearer
+      # and derives an empty set — absent, not `[]`.
       IDENTITY_SERVICE_TOKEN_GRANTS: >-
-        {"ledger":["ledger:read","ledger:post","ledger:reserve"],
-         "wallet":["ledger:read","ledger:post","ledger:reserve","custody:address:create","indexer:read","pricing:read","policy:decide"],
-         "settlement":["ledger:read","ledger:post","custody:sign:treasury","custody:treasury:read","indexer:read"],
-         "billing":["ledger:read","ledger:post","ledger:reserve"],
-         "mint":["ledger:read","ledger:post","ledger:reserve","custody:sign:deployer","indexer:read"],
-         "market":["ledger:read","ledger:post","ledger:reserve","indexer:read","policy:decide"],
-         "trade":["ledger:read","ledger:post","ledger:reserve","pricing:read","billing:read","billing:grant"],
-         "worlds":["ledger:read","ledger:post","billing:read","billing:grant"],
-         "nda":["worlds:read","worlds:write","billing:read","billing:grant"],
-         "community":["ledger:read","ledger:post","policy:decide"],
-         "admin-api":["ledger:read","market:read","market:admin","billing:read","admin:read"],
-         "analytics":["analytics:ingest","analytics:read"],
+        {"admin-api":["ledger:post","ledger:read"],
          "beacon":["ledger:read"],
-         "hub-api":["ledger:read","wallet:read","billing:read","pricing:read","policy:decide","notify:read"]}
+         "billing":["admin:read","ledger:post"],
+         "community":["indexer:read","ledger:post","policy:decide"],
+         "custody":["policy:decide"],
+         "emberkin":["billing:read","ledger:post","worlds:title"],
+         "faucet":["custody:sign:treasury"],
+         "foresight":["admin:read","custody:address:create","custody:sign:deployer","indexer:read","indexer:write","ledger:post","policy:decide"],
+         "hub-api":["billing:read","ledger:read","notify:read","policy:decide","pricing:read","wallet:read"],
+         "market":["indexer:read","ledger:post","policy:decide"],
+         "mint":["custody:address:create","custody:sign:deployer","indexer:read","ledger:post"],
+         "nda":["billing:read","worlds:title"],
+         "settlement":["custody:sign:deposit","custody:sign:treasury","custody:treasury:read","indexer:read","ledger:post"],
+         "trade":["ledger:post","ledger:read","ledger:reserve","pricing:read"],
+         "wallet":["custody:address:create","indexer:read","indexer:write","ledger:post","ledger:read","ledger:reserve","pricing:read","settlement:read"],
+         "worlds":["aetherholm:provision","billing:read","ledger:post"]}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: identity-estate
     ports:

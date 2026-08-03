@@ -1,0 +1,522 @@
+// derive-grants: what `IDENTITY_SERVICE_TOKEN_GRANTS` must be, read off the services themselves.
+//
+//   usage: node scripts/derive-grants.mjs [--estate <dir>] [--json] [--check] [--write]
+//
+// ── WHY THIS EXISTS ───────────────────────────────────────────────────────────────────────────
+//
+// `IDENTITY_SERVICE_TOKEN_GRANTS` decides what every service in the estate may ask identity to
+// mint. Until now it was fourteen lines of hand-maintained JSON in a compose file, and four
+// separate agents hit a missing grant in one week: `nda` could not post a cross-title achievement
+// because it held `worlds:read,worlds:write` and the unlock route demands `worlds:title`;
+// `emberkin` and `aetherholm` had no entry at all; `beacon` had none, so its own env refused to
+// start. A hand-maintained list of what other repositories need is the same class of artefact as
+// the gateway route map that "had never once loaded" and the MAP.md files that were stale — it is
+// a copy of a fact that lives somewhere else, and copies rot silently.
+//
+// The fact lives in the SERVICES. Each one already declares, in its own source, the scopes its
+// deploy must mint for it — `community/src/index.ts:130` says so in as many words: "The scopes it
+// needs are named in `LEDGER_SCOPES`, `POLICY_SCOPES` and `INDEXER_SCOPES` so the deploy can mint
+// exactly those." Twenty repositories follow that convention and NOTHING CONSUMED IT. This is the
+// consumer.
+//
+// ── THE DERIVATION, AND WHY EACH STEP IS THE SHAPE IT IS ──────────────────────────────────────
+//
+// A module that PRESENTS a credential is one that constructs an `HttpClient` with a `token`
+// option. That is the discriminator, and it is not a filename heuristic:
+//
+//   * It excludes every `outbox.ts` in the estate — twenty-two of them — automatically. The outbox
+//     relay authenticates with `cf-signature` over the body and carries no bearer at all, so it
+//     needs no scopes. A filename rule would have had to special-case them; this one does not.
+//   * It excludes a service's INBOUND vocabulary. `admin-api/src/scopes.ts` exports `ALL_SCOPES`
+//     holding `admin:read` — the scope admin-api ENFORCES on its callers, not one it presents.
+//     That file constructs no client, so it is never read as a grant. Getting this backwards would
+//     have granted every service the authority to call ITSELF, which is meaningless, and would
+//     have hidden the real grant it needs behind a plausible-looking entry.
+//
+// Both directions are then checked, because a derivation that can only fail one way fails silently
+// the other way:
+//
+//   1. Every derived scope must be in `@cloudsforge/contracts-auth`. identity validates this at
+//      import and refuses to boot on a bad value, so an underived scope is a dead container. This
+//      catches it here, where the message can name the file.
+//   2. A service may never be granted a scope IT ITSELF enforces. The registry records the
+//      enforcing service per scope, so this is checkable rather than a matter of opinion, and it
+//      is what makes step 1's soundness meaningful.
+//
+// ── THE FIVE MODULES THIS CANNOT READ, AND WHY THAT IS NOT A CLIMBDOWN ────────────────────────
+//
+// Five modules in the estate present a credential and declare no scope constant. They are named,
+// with reasons, in `compose/estate/grant-gaps.json`. That file is NOT the old hand-list in another
+// costume, and the difference is enforced here:
+//
+//   * It names a FILE, not a service, so an entry cannot quietly widen to cover a service's whole
+//     grant the way the compose map did.
+//   * An entry whose module has since grown a declaration is STALE and FAILS — so the file shrinks
+//     as the repositories that own those modules fix them, and it cannot be padded.
+//   * A reason under 40 characters is not a reason, following the `scope-exemptions.json` rule
+//     `service-ci.yml` already applies to the other direction of this same registry.
+//
+// Fourteen hand-maintained service entries became five hand-maintained file entries, each of which
+// fails loudly when it stops being true. That is the honest limit of the derivation, and it is
+// written down rather than papered over.
+import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const HERE = fileURLToPath(new URL('.', import.meta.url))
+const argv = process.argv.slice(2)
+const flag = (name) => argv.includes(name)
+const opt = (name, fallback) => {
+  const i = argv.indexOf(name)
+  return i >= 0 && argv[i + 1] ? argv[i + 1] : fallback
+}
+
+const ESTATE = opt('--estate', join(HERE, '..', '..'))
+const COMPOSE = join(HERE, '..', 'compose', 'docker-compose.estate.yml')
+const GAPS = join(HERE, '..', 'compose', 'estate', 'grant-gaps.json')
+const AUTH_INDEX = join(ESTATE, 'contracts/packages/auth/src/index.ts')
+const WORLDS_INDEX = join(ESTATE, 'contracts/packages/worlds/src/index.ts')
+
+// Floors, for the reason `estate-scopes.mjs` gives about set differences: every verdict below is
+// of the form "this service needs exactly these scopes", and a derivation that silently read no
+// files would answer that with an empty set for every service — which looks like a clean estate
+// and is actually a total loss of authority information.
+const MIN_REGISTRY = 40
+const MIN_SERVICES = 12
+
+const errors = []
+const fail = (message) => errors.push(message)
+
+if (!existsSync(AUTH_INDEX)) {
+  console.error(`derive-grants: no scope registry at ${AUTH_INDEX} — this checkout is not the estate`)
+  process.exit(2)
+}
+
+// ---------------------------------------------------------------- comments out, strings kept
+// Six guards in this estate have fired on their own prose, and the traps section of the runbook
+// records a Traefik outage caused by a template action inside a YAML comment. Strings survive
+// because the scope literals ARE strings.
+function stripComments(text) {
+  let out = ''
+  let i = 0
+  const n = text.length
+  while (i < n) {
+    const c = text[i]
+    const d = text[i + 1]
+    if (c === '/' && d === '/') {
+      while (i < n && text[i] !== '\n') i++
+      continue
+    }
+    if (c === '/' && d === '*') {
+      i += 2
+      while (i < n && !(text[i] === '*' && text[i + 1] === '/')) {
+        if (text[i] === '\n') out += '\n'
+        i++
+      }
+      i += 2
+      continue
+    }
+    if (c === "'" || c === '"' || c === '`') {
+      const quote = c
+      out += c
+      i++
+      while (i < n && text[i] !== quote) {
+        if (text[i] === '\\') {
+          out += text[i] + (text[i + 1] ?? '')
+          i += 2
+          continue
+        }
+        out += text[i]
+        i++
+      }
+      out += text[i] ?? ''
+      i++
+      continue
+    }
+    out += c
+    i++
+  }
+  return out
+}
+
+const lineOf = (text, offset) => text.slice(0, offset).split('\n').length
+
+function collect(dir, out = []) {
+  for (const name of readdirSync(dir)) {
+    const p = join(dir, name)
+    let st
+    try {
+      st = statSync(p)
+    } catch {
+      continue
+    }
+    if (st.isDirectory()) {
+      if (/^(node_modules|dist|build|coverage)$/.test(name) || /testsupport/.test(name)) continue
+      collect(p, out)
+    } else if (
+      /\.(ts|mts)$/.test(name) &&
+      !/\.(test|spec)\.(ts|mts)$/.test(name) &&
+      !/\.d\.ts$/.test(name) &&
+      !/testsupport/.test(name)
+    ) {
+      out.push(p)
+    }
+  }
+  return out
+}
+
+// ---------------------------------------------------------------- the registry: scope -> enforcer
+const registryText = readFileSync(AUTH_INDEX, 'utf8')
+const rFrom = registryText.indexOf('export const SCOPES')
+const rTo = registryText.indexOf('as const', rFrom)
+if (rFrom < 0 || rTo < 0) {
+  console.error(`derive-grants: cannot find the SCOPES registry in ${AUTH_INDEX}`)
+  process.exit(2)
+}
+const registryBlock = registryText.slice(rFrom, rTo)
+/** scope -> the service that ENFORCES it */
+const ENFORCER = new Map()
+for (const m of registryBlock.matchAll(/'([a-z][a-z0-9:-]+)':\s*Object\.freeze\(\{([\s\S]*?)\}\)/g)) {
+  const service = m[2].match(/service:\s*'([^']+)'/)
+  ENFORCER.set(m[1], service ? service[1] : null)
+}
+if (ENFORCER.size < MIN_REGISTRY) {
+  console.error(
+    `derive-grants: parsed ${ENFORCER.size} scopes out of the registry, expected at least ${MIN_REGISTRY} — the parser is broken, not the estate`,
+  )
+  process.exit(2)
+}
+
+// ---------------------------------------------------------------- contracts-worlds' SCOPE_FOR
+// `emberkin` and `nda` spell their worlds scope as `SCOPE_FOR.unlockAchievement` rather than a
+// literal, deliberately: a literal is exactly what let `worlds:write` sit wrong in both of those
+// files for months. Resolving it here is what lets them keep doing the right thing.
+const SCOPE_FOR = new Map()
+if (existsSync(WORLDS_INDEX)) {
+  const wt = stripComments(readFileSync(WORLDS_INDEX, 'utf8'))
+  const wFrom = wt.indexOf('export const SCOPE_FOR')
+  if (wFrom >= 0) {
+    const wBlock = wt.slice(wFrom, wt.indexOf('})', wFrom))
+    for (const m of wBlock.matchAll(/(\w+):\s*'([a-z][a-z0-9:-]+)'/g)) SCOPE_FOR.set(m[1], m[2])
+  }
+}
+
+// ---------------------------------------------------------------- the derivation
+const repos = readdirSync(ESTATE)
+  .filter((d) => {
+    try {
+      return statSync(join(ESTATE, d)).isDirectory() && existsSync(join(ESTATE, d, 'src'))
+    } catch {
+      return false
+    }
+  })
+  .sort()
+
+/**
+ * A module that presents a credential: it builds an `HttpClient` AND names a bearer somewhere in
+ * the file.
+ *
+ * The bearer test is deliberately across the WHOLE FILE rather than inside the constructor call.
+ * The first version of this looked for a `token` option within 800 characters of `new HttpClient({`
+ * and it silently missed `admin-api/src/upstreams.ts`, which constructs the client at :95 and
+ * attaches `Bearer ${token}` from a header helper at :111 — so admin-api derived an EMPTY grant and
+ * looked like a service with no upstreams, which it very much is not. A false negative here is the
+ * worst failure this file has: it does not produce a wrong grant, it produces NO grant, and a
+ * service with no entry cannot be minted a token at all.
+ *
+ * Every `outbox.ts` in the estate still drops out, because the relay signs the body with
+ * `cf-signature` and names no bearer anywhere.
+ */
+const BUILDS_CLIENT = /new HttpClient\s*\(/
+const NAMES_A_BEARER = /\btoken\b|\bcredential\b|authorization/i
+const presentsCredential = (text) => BUILDS_CLIENT.test(text) && NAMES_A_BEARER.test(text)
+
+/** service -> Map(scope -> provenance) */
+const grants = new Map()
+/**
+ * Files micro-deploy cannot take at face value, and why. Two kinds, both requiring an entry in
+ * `grant-gaps.json`:
+ *
+ *   `undeclared`   — presents a credential and exports no scope constant at all.
+ *   `unregistered` — exports one naming a scope `@cloudsforge/contracts-auth` does not have, so
+ *                    identity could never mint it and would refuse to boot on the attempt.
+ *
+ * The second kind is the reason this is a map and not a set. Reading such a declaration at face
+ * value would put an unmintable scope into the compose file and kill the identity container — so
+ * the wrong declaration has to be OVERRIDDEN here and REPORTED to the repository that owns it,
+ * not silently dropped and not silently trusted.
+ */
+const needsEntry = new Map()
+/** relative path -> the scopes it declared, for staleness checks against the gaps file */
+const cleanlyDeclared = new Set()
+
+for (const repo of repos) {
+  // `service-template` is a template, not a deployment. Granting it anything would put a service
+  // that does not exist into identity's allowlist.
+  if (repo === 'service-template') continue
+  const found = new Map()
+  for (const path of collect(join(ESTATE, repo, 'src'))) {
+    const text = stripComments(readFileSync(path, 'utf8'))
+    const rel = relative(ESTATE, path)
+    const presents = presentsCredential(text)
+
+    /** scope -> provenance, as declared by THIS file */
+    const declared = new Map()
+
+    // `export const <ANYTHING>_SCOPES = Object.freeze([...])`, and hub-api's object-of-arrays form.
+    for (const m of text.matchAll(/export const ([A-Z0-9_]*SCOPES)\b[^=]*=\s*Object\.freeze\(([\s\S]{0,600}?)\)\s*(?:satisfies|as const|;|\n)/g)) {
+      const body = m[2]
+      const literals = [...body.matchAll(/'([a-z][a-z0-9:-]+)'/g)].map((x) => x[1])
+      const viaScopeFor = [...body.matchAll(/SCOPE_FOR\.(\w+)/g)].map((x) => x[1])
+      const scopes = [...literals]
+      for (const key of viaScopeFor) {
+        const resolved = SCOPE_FOR.get(key)
+        if (!resolved) {
+          fail(`${rel}:${lineOf(text, m.index)}: SCOPE_FOR.${key} resolves to no scope in contracts-worlds — fail, do not guess`)
+          continue
+        }
+        scopes.push(resolved)
+      }
+      for (const scope of scopes) declared.set(scope, `${rel}:${lineOf(text, m.index)} (${m[1]})`)
+    }
+
+    // ── THE SECOND SEAM: a service that names its scopes at the exchange itself ────────────────
+    //
+    // `beacon` builds no `HttpClient`; it calls `POST /service-tokens/exchange` with raw fetch and
+    // states its demand in the request body — `body: { scopes: ['ledger:read'] }`
+    // (beacon/src/ecosystem.ts:563). That is the most direct declaration of demand in the estate:
+    // not a constant a deploy is trusted to read across, but the exact bytes identity is asked for.
+    // Reading it is why `beacon` needs no entry in the gaps file despite following none of the
+    // client conventions.
+    let exchanges = false
+    if (text.includes('/service-tokens/exchange')) {
+      for (const m of text.matchAll(/\bscopes:\s*\[([^\]]{0,300})\]/g)) {
+        const scopes = [...m[1].matchAll(/'([a-z][a-z0-9:-]+)'/g)].map((x) => x[1])
+        for (const scope of scopes) {
+          declared.set(scope, `${rel}:${lineOf(text, m.index)} (exchanged for at the call site)`)
+          exchanges = true
+        }
+      }
+    }
+
+    // A file that neither presents a credential nor exchanges for one contributes NOTHING, however
+    // many scope constants it exports. That is what keeps `admin-api/src/scopes.ts` — the inbound
+    // vocabulary admin-api enforces — out of admin-api's own grant. See the header.
+    if (!presents && !exchanges) continue
+
+    // ── THE SECOND DISCRIMINATOR, AND THE ONE THAT NEEDS NO HEURISTIC ─────────────────────────
+    //
+    // The registry records the service that ENFORCES each scope. A scope this repository enforces
+    // is its own inbound vocabulary and can never be part of its grant: a service does not present
+    // a credential to itself. So it is dropped here rather than being read as a demand.
+    //
+    // This is what makes the client-detection above merely a completeness check rather than the
+    // thing correctness rests on. `admin-api/src/scopes.ts` exports `admin:read`, which admin-api
+    // enforces; even if a future edit made that file construct a client, it still could not turn
+    // into a self-grant.
+    for (const scope of [...declared.keys()]) {
+      if (ENFORCER.get(scope) === repo) declared.delete(scope)
+    }
+
+    if (declared.size === 0) {
+      needsEntry.set(rel, { repo, kind: 'undeclared' })
+      continue
+    }
+    const unregistered = [...declared.keys()].filter((s) => !ENFORCER.has(s))
+    if (unregistered.length > 0) {
+      needsEntry.set(rel, { repo, kind: 'unregistered', unregistered })
+      continue
+    }
+    cleanlyDeclared.add(rel)
+    for (const [scope, where] of declared) found.set(scope, where)
+  }
+  if (found.size > 0) grants.set(repo, found)
+}
+
+// ---------------------------------------------------------------- the five that cannot be read
+let gaps = {}
+if (existsSync(GAPS)) {
+  try {
+    gaps = JSON.parse(readFileSync(GAPS, 'utf8'))
+  } catch (error) {
+    console.error(`derive-grants: ${GAPS} is not valid JSON — ${error.message}`)
+    process.exit(2)
+  }
+}
+delete gaps['//']
+
+const covered = new Set()
+for (const [rel, entry] of Object.entries(gaps)) {
+  if (!entry || typeof entry !== 'object' || !Array.isArray(entry.scopes) || typeof entry.reason !== 'string') {
+    fail(`${GAPS}: '${rel}' must be { "service": …, "scopes": [...], "reason": "…" }`)
+    continue
+  }
+  if (entry.reason.trim().length < 40) {
+    fail(`${GAPS}: the entry for '${rel}' has no real reason — under 40 characters is a hole, not a decision`)
+  }
+  if (cleanlyDeclared.has(rel)) {
+    fail(
+      `${GAPS}: '${rel}' now declares its own scopes, and they all resolve — the repository that owns it has done the work, so delete this entry.`,
+    )
+    continue
+  }
+  if (!needsEntry.has(rel)) {
+    fail(
+      `${GAPS}: '${rel}' presents no credential and exchanges for no token (or no longer exists) — the entry is stale, delete it.`,
+    )
+    continue
+  }
+  if (!entry.service) {
+    fail(`${GAPS}: '${rel}' names no service`)
+    continue
+  }
+  covered.add(rel)
+  if (!grants.has(entry.service)) grants.set(entry.service, new Map())
+  for (const scope of entry.scopes) {
+    grants.get(entry.service).set(scope, `${rel} (supplied by grant-gaps.json)`)
+  }
+}
+
+// A module micro-deploy cannot read and nobody has written down. Silence here is exactly how `nda`
+// went months without `worlds:title` and how `custody` never had an entry at all.
+for (const [rel, info] of needsEntry) {
+  if (covered.has(rel)) continue
+  if (info.kind === 'unregistered') {
+    fail(
+      `${rel}: declares ${info.unregistered.map((s) => `'${s}'`).join(', ')}, which @cloudsforge/contracts-auth does not register. ` +
+        `identity refuses to boot on an unknown scope, so this cannot be granted as written — it is a defect in ${info.repo}, not here. ` +
+        `Report it, and add an entry to ${relative(join(HERE, '..'), GAPS)} supplying the scopes the module's call sites actually need until it is fixed.`,
+    )
+    continue
+  }
+  fail(
+    `${rel}: presents a credential and declares no *_SCOPES constant, and is not in ${relative(join(HERE, '..'), GAPS)}. ` +
+      `Either export the scopes it needs from that module (the convention twenty repositories already follow, e.g. community/src/ledgerclient.ts), ` +
+      `or add an entry naming the service, the scopes and why they cannot be derived.`,
+  )
+}
+
+// ---------------------------------------------------------------- both directions checked
+for (const [service, found] of grants) {
+  for (const [scope, where] of found) {
+    if (!ENFORCER.has(scope)) {
+      fail(
+        `${service} is granted '${scope}' (${where}) but @cloudsforge/contracts-auth does not register it — identity refuses to boot on an unknown scope, so this would be a dead container.`,
+      )
+      continue
+    }
+    const enforcer = ENFORCER.get(scope)
+    if (enforcer === service) {
+      fail(
+        `${service} is granted '${scope}' (${where}), which ${service} itself ENFORCES. A service does not present a credential to itself; this is an inbound vocabulary constant being read as an outbound demand.`,
+      )
+    }
+  }
+}
+
+if (grants.size < MIN_SERVICES) {
+  console.error(
+    `derive-grants: derived grants for only ${grants.size} service(s), expected at least ${MIN_SERVICES} — this is a partial estate, and a partial derivation silently removes authority from every service it missed`,
+  )
+  process.exit(2)
+}
+
+// ---------------------------------------------------------------- output
+const derived = {}
+for (const service of [...grants.keys()].sort()) {
+  const scopes = [...grants.get(service).keys()].sort()
+  // A service that needs no scope gets NO ENTRY, rather than an empty one. Absence from this map is
+  // how identity refuses to mint for a service at all, and that is the correct answer for
+  // `devplatform` (forwards the developer's own bearer) — an empty array would instead say "this
+  // service may hold a token that opens nothing", which is a different and less honest claim.
+  if (scopes.length > 0) derived[service] = scopes
+}
+
+if (errors.length > 0) {
+  console.error(`derive-grants: FAILED — ${errors.length} problem(s)`)
+  for (const e of errors) console.error(`  ${e}`)
+  process.exit(1)
+}
+
+// The exact YAML block compose carries: a folded scalar, one service per line, sorted, so a diff
+// on this file is readable and a re-run produces byte-identical output.
+function composeBlock(map) {
+  const lines = Object.keys(map).map((s) => `"${s}":${JSON.stringify(map[s])}`)
+  return `        {${lines.join(',\n         ')}}`
+}
+
+const BEGIN = '      IDENTITY_SERVICE_TOKEN_GRANTS: >-\n'
+
+function currentBlock() {
+  const text = readFileSync(COMPOSE, 'utf8')
+  const start = text.indexOf(BEGIN)
+  if (start < 0) return null
+  const after = start + BEGIN.length
+  const rest = text.slice(after).split('\n')
+  const body = []
+  for (const line of rest) {
+    if (!/^\s{8,}\S/.test(line)) break
+    body.push(line)
+  }
+  return { text, start, after, body: body.join('\n') }
+}
+
+if (flag('--write')) {
+  const cur = currentBlock()
+  if (!cur) {
+    console.error(`derive-grants: cannot find IDENTITY_SERVICE_TOKEN_GRANTS in ${COMPOSE}`)
+    process.exit(2)
+  }
+  const next = cur.text.slice(0, cur.after) + composeBlock(derived) + cur.text.slice(cur.after + cur.body.length)
+  writeFileSync(COMPOSE, next)
+  console.log(`derive-grants: wrote ${Object.keys(derived).length} service grant(s) into ${relative(process.cwd(), COMPOSE)}`)
+  process.exit(0)
+}
+
+if (flag('--check')) {
+  const cur = currentBlock()
+  if (!cur) {
+    console.error(`derive-grants: cannot find IDENTITY_SERVICE_TOKEN_GRANTS in ${COMPOSE}`)
+    process.exit(2)
+  }
+  let onDisk
+  try {
+    onDisk = JSON.parse(cur.body.replace(/\s+/g, ' '))
+  } catch (error) {
+    console.error(`derive-grants: the compose block is not valid JSON — ${error.message}`)
+    process.exit(1)
+  }
+  // Compared as SETS, per service. Ordering and whitespace are not the property under test; what
+  // each service may mint is.
+  const problems = []
+  const services = new Set([...Object.keys(onDisk), ...Object.keys(derived)])
+  for (const service of [...services].sort()) {
+    const have = new Set(onDisk[service] ?? [])
+    const want = new Set(derived[service] ?? [])
+    const missing = [...want].filter((s) => !have.has(s))
+    const extra = [...have].filter((s) => !want.has(s))
+    if (missing.length) problems.push(`${service}: compose is MISSING ${missing.join(', ')}`)
+    if (extra.length) problems.push(`${service}: compose grants ${extra.join(', ')}, which no module in that service asks for`)
+  }
+  if (problems.length) {
+    console.error(`derive-grants: the compose file disagrees with the services — ${problems.length} difference(s)`)
+    for (const p of problems) console.error(`  ${p}`)
+    console.error(`\nRun: node scripts/derive-grants.mjs --write`)
+    process.exit(1)
+  }
+  console.log(
+    `derive-grants: ok — compose matches the estate (${Object.keys(derived).length} services, ${new Set(Object.values(derived).flat()).size} distinct scopes, ${Object.keys(gaps).length} declared gap(s))`,
+  )
+  process.exit(0)
+}
+
+if (flag('--json')) {
+  console.log(JSON.stringify(derived, null, 2))
+} else {
+  for (const service of Object.keys(derived)) {
+    console.log(`${service.padEnd(14)} ${derived[service].join(' ')}`)
+  }
+  console.log(
+    `\nderive-grants: ${Object.keys(derived).length} services, ${new Set(Object.values(derived).flat()).size} distinct scopes, ${Object.keys(gaps).length} declared gap(s)`,
+  )
+}
