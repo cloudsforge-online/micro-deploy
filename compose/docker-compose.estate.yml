@@ -1592,6 +1592,278 @@ services:
         condition: service_healthy
     healthcheck: *healthcheck-4022
 
+  # --------------------------------------------------------------- aetherholm
+  #
+  # ── THE THIRD FORGE WORLDS TITLE, AND ONE OF FIVE DEPLOYABLES NEVER RUN ─────
+  #
+  # `deployableRepos()` lists 45 services; this file served 40. The five missing
+  # were `aetherholm`, `emberkin`, `foresight`, `beacon` and `faucet`, and
+  # `scripts/web-check.py` had been naming them on every run under "registry rows
+  # with no container in this compose file". That is correctly not a failure —
+  # this file is not obliged to serve every deployable — but three of the five
+  # are the BACKENDS OF FRONTENDS THIS ESTATE ALREADY SERVES. `aetherholm-web`
+  # has been up on its own hostname with its API absent.
+  #
+  # ── THE PORT, AND WHY THIS IS *NOT* A SECOND tessera ────────────────────────
+  #
+  # aetherholm BINDS 4120 by default (`aetherholm/src/env.ts:105`, `.env.example`,
+  # `Dockerfile:87`), and 4120 IS ADMIN-API'S HOST PORT IN THIS FILE. The tessera
+  # block above argues at length for keeping a service's own bind port and moving
+  # the healthcheck instead; that argument turns on 4022 sitting BELOW the derived
+  # 4100+ block, where no number of new repositories can ever reach it. 4120 has
+  # the opposite property: it is already taken, here, today.
+  #
+  # So this follows `nda` — which EXPOSEs 4110, another number this file hands to
+  # somebody else (notify's host port), and is normalised to 4000 by
+  # `x-common-env`. Twenty-one of the twenty-two services in this file bind 4000;
+  # tessera is the single argued exception, not the pattern. The container port is
+  # 4000 and the HOST port is derived.
+  #
+  # HOST PORT 4124 IS DERIVED, NOT CHOSEN: index 24 in `deployableRepos()`, via
+  # `portFor` (org/tools/cfctl.ts:987). `make check-web` recomputes it.
+  #
+  # ── WHAT IT IS HANDED, AND WHAT IT DELIBERATELY IS NOT ──────────────────────
+  #
+  # Its `.env.example` has a closing section headed "not read by this service",
+  # and it is load-bearing rather than decorative: phase 1 makes NO outbound HTTP
+  # call. The title contract is inbound — worlds calls POST /v1/provision with a
+  # credential carrying `aetherholm:provision` — and every background timer is a
+  # leased job against its own database. So there is no upstream URL and no
+  # service credential here. Rule 9 is not "declare the variables you might want";
+  # a variable nothing reads is a secret nothing needed, handed to a container
+  # anyway.
+  aetherholm-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../aetherholm
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/aetherholm
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: aetherholm-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  aetherholm:
+    build:
+      context: ../../aetherholm
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/aetherholm
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: aetherholm-estate
+    ports:
+      - "127.0.0.1:4124:4000"
+    depends_on:
+      aetherholm-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ----------------------------------------------------------------- emberkin
+  #
+  # The monster-collecting RPG, played through Forge Worlds. `emberkin-web` has
+  # been served by this estate with this API absent, exactly as aetherholm was.
+  #
+  # HOST PORT 4122 IS DERIVED: index 22 in `deployableRepos()`. Its natural bind
+  # is 4100 — IDENTITY'S HOST PORT IN THIS FILE — so it is normalised to 4000 for
+  # the reason argued in the aetherholm block above.
+  #
+  # ── EMBERKIN_SERVICE_TOKEN IS A TOKEN AND MUST NOT BE HANDED A CREDENTIAL ───
+  #
+  # This is the tessera trap again, and it is worth stating per service because
+  # the variable NAME is not what settles it. `emberkin/src/index.ts:60` is
+  # `const token = (): string => env.serviceToken` — the value is PRESENTED as a
+  # bearer, verbatim, with no exchange. So it must be a ten-minute JWT from
+  # `POST /service-tokens`, and it is minted in `estate-bootstrap.sh`'s
+  # CREDENTIALS list. Handing it `EMBERKIN_IDENTITY_CREDENTIAL` — which section
+  # 5b already mints, and which is sitting in `tokens.env` looking like the
+  # obvious answer — would send its three upstreams a Bearer that is not a JWT
+  # and earn a 401 with nothing in either log naming the cause.
+  #
+  # The ten-minute expiry is therefore REAL here, and is recorded rather than
+  # hidden: this is the same cliff that froze EMBER through `ledger`, and the
+  # same remedy applies — micro-emberkin adopting `ServiceTokenProvider` and
+  # reading the credential instead. Unlike ledger's, emberkin's calls are on
+  # request paths rather than a 900-second timer, so a bootstrap is not
+  # guaranteed to outrun it; it fails when a player acts more than ten minutes
+  # after one.
+  #
+  # Its grant is DERIVED and already present: billing:read, ledger:post,
+  # worlds:title, from BILLING_SCOPES, LEDGER_SCOPES and WORLDS_SCOPES in its own
+  # three client modules. Nothing was typed into the map for it.
+  emberkin-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../emberkin
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      EMBERKIN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/emberkin
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # The migrator loads the same `env.ts`, which demands these three URLs and
+      # the token before it will construct a config — so they are supplied here
+      # too. It dials none of them.
+      LEDGER_URL: http://ledger:4000
+      BILLING_URL: http://billing:4000
+      WORLDS_URL: http://worlds:4000
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      INSTANCE_ID: emberkin-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  emberkin:
+    build:
+      context: ../../emberkin
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      EMBERKIN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/emberkin
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      LEDGER_URL: http://ledger:4000
+      BILLING_URL: http://billing:4000
+      WORLDS_URL: http://worlds:4000
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      INSTANCE_ID: emberkin-estate
+    ports:
+      - "127.0.0.1:4122:4000"
+    depends_on:
+      emberkin-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+      ledger:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+      worlds:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------------------------- beacon
+  #
+  # ── THE RELEASE GATE, WHICH HAD NEVER RUN IN ANY ENVIRONMENT ────────────────
+  #
+  # Synthetic monitoring: journeys, incidents and SLOs. It is the service that
+  # answers "does the estate actually work", and it is the one that had never been
+  # started — so every judgement about this environment so far has been made
+  # without it. HOST PORT 4143 IS DERIVED: index 43 in `deployableRepos()`.
+  #
+  # ── BEACON_TOKEN IS INBOUND BREAK-GLASS, NOT AN OUTBOUND SERVICE TOKEN ──────
+  #
+  # A static shared secret, like `ANALYTICS_TOKEN`, and NOT minted by identity.
+  # Its own header says why it is checked BEFORE the identity token: "when
+  # identity is the thing that has broken, a Beacon that could only be read with
+  # an identity token would be a Beacon nobody can read." Minting this from
+  # identity would destroy the one property it exists to have.
+  #
+  # ── BEACON_SERVICE_CREDENTIAL IS A CREDENTIAL, AND THE NAMES DO NOT MATCH ───
+  #
+  # This is the third variable in this file whose name has to be checked against
+  # its USE rather than read (see tessera and emberkin above, in the opposite
+  # direction). `beacon/src/ecosystem.ts:549` EXCHANGES it at
+  # `POST /service-tokens/exchange` for a `ledger:read` token, so it is the
+  # long-lived `cfsc_…` kind — which section 5b of `estate-bootstrap.sh` already
+  # mints, under the name `BEACON_IDENTITY_CREDENTIAL`. The deploy is where those
+  # two names are joined, and that is exactly what a deploy is for.
+  #
+  # SUPPLYING IT MAKES THE GATE STRICTER, WHICH IS WHY IT IS SUPPLIED. Without a
+  # credential `ecosystemJourneys()` DOES NOT DECLARE the trial-balance journey at
+  # all — the repository's own comment draws the line: "absent because it cannot
+  # run", which it holds, versus "declared and skipping for ever", which is how a
+  # gate gets switched off. An unset credential here would silently buy a smaller
+  # suite that still reports green.
+  #
+  # ── THE SIX TARGETS ARE READ OFF THE JOURNEYS, NOT CHOSEN ───────────────────
+  #
+  # `ctx.target('…')` across `src/` names exactly six: activity, hub-api,
+  # identity, ledger, market, worlds. A target a journey asks for and this list
+  # omits is a journey that cannot run, so the list is derived from the call sites
+  # the same way the grants map is.
+  #
+  # `BEACON_BROWSER_EXECUTABLE` is deliberately UNSET: no browser is installed in
+  # this image, and its own env.ts documents absent as a supported mode. The
+  # browser journeys stay undeclared rather than declared-and-failing.
+  #
+  # ── OPEN, FOUND BY RUNNING IT: EVERY SLO OBSERVATION IS BEING DROPPED ───────
+  #
+  # Starting this service surfaced a real gap within one scheduling cycle, which
+  # is precisely the argument for deploying the gate rather than reasoning about
+  # it. All eleven journeys run and are recorded in `journey_runs`, but every
+  # `slo_observations` insert fails:
+  #
+  #   insert or update on table "slo_observations" violates foreign key
+  #   constraint "slo_observations_slo_name_fkey"
+  #
+  # `jobs.ts:299` records against `journeySloName(name)` = `<journey>.runs`, and
+  # `slos` is EMPTY: nothing seeds it. `upsertSlo` has exactly one caller in the
+  # repository — `PUT /v1/slos/:name` (server.ts:685, admin-only) — so an SLO is
+  # REGISTERED, never derived, and beacon ships no catalogue.
+  #
+  # It does not crash: `jobs.ts:305` catches and warns, so the service is healthy
+  # and the journeys are real. What is lost is every objective and every error
+  # budget — the numbers the gate is supposed to gate ON. A green `/readyz` here
+  # is worth less than it looks, which is this file's recurring lesson.
+  #
+  # NOT FIXED HERE, AND THE CHOICE IS DELIBERATE. Registering eleven SLOs from
+  # `estate-bootstrap.sh` is defensible — section 5c already argues that WHO
+  # RECEIVES WHAT is deploy configuration, and an objective of 99% is written
+  # down (13-operational-model.md:437, "99% of scheduled runs pass. A skip counts
+  # against it"). But the objective, tier and window of each journey are the
+  # GATE'S OWN policy, and inventing eleven of them in a compose repository is
+  # how a threshold nobody agreed to becomes the one the estate is judged by.
+  # Reported to micro-beacon: either seed the declared journeys' SLOs at boot, or
+  # make a missing SLO a startup failure instead of a per-cycle warning. Until
+  # then this container runs its journeys and reports no budget.
+  beacon-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../beacon
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      BEACON_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/beacon
+      BEACON_TOKEN: estate-only-beacon-breakglass-000000000
+      INSTANCE_ID: beacon-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  beacon:
+    build:
+      context: ../../beacon
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      BEACON_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/beacon
+      BEACON_TOKEN: estate-only-beacon-breakglass-000000000
+      BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000
+      BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
+      INSTANCE_ID: beacon-estate
+    ports:
+      - "127.0.0.1:4143:4000"
+    depends_on:
+      beacon-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+      ledger:
+        condition: service_healthy
+      market:
+        condition: service_healthy
+      worlds:
+        condition: service_healthy
+      activity:
+        condition: service_healthy
+      hub-api:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
   # ====================================================== tier 4: the two BFFs
   # ---------------------------------------------------------------- admin-api
   # NOTE: admin-api/src/server.ts returns 501 for bootstrap and identity grants

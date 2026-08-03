@@ -59,9 +59,10 @@ CREATE DATABASE analytics;
 CREATE DATABASE admin_api;
 
 -- -- the fourth Forge Worlds title (docs/ecosystem/23-tessera.md) --------------
--- The first title SERVICE in this environment: emberkin and aetherholm have web
--- bundles here and no backend, so this is the first time a title's own database
--- exists at all. It is a persistent world — 23-tessera.md §4 puts it plainly,
+-- The first title SERVICE in this environment. That claim was written when
+-- emberkin and aetherholm had web bundles here and no backend; both now have a
+-- database below, so this is first in ORDER only and no longer the only one.
+-- It is a persistent world — 23-tessera.md §4 puts it plainly,
 -- "persistence means Postgres, and nothing else": there is no per-ward tick and
 -- no per-user simulation process, so an object placed IS a row, and this
 -- database is the entire authoritative world.
@@ -81,3 +82,37 @@ CREATE DATABASE tessera;
 -- rollups, and `rum_samples` — the browser sink. Everything here expires; the
 -- RUM plane at thirty days, and by policy it carries NO `user_id` column at all.
 CREATE DATABASE lantern;
+
+-- -- the five deployables this estate had never once run ------------------------
+--
+-- micro-org's `deployableRepos()` lists 45 services. This compose file served 40
+-- of them, and `scripts/web-check.py` had been reporting the other five by name
+-- and by derived port on every run — "registry rows with no container in this
+-- compose file" — which is not a failure and is also not nothing. Three of the
+-- five are the BACKENDS OF FRONTENDS THIS ESTATE ALREADY SERVES: foresight-web,
+-- emberkin-web and aetherholm-web have been answering on their own hostnames
+-- with their APIs absent, which from a browser is a page that renders and then
+-- cannot do anything.
+--
+-- A NOTE ON WHEN THIS FILE RUNS, because it caught this work out: postgres runs
+-- /docker-entrypoint-initdb.d ONLY when its data directory is empty. Adding a
+-- line here does nothing to a volume that already exists, so each database below
+-- was also created by hand against the running server. This file is what makes a
+-- FRESH estate come up whole; it is not what fixed the running one.
+
+-- The sky-island strategy MMO, and the second Forge Worlds title. Inbound-only:
+-- worlds calls POST /v1/provision with a credential carrying `aetherholm:provision`
+-- and this service makes no outbound HTTP call at all, which is why its block in
+-- the compose file has no upstream URL and no service credential.
+CREATE DATABASE aetherholm;
+
+-- The monster-collecting RPG, the second Forge Worlds title with a container
+-- here. Unlike aetherholm it DOES call out — ledger, billing and worlds — and
+-- presents a ten-minute token to do it (`emberkin/src/index.ts:60`).
+CREATE DATABASE emberkin;
+
+-- The release gate: synthetic journeys, incidents and SLOs. It had never been
+-- started in any environment, so every judgement made about this estate so far
+-- was made without the service whose job is to judge it.
+CREATE DATABASE beacon;
+

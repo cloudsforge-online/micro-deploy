@@ -292,8 +292,14 @@ echo "── 5. mint one service token per credential ────────�
 # repository's env.ts rather than assumed from the variable's name:
 #   settlement, market, trade, admin-api  still read a 10-minute token.
 #   community                             reads a long-lived CREDENTIAL.
-#   tessera                               reads a 10-minute token; see below.
+#   tessera, emberkin                     read a 10-minute token; see below.
 #   ledger                                reads a long-lived CREDENTIAL; see below.
+#
+# `emberkin` is on this list for exactly tessera's reason and was checked the same
+# way rather than assumed from the variable's name: `emberkin/src/index.ts:60` is
+# `const token = (): string => env.serviceToken`, so the value is PRESENTED as a
+# bearer and must be a JWT. `EMBERKIN_IDENTITY_CREDENTIAL` is also minted, by 5b,
+# and handing that to it instead would 401 every one of its three upstreams.
 #
 # ── LEDGER IS OFF THIS LIST AGAIN, AND THIS TIME IT IS THE FIX ────────────────
 #
@@ -348,6 +354,7 @@ TRADE_SERVICE_TOKEN|trade|
 COMMUNITY_SERVICE_CREDENTIAL|community|
 ADMIN_API_SERVICE_TOKEN|admin-api|
 TESSERA_SERVICE_CREDENTIAL|tessera|
+EMBERKIN_SERVICE_TOKEN|emberkin|
 "
 
 # The grants, read from the compose file the estate actually runs with. `python3`
