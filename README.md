@@ -62,7 +62,17 @@ docker compose -p cfmicro \
 Host ports are `4100 + the service's index in micro-org's registry` (`portFor`,
 `cfctl.ts:868`) — derived from the one list that orders every repository rather
 than picked, because a hand-chosen port has already collided twice here. They
-bind to `127.0.0.1` only. The frontends continue that sequence at 4122.
+bind to `127.0.0.1` only. The frontends continue that sequence at 4126.
+
+Derived means **positional**, which is the sharp edge: a row inserted into the
+middle of that registry moves every port below it. That has happened — a 46→70
+sweep of the registry moved **sixteen of the thirty-nine** host ports pinned
+here, and nothing reported it, because the comment claiming a guard named a
+script that did not exist. `make check-web` (`scripts/web-check.py`) now
+recomputes all of them by *executing* micro-org's registry and goes red on any
+disagreement, including for the ports `estate-verify.sh` drives — where a port
+that has moved onto another service does not fail, it passes against the wrong
+container.
 
 ### The fifteen frontends, and the hostnames that make them a product
 
@@ -75,13 +85,13 @@ They are reachable two ways, and only one of them is a product:
 
 | | Address | What works |
 | --- | --- | --- |
-| Direct | `127.0.0.1:4122` … `:4139` | the bundle, its assets, its 404 semantics |
+| Direct | `127.0.0.1:4126` … `:4141` | the bundle, its assets, its 404 semantics |
 | Through the gateway | `https://hub.$CF_WEB_APEX` and the other fourteen | **all of the above plus every API call the page makes** |
 
 The distinction is not cosmetic. `cloudsforgeHosts()` reads
 `window.location.hostname`, strips a known subdomain to derive the apex, and
 rebuilds every sibling host as `https://<sub>.<apex>` — **no port**
-(`ui/packages/ui/src/surfaces.ts`). A bundle opened on `127.0.0.1:4122`
+(`ui/packages/ui/src/surfaces.ts`). A bundle opened on `127.0.0.1:4126`
 therefore resolves identity to `http://localhost:4001`, which nothing here
 serves. The loopback ports are for debugging one bundle; the hostnames are the
 environment.
@@ -164,9 +174,10 @@ this repository, and none is worked around here.
 | **No scenario executes a bundle.** `estate-verify.sh` fetches every asset a page references and checks the design system reached the CSS, but nothing here runs JavaScript. A module that throws on line one passes every check. | `micro-beacon` — the tier-3 harness in `docs/ecosystem/22` §4 | by construction: this is a bash script |
 | **`micro-admin-api` cannot be rebuilt.** Its Dockerfile copies the `runtimepkgs` build context and **not** `contractspkgs`, so the `@cloudsforge/contracts-events` import added in its `24fb2c7` cannot resolve. `pnpm typecheck` fails in the image and takes the whole `up --build` with it. | `micro-admin-api` | `src/server.ts(122,66): error TS2307: Cannot find module '@cloudsforge/contracts-events'`; `admin-api/Dockerfile` has no `COPY --from=contractspkgs` |
 | **`indexer` is behind a profile** and so is `explorer.<apex>/v1`. | `micro-indexer` | `profiles: [indexer]` and the note above it |
-| **micro-org's registry is 12 repositories short.** 46 entries against a 58-directory tree; `foresight`, `foresight-admin-web`, `emberkin*`, `aetherholm*`, `conformance`, `brand`, `docs` and `deploy` are all absent, so no port can be *derived* for four of the fifteen frontends. | `micro-org` | `deployableRepos()` stops at `faucet` (4135) |
+| **~~micro-org's registry is 12 repositories short.~~ FIXED, and it moved sixteen ports.** The registry was swept from 46 rows to 70, so every surface here derives a port now. But the rows went in *mid-list* rather than appended, and the port is the index — so eleven frontends slid +4, `tessera` went 4140 → **4125**, and the four late surfaces were reordered. Recomputed here, all 39 at once. | closed | `make check-web` |
+| **Three registry services have no container here.** `emberkin` (4122), `foresight` (4123) and `aetherholm` (4124) now have registry rows and derived ports, but this compose file defines only their *frontends*. `web-check.py` reports them rather than failing: this file is not obliged to serve every deployable, and a red nobody intends to clear is a red everybody ignores. | this repo | `make check-web`, the "no container in this compose file" note |
 | **`foresight-admin` has no surface-registry row**, so its hostname is the one in this estate that was chosen rather than read. | `micro-ui` | no `foresight-admin` key in `ui/packages/ui/src/surfaces.ts` |
-| **A missing asset 404s with `text/html`.** Every frontend's `nginx.conf` states the opposite intent ("a JavaScript request answered with HTML fails with a syntax error that names the wrong file"), but `error_page 404 /index.html` is server-level and catches the `/assets/` location's `=404` too. The status is right, so a browser still refuses to execute it; the content type is not. | the fifteen `*-web` repos | `curl -i http://127.0.0.1:4122/assets/nope.js` |
+| **A missing asset 404s with `text/html`.** Every frontend's `nginx.conf` states the opposite intent ("a JavaScript request answered with HTML fails with a syntax error that names the wrong file"), but `error_page 404 /index.html` is server-level and catches the `/assets/` location's `=404` too. The status is right, so a browser still refuses to execute it; the content type is not. | the fifteen `*-web` repos | `curl -i http://127.0.0.1:4126/assets/nope.js` |
 | **The Traefik Docker provider has never worked here.** v3.2.3 pins its Docker API version to 1.24; Docker Desktop's daemon refuses anything under 1.40. Label-based discovery — the gateway's stated design — is dead, and every route comes from the file provider. Neither `DOCKER_API_VERSION` nor v3.3.7 changes it; both were tried. | this repo, unfixed on purpose — see the note in `compose/docker-compose.gateway.yml` | `ERR ... client version 1.24 is too old`, every ten seconds, since the gateway first started |
 
 ### The relay cannot authenticate, so two consumers can never be fed

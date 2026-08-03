@@ -40,6 +40,14 @@
 # another service, so the number is derived from the one list that orders every
 # repository. They bind to 127.0.0.1 only.
 #
+# Derived means POSITIONAL, and that is the sharp edge: a row inserted into the
+# middle of the registry moves every port below it. That has already happened
+# once — a 46→70 sweep moved sixteen of the thirty-nine pins in this file, in
+# silence. `scripts/web-check.py` (`make check-web`) recomputes all of them and
+# goes red on any disagreement; micro-org's `test/cfctl.test.ts` guards the other
+# side by pinning the derived ORDER, because the test it had asserted the ports
+# were DISTINCT — true before the sweep and after it, and not what broke.
+#
 # ── HOW TO RUN IT ──────────────────────────────────────────────────────────────
 #
 #   cd deploy && ./scripts/estate-up.sh          # build, migrate, bootstrap, verify
@@ -1347,13 +1355,27 @@ services:
   # in the only environment that exists is worse than no pin, so the port stays
   # and the healthcheck moves. That is the whole cost: one extra anchor.
   #
-  # ── HOST PORTS 4140 / 4141, AND WHY THEY ARE CHOSEN RATHER THAN DERIVED ─────
+  # ── HOST PORT 4125, AND WHY IT IS NO LONGER 4140 ────────────────────────────
   #
-  # micro-org's REGISTRY has no `tessera` or `tessera-web` entry — it carries 46
-  # entries against a 58-directory tree — so no index exists to derive from, the
-  # same reason foresight-web, foresight-admin-web, emberkin-web and aetherholm-web
-  # took 4136-4139 by hand. These are the next two: 4140 for the service, 4141
-  # for the bundle. Recorded as a defect in micro-org, not fixed here.
+  # This block used to read "micro-org's REGISTRY has no `tessera` or
+  # `tessera-web` entry … so no index exists to derive from", and took 4140 and
+  # 4141 by hand. THAT IS NO LONGER TRUE. The registry was swept from 46 rows to
+  # 70 and now carries both, so both are derived like everything else — and the
+  # sweep INSERTED the new rows mid-list rather than appending, which moved
+  # sixteen of this file's thirty-nine host ports at once.
+  #
+  # `tessera` derives to 4125 (index 25), behind `emberkin`, `foresight` and
+  # `aetherholm`, which were inserted ahead of it. 4140 now belongs to
+  # `aetherholm-web`, so leaving this at 4140 would not have been a stale number
+  # — it would have been ANOTHER SERVICE'S number.
+  #
+  # `tessera-web` derives to 4141, which is exactly what was chosen for it by
+  # hand. That agreement is arithmetic coincidence and is worth naming, because
+  # it is precisely what makes this class of drift look survivable: two ports
+  # were noticed, one of them already matched, and fourteen others were wrong.
+  # `scripts/web-check.py` now recomputes ALL of them against the registry.
+  #
+  # The BIND port below is a different question and is not touched: 4022 stays.
   #
   # ── WHAT IT TALKS TO, AND WHAT IS DELIBERATELY OPTIONAL ─────────────────────
   #
@@ -1420,7 +1442,7 @@ services:
       TESSERA_SERVICE_CREDENTIAL: ${TESSERA_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: tessera-estate
     ports:
-      - "127.0.0.1:4140:4022"
+      - "127.0.0.1:4125:4022"
     depends_on:
       tessera-migrate:
         condition: service_completed_successfully
@@ -1552,22 +1574,40 @@ services:
   #   node --import tsx -e "import {deployableRepos} from './tools/registry.ts'; \
   #     deployableRepos().forEach((r,i)=>console.log(4100+i, r.name))"   # in micro-org
   #
-  # ── FOUR SURFACES micro-org's REGISTRY DOES NOT KNOW ──────────────────────────
+  # ── THERE ARE NO LONGER ANY CHOSEN PORTS IN THIS FILE ─────────────────────────
   #
-  # That command yields 4122–4132 for eleven frontends and stops. `foresight-web`,
-  # `foresight-admin-web`, `emberkin-web` and `aetherholm-web` are ABSENT FROM THE
-  # REGISTRY — as are the `foresight`, `emberkin` and `aetherholm` services and
-  # eight other directories: micro-org's REGISTRY carries 46 entries against a
-  # 58-directory working tree. That is a defect in micro-org, not here, and it is
-  # recorded rather than papered over: this file cannot derive a port for a repo
-  # the registry has never heard of.
+  # This block used to say four surfaces — `foresight-web`, `foresight-admin-web`,
+  # `emberkin-web`, `aetherholm-web` — were ABSENT FROM THE REGISTRY and so took
+  # 4136-4139 by hand, "THE ONLY CHOSEN PORTS IN THIS FILE". micro-org's registry
+  # has since been swept from 46 rows to 70 and carries all four, plus `tessera`,
+  # `tessera-web` and the three services behind those surfaces. Every host port
+  # here is now derived. Nothing in this file is chosen.
   #
-  # They take 4136–4139 — after 4135 (`faucet`, the registry's last deployable) —
-  # in the order docs/ecosystem/22 §5 lists them. THESE FOUR NUMBERS ARE THE ONLY
-  # CHOSEN PORTS IN THIS FILE. The day micro-org's registry carries the four
-  # repositories, recompute all fifteen with the command above; `scripts/
-  # web-check.py` fails when this file and the registry disagree, so the drift
-  # cannot be silent.
+  # THE SWEEP MOVED SIXTEEN OF THEM, and this is the part worth remembering: the
+  # new rows went in MID-LIST rather than appended — four services ahead of the
+  # frontend block, five frontends ahead of ops. The port IS the index, so every
+  # row below an insertion moved. The eleven original frontends each slid +4
+  # (hub-web 4122 → 4126). `tessera` went 4140 → 4125. The four surfaces above
+  # were reordered among themselves. `tessera-web` stayed on 4141 by arithmetic
+  # coincidence — which is exactly why individual numbers must never be adopted
+  # one at a time: a spot-check of the two ports somebody noticed would have
+  # found one already correct and left fourteen wrong.
+  #
+  # ── THE GUARD, WHICH FOR A LONG TIME DID NOT EXIST ────────────────────────────
+  #
+  # These lines used to end: "`scripts/web-check.py` fails when this file and the
+  # registry disagree, so the drift cannot be silent." THAT SCRIPT DID NOT EXIST.
+  # `scripts/` held nine files and none of them was it. The estate's signature
+  # defect — a check that cannot fail — in its purest form: one that could not
+  # even run, asserted in a comment directly above the thing it claimed to guard.
+  # The drift was, in fact, silent, and it stayed silent through a 24-row sweep.
+  #
+  # The script is now written, and the claim is true rather than aspirational. It
+  # executes micro-org's registry rather than parsing it — a regex over
+  # `registry.ts` would be a second private copy of the list whose drift is the
+  # bug — checks all 39 pins here AND the ports `scripts/estate-verify.sh` drives,
+  # and refuses to skip: if micro-org cannot be reached it reports failure rather
+  # than a success it did not establish. Run it with `make check-web`.
   #
   # ── WHAT A GREEN HEALTHCHECK HERE IS WORTH ────────────────────────────────────
   #
@@ -1590,7 +1630,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4122:8080"
+      - "127.0.0.1:4126:8080"
 
   # ------------------------------------------------------------- site (apex)
   # The apex. It has no subdomain in the registry, which is why the gateway routes
@@ -1602,7 +1642,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4123:8080"
+      - "127.0.0.1:4127:8080"
 
   # --------------------------------------------------------- admin-web (admin)
   admin-web:
@@ -1612,7 +1652,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4124:8080"
+      - "127.0.0.1:4128:8080"
 
   # --------------------------------------------------------- mint-web (create)
   # `create.<apex>`, not `mint.`: the repository is micro-mint-web and the surface
@@ -1626,7 +1666,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4125:8080"
+      - "127.0.0.1:4129:8080"
 
   # --------------------------------------------------------- trade-web (trade)
   trade-web:
@@ -1636,7 +1676,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4126:8080"
+      - "127.0.0.1:4130:8080"
 
   # ------------------------------------------------------- worlds-web (worlds)
   worlds-web:
@@ -1646,7 +1686,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4127:8080"
+      - "127.0.0.1:4131:8080"
 
   # --------------------------------------------------- explorer-web (explorer)
   explorer-web:
@@ -1656,7 +1696,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4128:8080"
+      - "127.0.0.1:4132:8080"
 
   # ------------------------------------------------------ network-site (network)
   network-site:
@@ -1666,7 +1706,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4129:8080"
+      - "127.0.0.1:4133:8080"
 
   # ------------------------------------------------------- market-web (market)
   market-web:
@@ -1676,7 +1716,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4130:8080"
+      - "127.0.0.1:4134:8080"
 
   # -------------------------------------------------- devportal-web (developers)
   # `developers.<apex>`, from the registry — NOT `devportal.`, which is the
@@ -1689,7 +1729,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4131:8080"
+      - "127.0.0.1:4135:8080"
 
   # ------------------------------------------------------- status-web (status)
   status-web:
@@ -1699,11 +1739,16 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4132:8080"
+      - "127.0.0.1:4136:8080"
 
-  # --------------------------------------------- foresight-web (foresight) 4136
-  # From here down, the four surfaces micro-org's registry does not carry. See the
-  # section header.
+  # --------------------------------------------- foresight-web (foresight) 4138
+  # From here down, the four surfaces micro-org's registry did not carry until the
+  # 46→70 sweep. They are derived now, like everything else, and the sweep also
+  # REORDERED them relative to each other: emberkin-web sorts ahead of the two
+  # foresight surfaces in the registry, so it holds 4137 while its block still sits
+  # below theirs in this file. The blocks are not in port order and never were —
+  # `pricing` (4105) is above `activity` (4109) too. The number is read from the
+  # registry, not from position in this file.
   foresight-web:
     <<: *web-defaults
     build:
@@ -1711,10 +1756,12 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4136:8080"
+      - "127.0.0.1:4138:8080"
 
-  # ------------------------------------------ foresight-admin-web (no reg. row)
-  # `ui/packages/ui/src/surfaces.ts` has NO ROW for this surface, so it has no
+  # -------------------------------- foresight-admin-web (no micro-ui row)  4139
+  # micro-org's registry now carries this repository, so the PORT is derived. What
+  # it still has no row in is `ui/packages/ui/src/surfaces.ts` — a different
+  # registry answering a different question — so it has no
   # registry subdomain either. It is served at `foresight-admin.<apex>` — a name
   # chosen here, and the only surface hostname in this estate that is not read out
   # of the registry. Recorded as a gap for micro-ui rather than fixed here: the
@@ -1727,9 +1774,9 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4137:8080"
+      - "127.0.0.1:4139:8080"
 
-  # ------------------------------------------ emberkin-web (emberkin)      4138
+  # ------------------------------------------ emberkin-web (emberkin)      4137
   emberkin-web:
     <<: *web-defaults
     build:
@@ -1737,9 +1784,9 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4138:8080"
+      - "127.0.0.1:4137:8080"
 
-  # ------------------------------------------ aetherholm-web (aetherholm)  4139
+  # ------------------------------------------ aetherholm-web (aetherholm)  4140
   aetherholm-web:
     <<: *web-defaults
     build:
@@ -1747,7 +1794,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4139:8080"
+      - "127.0.0.1:4140:8080"
 
   # ------------------------------------------ tessera-web (tessera)        4141
   # The SIXTEENTH frontend, and the first whose service is also in this file.

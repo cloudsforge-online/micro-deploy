@@ -49,11 +49,20 @@ DEVPLATFORM=${DEVPLATFORM:-http://127.0.0.1:4118}
 HUB=${HUB:-http://127.0.0.1:4119}
 ADMIN=${ADMIN:-http://127.0.0.1:4120}
 ANALYTICS=${ANALYTICS:-http://127.0.0.1:4121}
-# 4140 on the host, 4022 in the container. tessera is the one service here that does not bind
-# 4000, and the number is argued rather than picked — 23-tessera.md §10.1. The HOST port is chosen
-# rather than derived for the same reason foresight-web's and aetherholm-web's are: micro-org's
-# registry has no entry to take an index from.
-TESSERA=${TESSERA:-http://127.0.0.1:4140}
+# 4125 on the host, 4022 in the container. tessera is the one service here that does not bind
+# 4000, and THAT number is argued rather than picked — 23-tessera.md §10.1. The BIND port is a
+# different question from the HOST port and is untouched.
+#
+# The host port was 4140 until micro-org's registry was swept from 46 rows to 70. tessera now has
+# a row, so this is derived (index 25) rather than chosen — and 4140 has been REASSIGNED to
+# aetherholm-web, so had this stayed at 4140 the checks below would not have failed to connect.
+# They would have driven another service's container and reported green.
+TESSERA=${TESSERA:-http://127.0.0.1:4125}
+# The bundle, not the service. Named rather than written inline at the `/world-assets/` check
+# below, because a bare literal is a port `scripts/web-check.py` cannot resolve to a repository
+# and therefore cannot recompute. It derives to 4141 — the same number it was assigned by hand
+# before the registry carried it, which is coincidence and is not evidence of anything.
+TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:4141}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 fails=0
 
@@ -1167,7 +1176,7 @@ fi
 # decodes as a corrupt PNG") that its own configuration does not achieve, exactly as the other
 # fifteen do. Measured here rather than asserted, because it is a defect in a repository this
 # suite cannot fix, and a red that nobody is able to clear is a red everybody learns to ignore.
-wa_body=$(curl -s -w '\n%{http_code}' "http://127.0.0.1:4141/world-assets/objects/seating-stool.png")
+wa_body=$(curl -s -w '\n%{http_code}' "$TESSERA_WEB/world-assets/objects/seating-stool.png")
 wa_status=$(printf '%s' "$wa_body" | tail -1)
 wa_note=""
 printf '%s' "$wa_body" | sed '$d' | grep -q 'id="root"' \
@@ -1258,9 +1267,13 @@ echo "── THE SIXTEEN FRONTENDS: served, and proved to be more than a 200 ─
 # estate believed an image worked because CI read its metadata without ever
 # running it.
 #
-# Ports are 4100 + the repo's index in micro-org's registry, as everywhere else;
-# the four surfaces that registry does not carry are documented beside their
-# containers in compose/docker-compose.estate.yml.
+# Ports are 4100 + the repo's index in micro-org's registry, as everywhere else.
+# All sixteen are derived now — the registry's 46→70 sweep gave rows to the four
+# surfaces it used to lack, and moved these numbers in the process. THE LIST
+# BELOW IS NOT ALLOWED TO DRIFT FROM IT: `scripts/web-check.py` reads each name
+# and port out of these records and recomputes them, because a port that has
+# moved onto ANOTHER service does not fail here — it connects, gets a 200 from
+# the wrong container, and reports green.
 #
 # No `declare -A` — bash here is 3.2, and an associative-array port map once
 # silently broke five suites in this repository.
@@ -1394,21 +1407,21 @@ print('\n'.join(sorted(set(urls))))
 }
 
 for rec in \
-  "hub-web 4122 /portfolio" \
-  "site 4123 /products" \
-  "admin-web 4124 /approvals" \
-  "mint-web 4125 /launch" \
-  "trade-web 4126 /bots" \
-  "worlds-web 4127 /player" \
-  "explorer-web 4128 /chains" \
-  "network-site 4129 /faucet" \
-  "market-web 4130 /listings" \
-  "devportal-web 4131 /apps" \
-  "status-web 4132 /history" \
-  "foresight-web 4136 /rules" \
-  "foresight-admin-web 4137 /categories" \
-  "emberkin-web 4138 /party" \
-  "aetherholm-web 4139 /cities" \
+  "hub-web 4126 /portfolio" \
+  "site 4127 /products" \
+  "admin-web 4128 /approvals" \
+  "mint-web 4129 /launch" \
+  "trade-web 4130 /bots" \
+  "worlds-web 4131 /player" \
+  "explorer-web 4132 /chains" \
+  "network-site 4133 /faucet" \
+  "market-web 4134 /listings" \
+  "devportal-web 4135 /apps" \
+  "status-web 4136 /history" \
+  "foresight-web 4138 /rules" \
+  "foresight-admin-web 4139 /categories" \
+  "emberkin-web 4137 /party" \
+  "aetherholm-web 4140 /cities" \
   "tessera-web 4141 /wards"; do
   set -- $rec
   web_surface "$1" "$2" "$3"
@@ -1420,7 +1433,7 @@ echo "── THE GATEWAY: the surfaces on the hostnames a browser will use ─�
 # Everything above reaches a container on a loopback port. NO BROWSER EVER WILL.
 # `cloudsforgeHosts()` reads `window.location.hostname`, strips a known
 # subdomain to get the apex, and rebuilds every sibling host as
-# `https://<sub>.<apex>` — no port. So a bundle opened on 127.0.0.1:4122 resolves
+# `https://<sub>.<apex>` — no port. So a bundle opened on 127.0.0.1:4126 resolves
 # identity to `http://localhost:4001`, which nothing in this estate serves. The
 # hostnames below are the only addresses under which the estate is a working
 # product rather than fifteen isolated static servers.

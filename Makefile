@@ -84,7 +84,7 @@ GW_ESTATE := -f compose/docker-compose.telemetry.yml \
              -f compose/docker-compose.gateway.yml \
              -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-ps check-gateway estate-gateway
+.PHONY: estate-up estate-down estate-verify estate-ps check-gateway check-web estate-gateway
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
@@ -104,3 +104,11 @@ estate-down: ## Stop the environment. Add VOLUMES=1 to delete its databases too
 
 check-gateway: ## Compare the public route map against what the services serve
 	@python3 scripts/gateway-check.py
+
+check-web: ## Recompute every host port from micro-org's registry and compare
+	@# The ports here are POSITIONAL — `4100 + index in deployableRepos()` — so a
+	@# row inserted into the middle of that registry moves every port below it.
+	@# That happened once in silence, moving sixteen of the thirty-nine pins,
+	@# while the compose file carried a comment claiming this script guarded it.
+	@# The script did not exist. Now it does.
+	@python3 scripts/web-check.py
