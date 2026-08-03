@@ -349,6 +349,136 @@ else
   bad "no session_created record reached the feed within 30s — the relay, the inbox gate, or the attribution is broken"
 fi
 
+echo "── WALLET'S MONEY INTAKE: one scheme accepted, the other refused ────────"
+#
+# ── WHAT THIS SECTION EXISTS FOR ───────────────────────────────────────────────
+#
+# `wallet/src/server.ts` served `POST /events` reading `x-cloudsforge-signature`
+# and verifying `sha256=<hmac over the body>`. Every producer — indexer,
+# settlement, ledger, identity — signs the contract's way, `cf-signature:
+# t=<seconds>,v1=<hmac over "seconds.body">`. So wallet refused all four while
+# answering /readyz, and their relays retried for ever.
+#
+# Measured on the running estate BEFORE the fix, not inferred: a correctly
+# contract-signed envelope answered 401 and the legacy MAC answered 202. After
+# it, that inverts, and the inversion is what the last two checks assert. Both
+# directions are driven, because a verifier that accepts everything passes the
+# positive check alone.
+#
+# The legacy scheme is refused rather than kept as a second arm, and that is the
+# security property under test: it covers the body ALONE with no timestamp, so a
+# captured POST to a route that CREDITS MONEY stays valid for ever. micro-wallet
+# deleted its signer as well as its verifier so nothing in the repository can
+# mint one.
+#
+# ── AND THE SEAM ITSELF, WHICH HAD NO WIRING AT ALL ───────────────────────────
+#
+# Fixing the verifier proved nothing on its own, because NOTHING WAS SUBSCRIBED
+# TO WALLET. Queried on the running estate: settlement's `event_subscriptions`
+# held five rows, all for admin-api and analytics, and indexer's database had no
+# such table. The deposit-crediting seam — the path by which a user's money
+# appears — had a producer, a consumer, a signature scheme they now agree on, and
+# no row joining them. estate-bootstrap.sh seeds those rows now; this drives one
+# through and asserts it landed.
+# READ FROM THE COMPOSE FILE, never copied here. The estate secret is a throwaway
+# and writing it out would still be a second copy of a value that already exists,
+# which is the class of artefact this repository keeps finding rotted — the
+# gateway route map, the hand-written grant list, the MAP.md files. It is also the
+# one shape a verifier must not have: a hardcoded expectation still passes after
+# the deploy changes underneath it.
+wi_secret=$(grep -m1 'OUTBOX_SIGNING_SECRET:' "$COMPOSE" | sed 's/.*OUTBOX_SIGNING_SECRET: *//')
+[ -n "$wi_secret" ] \
+  && ok "read the estate outbox secret out of $COMPOSE" \
+  || bad "no OUTBOX_SIGNING_SECRET in $COMPOSE — the two signature checks below would pass vacuously"
+wi_event=$(python3 -c 'import uuid;print(uuid.uuid4())')
+
+# Seeded here as well as in the bootstrap, so this section is true against an
+# estate bootstrapped before those rows existed. Idempotent, exactly as 5c's are.
+docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d indexer -c \
+  "insert into event_subscriptions (topic, url) values ('indexer.deposit.confirmed', 'http://wallet:4000/events') on conflict do nothing" \
+  >/dev/null 2>&1 && ok "subscription seeded: indexer.deposit.confirmed → wallet" \
+  || bad "could not seed indexer.deposit.confirmed → wallet; is indexer migrated?"
+
+# Nothing is credited by this, and that is deliberate rather than a shortcut. The
+# address belongs to nobody, so `claimCredit` returns `ignored: unknown_address`
+# — but `withInbox` has already inserted `(topic, event_id)` by then
+# (wallet/src/outbox.ts:459), so the inbox row is the proof the delivery was
+# authenticated, parsed and dispatched. Crediting a real balance to prove a
+# signature scheme would put a money movement inside a security check.
+wi_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d wallet \
+  -c "select count(*) from deposit_credits" 2>/dev/null | tr -d '\r ')
+docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d indexer >/dev/null 2>&1 <<SQL
+insert into outbox (id, topic, key, producer, version, actor, correlation_id, payload)
+values ('$wi_event', 'indexer.deposit.confirmed',
+        'ethereum:sepolia:0x000000000000000000000000000000000000dead', 'indexer', 1, 'system', '$wi_event',
+  '{"chain":"ethereum","network":"sepolia","address":"0x000000000000000000000000000000000000dead",
+    "direction":"in","assetCode":"ETH","assetKind":"native","tokenAddress":null,"amount":"1",
+    "txHash":"0x$wi_event","logIndex":null,"blockHeight":1,"confirmations":64}'::jsonb);
+SQL
+
+# INDEXER'S OWN RELAY does the delivery: it builds the envelope, signs it with the
+# contract's signDelivery and POSTs it. Nothing here signs anything — that is what
+# makes this a producer-to-consumer test rather than a test of curl.
+wi_landed=""
+for _ in $(seq 1 30); do
+  wi_landed=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d wallet \
+    -c "select event_id from inbox where topic = 'indexer.deposit.confirmed' and event_id = '$wi_event'" \
+    2>/dev/null | tr -d '\r ')
+  [ -n "$wi_landed" ] && break
+  sleep 1
+done
+if [ -n "$wi_landed" ]; then
+  ok "indexer's relay signed it, wallet verified it, and it is in wallet's inbox — THE MONEY BUS CARRIES"
+else
+  wi_why=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d indexer \
+    -c "select attempts || ' attempt(s): ' || coalesce(last_error, 'none') from outbox_deliveries where event_id = '$wi_event'" 2>/dev/null | tr -d '\r')
+  bad "no contract-signed delivery reached wallet's inbox within 30s — ${wi_why:-no delivery row at all}"
+fi
+
+wi_after=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d wallet \
+  -c "select count(*) from deposit_credits" 2>/dev/null | tr -d '\r ')
+[ "$wi_before" = "$wi_after" ] \
+  && ok "and it credited nothing ($wi_after credit rows, unchanged) — an unowned address is ignored, not paid" \
+  || bad "the probe deposit CREDITED SOMETHING: deposit_credits went $wi_before → $wi_after"
+
+# ── THE TWO SCHEMES, OVER THE SAME BYTES ──────────────────────────────────────
+#
+# One body, written once and posted twice with `--data-binary` so the bytes signed
+# are the bytes sent. Verification happens before the parse, so a re-serialised
+# body would be a different test.
+wi_probe=$(python3 -c 'import uuid;print(uuid.uuid4())')
+printf '{"id":"%s","topic":"probe.wallet.intake","payload":{}}' "$wi_probe" >/tmp/wallet-intake.json
+wi_contract_sig=$(python3 - "$wi_secret" /tmp/wallet-intake.json <<'PY'
+import hashlib, hmac, sys, time
+secret, path = sys.argv[1], sys.argv[2]
+body = open(path, 'rb').read()
+t = int(time.time())
+print('t=%d,v1=%s' % (t, hmac.new(secret.encode(), b'%d.' % t + body, hashlib.sha256).hexdigest()))
+PY
+)
+wi_legacy_sig=$(python3 - "$wi_secret" /tmp/wallet-intake.json <<'PY'
+import hashlib, hmac, sys
+secret, path = sys.argv[1], sys.argv[2]
+print('sha256=' + hmac.new(secret.encode(), open(path, 'rb').read(), hashlib.sha256).hexdigest())
+PY
+)
+# `probe.wallet.intake` is a topic wallet does not subscribe to, so a 2xx here is
+# the AUTHENTICATION verdict and nothing else — 202 `topic_not_subscribed`. That
+# keeps a signature test off every crediting path.
+wi_c=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$WALLET/events" \
+  -H 'content-type: application/json' -H "cf-signature: $wi_contract_sig" -H "cf-event-id: $wi_probe" \
+  --data-binary @/tmp/wallet-intake.json)
+wi_l=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$WALLET/events" \
+  -H 'content-type: application/json' -H "x-cloudsforge-signature: $wi_legacy_sig" -H "x-event-id: $wi_probe" \
+  --data-binary @/tmp/wallet-intake.json)
+case "$wi_c" in
+  2*) ok "a contract-signed delivery is accepted ($wi_c) — it was 401 before the fix" ;;
+  *)  bad "wallet refused a correctly contract-signed delivery ($wi_c) — no producer can reach it" ;;
+esac
+[ "$wi_l" = 401 ] \
+  && ok "the legacy body-only MAC is refused (401) — it was 200 before the fix, and it is a permanent replay credential" \
+  || bad "WALLET STILL ACCEPTS THE LEGACY MAC ($wi_l) — a captured POST to a crediting route is valid for ever"
+
 echo "── THE ERASURE SEAM: the GDPR path, driven end to end ───────────────────"
 # The contracts registry has said since it was written: "identity.user.deleted currently has no
 # subscriber anywhere, which is precisely why there is no GDPR erasure path at all." The bus works

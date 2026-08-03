@@ -608,28 +608,34 @@ services:
   # and indexes nothing". Following nothing is the honest configuration; what
   # this proves is that indexer boots, migrates and answers, not that it indexes.
   #
-  # ── WHY IT IS BEHIND A PROFILE, AND WHAT THAT REVEALED ────────────────────────
+  # ── IT WAS BEHIND A PROFILE, AND THE REASON HAS EXPIRED ───────────────────────
   #
-  # `profiles: [indexer]` means the default `up` SKIPS it. Not because indexer is
-  # broken, but because of something this environment is the first thing to
-  # demonstrate: EVERY SERVICE HERE BUILDS FROM A WORKING TREE, not from a
-  # published image. At the time of writing, micro-indexer has uncommitted
-  # changes in src/reads.ts, src/store.ts and src/migrations.ts and a new
-  # src/bitcoin.ts, and `pnpm typecheck` fails inside its Dockerfile on a
-  # RowStatus that has grown a 'conflicted' member the ActivityView type has not.
-  # That is another agent's work in flight; it is not a defect in committed code.
+  # `profiles: [indexer]` kept the default `up` from including it. Not because
+  # indexer was broken, but because of something this environment was the first
+  # thing to demonstrate: EVERY SERVICE HERE BUILDS FROM A WORKING TREE, not from
+  # a published image. micro-indexer then had uncommitted changes in src/reads.ts,
+  # src/store.ts and src/migrations.ts and a new src/bitcoin.ts, and `pnpm
+  # typecheck` failed inside its Dockerfile on a RowStatus that had grown a
+  # 'conflicted' member the ActivityView type had not. Another agent's work in
+  # flight; never a defect in committed code.
   #
-  # The lesson is structural, and it is the case FOR the release manifest rather
-  # than against it: an environment built from working trees is only ever as
+  # THAT WORK IS COMMITTED (micro-indexer 64ff91a, tree clean) AND THE IMAGE
+  # BUILDS. Checked by building it, not by reading the log that recorded the
+  # failure — which is the same standard the profile was added under. So the
+  # profile is removed and indexer is a member of the estate.
+  #
+  # This was not cosmetic. `indexer.deposit.confirmed` is how a user's deposit
+  # becomes a balance, and wallet is its only consumer; with indexer absent there
+  # was no producer for the estate's money-in path at all, and `wallet` and
+  # `settlement` both carry a note below saying their INDEXER_URL resolves to
+  # nothing. It now resolves.
+  #
+  # The lesson the profile taught still stands and is still the case FOR the
+  # release manifest: an environment built from working trees is only ever as
   # green as every checkout on the machine, and it fails for reasons that have
   # nothing to do with the change under test. cfctl's rule — "an image tag cannot
-  # name a working tree" — is the same observation from the other side. Once
-  # `release-up.sh` runs this environment from a manifest, this profile goes
-  # away, because a manifest names images that have already been built and typed.
-  #
-  # To include it anyway:  docker compose --profile indexer -f ... up -d
+  # name a working tree" — is the same observation from the other side.
   indexer-migrate:
-    profiles: [indexer]
     <<: *migrate-defaults
     build:
       context: ../../indexer
@@ -644,7 +650,6 @@ services:
         condition: service_healthy
 
   indexer:
-    profiles: [indexer]
     build:
       context: ../../indexer
       additional_contexts: *build-contexts
@@ -805,6 +810,21 @@ services:
       WALLET_CHALLENGE_URI: http://localhost:4103
       WALLET_SERVICE_TOKEN: ${WALLET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # ── THE LONG-LIVED CREDENTIAL, WHICH THIS FILE NEVER HANDED OVER ──────
+      # estate-bootstrap.sh has been minting these into compose/estate/tokens.env
+      # and NOT ONE SERVICE WAS GIVEN ONE: no `*_IDENTITY_CREDENTIAL` appeared
+      # anywhere in this file, so `--env-file` set variables no container
+      # declared. Every service that adopted the exchange therefore booted,
+      # logged "is not set; every call to a peer will fail 503", and went
+      # `degraded` — which is why `up --wait` could not bring the estate up at
+      # all. Measured on this estate, not inferred.
+      #
+      # Unlike the 10-minute `*_SERVICE_TOKEN` above, this does not expire: the
+      # service exchanges it at POST /service-tokens/exchange for a fresh token
+      # whenever it needs one, so a restart survives and the bootstrap is not a
+      # renewal treadmill. Both are passed while the migration is in flight;
+      # the service logs that it IGNORES the token when it holds a credential.
+      WALLET_IDENTITY_CREDENTIAL: ${WALLET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: wallet-estate
     ports:
       - "127.0.0.1:4103:4000"
@@ -815,10 +835,11 @@ services:
         condition: service_healthy
       custody:
         condition: service_healthy
-      # indexer is behind a profile (see its block) and is NOT waited on. This
-      # service still points INDEXER_URL at http://indexer:4000, so any call it
-      # makes to the indexer fails to resolve. It boots and serves everything
-      # that does not need chain data; it is not whole.
+      # indexer is a member of the estate now (its profile is gone; see its
+      # block) so INDEXER_URL resolves. It is still NOT waited on here, and that
+      # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
+      # indexer follows no chain and has no deposit to report. This service must
+      # boot whether or not indexer is healthy, exactly as it did before.
       pricing:
         condition: service_healthy
     healthcheck: *healthcheck
@@ -864,10 +885,11 @@ services:
         condition: service_healthy
       custody:
         condition: service_healthy
-      # indexer is behind a profile (see its block) and is NOT waited on. This
-      # service still points INDEXER_URL at http://indexer:4000, so any call it
-      # makes to the indexer fails to resolve. It boots and serves everything
-      # that does not need chain data; it is not whole.
+      # indexer is a member of the estate now (its profile is gone; see its
+      # block) so INDEXER_URL resolves. It is still NOT waited on here, and that
+      # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
+      # indexer follows no chain and has no deposit to report. This service must
+      # boot whether or not indexer is healthy, exactly as it did before.
     healthcheck: *healthcheck
 
   # ------------------------------------------------------------------ billing
@@ -897,6 +919,8 @@ services:
       BILLING_LEDGER_URL: http://ledger:4000
       BILLING_LEDGER_TOKEN: ${BILLING_LEDGER_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # The long-lived credential. See wallet's block for what it replaces.
+      BILLING_IDENTITY_CREDENTIAL: ${BILLING_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: billing-estate
     ports:
       - "127.0.0.1:4106:4000"
@@ -938,6 +962,8 @@ services:
       INDEXER_URL: http://indexer:4000
       MINT_SERVICE_TOKEN: ${MINT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # The long-lived credential. See wallet's block for what it replaces.
+      MINT_IDENTITY_CREDENTIAL: ${MINT_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: mint-estate
     ports:
       - "127.0.0.1:4112:4000"
@@ -948,10 +974,11 @@ services:
         condition: service_healthy
       custody:
         condition: service_healthy
-      # indexer is behind a profile (see its block) and is NOT waited on. This
-      # service still points INDEXER_URL at http://indexer:4000, so any call it
-      # makes to the indexer fails to resolve. It boots and serves everything
-      # that does not need chain data; it is not whole.
+      # indexer is a member of the estate now (its profile is gone; see its
+      # block) so INDEXER_URL resolves. It is still NOT waited on here, and that
+      # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
+      # indexer follows no chain and has no deposit to report. This service must
+      # boot whether or not indexer is healthy, exactly as it did before.
     healthcheck: *healthcheck
 
   # ------------------------------------------------------------------- market
@@ -993,10 +1020,11 @@ services:
         condition: service_completed_successfully
       ledger:
         condition: service_healthy
-      # indexer is behind a profile (see its block) and is NOT waited on. This
-      # service still points INDEXER_URL at http://indexer:4000, so any call it
-      # makes to the indexer fails to resolve. It boots and serves everything
-      # that does not need chain data; it is not whole.
+      # indexer is a member of the estate now (its profile is gone; see its
+      # block) so INDEXER_URL resolves. It is still NOT waited on here, and that
+      # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
+      # indexer follows no chain and has no deposit to report. This service must
+      # boot whether or not indexer is healthy, exactly as it did before.
       policy:
         condition: service_healthy
     healthcheck: *healthcheck
@@ -1075,6 +1103,8 @@ services:
       BILLING_URL: http://billing:4000
       WORLDS_SERVICE_TOKEN: ${WORLDS_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # The long-lived credential. See wallet's block for what it replaces.
+      WORLDS_IDENTITY_CREDENTIAL: ${WORLDS_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: worlds-estate
     ports:
       - "127.0.0.1:4115:4000"
@@ -1116,6 +1146,8 @@ services:
       BILLING_URL: http://billing:4000
       NDA_SERVICE_TOKEN: ${NDA_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # The long-lived credential. See wallet's block for what it replaces.
+      NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: nda-estate
     ports:
       - "127.0.0.1:4116:4000"
@@ -1247,6 +1279,8 @@ services:
       HUB_PRICING_TOKEN: ${HUB_PRICING_TOKEN:-estate-placeholder-token-0000000000000000}
       HUB_POLICY_TOKEN: ${HUB_POLICY_TOKEN:-estate-placeholder-token-0000000000000000}
       HUB_ACTIVITY_TOKEN: ${HUB_ACTIVITY_TOKEN:-estate-placeholder-token-0000000000000000}
+      # The long-lived credential. See wallet's block for what it replaces.
+      HUB_API_IDENTITY_CREDENTIAL: ${HUB_API_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: hub-api-estate
     ports:
       - "127.0.0.1:4119:4000"

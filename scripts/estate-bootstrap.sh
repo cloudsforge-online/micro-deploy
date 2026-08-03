@@ -476,6 +476,30 @@ subscribe identity identity.session.created http://activity:4000/ingest
 subscribe identity identity.user.deleted   http://activity:4000/ingest
 subscribe identity identity.user.deleted   http://notify:4000/ingest
 
+# ── WALLET'S INBOX WAS FED BY NOBODY ──────────────────────────────────────────
+#
+# `wallet/src/server.ts:441` serves `POST /events` and branches on exactly three
+# topics — `indexer.deposit.confirmed`, `settlement.outbound.confirmed` and
+# `settlement.outbound.failed`. Not one row in any producer's
+# `event_subscriptions` pointed at `http://wallet:4000/events`. Queried, not
+# assumed: settlement's table held five rows, all for admin-api and analytics;
+# indexer's database had no such table at all.
+#
+# So the two seams that MOVE A USER'S MONEY had no delivery path. A confirmed
+# deposit never credited a balance and a completed withdrawal never settled its
+# reservation, and both failed by silence — wallet answered /readyz, the
+# producers wrote their outbox rows, and nothing connected the two. This is the
+# same shape as `identity.user.registered` above: a consumer with no producer,
+# invisible because every individual part was healthy.
+#
+# It also went unnoticed because wallet's intake was refusing the contract's
+# signature until tonight, so seeding these rows earlier would have produced a
+# retry storm of 401s rather than a working seam — the defect masked its own
+# wiring.
+subscribe indexer    indexer.deposit.confirmed     http://wallet:4000/events
+subscribe settlement settlement.outbound.confirmed http://wallet:4000/events
+subscribe settlement settlement.outbound.failed    http://wallet:4000/events
+
 echo "── 5d. the audit mirror — admin-api subscribes to the audited topics ────"
 #
 # Claim 9 of the eleven "one platform" tests — an operator answers "where did this

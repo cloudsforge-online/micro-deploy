@@ -43,11 +43,29 @@
 //      enforcing service per scope, so this is checkable rather than a matter of opinion, and it
 //      is what makes step 1's soundness meaningful.
 //
-// ── THE FIVE MODULES THIS CANNOT READ, AND WHY THAT IS NOT A CLIMBDOWN ────────────────────────
+// ── "NEEDS NOTHING" IS A DECLARATION, NOT A SILENCE ───────────────────────────────────────────
 //
-// Five modules in the estate present a credential and declare no scope constant. They are named,
-// with reasons, in `compose/estate/grant-gaps.json`. That file is NOT the old hand-list in another
-// costume, and the difference is enforced here:
+// `export const FOO_SCOPES = NO_SCOPES_REQUIRED` — or the bare `Object.freeze([])` — is read as
+// the author saying their client presents a credential no scope makes stronger: a bearer forwarded
+// from the caller, an external API key, a route nobody gates. It is CLEANLY DECLARED: no gaps
+// entry, no grant, and a gaps entry for such a module now fails as stale like any other the owning
+// repository has made good on. `NO_SCOPES_REQUIRED` is `@cloudsforge/contracts-auth`'s name for the
+// empty list and is the spelling to prefer — the two are identical at runtime, and only one of them
+// is legible as a decision to the next person reading the module.
+//
+// This was not always true, and the cost was measurable. Before it, an empty freeze and no
+// constant at all were the same input — zero scopes — so the honest answer failed the build and
+// the expressible one was a scope the module did not need. `wallet/src/pricingclient.ts` says so
+// in its own header: `pricing:read` is kept for `GET /rates`, which pricing does not gate, only
+// because "there is no way to say 'this client needs nothing' from the source side". A tool that
+// makes the truthful answer inexpressible does not get silence — it gets a grant wider than the
+// call sites need, which is the exact failure this derivation exists to end.
+//
+// ── THE MODULES THIS CANNOT READ, AND WHY THAT IS NOT A CLIMBDOWN ─────────────────────────────
+//
+// Some modules in the estate present a credential and declare no scope constant at all. They are
+// named, with reasons, in `compose/estate/grant-gaps.json`. That file is NOT the old hand-list in
+// another costume, and the difference is enforced here:
 //
 //   * It names a FILE, not a service, so an entry cannot quietly widen to cover a service's whole
 //     grant the way the compose map did.
@@ -56,9 +74,13 @@
 //   * A reason under 40 characters is not a reason, following the `scope-exemptions.json` rule
 //     `service-ci.yml` already applies to the other direction of this same registry.
 //
-// Fourteen hand-maintained service entries became five hand-maintained file entries, each of which
-// fails loudly when it stops being true. That is the honest limit of the derivation, and it is
-// written down rather than papered over.
+// Fourteen hand-maintained service entries became ten hand-maintained file entries and are now
+// seven, each of which fails loudly when it stops being true — `market/src/policyclient.ts`,
+// `wallet/src/custodyclient.ts` and `wallet/src/settlement.ts` were deleted the day their
+// repositories declared for themselves, and the ratchet is what said so. Three of the seven exist
+// only because their modules have not yet exported an empty constant; that is now expressible, so
+// they can go too. That is the honest limit of the derivation, and it is written down rather than
+// papered over.
 import { readFileSync, readdirSync, existsSync, statSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -176,13 +198,40 @@ if (rFrom < 0 || rTo < 0) {
 const registryBlock = registryText.slice(rFrom, rTo)
 /** scope -> the service that ENFORCES it */
 const ENFORCER = new Map()
+/**
+ * The scopes the registry has marked dead, read off the same entries.
+ *
+ * A `deprecated` reason means no gate demands the scope and none can — `admin:audit:write` and
+ * `notify:ingest` died the day their routes became MAC-only. Granting one is not fatal the way an
+ * unregistered scope is (identity's `isScope` reads the wide set, so the container still boots)
+ * and that is exactly why it is worth catching here: it fails NOWHERE ELSE. It is a real capability
+ * on a real token that nothing on the receiving side will ever consult, which is the shape AD-05
+ * exists to prevent, and it would sit in the compose file indefinitely looking correct.
+ *
+ * `contracts-auth` derives `DeprecatedScope` from this same field at the type level, so a
+ * consumer annotating an outbound constant `readonly LiveScope[]` gets the error in its own file.
+ * This is the deploy-side half of the same fact, for the modules a type cannot reach: the entries
+ * in `grant-gaps.json`, whose scopes micro-deploy writes by hand and no compiler ever sees.
+ */
+const DEPRECATED = new Set()
 for (const m of registryBlock.matchAll(/'([a-z][a-z0-9:-]+)':\s*Object\.freeze\(\{([\s\S]*?)\}\)/g)) {
   const service = m[2].match(/service:\s*'([^']+)'/)
   ENFORCER.set(m[1], service ? service[1] : null)
+  if (/\bdeprecated:\s*\n?\s*'/.test(m[2])) DEPRECATED.add(m[1])
 }
 if (ENFORCER.size < MIN_REGISTRY) {
   console.error(
     `derive-grants: parsed ${ENFORCER.size} scopes out of the registry, expected at least ${MIN_REGISTRY} — the parser is broken, not the estate`,
+  )
+  process.exit(2)
+}
+// A floor for the same reason as the others: `DEPRECATED` empty is indistinguishable from a
+// parser that stopped reading, and an empty set makes the check below silently unconditional.
+// The registry has carried at least two dead scopes since micro-contracts closed the two ingest
+// gates; if that ever drops to zero the check should be deleted deliberately, not decay.
+if (DEPRECATED.size === 0) {
+  console.error(
+    `derive-grants: parsed no deprecated scopes out of the registry — either the parser broke or the registry lost a field it has had since the ingest scopes died`,
   )
   process.exit(2)
 }
@@ -234,12 +283,16 @@ const presentsCredential = (text) => BUILDS_CLIENT.test(text) && NAMES_A_BEARER.
 /** service -> Map(scope -> provenance) */
 const grants = new Map()
 /**
- * Files micro-deploy cannot take at face value, and why. Two kinds, both requiring an entry in
+ * Files micro-deploy cannot take at face value, and why. Three kinds, all requiring an entry in
  * `grant-gaps.json`:
  *
- *   `undeclared`   — presents a credential and exports no scope constant at all.
- *   `unregistered` — exports one naming a scope `@cloudsforge/contracts-auth` does not have, so
- *                    identity could never mint it and would refuse to boot on the attempt.
+ *   `undeclared`    — presents a credential and exports no scope constant at all.
+ *   `unregistered`  — exports one naming a scope `@cloudsforge/contracts-auth` does not have, so
+ *                     identity could never mint it and would refuse to boot on the attempt.
+ *   `self-enforced` — exports one naming ONLY scopes this repository itself enforces, so after the
+ *                     inbound-vocabulary drop below there is nothing left. That is an inbound
+ *                     constant being presented as an outbound demand, and saying "undeclared" to
+ *                     its author would send them to write the constant they have already written.
  *
  * The second kind is the reason this is a map and not a set. Reading such a declaration at face
  * value would put an unmintable scope into the compose file and kill the identity container — so
@@ -249,6 +302,64 @@ const grants = new Map()
 const needsEntry = new Map()
 /** relative path -> the scopes it declared, for staleness checks against the gaps file */
 const cleanlyDeclared = new Set()
+/**
+ * Modules that declared, in their own source, that they need NO scope — `export const FOO_SCOPES =
+ * Object.freeze([])`. Reported, never granted.
+ *
+ * ── WHY THIS DISTINCTION EXISTS ──────────────────────────────────────────────────────────────
+ *
+ * Until this, an empty declaration and no declaration at all were the same input to this tool:
+ * zero scopes parsed, so the module fell into `undeclared` and failed the estate build unless
+ * micro-deploy carried a hand-written entry for it. There was no way to say "this client needs
+ * nothing" FROM THE SOURCE — and the cost of that was not theoretical. `wallet/src/pricingclient.ts`
+ * declares `pricing:read` for a route, `GET /rates`, that pricing does not gate at all, and its
+ * header says in as many words that it is kept only because "there is no way to say 'this client
+ * needs nothing' from the source side. Reported to micro-deploy; narrow this to `[]` once an empty
+ * declaration is expressible." A tool that makes the honest answer inexpressible does not get
+ * silence — it gets a grant wider than the call sites need, which is the precise failure the
+ * whole derivation exists to end.
+ *
+ * So an empty freeze is now the SEVENTH thing this file can read, and it is a first-class verdict:
+ * the module is cleanly declared, needs no gaps entry, and contributes no scope. It is distinct
+ * from `undeclared` in both directions — an empty declaration satisfies the gaps ratchet, and a
+ * gaps entry for a module that has since declared empty now FAILS as stale exactly like any other
+ * entry the owning repository has made good on.
+ *
+ * The three modules whose gaps entries carry `"scopes": []` today —
+ * `devplatform/src/membership.ts`, `mint/src/index.ts`, `foresight/src/proposer.ts` — can each
+ * declare nothing and have their entry deleted. That is theirs to do, not micro-deploy's: this
+ * side of it is now built and those repositories have been told.
+ *
+ * ── TWO SPELLINGS, ONE VERDICT ────────────────────────────────────────────────────────────────
+ *
+ * `Object.freeze([])` and `@cloudsforge/contracts-auth`'s `NO_SCOPES_REQUIRED` are both read, and
+ * the second is the one to prefer. It is `Object.freeze([])` at runtime and adds nothing a
+ * reviewer can see in a diff — but it is a NAME, and the name is what a reader of the consuming
+ * module encounters. Its own header states the tension it exists for: micro-wallet's
+ * `PRICING_SCOPES` names `pricing:read` for a route that is ungated, kept only because this tool
+ * could not tell an empty declaration from a forgotten one. An over-declaration is not a
+ * formality — it is a real scope on a real token, against AD-05.
+ *
+ * micro-contracts asked for exactly one branch here and said the order out loud: micro-deploy
+ * first, then the consumers, because a consumer that adopts it before this tool reads it fails the
+ * estate build. This is that branch, and it is deliberately NOT a new way to be silent — an
+ * assignment is still required, so a module that declares nothing at all still fails.
+ */
+const declaredNothing = new Map()
+
+/**
+ * The two forms of "I need no scope", as the consumer may write them.
+ *
+ * `NO_SCOPES_REQUIRED` is matched by its NAME rather than by resolving the import, for the same
+ * reason `SCOPE_FOR` is resolved and a bare literal is not: the name is unambiguous in this estate
+ * and a resolver would be a second, weaker copy of the module system. A file that imports it under
+ * an alias is not read as declaring nothing — it falls through to `undeclared` and fails loudly,
+ * which is the safe direction.
+ *
+ * The constant's own declaration in contracts cannot match: `[A-Z0-9_]*SCOPES\b` needs a word
+ * boundary after `SCOPES`, and `NO_SCOPES_REQUIRED` continues with `_`.
+ */
+const DECLARES_NONE = /export const ([A-Z0-9_]*SCOPES)\b[^=]*=\s*NO_SCOPES_REQUIRED\b/g
 
 for (const repo of repos) {
   // `service-template` is a template, not a deployment. Granting it anything would put a service
@@ -262,10 +373,20 @@ for (const repo of repos) {
 
     /** scope -> provenance, as declared by THIS file */
     const declared = new Map()
+    /**
+     * Where this file's `*_SCOPES` constants are, whether or not they named anything.
+     *
+     * Kept separately from `declared` because the two questions are different and were previously
+     * conflated: `declared.size === 0` answers "did any scope come out of this file", and this
+     * answers "did its author state a demand at all". `Object.freeze([])` is a stated demand of
+     * nothing; no constant is no statement. See `declaredNothing` above.
+     */
+    const constants = []
 
     // `export const <ANYTHING>_SCOPES = Object.freeze([...])`, and hub-api's object-of-arrays form.
     for (const m of text.matchAll(/export const ([A-Z0-9_]*SCOPES)\b[^=]*=\s*Object\.freeze\(([\s\S]{0,600}?)\)\s*(?:satisfies|as const|;|\n)/g)) {
       const body = m[2]
+      constants.push(`${m[1]} at ${rel}:${lineOf(text, m.index)}`)
       const literals = [...body.matchAll(/'([a-z][a-z0-9:-]+)'/g)].map((x) => x[1])
       const viaScopeFor = [...body.matchAll(/SCOPE_FOR\.(\w+)/g)].map((x) => x[1])
       const scopes = [...literals]
@@ -278,6 +399,14 @@ for (const repo of repos) {
         scopes.push(resolved)
       }
       for (const scope of scopes) declared.set(scope, `${rel}:${lineOf(text, m.index)} (${m[1]})`)
+    }
+
+    // `export const <ANYTHING>_SCOPES = NO_SCOPES_REQUIRED` — the named form of the same verdict.
+    // It contributes no scope and, exactly like `Object.freeze([])`, counts as a STATEMENT: the
+    // file has said what it needs. See `DECLARES_NONE`.
+    DECLARES_NONE.lastIndex = 0
+    for (const m of text.matchAll(DECLARES_NONE)) {
+      constants.push(`${m[1]} = NO_SCOPES_REQUIRED at ${rel}:${lineOf(text, m.index)}`)
     }
 
     // ── THE SECOND SEAM: a service that names its scopes at the exchange itself ────────────────
@@ -314,11 +443,30 @@ for (const repo of repos) {
     // thing correctness rests on. `admin-api/src/scopes.ts` exports `admin:read`, which admin-api
     // enforces; even if a future edit made that file construct a client, it still could not turn
     // into a self-grant.
+    const namedSomething = declared.size > 0
     for (const scope of [...declared.keys()]) {
       if (ENFORCER.get(scope) === repo) declared.delete(scope)
     }
 
     if (declared.size === 0) {
+      // ── "NEEDS NOTHING", SAID OUT LOUD ─────────────────────────────────────────────────────
+      //
+      // An exported constant that names no scope is the author telling us their client presents a
+      // credential no scope makes stronger — a bearer forwarded from the caller, an external API
+      // key, a public route. That is a verdict, not a hole, so it does not want a gaps entry and
+      // it does not want an exemption: it wants to be believed. See `declaredNothing`.
+      if (constants.length > 0 && !namedSomething) {
+        declaredNothing.set(rel, constants.join(', '))
+        cleanlyDeclared.add(rel)
+        continue
+      }
+      // The constants named only scopes THIS repository enforces, so the inbound-vocabulary drop
+      // above emptied them. Telling this author "you declared nothing" would be false and would
+      // send them to write a constant that is already there; name the real fault instead.
+      if (constants.length > 0) {
+        needsEntry.set(rel, { repo, kind: 'self-enforced', constants })
+        continue
+      }
       needsEntry.set(rel, { repo, kind: 'undeclared' })
       continue
     }
@@ -343,7 +491,10 @@ if (existsSync(GAPS)) {
     process.exit(2)
   }
 }
-delete gaps['//']
+// Any key beginning `//` is prose, not an entry. JSON has no comments and this file has to explain
+// itself — including what it no longer says, which is the part a diff loses. No module path can
+// begin with a slash, so this cannot swallow a real entry.
+for (const key of Object.keys(gaps)) if (key.startsWith('//')) delete gaps[key]
 
 const covered = new Set()
 for (const [rel, entry] of Object.entries(gaps)) {
@@ -353,6 +504,13 @@ for (const [rel, entry] of Object.entries(gaps)) {
   }
   if (entry.reason.trim().length < 40) {
     fail(`${GAPS}: the entry for '${rel}' has no real reason — under 40 characters is a hole, not a decision`)
+  }
+  if (declaredNothing.has(rel)) {
+    fail(
+      `${GAPS}: '${rel}' now declares, in its own source, that it needs NO scope — ${declaredNothing.get(rel)}. ` +
+        `That is the same verdict this entry carries, said by the repository that owns the module instead of by micro-deploy, so delete this entry.`,
+    )
+    continue
   }
   if (cleanlyDeclared.has(rel)) {
     fail(
@@ -389,9 +547,18 @@ for (const [rel, info] of needsEntry) {
     )
     continue
   }
+  if (info.kind === 'self-enforced') {
+    fail(
+      `${rel}: its scope constant(s) — ${info.constants.join(', ')} — name only scopes ${info.repo} ITSELF enforces, ` +
+        `so nothing outbound is declared. A service does not present a credential to itself: that is an inbound vocabulary, and the module's ` +
+        `outbound demand is still unstated. Declare the scopes its call sites need, or NO_SCOPES_REQUIRED if they need none — it is a defect in ${info.repo}, not here.`,
+    )
+    continue
+  }
   fail(
     `${rel}: presents a credential and declares no *_SCOPES constant, and is not in ${relative(join(HERE, '..'), GAPS)}. ` +
-      `Either export the scopes it needs from that module (the convention twenty repositories already follow, e.g. community/src/ledgerclient.ts), ` +
+      `Either export the scopes it needs from that module (the convention twenty repositories already follow, e.g. community/src/ledgerclient.ts) — ` +
+      `or NO_SCOPES_REQUIRED from @cloudsforge/contracts-auth if it needs none, which is read as a declaration and not as silence — ` +
       `or add an entry naming the service, the scopes and why they cannot be derived.`,
   )
 }
@@ -409,6 +576,14 @@ for (const [service, found] of grants) {
     if (enforcer === service) {
       fail(
         `${service} is granted '${scope}' (${where}), which ${service} itself ENFORCES. A service does not present a credential to itself; this is an inbound vocabulary constant being read as an outbound demand.`,
+      )
+      continue
+    }
+    if (DEPRECATED.has(scope)) {
+      fail(
+        `${service} is granted '${scope}' (${where}), which the registry marks DEPRECATED — no gate demands it and none can. ` +
+          `identity still mints it, so nothing fails at boot and nothing fails at the call; the token simply carries a capability its holder can never use, ` +
+          `which is the least-privilege rule broken in the one direction that is silent. Drop it from the declaration, or from grant-gaps.json if micro-deploy wrote it.`,
       )
     }
   }
@@ -505,7 +680,7 @@ if (flag('--check')) {
     process.exit(1)
   }
   console.log(
-    `derive-grants: ok — compose matches the estate (${Object.keys(derived).length} services, ${new Set(Object.values(derived).flat()).size} distinct scopes, ${Object.keys(gaps).length} declared gap(s))`,
+    `derive-grants: ok — compose matches the estate (${Object.keys(derived).length} services, ${new Set(Object.values(derived).flat()).size} distinct scopes, ${Object.keys(gaps).length} declared gap(s), ${declaredNothing.size} module(s) declaring they need none)`,
   )
   process.exit(0)
 }
@@ -519,4 +694,5 @@ if (flag('--json')) {
   console.log(
     `\nderive-grants: ${Object.keys(derived).length} services, ${new Set(Object.values(derived).flat()).size} distinct scopes, ${Object.keys(gaps).length} declared gap(s)`,
   )
+  for (const rel of [...declaredNothing.keys()].sort()) console.log(`  needs no scope, and says so: ${rel}`)
 }
