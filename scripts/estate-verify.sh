@@ -49,6 +49,11 @@ DEVPLATFORM=${DEVPLATFORM:-http://127.0.0.1:4118}
 HUB=${HUB:-http://127.0.0.1:4119}
 ADMIN=${ADMIN:-http://127.0.0.1:4120}
 ANALYTICS=${ANALYTICS:-http://127.0.0.1:4121}
+# 4140 on the host, 4022 in the container. tessera is the one service here that does not bind
+# 4000, and the number is argued rather than picked — 23-tessera.md §10.1. The HOST port is chosen
+# rather than derived for the same reason foresight-web's and aetherholm-web's are: micro-org's
+# registry has no entry to take an index from.
+TESSERA=${TESSERA:-http://127.0.0.1:4140}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 fails=0
 
@@ -69,7 +74,7 @@ for pair in \
   "custody $CUSTODY" "activity $ACTIVITY" "notify $NOTIFY" "studio $STUDIO" \
   "mint $MINT" "market $MARKET" "trade $TRADE" "worlds $WORLDS" "nda $NDA" \
   "community $COMMUNITY" "devplatform $DEVPLATFORM" "hub-api $HUB" \
-  "admin-api $ADMIN" "analytics $ANALYTICS"; do
+  "admin-api $ADMIN" "analytics $ANALYTICS" "tessera $TESSERA"; do
   set -- $pair
   [ "$(code "$2/livez")"  = 200 ] && ok "$1 /livez"  || bad "$1 /livez"
   # /readyz probes the database. /livez answers while it is unreachable, which is
@@ -860,6 +865,320 @@ wtok2=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $at
   || bad "a service other than worlds was minted aetherholm:provision"
 
 echo
+echo "── TESSERA: the world, driven — provision, claim, and the two refusals ──"
+#
+# ── WHY THIS IS A FLOW AND NOT A HEALTH CHECK ─────────────────────────────────
+#
+# tessera answers /readyz above with everything else, and that proves it can open its database.
+# It proves nothing about the four things this title is actually FOR, so each is driven and each
+# is paired with the negative that makes it mean something:
+#
+#   1. `GET /v1/title` — the descriptor worlds reads before it holds any credential. Public by
+#      contract. If `private_world` is missing from it, worlds' provisioning bridge never calls
+#      this title at all (worlds/src/provisioning.ts:441-451) and a purchase is taken for a ward
+#      nobody raises.
+#   2. `POST /v1/provision` under worlds' `tessera:provision` — **the first code path the
+#      `world.private.small` SKU has ever had.** It has existed in billing since
+#      billing/src/migrations.ts:405 and no title in this estate has ever served it. 201 on the
+#      first ask, 200 AND THE SAME URN on the replay, because the idempotency is a PRIMARY KEY on
+#      `provisions.entitlement_id` rather than a check-then-insert.
+#   3. A Homestead claimed by a real signed-in user — 201 with `objectCap` 160 (§6.2's table) —
+#      and a SECOND Homestead refused. The second refusal is the sharp one: it is a partial unique
+#      index, `tessera_one_homestead`, so it holds against a caller with a database connection and
+#      not merely against this route.
+#   4. The scope, broken on purpose: a valid, correctly-signed service token that does NOT carry
+#      `tessera:write` must be refused by the same route that just accepted a claim.
+#
+# Every request below is a real socket to a real container. The wards this reads did not exist
+# before step 2 created one, which is why the order is not rearrangeable.
+#
+# NOTE ON WHAT IS NOT PROVED HERE: the Kiln. It is configured in this environment (STUDIO_URL and
+# a token are both set) and it cannot work, because `tessera/src/studioclient.ts:93` posts to
+# `POST /v1/generations` and micro-studio serves no such route — its generation route is
+# `POST /v1/brand-kits/:id/generate` (studio/src/server.ts:418) and its status body is nested
+# under `job`, not flat. Driving a firing here would assert a 202 this file could not distinguish
+# from a working Kiln. It is recorded as a defect for micro-tessera and micro-studio to agree a
+# contract on, rather than dressed up as a passing check.
+
+# The descriptor, unauthenticated — which is itself the assertion. worlds reads this before it
+# holds a credential for the title, so a service that gated it would be unreachable by the bridge.
+tt=$(code "$TESSERA/v1/title")
+if [ "$tt" = 200 ]; then
+  tcap=$(python3 -c "
+import json
+b = json.load(open('/tmp/slice.body'))
+print('yes' if b.get('slug') == 'tessera' and 'private_world' in (b.get('capabilities') or []) else 'no')" 2>/dev/null)
+  [ "$tcap" = yes ] \
+    && ok "tessera serves its title descriptor unauthenticated, declaring private_world — the capability worlds' bridge gates on" \
+    || bad "tessera's descriptor is missing slug 'tessera' or the private_world capability; worlds would never call it"
+else
+  bad "GET /v1/title answered $tt — worlds cannot read this title's capabilities"
+fi
+
+# The read gate. No token at all must be 401 rather than an empty list: a 200 with `[]` is a world
+# that looks empty rather than a world that refused, and a consumer files those differently.
+tw_anon=$(code "$TESSERA/v1/wards")
+[ "$tw_anon" = 401 ] && ok "GET /v1/wards refuses an anonymous caller (401), rather than answering an empty world" \
+  || bad "tessera answered $tw_anon to an unauthenticated /v1/wards, expected 401"
+
+# ── PROVISIONING, UNDER THE GRANT THE DERIVATION JUST ADDED ───────────────────
+#
+# `worlds` gained `tessera:provision` from grant-gaps.json, and unlike its `aetherholm:provision`
+# sibling — which cannot be driven, because that service has no container here — this one reaches
+# a real route on a real container. That difference is the whole reason this section exists.
+wtok3=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+  -H 'content-type: application/json' -d '{"service":"worlds","scopes":["tessera:provision"]}' \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+[ -n "$wtok3" ] && ok "identity minted tessera:provision for worlds" \
+  || bad "identity would not mint tessera:provision for worlds — the grant is missing"
+
+# ── THE ENTITLEMENT ID, AND WHY THE ENTROPY IS AT THE FRONT ───────────────────
+#
+# A fresh id per run, so a re-run provisions a new ward rather than replaying the previous run's
+# and reporting 200 where 201 was the thing under test.
+#
+# THE ORDER OF THE CHARACTERS IS LOAD-BEARING, and finding out why is what the second run of this
+# section bought. `wardSlugFrom` (tessera/src/titlecontract.ts:192-195) strips non-alphanumerics
+# and takes THE FIRST TWELVE CHARACTERS: `estate-verify-4321` and `estate-verify-8765` both become
+# `private-estateverify`, and the second one violates `wards_slug_key`. So the timestamp and pid go
+# first, where twelve characters can still tell two runs apart.
+ENT="$(date +%s)$$-estate-verify"
+tward=""
+if [ -n "$wtok3" ]; then
+  prov=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $wtok3" \
+    -H 'content-type: application/json' -H "Idempotency-Key: $ENT" \
+    -d "{\"entitlementId\":\"$ENT\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
+  purn=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('urn',''))" 2>/dev/null)
+  [ "$prov" = 201 ] && [ -n "$purn" ] \
+    && ok "world.private.small PROVISIONED (201, $purn) — a SKU that has existed since billing/src/migrations.ts:405 and had never been served by any title" \
+    || bad "provision returned $prov (422 means the sku is unserved; 403 means the grant is wrong; 404 means the route is)"
+
+  # THE REPLAY. Same entitlement id, and the contract requires the SAME urn with replayed: true —
+  # not merely a second success. A second ward under a second urn would be a purchase provisioned
+  # twice, which is what the primary key on `provisions.entitlement_id` exists to prevent.
+  replay2=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $wtok3" \
+    -H 'content-type: application/json' -H "Idempotency-Key: $ENT" \
+    -d "{\"entitlementId\":\"$ENT\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
+  rurn=$(python3 -c "import json;b=json.load(open('/tmp/slice.body'));print(b.get('urn','') if b.get('replayed') is True else '')" 2>/dev/null)
+  if [ "$replay2" = 200 ] && [ -n "$rurn" ] && [ "$rurn" = "$purn" ]; then
+    ok "replaying the entitlement is 200 with the SAME urn and replayed:true — one purchase, one ward"
+  else
+    bad "the replayed provision returned $replay2 with urn '$rurn' (expected 200 and '$purn') — a redelivered entitlement would raise a second ward"
+  fi
+
+  # ── A SECOND, DIFFERENT ENTITLEMENT THAT SHARES A SLUG PREFIX ───────────────
+  #
+  # Found by running this section twice, which is the only way it surfaces. `wardSlugFrom`
+  # (tessera/src/titlecontract.ts:192-195) builds `private-<first 12 alphanumerics of the
+  # entitlement id>`, and the doc comment directly above it says the entitlement id is used
+  # "because [it] is already unique" — but the truncation throws that uniqueness away. Two
+  # DIFFERENT paid entitlements whose ids agree for twelve characters collide on `wards_slug_key`,
+  # and the violation is not caught: it leaves the handler as a raw PostgresError and is logged
+  # `unhandled request failure` — a **500** on somebody's paid provision, which is precisely the
+  # outcome that comment exists to rule out.
+  #
+  # WHAT IS ASSERTED IS NARROW ON PURPOSE. 201 (a distinct ward) and 409 (a refusal on the merits)
+  # are both defensible answers and both pass. **500 is not**, because an unhandled unique
+  # violation tells the buyer nothing, tells worlds' bridge to retry for ever, and is
+  # indistinguishable from the service being broken. This is a defect in micro-tessera, named here
+  # rather than smoothed over, and this check goes green the day it is fixed either way.
+  #
+  # A UUID entitlement id does not escape it: UUIDv7's first twelve hex characters are its
+  # 48-bit millisecond timestamp, so two provisions in one millisecond collide too.
+  ENT2="${ENT}-second"
+  prov2=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $wtok3" \
+    -H 'content-type: application/json' -H "Idempotency-Key: $ENT2" \
+    -d "{\"entitlementId\":\"$ENT2\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
+  case "$prov2" in
+    201|409)
+      ok "a second entitlement sharing the first twelve characters is answered $prov2, not 500 — the slug truncation is handled"
+      ;;
+    500)
+      bad "a second paid entitlement whose id shares 12 characters with the first returned 500 — wardSlugFrom (tessera/src/titlecontract.ts:192-195) truncates the entitlement id to 12 alphanumerics, wards_slug_key raises, and the PostgresError leaves the handler unhandled. A buyer gets a 500 and worlds' bridge retries for ever"
+      ;;
+    *)
+      bad "a second entitlement sharing a slug prefix returned $prov2; expected 201 (a distinct ward) or 409 (a refusal on the merits)"
+      ;;
+  esac
+fi
+
+# ── THE NEGATIVE ON PROVISIONING ──────────────────────────────────────────────
+#
+# `community` is used for the same reason it is used against worlds' achievement route above: its
+# derived grant is ledger/policy/indexer only, so identity mints it a real, valid, correctly-signed
+# token that simply lacks this authority — which is the case that must 403 rather than 401.
+if [ -n "${ctok:-}" ]; then
+  prefused=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $ctok" \
+    -H 'content-type: application/json' \
+    -d "{\"entitlementId\":\"nope-$$\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
+  [ "$prefused" = 403 ] \
+    && ok "a valid token without tessera:provision is refused (403) — the scope is doing the work, not the route's existence" \
+    || bad "tessera answered $prefused to a provision from a credential with no tessera:provision, expected 403"
+fi
+
+# And identity must refuse to MINT it outside worlds' grant. The registry says worlds alone holds
+# it; this is that sentence, executed.
+[ "$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+     -H 'content-type: application/json' \
+     -d '{"service":"community","scopes":["tessera:provision"]}')" = 403 ] \
+  && ok "identity refuses to mint tessera:provision for community — the allowlist is enforced at the mint, not only at the gate" \
+  || bad "identity minted tessera:provision for a service whose grant does not carry it"
+
+# `tessera:write` is tessera's own INBOUND vocabulary: no service in this estate is granted it,
+# because a title acts for a player and players present their own tokens. Asserted rather than
+# assumed, because a grant that quietly appeared would be a credential able to claim land as
+# anybody.
+[ "$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
+     -H 'content-type: application/json' \
+     -d '{"service":"community","scopes":["tessera:write"]}')" = 403 ] \
+  && ok "no service in the estate can be minted tessera:write — the world is written by players, not by peers" \
+  || bad "identity minted tessera:write for community; some service can now claim land as any user"
+
+# ── THE CLAIM: a real signed-in person, and the refusal that is a database index ──
+#
+# `utok` is the drill user registered at the top of this file — a plain user token with no scopes
+# at all, which is exactly what a player has. `requireUser` (tessera/src/server.ts:897-911) checks
+# a scope ONLY for a service principal; a user is their own authority.
+# ── THE WARD IS THE ONE THIS RUN RAISED, NOT WHATEVER /v1/wards LISTS FIRST ───
+#
+# This read `wards[0].id` for one run and it was wrong in a way that only a SECOND run exposed:
+# the world is persistent, so run two claimed tile (0,0) in run one's ward, got a 409 for
+# overlapping an existing parcel, and then got a 201 for the tile that was supposed to be the
+# refusal — the two assertions passed each other's answers and both reported the opposite of the
+# truth. A verification that is not hermetic against its own history is a verification that gets
+# more wrong the longer the environment lives.
+#
+# So the ward id comes out of the URN this run's provision returned: `cf:tessera:ward:<uuid>`.
+# `GET /v1/wards` is still driven — under the user's token, which is the read gate proving a
+# player can see the world — but the id below is the one that was just minted.
+tward=$(printf '%s' "$purn" | sed 's/.*://')
+twards=$(curl -s -o /tmp/slice.body -w '%{http_code}' "$TESSERA/v1/wards" -H "authorization: Bearer $utok")
+[ "$twards" = 200 ] && ok "a signed-in player can read the world (GET /v1/wards 200 under a plain user token, no scope)" \
+  || bad "GET /v1/wards answered $twards to a signed-in player, expected 200"
+# Captured BEFORE it is read into a body. `set -u` is what turns a missed capture here into a
+# failure rather than a POST claiming a parcel in ward "".
+[ -n "$tward" ] && ok "the ward this run raised is the one it will build in: $tward" \
+  || bad "no ward id could be read out of the provision urn — nothing below can be claimed"
+
+if [ -n "$tward" ]; then
+  claim=$(code -X POST "$TESSERA/v1/parcels" -H "authorization: Bearer $utok" \
+    -H 'content-type: application/json' \
+    -d "{\"wardId\":\"$tward\",\"tier\":\"homestead\",\"originX\":0,\"originY\":0}")
+  # objectCap is asserted, not just the status. §6.2 fixes a Homestead at 160 objects and states
+  # it as a RENDERING budget that is not purchasable at any price — so the number appearing on the
+  # row is the design's fifth refusal made checkable per parcel rather than promised in a document.
+  ccap=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('parcel',{}).get('objectCap',''))" 2>/dev/null)
+  if [ "$claim" = 201 ] && [ "$ccap" = 160 ]; then
+    ok "a Homestead was CLAIMED (201) with objectCap 160 — free ground, and §6.2's budget on the row"
+  else
+    bad "the claim returned $claim with objectCap '$ccap' (expected 201 and 160)"
+  fi
+
+  # ── THE SECOND HOMESTEAD, WHICH THE DATABASE REFUSES ────────────────────────
+  #
+  # Different origin, so nothing about the tile overlap can be the reason it fails: the only thing
+  # wrong with this request is that this account already has a Homestead. §4 — "a partial unique
+  # index makes a second one unrepresentable". Unrepresentable, not merely refused: the index is
+  # `tessera_one_homestead on parcels (owner_subject) where tier = 'homestead' and status =
+  # 'held'`, so it holds against a caller holding a psql prompt and not only against this handler.
+  #
+  # This is the check that would have caught the class of defect found in this estate twice
+  # tonight — a guard that grades an `if` in a handler rather than asking the index.
+  second=$(code -X POST "$TESSERA/v1/parcels" -H "authorization: Bearer $utok" \
+    -H 'content-type: application/json' \
+    -d "{\"wardId\":\"$tward\",\"tier\":\"homestead\",\"originX\":64,\"originY\":64}")
+  [ "$second" = 409 ] \
+    && ok "a SECOND Homestead is refused (409) — one per account, held by an index rather than by a rule" \
+    || bad "the second Homestead returned $second, expected 409; the one-per-account floor is not being enforced"
+
+  # And the index itself, asked directly rather than inferred from the 409 above. A handler that
+  # returned 409 from its own `if` would pass that check with the index dropped.
+  hidx=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d tessera \
+    -c "select count(*) from pg_indexes where tablename='parcels' and indexname='tessera_one_homestead'" 2>/dev/null | tr -d '[:space:]')
+  [ "${hidx:-0}" = 1 ] \
+    && ok "tessera_one_homestead exists in the schema — the 409 above is the database's answer, not the handler's" \
+    || bad "no tessera_one_homestead index in tessera's schema; the 409 above is a handler's opinion and a psql prompt would beat it"
+
+  # ── THE SCOPE, BROKEN ON PURPOSE ────────────────────────────────────────────
+  #
+  # The same route that just accepted a claim must refuse a valid service token that does not carry
+  # `tessera:write`. Without this, everything above would also pass if tessera had stopped checking
+  # scopes altogether — which is the exact condition a security scan in this estate was in for its
+  # entire life.
+  if [ -n "${ctok:-}" ]; then
+    crefused=$(code -X POST "$TESSERA/v1/parcels" -H "authorization: Bearer $ctok" \
+      -H 'content-type: application/json' -H "x-user-id: $uid" \
+      -d "{\"wardId\":\"$tward\",\"tier\":\"plot\",\"originX\":128,\"originY\":128}")
+    [ "$crefused" = 403 ] \
+      && ok "a valid service token without tessera:write cannot claim land (403), even naming a user in x-user-id" \
+      || bad "tessera answered $crefused to a claim from a credential with no tessera:write, expected 403"
+  fi
+
+  # ── DISCOVERY, AND THE REFUSAL THAT IS AN ABSENCE ───────────────────────────
+  #
+  # §6.5: the ranking function admits exactly two inputs, footfall and dwell, and
+  # §7.1's FIRST refusal is that discovery can never be bought — "no promoted placement, no paid
+  # ranking, no sponsored beacons, no boost … forever".
+  #
+  # A 200 alone would not test that. So the response is read for a `promoted` field, and its
+  # ABSENCE is the assertion — the way `admin-web` asserts its missing og card. A ranking that
+  # gained a paid input would almost certainly gain a field before it gained a route, and this is
+  # the check that notices.
+  disc=$(code "$TESSERA/v1/discover?wardId=$tward" -H "authorization: Bearer $utok")
+  if [ "$disc" = 200 ]; then
+    dpaid=$(python3 -c "
+import json
+b = json.load(open('/tmp/slice.body'))
+rows = b.get('parcels') or []
+banned = {'promoted','sponsored','boost','boosted','rank_paid','placementFee','bid'}
+print('yes' if any(k in banned for r in rows if isinstance(r, dict) for k in r) else 'no')" 2>/dev/null)
+    [ "$dpaid" = no ] \
+      && ok "GET /v1/discover answers 200 and carries no promoted/sponsored/boost field — §7.1's first refusal, asserted as an absence" \
+      || bad "a discovery row carries a paid-placement field; §7.1 says the feed is footfall, dwell and recency and nothing else, forever"
+  else
+    bad "GET /v1/discover answered $disc to a signed-in player, expected 200"
+  fi
+fi
+
+# ── THE SPRITE PATH: 404, AND 404 WITHOUT THE SHELL ───────────────────────────
+#
+# micro-tessera-web named this the item most likely to be missed. `/world-assets/` is served
+# same-origin because a ward costs several hundred image requests and a cross-origin path puts a
+# CORS preflight in front of every one; the bytes are NOT in the bundle image, they are mounted
+# from wherever micro-tessera-assets is materialised.
+#
+# THEY ARE NOT MATERIALISED YET — `micro-tessera-assets` has no `materialise.py` — so the mount
+# points at an empty directory and every sprite 404s. That is the CORRECT state, and it is what
+# `tessera-web/nginx.conf:64-67` says to expect. What is asserted here is not that a sprite
+# exists; it is that the path fails the RIGHT WAY, because the two wrong ways are both silent:
+#
+#   * 200 with index.html — what `try_files $uri /index.html` would give. The browser decodes HTML
+#     as a PNG and reports a corrupt image naming the wrong file.
+#   * 404 with nginx's own error page — indistinguishable to the client from a network fault.
+#
+# ── WHAT IS ASSERTED, AND THE HALF THAT IS ONLY RECORDED ──────────────────────
+#
+# THE STATUS IS ASSERTED. It is what stops a browser treating the bytes as an image at all.
+#
+# THE BODY IS MEASURED AND REPORTED, NOT ASSERTED — the same call this file already makes for
+# `/assets/` a few hundred lines above, and for the same cause. `error_page 404 /index.html` is a
+# SERVER-level directive in every frontend's nginx.conf, so it catches this location's `=404` too:
+# tessera-web/nginx.conf:64-72 states an intent ("a sprite request answered with index.html
+# decodes as a corrupt PNG") that its own configuration does not achieve, exactly as the other
+# fifteen do. Measured here rather than asserted, because it is a defect in a repository this
+# suite cannot fix, and a red that nobody is able to clear is a red everybody learns to ignore.
+wa_body=$(curl -s -w '\n%{http_code}' "http://127.0.0.1:4141/world-assets/objects/seating-stool.png")
+wa_status=$(printf '%s' "$wa_body" | tail -1)
+wa_note=""
+printf '%s' "$wa_body" | sed '$d' | grep -q 'id="root"' \
+  && wa_note=" (and it carries the app shell — server-level error_page catches this location too, a finding for micro-tessera-web, not a failure here)"
+if [ "$wa_status" = 404 ]; then
+  ok "/world-assets/ 404s a sprite that is not materialised — the mount is wired and the art has not landed$wa_note"
+else
+  bad "/world-assets/ answered $wa_status for a sprite that is not materialised — a missing sprite must 404, not resolve to something. Check the CF_WORLD_ASSETS mount"
+fi
+
+echo
 echo "── THE AUDIT MIRROR: admin-api receives the audited topics ──────────────"
 #
 # Claim 9 of the eleven "one platform" tests — an operator answers "where did this
@@ -882,7 +1201,7 @@ done
   || bad "no audited event reached admin-api in 15s — the mirror is still not receiving"
 
 echo
-echo "── THE FIFTEEN FRONTENDS: served, and proved to be more than a 200 ──────"
+echo "── THE SIXTEEN FRONTENDS: served, and proved to be more than a 200 ─────"
 #
 # ── THE TRAP THIS SECTION EXISTS FOR ───────────────────────────────────────────
 #
@@ -919,7 +1238,7 @@ echo "── THE FIFTEEN FRONTENDS: served, and proved to be more than a 200 ─
 #      dropped from docker-compose.estate.yml, or the design system failed to
 #      resolve the way micro-service-template's `/contracts` did, the build would
 #      emit a stylesheet without it. This is the check that the symlink survived
-#      containerisation, and it is asserted on all fifteen because the failure
+#      containerisation, and it is asserted on all sixteen because the failure
 #      would be estate-wide and silent.
 #   4. The JS bundle is over 50 kB. An empty or stub entry chunk is served with a
 #      200 and a correct content type.
@@ -1089,7 +1408,8 @@ for rec in \
   "foresight-web 4136 /rules" \
   "foresight-admin-web 4137 /categories" \
   "emberkin-web 4138 /party" \
-  "aetherholm-web 4139 /cities"; do
+  "aetherholm-web 4139 /cities" \
+  "tessera-web 4141 /wards"; do
   set -- $rec
   web_surface "$1" "$2" "$3"
 done
@@ -1148,7 +1468,8 @@ for rec in \
   "foresight foresight-web" \
   "foresight-admin foresight-admin-web" \
   "emberkin emberkin-web" \
-  "aetherholm aetherholm-web"; do
+  "aetherholm aetherholm-web" \
+  "tessera tessera-web"; do
   set -- $rec
   sub=$1; repo=$2
   # `site` has an EMPTY subdomain in the registry: it is the bare apex.
@@ -1180,7 +1501,8 @@ for rec in \
   "create /v1/catalogue mint" \
   "trade /v1/bots trade" \
   "worlds /v1/titles worlds" \
-  "developers /v1/scopes devplatform"; do
+  "developers /v1/scopes devplatform" \
+  "tessera /v1/wards tessera"; do
   set -- $rec
   sub=$1; path=$2; svc=$3
   apic=$(gw "$sub.$WEB_APEX" "$path")
@@ -1370,14 +1692,44 @@ cb_anon=$(code "$INDEXER/v1/custody/ember/testnet/total")
 [ "$cb_anon" = 401 ] && ok "the custody total refuses an anonymous caller (401)" \
   || bad "the custody total answered $cb_anon to no token — every other read here is public because chain facts are; Sigma over a set only the platform knows is not"
 
-# A token the estate actually mints. `community` is used because its DERIVED
-# grant already carries `indexer:read` — ledger's does not, and cannot until its
-# client exports the scope for `derive-grants.mjs` to find. So this drives the
-# route with the credential shape ledger will eventually hold, without pretending
-# ledger holds one today.
+# ── THE CALLER IS NOW LEDGER ITSELF, AND THAT IS THE WHOLE POINT ──────────────
+#
+# This used to mint for `community`, with a note saying community was a stand-in because "ledger's
+# [grant] does not [carry indexer:read], and cannot until its client exports the scope for
+# `derive-grants.mjs` to find. So this drives the route with the credential shape ledger will
+# eventually hold, without pretending ledger holds one today."
+#
+# It holds one today. `ledger/src/indexerclient.ts` exports `INDEXER_SCOPES = ['indexer:read']`,
+# the derivation picked it up with nothing typed into the grants map by hand, and
+# `estate-bootstrap.sh` now hands ledger the token its `env.ts:310` has always read.
+#
+# Driving it AS LEDGER is what separates two states that a health check cannot tell apart and that
+# are completely different facts:
+#
+#   * EMBER frozen because no Hearth node is followed — CORRECT, argued in compose beside
+#     LEDGER_RECONCILE_ASSETS. If the chain has not launched then no EMBER is backed by anything.
+#   * EMBER frozen because ledger cannot AUTHENTICATE — a deployment defect. The 401 maps to
+#     `undefined`, the run is unobserved, the run is `failed`, the asset freezes, and the
+#     reconciliation table records exactly the same row as the honest case.
+#
+# A stand-in caller could never have told them apart, because a stand-in that authenticates proves
+# nothing about the principal that actually makes the call. 401 below is therefore its own failure
+# with its own message, and it is NOT allowed to pass as "refuses with a reason".
 cb_tok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
-  -H 'content-type: application/json' -d '{"service":"community","scopes":["indexer:read"]}' \
+  -H 'content-type: application/json' -d '{"service":"ledger","scopes":["indexer:read"]}' \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+[ -n "$cb_tok" ] \
+  && ok "identity minted indexer:read for LEDGER — the principal that actually makes the custody call, not a stand-in" \
+  || bad "identity would not mint indexer:read for ledger; its INDEXER_SCOPES declaration has not reached the grants map"
+
+# And the container is HOLDING it, which is a different fact from being allowed to mint it. This is
+# the line whose absence froze EMBER: a grant says what identity MAY mint, `LEDGER_SERVICE_TOKEN`
+# is what ledger was actually handed, and nothing was setting it.
+lsvc=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+  | grep -c '^LEDGER_SERVICE_TOKEN=ey' || true)
+[ "${lsvc:-0}" -ge 1 ] \
+  && ok "the ledger container holds a real LEDGER_SERVICE_TOKEN — it can authenticate to the indexer at all" \
+  || bad "ledger has no LEDGER_SERVICE_TOKEN in its environment; its custody call goes out unauthenticated, the 401 maps to undefined, and EMBER freezes on an auth error while LOOKING exactly like the honest no-chain freeze"
 
 if [ -z "$cb_tok" ]; then
   bad "could not obtain a service token carrying indexer:read; the custody route cannot be driven"
@@ -1396,9 +1748,18 @@ else
     404)
       bad "the custody total answered 404 — a consumer files that as 'no custody here', which is a zero wearing a status code"
       ;;
+    401|403)
+      # ITS OWN BRANCH, AND IT MUST NEVER FALL INTO THE 5xx ONE ABOVE. A 401 here is not the chain
+      # being absent; it is ledger being unable to ask. Both end in a frozen EMBER and an
+      # `unavailable/failed` row, and only this line can tell an operator which one they have.
+      bad "the custody total answered $cb_status to LEDGER'S OWN token — ledger cannot authenticate to the indexer, so its reconciliation is unobserved for a reason that has nothing to do with the chain. EMBER will freeze on an auth error while reporting the same state as the honest no-chain case"
+      ;;
     50*)
+      # A 503 `chain_not_followed` is the HONEST refusal: the indexer follows no chain here because
+      # INDEXER_CHAINS is unset and Hearth has not launched. It is only honest when the caller got
+      # far enough to be refused on the merits, which the 401 branch above is what establishes.
       [ -n "$cb_code" ] \
-        && ok "the custody total refuses with a reason ($cb_status $cb_code) rather than a number nobody measured" \
+        && ok "the custody total refuses ledger with a reason ($cb_status $cb_code) rather than a number nobody measured — the freeze below is the chain's absence, not an auth failure" \
         || bad "the custody total answered $cb_status with no error code; an operator cannot act on it"
       ;;
     *)

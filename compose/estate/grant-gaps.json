@@ -35,6 +35,18 @@
     "reason": "micro-tessera owns this. Two call sites, two scopes, and they are deliberately not collapsed into the wider one: POST /v1/generations (tessera/src/studioclient.ts:93) is gated on WRITE_SCOPE = studio:write (studio/src/server.ts:420), and the poll that follows it — GET /v1/jobs/:id, 'the status URL a 202 points at' (studio/src/server.ts:472) — is gated on READ_SCOPE = studio:read. A generation is a REAL CHARGE against studio's credit ledger, which holds real USD (studio/src/credits.ts:43), so the write scope is the expensive half and the polling half must not silently inherit it. Reported to micro-tessera; delete this entry when it exports STUDIO_SCOPES."
   },
 
+  "tessera/src/marketclient.ts": {
+    "service": "tessera",
+    "scopes": [],
+    "reason": "micro-tessera owns this. It builds a token-bearing HttpClient and it is NOT a service-token client: every write relays THE PLAYER'S OWN bearer — `input.sellerToken`, tessera/src/marketclient.ts:108, 'The SELLER's bearer token, relayed. Never a service credential' — and the one read, GET /v1/listings/:id, sends no authorization at all. Its header states the reason rather than assuming it: the token the player presented to Tessera is already a token market accepts, so relaying it grants market exactly the authority the player has and not one scope more. An empty list is the derivation, not a placeholder; granting market:write here would hand tessera a credential able to list on any player's behalf, which is the shape SD-05 retired. Delete this entry the day micro-tessera exports MARKET_SCOPES = NO_SCOPES_REQUIRED, which is now expressible."
+  },
+
+  "tessera/src/communityclient.ts": {
+    "service": "tessera",
+    "scopes": [],
+    "reason": "micro-tessera owns this. Same shape as its market client and for a stronger reason: community REFUSES a service token on the founding route — its own comment at tessera/src/communityclient.ts:31-34 quotes the gate, 'A service token is not close enough on the governance surface. It names no user', throwing ForbiddenError. So POST /v1/communities carries `input.founderToken`, the founding admin's own bearer, relayed. There is no scope that would help: a wider grant here would be a credential that still cannot make the call. Ward governance is one member one vote (23-tessera.md §7.1's second refusal) and a service principal has no membership to vote with. Delete this entry when micro-tessera exports COMMUNITY_SCOPES = NO_SCOPES_REQUIRED."
+  },
+
   "billing/src/ledger.ts": {
     "service": "billing",
     "scopes": ["ledger:post"],
@@ -55,7 +67,7 @@
 
   "worlds/src/titleclient.ts": {
     "service": "worlds",
-    "scopes": ["aetherholm:provision"],
-    "reason": "micro-worlds owns this. It is the provisioning bridge and the reason it declares no constant is structural rather than an oversight: its base URL is per registered title, resolved at runtime from worlds' own registry, so there is no single named peer to hang a FOO_SCOPES constant on. It calls POST /v1/provision, gated on PROVISION_SCOPE = aetherholm:provision (aetherholm/src/server.ts:130, 400); its other call, GET /v1/title, is deliberately public. The registry states this scope is held by worlds alone."
+    "scopes": ["aetherholm:provision", "tessera:provision"],
+    "reason": "micro-worlds owns this. It is the provisioning bridge and the reason it declares no constant is structural rather than an oversight: its base URL is per registered title, resolved at runtime from worlds' own registry, so there is no single named peer to hang a FOO_SCOPES constant on — the grant is therefore ONE SCOPE PER TITLE THAT CAN BE PROVISIONED, and it grows with the estate rather than with this file's age. It calls POST /v1/provision, gated on PROVISION_SCOPE = aetherholm:provision (aetherholm/src/server.ts:130, 400) and on tessera:provision (tessera/src/server.ts:330, = PROVISION_SCOPE at tessera/src/scopes.ts:39); its other call, GET /v1/title, is deliberately public on both. tessera:provision is what finally gives the world.private.small SKU a code path — it has existed in billing since billing/src/migrations.ts:405 and no title has ever served it. The registry states both scopes are held by worlds alone, and estate-verify drives the tessera one end to end rather than asserting it, which the aetherholm one cannot be because that service has no container here."
   }
 }

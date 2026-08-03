@@ -79,10 +79,18 @@ http:
           - https://emberkin.cloudsforge.online
           - https://aetherholm.cloudsforge.online
           - https://foresight-admin.cloudsforge.online
+          # The fourth Forge Worlds title. It needs this entry for the same reason the three
+          # above do — sign-in is cross-origin from every surface — and for one more that is
+          # specific to it: unlike emberkin and aetherholm, its SERVICE runs in this estate, and
+          # `tessera-web` calls it. `resolveApiBase` returns the empty string when the bundle is
+          # served from its own registry host, so those calls are same-origin and need no CORS
+          # entry at all; the ones that DO cross are to nimbus, and they are the ones a missing
+          # entry kills. An allowlist that omits an origin fails closed and silently.
+          - https://tessera.cloudsforge.online
 {{ if env "CF_WEB_APEX" }}
           # ── THE ESTATE APEX ────────────────────────────────────────────────
           #
-          # The same fifteen surfaces, at whatever apex this deployment serves them on. Present
+          # The same sixteen surfaces, at whatever apex this deployment serves them on. Present
           # only when `CF_WEB_APEX` is set, which production does not set — with it unset this
           # block renders to nothing and the list above is byte-for-byte what it always was.
           #
@@ -116,6 +124,7 @@ http:
           - https://foresight-admin.{{ env "CF_WEB_APEX" }}
           - https://emberkin.{{ env "CF_WEB_APEX" }}
           - https://aetherholm.{{ env "CF_WEB_APEX" }}
+          - https://tessera.{{ env "CF_WEB_APEX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:

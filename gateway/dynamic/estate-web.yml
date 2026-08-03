@@ -314,6 +314,43 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-aetherholm
 
+    # ─────────────────────────────── tessera — THE FIRST TITLE WITH A SERVICE ──
+    #
+    # The section above exists for surfaces whose backend is not in this estate, and says what to
+    # do when that changes: "The day one of these services joins the estate, add its router beside
+    # its surface." This is that day. tessera-web AND tessera are both containers in
+    # docker-compose.estate.yml, so this surface gets the `/v1` router the four above are
+    # deliberately denied — and the reason they are denied it is the reason this one is safe to
+    # write: a router pointing at a container that does not exist answers 502, which reads as "the
+    # service fell over" rather than "there is no such service here". `cf-svc-tessera` points at a
+    # container that does exist, so a 502 from it would be true.
+    #
+    # PRIORITY 600 ON THE API ROUTER, 500 ON THE SURFACE. Both rules match a request for
+    # `tessera.<apex>/v1/wards`; Traefik resolves the tie by priority, and without the higher
+    # number the bundle would win and every API call would be answered with index.html — a 200
+    # carrying HTML where JSON was expected, which fails in the client as a parse error naming the
+    # wrong file. That is the same ordering `cf-api-admin` uses above.
+    #
+    # WHY THE APP CAN CALL A RELATIVE PATH AT ALL: `resolveApiBase` returns the EMPTY STRING when
+    # a bundle is served from its own registry host, so tessera-web's requests are same-origin
+    # `/v1/...` and this router is what has to catch them. Route the bundle and not the API and the
+    # surface loads beautifully and answers nothing.
+    #
+    # PORT 4022, not 4000. tessera is the one service in this estate that does not bind 4000, and
+    # the number is argued rather than picked — 23-tessera.md §10.1, and the block beside its
+    # container in docker-compose.estate.yml.
+    cf-web-tessera:
+      rule: 'Host(`tessera.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-tessera
+    cf-api-tessera:
+      rule: 'Host(`tessera.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-tessera
+
     # ──────────────────────────────────────────────────────────────── nimbus ──
     #
     # identity, on the hostname every bundle in the estate calls it by.
@@ -426,6 +463,9 @@ http:
     cf-web-aetherholm:
       loadBalancer:
         servers: [{ url: "http://aetherholm-web:8080" }]
+    cf-web-tessera:
+      loadBalancer:
+        servers: [{ url: "http://tessera-web:8080" }]
 
     # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
     # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are
@@ -451,6 +491,13 @@ http:
     cf-svc-devplatform:
       loadBalancer:
         servers: [{ url: "http://devplatform:4000" }]
+    # 4022, and it is the ONE upstream in this file that is not 4000. Read from
+    # `tessera/src/env.ts:55` and from its Dockerfile's `EXPOSE 4022`, not chosen here — the same
+    # rule public-api.yml states for its upstreams. Writing 4000 out of habit would produce a
+    # connection refused that looks exactly like a container that has not started.
+    cf-svc-tessera:
+      loadBalancer:
+        servers: [{ url: "http://tessera:4022" }]
     cf-svc-identity:
       loadBalancer:
         servers: [{ url: "http://identity:4000" }]

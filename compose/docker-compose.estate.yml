@@ -86,6 +86,15 @@ x-healthcheck: &healthcheck
   timeout: 5s
   retries: 30
 
+# The same probe, against 4022 — the ONE service in this file that does not bind
+# 4000. See the `tessera` block for why that is deliberate and must not be
+# "tidied" by setting PORT=4000 on it.
+x-healthcheck-4022: &healthcheck-4022
+  test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4022/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+  interval: 3s
+  timeout: 5s
+  retries: 30
+
 x-migrate-defaults: &migrate-defaults
   command: ["node", "--import", "tsx", "src/migrator.ts"]
   restart: "no"
@@ -169,7 +178,7 @@ services:
     volumes:
       - ./estate/initdb.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
     command:
-      # 21 services x a pool of 10 exceeds the default 100 connections, and the
+      # 22 services x a pool of 10 exceeds the default 100 connections, and the
       # symptom is a service that boots, passes its first probe and then fails
       # readiness under no load at all. Raised here rather than by shrinking
       # every pool, because the pool sizes are each service's own decision.
@@ -244,9 +253,21 @@ services:
       # identity/src/env.ts:92-106), so a wrong entry is a dead container rather
       # than a silently-ignored line.
       #
-      # These are the fifteen surfaces this compose file serves, at the apex the
+      # These are the sixteen surfaces this compose file serves, at the apex the
       # gateway routes them on. `site` is the bare apex — it has an empty
       # `subdomain` in the registry — which is why the first entry has no label.
+      #
+      # THE LAST ENTRY IS THE ONE ODD ONE, AND IT IS DELIBERATE.
+      # `http://localhost:5172` is micro-tessera-web's VITE DEV PORT, not a
+      # deployed surface. It is here because a title is developed against this
+      # estate rather than against a stub: `pnpm dev` on 5172 signs in through
+      # the same identity container as everything else, and `createHandoffCode`
+      # returns null for an origin not on this list (identity/src/handoff.ts:32),
+      # so without it a developer's sign-in 403s with nothing server-side saying
+      # why. It is `http`, which `origin()` accepts (identity/src/env.ts:92-106),
+      # and it is loopback — an allowlist entry that only an attacker running
+      # code on the developer's own machine could reach, at which point the
+      # hand-off code is not the exposure.
       IDENTITY_HANDOFF_ORIGINS: >-
         https://${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://hub.${CF_WEB_APEX:-cloudsforge.localtest.me},
@@ -262,7 +283,9 @@ services:
         https://foresight.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://foresight-admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me}
+        https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        http://localhost:5172
 
       # ══════════════════════════════════════════════════════════════════════════
       # GENERATED — `node scripts/derive-grants.mjs --write`. Do not hand-edit.
@@ -331,14 +354,15 @@ services:
          "faucet":["custody:sign:treasury"],
          "foresight":["admin:read","custody:address:create","custody:sign:deployer","indexer:read","indexer:write","ledger:post","policy:decide"],
          "hub-api":["billing:read","ledger:read","notify:read","policy:decide","pricing:read","wallet:read"],
+         "ledger":["indexer:read"],
          "market":["indexer:read","ledger:post","policy:decide"],
          "mint":["custody:address:create","custody:sign:deployer","indexer:read","ledger:post"],
          "nda":["billing:read","worlds:title"],
-         "settlement":["custody:sign:deposit","custody:sign:treasury","custody:treasury:read","indexer:read","ledger:post"],
+         "settlement":["custody:sign:deposit","custody:sign:treasury","custody:treasury:read","indexer:read","indexer:write","ledger:post"],
          "tessera":["ledger:post","studio:read","studio:write"],
          "trade":["ledger:post","ledger:read","ledger:reserve","pricing:read"],
          "wallet":["custody:address:create","indexer:read","indexer:write","ledger:post","ledger:read","ledger:reserve","pricing:read","settlement:read"],
-         "worlds":["aetherholm:provision","billing:read","ledger:post"]}
+         "worlds":["aetherholm:provision","billing:read","ledger:post","tessera:provision"]}
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: identity-estate
     ports:
@@ -455,17 +479,33 @@ services:
       # secrets — rule 9's concern is the `env_file: .env` fan-out that put the
       # custody master secret in a game container, not a service address.
       #
-      # WHEN THAT CALL LANDS IT WILL 401 UNTIL LEDGER HOLDS A GRANT. The custody
-      # route is the one read on the indexer that demands `indexer:read`, and
-      # IDENTITY_SERVICE_TOKEN_GRANTS above is DERIVED from the `*_SCOPES`
-      # constants the services export — ledger declares none, so it has no entry
-      # and is issued no token. Adding one by hand here would fail
-      # `derive-grants.mjs --check`. The correct sequence is: ledger's client
-      # exports `INDEXER_SCOPES = ['indexer:read']`, the map is regenerated, the
-      # grant appears. Until then the 401 maps to `undefined` and EMBER freezes,
-      # which is failing closed in the only direction that is safe.
+      # THAT CALL HAS LANDED, AND SO HAS THE GRANT. The block above used to end
+      # "it will 401 until ledger holds a grant … the correct sequence is:
+      # ledger's client exports `INDEXER_SCOPES = ['indexer:read']`, the map is
+      # regenerated, the grant appears." Both halves have now happened —
+      # `ledger/src/jobs.ts:251` makes the call, `ledger/src/indexerclient.ts`
+      # declares the scope, and `derive-grants.mjs` picked it up on its next run
+      # without one character being typed into the grants map by hand.
+      #
+      # THE THIRD HALF WAS MISSING AND IS THE LINE BELOW. A grant says what
+      # identity MAY mint for a service; it does not hand the service anything.
+      # ledger reads `LEDGER_SERVICE_TOKEN` (ledger/src/env.ts:310, via
+      # `optionalSecret`, into `indexerToken`) and nothing was ever setting it —
+      # so the call went out with no bearer, the indexer answered 401, the 401
+      # maps to `undefined`, the reconciliation ran unobserved, and EMBER froze.
+      # `ledger/src/index.ts:170` logs that at FATAL.
+      #
+      # THE TWO FREEZES LOOK IDENTICAL AND ARE NOT THE SAME FACT. EMBER frozen
+      # because no Hearth node is followed is CORRECT and is argued beside
+      # LEDGER_RECONCILE_ASSETS above — if the chain has not launched then no
+      # EMBER is backed by anything. EMBER frozen because ledger cannot
+      # AUTHENTICATE is a deployment defect wearing the same status. From a
+      # health check they are one line; `scripts/estate-verify.sh` now separates
+      # them by driving the custody route with ledger's own credential and
+      # asserting the answer is 503 `chain_not_followed` rather than 401.
       INDEXER_URL: http://indexer:4000
       LEDGER_INDEXER_DEADLINE_MS: "5000"
+      LEDGER_SERVICE_TOKEN: ${LEDGER_SERVICE_TOKEN:-}
       # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: ledger-estate
     ports:
@@ -1281,6 +1321,117 @@ services:
         condition: service_healthy
     healthcheck: *healthcheck
 
+  # ------------------------------------------------------------------ tessera
+  #
+  # ── THE PORT, AND WHY THIS BLOCK LOOKS DIFFERENT FROM THE TWENTY-ONE ABOVE ──
+  #
+  # Every other service here binds 4000 (from `x-common-env`) and is mapped to a
+  # derived host port. **tessera binds 4022**, and that is not a quirk to
+  # normalise — it is the point of the choice, argued at 23-tessera.md §10.1 and
+  # again in `tessera/src/env.ts:31-55`.
+  #
+  # This estate keeps three port spaces and keeps confusing them: the port a
+  # service BINDS, the HOST port here (derived, `4100 + index in
+  # deployableRepos()`), and micro-ui's `devPort`, which is documented as "not an
+  # allocation; it is a fact about a service". Spaces one and two already collide
+  # THREE TIMES in repositories that are pushed and green: emberkin binds 4100,
+  # which is identity's host port in this very file; aetherholm binds 4120, which
+  # is admin-api's; nda binds 4110, which is notify's. Each of those services
+  # binds a number this file hands to somebody else.
+  #
+  # 4022 sits BELOW the derived 4100+ block, so no number of repositories
+  # appended to `deployableRepos()` can grow into it. Setting `PORT: "4000"` here
+  # would make this container disagree with its own Dockerfile (`EXPOSE 4022`),
+  # with `tessera/src/env.ts`, and with the `tessera` row in micro-ui's registry
+  # — whose test pins 4022 as "the port the service binds". A pin that is false
+  # in the only environment that exists is worse than no pin, so the port stays
+  # and the healthcheck moves. That is the whole cost: one extra anchor.
+  #
+  # ── HOST PORTS 4140 / 4141, AND WHY THEY ARE CHOSEN RATHER THAN DERIVED ─────
+  #
+  # micro-org's REGISTRY has no `tessera` or `tessera-web` entry — it carries 46
+  # entries against a 58-directory tree — so no index exists to derive from, the
+  # same reason foresight-web, foresight-admin-web, emberkin-web and aetherholm-web
+  # took 4136-4139 by hand. These are the next two: 4140 for the service, 4141
+  # for the bundle. Recorded as a defect in micro-org, not fixed here.
+  #
+  # ── WHAT IT TALKS TO, AND WHAT IS DELIBERATELY OPTIONAL ─────────────────────
+  #
+  # `STUDIO_URL`, `LEDGER_URL` and `MARKET_URL` are all optional in
+  # `tessera/src/env.ts:168-178`, and their absence is a SUPPORTED mode: the Kiln
+  # answers 503 `kiln_unconfigured` rather than 500 and every other route still
+  # serves. They are set anyway, because a world whose Kiln is cold in the one
+  # environment we can drive is a world whose Kiln has never been driven.
+  tessera-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../tessera
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      # Explicit, and it OVERRIDES the 4000 in `x-common-env` — an explicit key
+      # beats a merge key in YAML. The migrator binds nothing, but it loads the
+      # same `env.ts`, and a migrator that disagreed with its service about the
+      # port would be one more copy of a fact to drift.
+      PORT: "4022"
+      TESSERA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/tessera
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      # A SECOND variable holding the same value, on purpose. `tessera/src/env.ts:150-160`
+      # explains it: outbound signatures and inbound verification are one secret
+      # today and stop being one the day the estate moves to per-producer signing
+      # keys. A service that read one variable for both would have to be found.
+      INBOUND_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INSTANCE_ID: tessera-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  tessera:
+    build:
+      context: ../../tessera
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      PORT: "4022"
+      TESSERA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/tessera
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      INBOUND_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      STUDIO_URL: http://studio:4000
+      LEDGER_URL: http://ledger:4000
+      MARKET_URL: http://market:4000
+      # ── A TOKEN, NOT A CREDENTIAL, AND THE NAME IS NOT THE REASON ──────────
+      #
+      # `estate-bootstrap.sh` writes both kinds and they are NOT interchangeable:
+      # `*_IDENTITY_CREDENTIAL` is long-lived and is EXCHANGED at
+      # POST /service-tokens/exchange, `*_SERVICE_TOKEN` is a ten-minute JWT that
+      # is PRESENTED as a bearer. tessera presents this value directly —
+      # `token: async () => env.serviceCredential ?? ''` (tessera/src/index.ts:127),
+      # under a header saying "until this service is granted a credential in the
+      # deploy, the credential IS the token". So it must be a token. Handing it a
+      # long-lived credential secret would produce a Bearer that is not a JWT,
+      # and studio would answer 401 to every firing with nothing in either log
+      # naming the cause.
+      #
+      # It is therefore bootstrapped as a TOKEN (`TESSERA_SERVICE_CREDENTIAL` in
+      # the CREDENTIALS list), and the ten-minute expiry is real: a firing
+      # attempted more than ten minutes after a bootstrap will 401 until the next
+      # run. Recorded, not hidden — the fix is micro-tessera adopting
+      # `ServiceTokenProvider`, which its own comment already names.
+      TESSERA_SERVICE_CREDENTIAL: ${TESSERA_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
+      INSTANCE_ID: tessera-estate
+    ports:
+      - "127.0.0.1:4140:4022"
+    depends_on:
+      tessera-migrate:
+        condition: service_completed_successfully
+      studio:
+        condition: service_healthy
+      ledger:
+        condition: service_healthy
+      market:
+        condition: service_healthy
+    healthcheck: *healthcheck-4022
+
   # ====================================================== tier 4: the two BFFs
   # ---------------------------------------------------------------- admin-api
   # NOTE: admin-api/src/server.ts returns 501 for bootstrap and identity grants
@@ -1380,7 +1531,7 @@ services:
         condition: service_healthy
     healthcheck: *healthcheck
 
-  # ══════════════════════════════════════════ tier 5: the fifteen frontends ════
+  # ══════════════════════════════════════════ tier 5: the sixteen frontends ════
   #
   # ── WHY THEY ARE HERE ─────────────────────────────────────────────────────────
   #
@@ -1597,3 +1748,53 @@ services:
       args: *web-build-args
     ports:
       - "127.0.0.1:4139:8080"
+
+  # ------------------------------------------ tessera-web (tessera)        4141
+  # The SIXTEENTH frontend, and the first whose service is also in this file.
+  # foresight-web, emberkin-web and aetherholm-web are bundles with no backend
+  # here, which is why estate-web.yml writes no `/v1` router for them: a router
+  # pointing at a container that does not exist answers 502, and 502 reads as
+  # "the service fell over" — a wrong diagnosis, permanently. tessera-web DOES
+  # get one, beside its surface, exactly as that file's note says to do "the day
+  # one of these services joins the estate".
+  tessera-web:
+    <<: *web-defaults
+    build:
+      context: ../../tessera-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+    ports:
+      - "127.0.0.1:4141:8080"
+    # ── `/world-assets/`, THE ONE micro-tessera-web NAMED AS MOST LIKELY TO BE
+    #    MISSED, AND IT IS NOT POINTED AT THE ASSET REPOSITORY YET ────────────
+    #
+    # `tessera-web/nginx.conf:73` serves `location /world-assets/` with
+    # `try_files $uri =404` and NO index.html fallback — deliberately, because a
+    # sprite request answered with HTML decodes as a corrupt PNG rather than as
+    # a 404, and the client would report a decode failure for a file that simply
+    # is not there. Its own comment says the bytes are "NOT served from this
+    # image. micro-deploy maps it … to wherever micro-tessera-assets is
+    # materialised", and that "until that mapping exists this location 404s,
+    # which is the correct answer".
+    #
+    # THIS IS THAT MOUNT, AND IT DELIBERATELY DOES NOT POINT AT
+    # `../../tessera-assets` TODAY. That repository has no `materialise.py` — it
+    # is still generating, and the on-disk layout the client resolves against
+    # does not exist to be pointed at. Mounting `assets/` in its place would put
+    # SOME bytes under the path and turn "there is no materialised art here"
+    # into "the art is there and every sprite 404s", which is the same class of
+    # error as a zero wearing a status code. Worse, a bind mount of a path that
+    # does not exist makes docker CREATE it — an empty directory written into a
+    # repository micro-deploy does not own.
+    #
+    # So it points at an empty, documented directory in THIS repository, and the
+    # default is overridable in one place. The day `materialise.py` lands:
+    #
+    #     CF_WORLD_ASSETS=../../tessera-assets/materialised ./scripts/estate-up.sh
+    #
+    # and nothing else changes. Until then the location 404s, which is what the
+    # bundle expects and what `scripts/estate-verify.sh` asserts — including
+    # that it 404s WITHOUT the app shell, because serving index.html here is the
+    # failure the nginx block is written to avoid.
+    volumes:
+      - ${CF_WORLD_ASSETS:-./estate/world-assets}:/usr/share/nginx/html/world-assets:ro

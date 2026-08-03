@@ -57,3 +57,12 @@ CREATE DATABASE analytics;
 -- error, and quoting it would force every psql invocation in the verify script
 -- to quote it too.
 CREATE DATABASE admin_api;
+
+-- -- the fourth Forge Worlds title (docs/ecosystem/23-tessera.md) --------------
+-- The first title SERVICE in this environment: emberkin and aetherholm have web
+-- bundles here and no backend, so this is the first time a title's own database
+-- exists at all. It is a persistent world — 23-tessera.md §4 puts it plainly,
+-- "persistence means Postgres, and nothing else": there is no per-ward tick and
+-- no per-user simulation process, so an object placed IS a row, and this
+-- database is the entire authoritative world.
+CREATE DATABASE tessera;

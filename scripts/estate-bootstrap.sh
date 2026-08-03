@@ -292,15 +292,53 @@ echo "── 5. mint one service token per credential ────────�
 # repository's env.ts rather than assumed from the variable's name:
 #   settlement, market, trade, admin-api  still read a 10-minute token.
 #   community                             reads a long-lived CREDENTIAL.
+#   ledger, tessera                       read a 10-minute token; see below.
+#
+# ── LEDGER IS BACK ON THIS LIST, AND ITS ABSENCE WAS FREEZING AN ASSET ────────
+#
+# The note above records that ledger lost its entry because "neither makes a
+# tokened outbound call". That was true when it was written and is not true now:
+# `ledger/src/jobs.ts:251` calls the indexer's custody aggregate, and
+# `ledger/src/env.ts:310` reads `LEDGER_SERVICE_TOKEN` into `indexerToken`.
+#
+# With nothing setting it the call went out unauthenticated, the indexer answered
+# 401, and ledger maps a 401 to `undefined` — an UNOBSERVED reconciliation run,
+# which is recorded `failed`, which FREEZES EMBER. `ledger/src/index.ts:170` logs
+# it at fatal. Failing closed, which is the safe direction, and still a defect:
+# the estate was frozen on an authentication error while reporting the same state
+# it correctly reports when no chain is followed at all.
+#
+# The GRANT was never the missing piece and must not be added by hand — ledger
+# declares `INDEXER_SCOPES = ['indexer:read']` in its own source and
+# `derive-grants.mjs` picked it up on its next run. A grant says what identity MAY
+# mint; this list is what a service is actually HANDED.
 # hub-api's six narrow tokens are gone because hub-api itself retired them, NOT
 # because the AD-05 separation they expressed was wrong; its credential is
 # exchanged for tokens per upstream and the narrowing moved into that exchange.
+#
+# ── TESSERA IS ON THIS LIST, AND THE VARIABLE'S NAME LIES ─────────────────────
+#
+# `TESSERA_SERVICE_CREDENTIAL` is spelled like community's long-lived credential
+# and is NOT one. `tessera/src/index.ts:127` presents the value straight through
+# as a bearer — `token: async () => env.serviceCredential ?? ''` — under a header
+# that says "until this service is granted a credential in the deploy, the
+# credential IS the token". So it must be minted here, as a TOKEN, or the Kiln
+# sends studio a bearer that is not a JWT and gets 401 with nothing in either log
+# naming the cause. It is the same variable-name trap the comment above records
+# for community, in the opposite direction, which is why the SCOPES are derived
+# and only the NAME is hand-written: names are deploy facts, authority is not.
+#
+# The ten-minute expiry is real and is not papered over: a firing attempted more
+# than ten minutes after a bootstrap 401s until the next run. The fix is
+# micro-tessera adopting `ServiceTokenProvider`, which its own comment names.
 CREDENTIALS="
 SETTLEMENT_SERVICE_TOKEN|settlement|
 MARKET_SERVICE_TOKEN|market|
 TRADE_SERVICE_TOKEN|trade|
 COMMUNITY_SERVICE_CREDENTIAL|community|
 ADMIN_API_SERVICE_TOKEN|admin-api|
+TESSERA_SERVICE_CREDENTIAL|tessera|
+LEDGER_SERVICE_TOKEN|ledger|
 "
 
 # The grants, read from the compose file the estate actually runs with. `python3`

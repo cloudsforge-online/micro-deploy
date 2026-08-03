@@ -18,7 +18,7 @@
 #
 # ── THE ORDER, AND WHY EACH STEP IS WHERE IT IS ────────────────────────────────
 #
-#   1. the estate            postgres, 21 services, 15 frontends. It creates the
+#   1. the estate            postgres, 22 services, 16 frontends. It creates the
 #                            network `cloudsforge-estate_default` that step 3
 #                            attaches to, so it cannot be later.
 #   2. the bootstrap         the admin UPDATE, the service tokens, the long-lived
@@ -114,7 +114,7 @@ else
   BUILD_FLAG="--build"
 fi
 
-echo "── 1. the estate: 21 services, 15 frontends, one database each ──────────"
+echo "── 1. the estate: 22 services, 16 frontends, one database each ──────────"
 echo "     apex: $CF_WEB_APEX   release: $CLOUDSFORGE_RELEASE"
 # --wait blocks on every healthcheck rather than on the daemon accepting the
 # request. Without it the bootstrap races identity's first migration and the
