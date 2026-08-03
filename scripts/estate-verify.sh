@@ -63,6 +63,12 @@ TESSERA=${TESSERA:-http://127.0.0.1:4125}
 # and therefore cannot recompute. It derives to 4141 — the same number it was assigned by hand
 # before the registry carried it, which is coincidence and is not evidence of anything.
 TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:4141}
+# The observability sink. Derived — `deployableRepos()` index 42, immediately after
+# tessera-web's 4141 — and `scripts/web-check.py` recomputes it from micro-org rather
+# than trusting this line. Until recently there was nothing on this port at all: the
+# service was absent from the estate compose file entirely while sixteen frontends
+# posted browser telemetry at it.
+LANTERN=${LANTERN:-http://127.0.0.1:4142}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 fails=0
 
@@ -2263,6 +2269,104 @@ else
     && ok "and clean again ($src/$st) — the freeze was a state, not a one-way door" \
     || bad "after restoring the custody set the run is $src/$st, not indexer/clean; the estate has been left worse than it was found"
 fi
+
+echo
+echo "── the browser telemetry sink, driven to the ROW ────────────────────────"
+# ── WHY THIS SECTION EXISTS ───────────────────────────────────────────────────
+#
+# `grep -c lantern` over the estate compose file returned 0. Sixteen frontends
+# had been posting browser telemetry since the template was written and NOT ONE
+# EVENT HAD EVER BEEN STORED, because the service was not deployed and the
+# bundles were posting the wrong path, the wrong envelope key and the wrong
+# record shape. Nothing here checked any of it, so nothing said so.
+#
+# ── AND WHY IT ASSERTS THE ROW RATHER THAN THE STATUS CODE ────────────────────
+#
+# Because a 202 from this route IS NOT SUCCESS. A correct path carrying a wrong
+# record shape answers `202 {"stored":0}` — accepted, discarded in full, and
+# reported to the caller as fine. That is the exact shape of the defect this
+# whole section exists to catch, and asserting on the status code would step
+# straight into it. So the positive check reads the row back out of Postgres.
+lansql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d lantern "$@" 2>/dev/null; }
+APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
+ORIGIN="https://hub.${APEX}"
+
+[ "$(code "$LANTERN/livez")"  = 200 ] && ok "lantern /livez"  || bad "lantern /livez — the sink is not deployed"
+[ "$(code "$LANTERN/readyz")" = 200 ] && ok "lantern /readyz" || bad "lantern /readyz"
+
+# THE POSITIVE, read back from the table. A unique marker per run, so a stale row
+# from an earlier run cannot make this pass.
+marker="verify-$$-$(date +%s)"
+# ── TRUNCATE FIRST, AND RETURN THE STATUS ────────────────────────────────────
+#
+# `curl -o FILE` does NOT touch FILE when the connection is refused, so the file
+# keeps whatever the LAST SUCCESSFUL request left in it — including from an
+# earlier run of this script. A `grep` over that stale body is a check that
+# passes while the service is stopped.
+#
+# That is not hypothetical either: it is what the first version of this section
+# did. Stopping the lantern container was supposed to turn every check below red
+# and two of them stayed green, reading a body from the previous run. Truncating
+# and requiring the status code is what makes the greps mean anything.
+post() { : > /tmp/lantern.body
+         curl -s -o /tmp/lantern.body -w '%{http_code}' --max-time 10 -X POST "$LANTERN/ingest/client" \
+           -H "Origin: $ORIGIN" -H 'content-type: application/json' -d "$1"; }
+
+post "{\"samples\":[{\"app\":\"$marker\",\"kind\":\"page_load\",\"route\":\"/verify\",\"valueMs\":42,\"attributes\":{\"probe\":true}}]}" >/dev/null
+stored=$(lansql -c "select count(*) from rum_samples where app='$marker' and kind='page_load' and route='/verify' and value_ms=42")
+[ "${stored:-0}" = 1 ] \
+  && ok "a correctly-shaped sample REACHED POSTGRES — not merely a 202, the row is in rum_samples" \
+  || bad "the sample did NOT reach rum_samples (found ${stored:-0}); browser telemetry is being accepted and discarded"
+
+# ── THE THREE NEGATIVES: each defect the frontends actually shipped ───────────
+#
+# All three were live at once and each alone was enough. They are asserted
+# separately because fixing one and not the others changes nothing observable.
+
+# 1. The stale PATH. It must answer the diagnostic, and — the part that matters —
+#    it must carry the CORS header, because a 4xx a browser cannot read is not a
+#    4xx as far as the page is concerned. `curl` sees every refusal; Chrome does
+#    not. That difference is why this asserts the HEADER and not just the body.
+: > /tmp/lantern.body
+hdrs=$(curl -s -D- -o /tmp/lantern.body --max-time 10 -X POST "$LANTERN/ingest/browser" \
+        -H "Origin: $ORIGIN" -H 'content-type: application/json' -d '{}')
+printf '%s' "$hdrs" | grep -qi "access-control-allow-origin: $ORIGIN" \
+  && ok "the stale /ingest/browser path answers WHERE A BROWSER CAN HEAR IT (CORS header present)" \
+  || bad "the /ingest/browser refusal carries no access-control-allow-origin — a page reads it as 'Failed to fetch', indistinguishable from the host being absent"
+grep -q 'unknown_ingest_path' /tmp/lantern.body \
+  && ok "…and names the path that does exist, rather than a bare 404" \
+  || bad "the unknown-path reply no longer names the served paths"
+
+# 2. The stale ENVELOPE key.
+envcode=$(post '{"events":[{"app":"x","type":"PageLoad","message":"m"}]}')
+# Matched WITHOUT the quotes around `samples`: the body is JSON, so they arrive
+# escaped as \"samples\" and a pattern carrying bare quotes matches nothing. That
+# is not a hypothetical — this check failed on its first run for exactly that
+# reason, against a sink that was behaving correctly.
+[ "$envcode" = 400 ] && grep -q 'this sink reads' /tmp/lantern.body \
+  && ok "an \"events\" envelope is REFUSED by name, not silently dropped" \
+  || bad "an \"events\" envelope is no longer refused by name (status $envcode); the old frontend shape would vanish quietly"
+
+# 3. The stale RECORD key — the dangerous one, because it returns 2xx.
+badcode=$(post "{\"samples\":[{\"app\":\"$marker-bad\",\"type\":\"PageLoad\",\"message\":\"m\"}]}")
+[ "$badcode" = 202 ] && grep -q '"stored":0' /tmp/lantern.body && grep -q 'unknown_kind' /tmp/lantern.body \
+  && ok "a record keyed \`type\` stores nothing AND SAYS SO (stored:0, unknown_kind) — the 202 that used to lie now explains itself" \
+  || bad "a record keyed \`type\` did not report itself as dropped (status $badcode); a wrong shape is silently discarded again"
+
+# The origin allowlist. The sink answers without a credential, so this is the
+# only thing standing between it and any page on the internet.
+[ "$(code -X POST "$LANTERN/ingest/client" -H 'Origin: https://evil.example' \
+      -H 'content-type: application/json' -d '{"samples":[]}')" = 400 ] \
+  && ok "an unlisted origin is refused — the allowlist is the sink's only defence and it is on" \
+  || bad "an unlisted origin was NOT refused; any page on the internet can write to the triage view"
+
+lansql -c "delete from rum_samples where app like '$marker%'" >/dev/null
+# Asserted, not announced. An unconditional `ok` here would be one more line that
+# cannot fail, in a section written because this estate keeps producing them.
+left=$(lansql -c "select count(*) from rum_samples where app like '$marker%'")
+[ "${left:-x}" = 0 ] \
+  && ok "the probe rows are removed — this section leaves the estate as it found it" \
+  || bad "the probe rows were NOT removed (${left:-unreadable} left); this run has polluted the telemetry plane"
 
 [ "$fails" -eq 0 ] && { echo; echo "all seams verified"; exit 0; }
 echo; echo "$fails check(s) failed"; exit 1
