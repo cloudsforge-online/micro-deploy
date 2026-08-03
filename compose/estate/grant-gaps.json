@@ -23,12 +23,6 @@
     "reason": "micro-mint owns this. The HttpClient built here dials PUBLIC CHAIN NODES outside this estate, and the file says so at :92 — 'NOT given a token: they dial public chain nodes outside this estate.' No CloudsForge scope applies to an external RPC endpoint. Mint's real upstream scopes come from its three declared client modules and are derived normally."
   },
 
-  "tessera/src/ledgerclient.ts": {
-    "service": "tessera",
-    "scopes": ["ledger:post"],
-    "reason": "micro-tessera owns this. The repository appeared in the estate while this file was being edited — three commits old, actively being written — and the ratchet caught it on its first run: two token-bearing clients, no scope constants. Derived by reading the single call site: POST /entries (tessera/src/ledgerclient.ts:146), gated on POST_SCOPE = ledger:post (ledger/src/server.ts:346). It reaches no other ledger route. tessera has no container in this compose file yet, which is not a reason to leave it ungranted — emberkin and faucet have none either and both of their grants are minted and exercised by estate-verify. This entry deletes itself the day micro-tessera exports LEDGER_SCOPES, which is the convention twenty repositories already follow."
-  },
-
   "tessera/src/studioclient.ts": {
     "service": "tessera",
     "scopes": ["studio:write", "studio:read"],

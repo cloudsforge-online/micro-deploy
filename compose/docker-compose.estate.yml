@@ -367,7 +367,7 @@ services:
          "mint":["custody:address:create","custody:sign:deployer","indexer:read","ledger:post"],
          "nda":["billing:read","worlds:title"],
          "settlement":["custody:sign:deposit","custody:sign:treasury","custody:treasury:read","indexer:read","indexer:write","ledger:post"],
-         "tessera":["ledger:post","studio:read","studio:write"],
+         "tessera":["ledger:post","ledger:reserve","studio:read","studio:write"],
          "trade":["ledger:post","ledger:read","ledger:reserve","pricing:read"],
          "wallet":["custody:address:create","indexer:read","indexer:write","ledger:post","ledger:read","ledger:reserve","pricing:read","settlement:read"],
          "worlds":["aetherholm:provision","billing:read","ledger:post","tessera:provision"]}
