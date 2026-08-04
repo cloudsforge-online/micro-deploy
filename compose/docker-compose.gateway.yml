@@ -41,21 +41,6 @@ services:
     image: traefik:v3.2.3
     # No container_name, deliberately, and it is the first place to prove the
     # point: this service is discovered by label like everything behind it.
-    environment:
-      # ── ONE VALUE, TWO CONSUMERS, AND THAT IS THE POINT ──────────────────────
-      #
-      # The flag in `command:` is COMPOSE interpolation; `gateway/dynamic/tls.yml`
-      # is a Go template the file provider renders against the CONTAINER's
-      # environment. Two different layers, and if they disagreed the gateway would
-      # advertise TLS and serve no certificate — `CN=TRAEFIK DEFAULT CERT`, the
-      # exact state `tls.yml` was written to end.
-      #
-      # Passing the value through here makes that impossible: both read
-      # `CF_GATEWAY_TLS` from the same place, defaulted identically. It is
-      # deliberately NOT a second line in `env/traefik*.env` beside the other
-      # gateway variables, because that file cannot feed `${...}` in `command:`
-      # and a value written twice is a value that drifts.
-      CF_GATEWAY_TLS: ${CF_GATEWAY_TLS:-true}
     env_file:
       # PARAMETERISED so a second compose project on this host can serve a
       # different apex. `traefik.env` pins CF_WEB_APEX and CF_API_HOST, and both
@@ -161,71 +146,10 @@ services:
       - --entrypoints.web.address=:80
       - --entrypoints.web.http.redirections.entrypoint.to=websecure
       - --entrypoints.web.http.redirections.entrypoint.scheme=https
-      # ── AND IT STILL SAYS `https` WHEN `CF_GATEWAY_TLS` IS false ─────────────
-      #
-      # Left that way deliberately, and written down rather than discovered.
-      # `web` is :80 (published on ${CF_GW_PORT_BASE}95), and on a plaintext
-      # deployment NOTHING REACHES IT: the tunnel's service URL names the
-      # `websecure` port directly, so the only client that could follow this
-      # redirect never asks for it. Measured — with TLS off, `:80` still answers
-      # `301 -> https://hub.<apex>/`.
-      #
-      # It is one variable rather than two ON PURPOSE. Making this scheme follow
-      # the TLS switch needs a SECOND compose variable (compose interpolation has
-      # no conditional, so `true`/`false` cannot become `https`/`http`), and two
-      # levers that must agree are two levers that drift — the defect this
-      # repository has paid for repeatedly and that `surface-routes.py` check 6
-      # exists to catch. A redirect nobody follows is a smaller cost than a second
-      # source of truth for the same fact.
       - --entrypoints.websecure.address=:443
       # TLS termination. ACME in production; the local stack runs Traefik's
       # self-signed default, which is correct for loopback and wrong to ship.
-      # ── TLS HERE IS NOW A PER-ENVIRONMENT DECISION, AND IT DEFAULTS TO ON ────
-      #
-      # `true` is what every environment renders that does not say otherwise, so
-      # an unset variable leaves this line byte-for-byte what it always was. The
-      # owner's local estate on `cloudsforge.localtest.me` depends on that: a
-      # browser being able to use the estate over REAL TLS is what caught a
-      # gateway serving `CN=TRAEFIK DEFAULT CERT` while every check passed, and
-      # that arrangement is deliberate rather than incidental.
-      #
-      # `false` IS NOT "TLS off and everything else the same". Measured on
-      # traefik:v3.2.3, because the difference decides whether 53 routers answer
-      # at all:
-      #
-      #   tls=true    a router on this entrypoint is SPLIT into a TLS copy, and
-      #               plaintext on :443 answers 404 — TLS is required.
-      #   tls=false   the router is not split; it answers PLAINTEXT on :443, and
-      #               the entrypoint middleware chain below STILL APPLIES to it.
-      #
-      # That second measurement is the whole reason this is one flag rather than a
-      # second entrypoint: `cf-request-id`, `cf-security-headers` and `cf-cors`
-      # are attached to the ENTRYPOINT, not to the TLS on it, so turning TLS off
-      # does not drop one of them. Verified by reading the headers off the
-      # plaintext response, not inferred from the configuration.
-      #
-      # WHY ANY ENVIRONMENT WOULD SET `false`. Cloudflare Tunnel validates a
-      # certificate against THE HOSTNAME IN ITS SERVICE URL, and on this host that
-      # URL is an IP literal — `https://127.0.0.1:443`. Both certificates tried
-      # failed for reasons no certificate can fix:
-      #
-      #   estate CA leaf   -> x509: certificate signed by unknown authority
-      #   Origin CA leaf   -> x509: cannot validate certificate for 127.0.0.1
-      #                      because it doesn't contain any IP SANs
-      #
-      # and no Origin CA will ever sign an IP literal. The dashboard settings that
-      # would sidestep it — *No TLS Verify*, *Origin Server Name* — the owner
-      # could not find in their UI, twice. `cloudflared/config.*.yml` in this
-      # repository carries `noTLSVerify: true` and IS NOT WHAT THE RUNNING TUNNEL
-      # READS: the unit is `cloudflared tunnel run --token-file`, so its ingress
-      # arrives from the dashboard over the API.
-      #
-      # So on that deployment the gateway stops offering a certificate at all and
-      # the tunnel's service URL becomes `http://`. Nothing a user touches is
-      # downgraded: browser -> Cloudflare is HTTPS, Cloudflare -> this host is the
-      # tunnel's own encrypted connection, and the only plaintext segment is a
-      # loopback socket inside one machine, on a port bound to 127.0.0.1.
-      - --entrypoints.websecure.http.tls=${CF_GATEWAY_TLS:-true}
+      - --entrypoints.websecure.http.tls=true
       # Every request gets an x-request-id at the edge if it does not have one.
       # This is the id a user reads off an error page and an operator pastes
       # into one search box — a workflow that already works and must keep

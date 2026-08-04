@@ -65,47 +65,89 @@ ingress:
     service: http_status:404
 
   - hostname: cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: aetherholm.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: api.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: create.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: developers.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: emberkin.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: explorer.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: foresight.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: hub.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: market.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: network.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: nimbus.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: p2p.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: pay.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: rpc.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: status.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: tessera.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: trade.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: vault.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: worlds.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   - hostname: worlds-api.cloudsforge.online
-    service: http://127.0.0.1:443
+    service: https://127.0.0.1:443
+    originRequest:
+      noTLSVerify: true
   # cloudflared REQUIRES a catch-all and refuses to start without one. 404 rather
   # than a redirect: a hostname that is not in this file is not one this estate
   # serves, and answering it with anything else invents a surface.

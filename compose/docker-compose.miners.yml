@@ -26,25 +26,22 @@
 # the owner opens a laptop. `--add-host` is required because the apexes are real
 # public names that must resolve to this host's loopback, not to the internet.
 #
-# ── THE trust.crt MOUNT IS NOW INERT, AND IT IS KEPT ON PURPOSE ──────────────
+# ── AND THAT IS WHY BOTH MOUNT `trust.crt` AND NOT `ca.crt` ───────────────────
 #
-# This paragraph used to explain that the mainnet miner had to mount `trust.crt`
-# rather than `ca.crt` because the mainnet gateway terminated on a Cloudflare
-# Origin CA leaf. It does not any more: that leaf never solved the 502 it was
-# installed for — cloudflared validates against the hostname in its service URL,
-# which is `127.0.0.1`, and no Origin CA will ever sign an IP literal — so the
-# gateway now terminates no TLS at all and both miners poll it over `http`.
+# The design above is load-bearing here and cuts both ways: the mainnet miner
+# verifies the MAINNET gateway's certificate on every poll, and that gateway now
+# terminates on a Cloudflare Origin CA leaf rather than the estate leaf, so that
+# Cloudflare Tunnel stops refusing the origin and answering 502 (see
+# `gateway/dynamic/tls.yml`). Left on `ca.crt`, `cf-miner-mainnet` would have
+# stopped producing blocks the moment that certificate changed — a live chain
+# halted by a TLS edit, reported as nothing at all until somebody looked at the
+# height.
 #
-# There is therefore NO CERTIFICATE ON THIS PATH TO VERIFY, and NODE_EXTRA_CA_CERTS
-# below verifies nothing. It is left in place, with the mount, for one reason: it
-# makes `CF_MINER_RPC_URL` a COMPLETE switch. A deployment that terminates TLS
-# points that variable back at `https://` and needs to change nothing else, which
-# is worth more than the tidiness of deleting two inert lines — the failure this
-# file's header describes is a chain that stops silently, and a half-configured
-# way back to TLS is exactly how that happens.
-#
-# NODE_EXTRA_CA_CERTS is read ONCE at startup, so a change here needs
-# `docker compose … up -d` and not just a file rewrite.
+# `trust.crt` is `ca.crt` plus every public root in `gateway/trust/`, rebuilt by
+# `scripts/gateway-cert.sh`. The testnet miner keeps working unchanged for the
+# same reason: the testnet gateway still serves the estate leaf, which is in the
+# bundle. NODE_EXTRA_CA_CERTS is read ONCE at startup, so a change to this file
+# needs `docker compose … up -d` and not just a file rewrite.
 #
 # ── THE KEY IS THE POINT, AND IT IS NOT OPTIONAL ─────────────────────────────
 #
@@ -85,29 +82,7 @@ services:
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
       - "--url"
-      # ── `http`, AND WITHOUT IT THIS CHAIN STOPS ──────────────────────────────
-      #
-      # The gateway on this box terminates no TLS (`CF_GATEWAY_TLS=false`), so an
-      # `https://` poll here would fail every four seconds and the miner would
-      # produce nothing. That is the single most expensive consequence of the
-      # transport change, and it is invisible in the way this file's header warns
-      # about: nothing errors loudly, the height just stops moving.
-      #
-      # The PORT is now explicit because the scheme no longer implies it — `http`
-      # defaults to 80 and the gateway's browser port is 443, still bound to
-      # 127.0.0.1 and reached through the `extra_hosts` entry below.
-      #
-      # THE REASON FOR GOING THROUGH THE GATEWAY IS UNCHANGED and is the whole
-      # point of the header above: this still drives the real router table, the
-      # real `rpc.<apex>` host rule and the real upstream, so a routing regression
-      # still shows up as blocks stopping. What it no longer exercises is a TLS
-      # handshake, because there no longer is one to exercise — the public leg is
-      # Cloudflare's and cannot be driven from this host at all.
-      #
-      # A deployment that does terminate TLS sets `CF_MINER_RPC_URL` back to
-      # `https://rpc.<apex>`; the CA mount below is deliberately left in place so
-      # that variable is the only thing such a deployment has to change.
-      - "${CF_MINER_RPC_URL:-http://rpc.cloudsforge.online:443}"
+      - "https://rpc.cloudsforge.online"
       - "--data"
       - "/minerdata"
       # `hearth` — CHAIN 7411 — because this is the mainnet environment's miner.
@@ -146,12 +121,9 @@ services:
     container_name: cf-miner-testnet
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
-      # Port 10443 is the testnet gateway's browser port (compose/testnet.env),
-      # and `http` for the reason given on the mainnet miner above: that gateway
-      # terminates no TLS either, and an https:// poll here would silently stop
-      # this chain rather than fail loudly.
+      # Port 10443 is the testnet gateway's browser port (compose/testnet.env).
       - "--url"
-      - "${CF_MINER_RPC_URL_TESTNET:-http://rpc.testnet.cloudsforge.online:10443}"
+      - "https://rpc.testnet.cloudsforge.online:10443"
       - "--data"
       - "/minerdata"
       - "--network"
