@@ -1259,6 +1259,7 @@ services:
       <<: [*common-env, *identity-trust]
       BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
+      BILLING_PRICING_URL: http://pricing:4000
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: billing-migrate
     depends_on:
@@ -1273,6 +1274,7 @@ services:
       <<: [*common-env, *identity-trust]
       BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
+      BILLING_PRICING_URL: http://pricing:4000
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       BILLING_IDENTITY_CREDENTIAL: ${BILLING_IDENTITY_CREDENTIAL:-}
@@ -2175,6 +2177,11 @@ services:
       BEACON_TOKEN: estate-only-beacon-breakglass-000000000
       BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000
       BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
+      # The SSO origin the handoff journey hands off TO. Unset, `identity.handoff`
+      # SKIPS rather than guesses an origin — correctly, since a guessed origin would
+      # test nothing and report green. That skip was the last open SEV2 and the last
+      # skipped critical journey on the release gate.
+      BEACON_HANDOFF_ORIGIN: https://hub.${CF_WEB_APEX:-cloudsforge.localtest.me}
       # ── A STATUS PAGE BEHIND A LOGIN IS NOT A STATUS PAGE ────────────────────
       #
       # `BEACON_PUBLIC_STATUS` defaults FALSE (`beacon/src/env.ts:330`) and was set nowhere here,
