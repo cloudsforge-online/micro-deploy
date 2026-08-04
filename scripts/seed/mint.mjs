@@ -56,7 +56,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
-import { api, ok, bad, skip, note, head, ROOT } from './lib.mjs'
+import { api, ok, bad, skip, note, head, ROOT, MINER_DATA } from './lib.mjs'
 
 /**
  * The owner address every order is opened against.
@@ -69,8 +69,12 @@ import { api, ok, bad, skip, note, head, ROOT } from './lib.mjs'
  * nobody controls is a lie about who would own the token.
  */
 function ownerAddress() {
-  const home = process.env.EMBER_HOME || path.join(process.env.HOME || '', '.cloudsforge/ember-testnet')
-  const file = path.join(process.env.EMBER_MINER_DATA || path.join(home, 'miner'), 'coinbase-key.json')
+  // `MINER_DATA` is `lib.mjs`'s, and it looks in `../miner-keys/<network>` —
+  // the layout `compose/docker-compose.miners.yml:134` already declares — before
+  // falling back to the laptop path this function used to be the only reader of.
+  // On the deployment host the laptop path does not exist, so this returned null
+  // and every token order was skipped for want of a key two directories away.
+  const file = path.join(MINER_DATA, 'coinbase-key.json')
   try {
     const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
     return String(raw.address)

@@ -64,14 +64,32 @@ import { APEX, SERVICES, api, bad, head, note, ok } from './lib.mjs'
 export const SURFACES = [
   {
     key: 'foresight',
-    what: 'prediction markets',
+    what: 'OPEN prediction markets',
     service: 'foresight',
-    path: '/markets?limit=200',
+    // ── `?status=open`, AND THE UNFILTERED LIST WOULD HAVE BEEN A CHECK THAT
+    //    COULD NOT FAIL ────────────────────────────────────────────────────────
+    //
+    // This was `/markets?limit=200`. `foresight/src/server.ts:498-503` treats an
+    // absent `status` as NO FILTER, so that read returns drafts, approved markets
+    // and voided test artefacts alike — and `foresight-web/src/pages/markets.tsx:40`
+    // opens on `useState<MarketStatus | null>('open')`. The browse page asks for
+    // open markets and nothing else.
+    //
+    // The two diverge in a state this estate reaches every time: a market cannot
+    // open until its contract is on chain (`markets.ts:417-418` requires
+    // `deploy_state = 'deployed'`), and the seeder skips the deploy whenever the
+    // mining key or the node is out of reach. That leaves nine `approved` rows —
+    // measured today — which the unfiltered read counts and the page does not
+    // show. A check written the easy way would have gone green over an empty
+    // page, which is the exact defect it exists to catch.
+    path: '/markets?status=open&limit=200',
     anon: true,
     pick: (b) => b.markets,
     page: (apex) => `https://foresight.${apex}/`,
     empty:
-      'the Foresight home page renders no questions at all — the surface the owner named first',
+      'the Foresight browse page renders no questions at all — the surface the owner named first. ' +
+      'Markets that exist but are not `open` do not appear on it: check `select status, count(*) ' +
+      'from markets` before concluding nothing was created',
   },
   {
     key: 'market.listings',
@@ -81,7 +99,28 @@ export const SURFACES = [
     anon: true,
     pick: (b) => b.listings,
     page: (apex) => `https://market.${apex}/`,
-    empty: 'the marketplace has nothing for sale',
+    // ── THIS ONE IS RED TODAY, AND IT IS NOT RED FOR WANT OF SEEDING ─────────
+    //
+    // `seed/market.mjs` creates four listings and every one of them stays
+    // `draft`. Activation answers 402 `payment_refused` because
+    // `listings_active_is_escrowed` requires micro-ledger to reserve the item,
+    // the operator holds none, and the only way to change that from the seeder
+    // would be to credit a liability with nothing behind it — the shape that
+    // froze EMBER in this estate. `market-web`'s browse page reads
+    // `status=active` by design, so the drafts are correct, real, and one honest
+    // ledger posting away from being live.
+    //
+    // It is left FAILING rather than softened to "some listing exists in any
+    // state". The marketplace page is empty to a visitor, which is the defect
+    // the owner reported, and a check that went green on four invisible drafts
+    // would be asserting the opposite of what it is for. It can pass — the day
+    // the deposit-and-convert seam funds a seller, it does — so it is a true
+    // statement about a live gap and not a permanent alarm.
+    empty:
+      'the marketplace has nothing for sale. NOTE: the seeder creates four listings and they are ' +
+      'all `draft` — activation needs micro-ledger to escrow the item and the operator holds no ' +
+      'SHARD, so this is the deposit-and-convert seam and not missing content. `select status, ' +
+      'count(*) from listings` shows them',
   },
   {
     key: 'market.collections',

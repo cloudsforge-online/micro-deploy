@@ -133,6 +133,69 @@ export const SERVICES = {
   community: { base: 'http://127.0.0.1:4117', gateway: false },
 }
 
+/* ── the chain, in the places this deployment actually keeps it ─────────────── */
+
+/**
+ * Which EMBER this project is. The same variable `docker-compose.estate.yml`
+ * keys `env/chain.${CF_EMBER_NETWORK}.env` and `LEDGER_RECONCILE_NETWORK` on,
+ * with the same `mainnet` default.
+ */
+export const EMBER_NETWORK = process.env.CF_EMBER_NETWORK || 'mainnet'
+
+/**
+ * The EMBER node, as reachable FROM THE HOST.
+ *
+ * ── THE DEFAULT WAS A LITERAL 8545 IN TWO FILES, AND IT IS THE TESTNET THAT
+ *    SUFFERS FOR IT ───────────────────────────────────────────────────────────
+ *
+ * `seed/foresight.mjs` defaulted to `http://127.0.0.1:8545`, which is the
+ * MAINNET seed on this host — `compose/env/traefik.testnet.env` puts the testnet
+ * node on 8745 and says at length why the two must never be confused: "a miner
+ * pointed at testnet crediting blocks on the other environment's ledger… nothing
+ * can detect it from outside: both nodes speak the same protocol and both answer
+ * correctly, about the wrong chain." A seeder carrying its own 8545 would have
+ * funded testnet market deployers out of the mainnet miner's balance.
+ *
+ * So it is READ from the gateway's own env file, per environment, exactly as
+ * `API_HOST` is — one fact, one place. `host.docker.internal` is rewritten to
+ * loopback because that value is written for a CONTAINER and this runs on the
+ * host; the port, which is the part that differs, is taken as it is found.
+ */
+export const EMBER_RPC_HOST = readEmberRpc()
+
+function readEmberRpc() {
+  if (process.env.EMBER_HOST_RPC) return process.env.EMBER_HOST_RPC
+  const upstream = fromTraefikEnv('CF_RPC_UPSTREAM')
+  if (upstream) return upstream.replace('host.docker.internal', '127.0.0.1')
+  return 'http://127.0.0.1:8545'
+}
+
+/**
+ * The directory holding `coinbase-key.json` for THIS environment's miner.
+ *
+ * `compose/docker-compose.miners.yml:134,161` already declares the deployed
+ * layout — `${CF_MINER_KEYS}/mainnet` and `${CF_MINER_KEYS}/testnet` — and this
+ * is the same expression rather than a second convention. Before it, the seeders
+ * looked only at `~/.cloudsforge/ember-testnet/miner`, a developer-laptop path
+ * that does not exist on the deployment host, so every market was created,
+ * approved and then SKIPPED at the deploy step for want of a key that was
+ * sitting two directories away. An approved market does not appear on the browse
+ * page, so the surface stayed empty and the seeder reported a reasoned skip.
+ *
+ * The laptop path remains the last fallback, unchanged, for the machine where it
+ * is right.
+ */
+export const MINER_DATA = readMinerData()
+
+function readMinerData() {
+  if (process.env.EMBER_MINER_DATA) return process.env.EMBER_MINER_DATA
+  const keys = process.env.CF_MINER_KEYS || path.resolve(ROOT, '../miner-keys')
+  const perNetwork = path.join(keys, EMBER_NETWORK)
+  if (fs.existsSync(path.join(perNetwork, 'coinbase-key.json'))) return perNetwork
+  const home = process.env.EMBER_HOME || path.join(process.env.HOME || '', '.cloudsforge/ember-testnet')
+  return path.join(home, 'miner')
+}
+
 export const COMPOSE = process.env.COMPOSE || 'compose/docker-compose.estate.yml'
 export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test'
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correct-horse-battery-staple-42'
