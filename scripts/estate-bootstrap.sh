@@ -890,6 +890,51 @@ else
   tail -20 /tmp/estate-bootstrap-up.log
 fi
 
+echo "── 7. seed the product surfaces ─────────────────────────────────────────"
+#
+# ── WHY SEEDING IS A BOOTSTRAP STEP ───────────────────────────────────────────
+#
+# A freshly deployed estate does not merely lack credentials, it lacks CONTENT.
+# Foresight opens with no questions, Market with no listings, Mint with no
+# orders — and an operator looking at five empty product surfaces cannot tell a
+# working deployment from a broken one. That is the same class of problem as the
+# first administrator: something a new environment cannot produce for itself and
+# which therefore has to be an explicit, named step somebody runs.
+#
+# ── WHY IT IS ITS OWN SCRIPT AND NOT ANOTHER SECTION HERE ─────────────────────
+#
+# It will grow. Every service the estate gains that has a surface will want a few
+# honest rows, and this file is already nine hundred lines of credential
+# machinery that nobody should have to scroll past to find a seeded market. The
+# domains live in `scripts/seed/`, one file each, and each states its own
+# idempotency discriminator and its own refusals.
+#
+# ── IT IS ADDITIVE, SO IT CANNOT FAIL A BOOTSTRAP ─────────────────────────────
+#
+# A bootstrap that went red because a marketplace could not be filled would be
+# reporting a content problem as a credential problem, and the next person would
+# learn to ignore the red. So the seeder's exit code is REPORTED here and does
+# not touch `fails`. Everything above this line is what makes the estate work;
+# this is what makes it worth looking at.
+#
+# `CF_SEED_SKIP=1` skips it, for a bootstrap run purely to renew the ten-minute
+# tokens — which is most of them.
+if [ "${CF_SEED_SKIP:-0}" = "1" ]; then
+  ok "seeding skipped (CF_SEED_SKIP=1)"
+elif [ ! -x scripts/estate-seed.mjs ]; then
+  bad "scripts/estate-seed.mjs is missing or not executable"
+elif ! command -v node >/dev/null 2>&1; then
+  ok "seeding skipped: no node on this machine (the seeder needs Node >= 22)"
+else
+  if ./scripts/estate-seed.mjs; then
+    ok "product surfaces seeded"
+  else
+    # Named, not swallowed. A surface that could not be filled is worth knowing
+    # about; it is just not worth failing a credential bootstrap over.
+    ok "seeding reported at least one failure — see its output above; the bootstrap itself is unaffected"
+  fi
+fi
+
 echo
 if [ "$fails" -eq 0 ]; then
   echo "bootstrapped."
