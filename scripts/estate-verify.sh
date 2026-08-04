@@ -2678,5 +2678,149 @@ left=$(lansql -c "select count(*) from rum_samples where app like '$marker%'")
   && ok "the probe rows are removed — this section leaves the estate as it found it" \
   || bad "the probe rows were NOT removed (${left:-unreadable} left); this run has polluted the telemetry plane"
 
+echo "── THE PAGES HAVE SOMETHING ON THEM ─────────────────────────────────────"
+#
+# ── THE DEFECT THIS CLOSES, AND WHY NOTHING ABOVE COULD SEE IT ────────────────
+#
+# Every gateway check in this file asserts that a route ANSWERS. Not one asks
+# whether it answers with anything. `https://api.<apex>/v1/listings` returning
+# `200 {"listings":[]}` passes the surface loop above in every respect — it is
+# not a 404, not a 502, it is JSON, and it is not the bundle's shell — and it is
+# an empty marketplace.
+#
+# On 2026-08-05 that was the state of both live estates: `foresight.markets` 0,
+# `market.listings` 0, `market.collections` 0, `mint.tokens` 0,
+# `community.communities` 0, `nda.worlds` 0, `beacon.probes` 0. The seeding step
+# in `estate-bootstrap.sh` had never once run, because the host has no Node and
+# that branch reported the skip as `ok`. Five empty products, green for months,
+# and the only way anybody found out was by opening a page.
+#
+# ── WHY IT SHELLS OUT INSTEAD OF CURLING SEVEN URLS HERE ──────────────────────
+#
+# `scripts/seed/lib.mjs` already holds the map: where each service is, which four
+# have NO gateway route and must be read on loopback, and which read corresponds
+# to which surface. Restating that in bash would be a second copy of it, and the
+# copy that goes stale is always the one a person is not looking at. `--check`
+# writes nothing, reads each surface through the same front door its own page
+# uses, and is anonymous wherever a visitor is.
+#
+# ── AND WHY IT IS FATAL HERE AND NOT IN THE BOOTSTRAP ─────────────────────────
+#
+# `estate-bootstrap.sh` reports this and does not fail on it, deliberately: a
+# credential bootstrap that went red because a marketplace was empty would be
+# reporting a content problem as a credential problem, and the next person would
+# learn to ignore the red. THIS file is where a content problem is a failure —
+# it is the estate's own suite, and "the product has nothing in it" is exactly
+# the kind of thing a suite exists to refuse to pass.
+if ! SEED_NODE=$(./scripts/node-tool.sh 2>/tmp/estate-node-tool.log); then
+  bad "no Node >= 22 could be found or fetched, so THE PAGES WENT UNCHECKED — see /tmp/estate-node-tool.log. This is the same missing interpreter that left every surface empty; it is a failure here and not a skip"
+else
+  if "$SEED_NODE" ./scripts/estate-seed.mjs --check >/tmp/estate-seed-check.log 2>&1; then
+    ok "every product surface has content — $(grep -c '  ok ' /tmp/estate-seed-check.log) read back through the front door"
+  else
+    # Each empty surface named on its own line rather than one summary failure:
+    # "content is missing" is not actionable, "the marketplace has nothing for
+    # sale" is, and the count of failures should match the count of empty pages.
+    while IFS= read -r line; do
+      bad "$line"
+    done < <(sed 's/\x1b\[[0-9;]*m//g' /tmp/estate-seed-check.log | grep -E 'FAIL' | sed 's/^ *FAIL *//')
+    grep -qE 'FAIL' /tmp/estate-seed-check.log \
+      || bad "estate-seed.mjs --check exited non-zero and named nothing — see /tmp/estate-seed-check.log"
+  fi
+fi
+
+echo "── THE FAUCET, AND THE CHAIN THIS ESTATE ACTUALLY RUNS ──────────────────"
+#
+# ── WHY A ROUTE THAT 502s IS THE WORST OF THE THREE ANSWERS ───────────────────
+#
+# `micro-faucet` will only ever run against the EMBER testnet. `faucet/src/env.ts:63`
+# is `export const NETWORK = 'testnet' as const`, annotated that way so that
+# `NETWORK === 'mainnet'` is a COMPILE ERROR rather than a branch, and
+# `faucet/src/index.ts:108-120` reads `eth_chainId` at boot and exits on anything
+# that is not 7412. That is right and is not being weakened: a faucet is an
+# unauthenticated withdrawal endpoint that happens to be pointed at a worthless
+# chain, and the mainnet EMBER on this host is mined, publicly reachable and
+# backs the ledger.
+#
+# So both faucet services carry `profiles: ["ember-testnet"]` and the mainnet
+# estate runs none. **The gateway did not know that.** `cf-api-network` routed
+# `network.<apex>/v1` to `cf-svc-faucet` unconditionally, so on mainnet:
+#
+#     https://network.cloudsforge.online/faucet     -> 200 text/html
+#     https://network.cloudsforge.online/v1/faucet  -> 502    (measured 2026-08-05)
+#
+# A 502 is the estate saying "there is a faucet here and it has fallen over".
+# There is no mainnet faucet and there is never going to be one, so the honest
+# answer is the one `estate-web.yml`'s own rule already prescribes for a surface
+# whose backend is absent: no `/v1` router, and a 404 from the bundle's nginx,
+# which means "there is no such service". Nothing failed on the 502. A person
+# found it.
+#
+# ── AND THE CHAIN ID, WHICH WAS SWAPPED EARLIER TODAY ─────────────────────────
+#
+# The estate briefly had mainnet and testnet the wrong way round. Nothing at this
+# level would have noticed: both nodes speak an identical protocol and answer
+# every request correctly, about the wrong chain. `faucet/src/env.test.ts:46-61`
+# pins the faucet's own half — CHAIN_ID is 7412, mainnet is 7411, and the two are
+# asserted to differ — so the SERVICE could not have been fooled. What had no
+# check was the ESTATE: which chain this project's node is actually on, and
+# whether a faucet is published for it.
+FAUCET_RUNNING=$(docker compose -f "$COMPOSE" ps --status running --services 2>/dev/null | grep -cx faucet)
+
+# 1. The node this environment points at is the chain this environment claims.
+#    `ember_chain_dec` is derived from CF_EMBER_NETWORK at the head of this file.
+faucet_chain=$(curl -s --max-time 5 -X POST -H 'content-type: application/json' \
+  --data-binary '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$EMBER_RPC_HOST" 2>/dev/null \
+  | sed -n 's/.*"result":"\([^"]*\)".*/\1/p')
+if [ -z "$faucet_chain" ]; then
+  ok "no EMBER node at $EMBER_RPC_HOST, so the faucet's chain agreement is not asserted (the chain section above already reports this)"
+elif [ "$faucet_chain" != "$ember_chain_want" ]; then
+  bad "this estate is configured as EMBER $EMBER_NETWORK ($ember_chain_dec) but $EMBER_RPC_HOST answers chain $faucet_chain — every service in this project, the faucet included, is talking to the WRONG CHAIN and answering correctly about it"
+else
+  ok "the node at $EMBER_RPC_HOST is EMBER $EMBER_NETWORK ($ember_chain_dec), which is what this project is configured for"
+fi
+
+# 2. A faucet runs here if and only if this is the testnet.
+case "$EMBER_NETWORK:$FAUCET_RUNNING" in
+  testnet:0)
+    bad "this is the EMBER testnet and NO faucet container is running — a testnet whose coins only the miner's key can spend is not a testnet anybody else can use. Bring the estate up with --env-file compose/testnet.env, which sets COMPOSE_PROFILES=ember-testnet" ;;
+  mainnet:0)
+    ok "no faucet on the mainnet estate, which is the point: faucet/src/env.ts:63 fixes NETWORK to 'testnet' at compile time and mainnet EMBER is mined money" ;;
+  mainnet:*)
+    bad "a faucet container is RUNNING on the mainnet estate. It cannot dispense — index.ts:108-120 exits on any chain that is not 7412 — so this is a crash loop, and it means COMPOSE_PROFILES carries ember-testnet in an environment whose chain is $ember_chain_dec" ;;
+  *)
+    ok "a faucet runs on the EMBER testnet estate" ;;
+esac
+
+# 3. And the gateway agrees with 2, which is the half that was wrong.
+#    `network.<apex>/v1/faucet` is the faucet's terms — the first call the drip
+#    form makes (`network-site/src/pages/faucet.tsx`). Its CONTENT TYPE is the
+#    invariant, for the reason the operator-console block above gives: a 200
+#    carrying the SPA's index.html would pass a status-code check and fail in the
+#    client as a parse error naming the wrong file.
+fct=$(gwv "network.$WEB_APEX" /v1/faucet '%{content_type}')
+fcode=$(gwv "network.$WEB_APEX" /v1/faucet '%{http_code}')
+if [ "$FAUCET_RUNNING" -gt 0 ]; then
+  case "$fct:$fcode" in
+    *json*:200) ok "https://network.$WEB_APEX/v1/faucet → the faucet's terms ($fcode $fct)" ;;
+    *json*)     bad "https://network.$WEB_APEX/v1/faucet answered $fcode — a faucet is running but its terms cannot be read, so the drip form renders disabled and says the faucet did not answer" ;;
+    *)          bad "https://network.$WEB_APEX/v1/faucet answered $fcode $fct — a faucet is running and the gateway is not putting it on the hostname the form posts to" ;;
+  esac
+else
+  case "$fcode" in
+    502|503)
+      bad "https://network.$WEB_APEX/v1/faucet answered $fcode — THERE IS NO FAUCET IN THIS ESTATE AND THE GATEWAY IS ADVERTISING ONE. A 5xx reads as 'the faucet fell over'; the true answer is that a $EMBER_NETWORK estate has no faucet by design. Gate cf-api-network on CF_EMBER_NETWORK in gateway/dynamic/estate-web.yml" ;;
+    404)
+      case "$fct" in
+        *json*) ok "https://network.$WEB_APEX/v1/faucet → 404 from the bundle's nginx, which honestly means there is no faucet on a $EMBER_NETWORK estate" ;;
+        *)      bad "https://network.$WEB_APEX/v1/faucet answered 404 $fct — the right status from the wrong thing; a drip form parsing this gets a parse error and blames itself" ;;
+      esac ;;
+    200)
+      bad "https://network.$WEB_APEX/v1/faucet answered 200 $fct with no faucet in this estate — either the SPA is shadowing the path (a 200 of index.html where JSON was expected) or something else has taken the route" ;;
+    *)
+      bad "https://network.$WEB_APEX/v1/faucet answered $fcode $fct — no faucet runs here, so this should be the bundle's 404 and it is not" ;;
+  esac
+fi
+
 [ "$fails" -eq 0 ] && { echo; echo "all seams verified"; exit 0; }
 echo; echo "$fails check(s) failed"; exit 1

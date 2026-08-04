@@ -49,7 +49,59 @@ export const ROOT = path.resolve(HERE, '../..')
  */
 export const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/trust.crt')
 
-export const APEX = process.env.CF_WEB_APEX || 'cloudsforge.localtest.me'
+/**
+ * The gateway's own env file — `env/traefik.env`, or `env/traefik.testnet.env`
+ * when `CF_TRAEFIK_ENV` selects it, which is the same expression
+ * `compose/docker-compose.gateway.yml:50`, `scripts/gateway-reload.sh:100` and
+ * `scripts/release-deploy.sh:78` all use. One rule, four readers.
+ */
+const TRAEFIK_ENV = path.join(
+  ROOT,
+  'compose/env',
+  `${process.env.CF_TRAEFIK_ENV || 'traefik'}.env`,
+)
+
+/**
+ * One variable out of the file the GATEWAY actually loads.
+ *
+ * `.pop()` rather than `[0]`: an env file's LAST assignment wins, which is what
+ * docker compose does with it, and reading the first would take a value the
+ * gateway is not using.
+ */
+function fromTraefikEnv(name) {
+  try {
+    const line = fs
+      .readFileSync(TRAEFIK_ENV, 'utf8')
+      .split('\n')
+      .filter((l) => new RegExp(`^${name}=`).test(l))
+      .pop()
+    if (line) return line.slice(name.length + 1).trim() || null
+  } catch {
+    /* the file is optional on a developer machine; the caller has a default */
+  }
+  return null
+}
+
+/**
+ * The apex the fifteen browser surfaces are served on — READ, not guessed.
+ *
+ * ── THIS WAS `process.env.CF_WEB_APEX || 'cloudsforge.localtest.me'` ─────────
+ *
+ * and it was wrong on the only host that matters. `CF_API_HOST` below has always
+ * been read out of the gateway's env file, with a comment saying why guessing it
+ * "would be right today and wrong the first time somebody deploys under a real
+ * apex" — and the line above it then guessed the apex. On the live estate that
+ * produced a seeder addressing `foresight.cloudsforge.localtest.me` (404, the
+ * public wildcard resolves to loopback and nothing there serves it) while
+ * addressing `api.cloudsforge.online` correctly, from the same run. Two hosts,
+ * one deployment, one of them invented.
+ *
+ * The default is unchanged for a machine with no gateway env file at all, which
+ * is a developer's laptop and is where `localtest.me` is the right answer.
+ */
+export const APEX =
+  process.env.CF_WEB_APEX || fromTraefikEnv('CF_WEB_APEX') || 'cloudsforge.localtest.me'
+
 /**
  * The API host, read from the file the GATEWAY reads rather than guessed.
  *
@@ -58,23 +110,8 @@ export const APEX = process.env.CF_WEB_APEX || 'cloudsforge.localtest.me'
  * nothing in Traefik's log. Guessing `api.${APEX}` would be right today and
  * wrong the first time somebody deploys under a real apex.
  */
-export const API_HOST = readApiHost()
-
-function readApiHost() {
-  if (process.env.CF_API_HOST) return process.env.CF_API_HOST
-  const file = path.join(ROOT, 'compose/env/traefik.env')
-  try {
-    const line = fs
-      .readFileSync(file, 'utf8')
-      .split('\n')
-      .filter((l) => /^CF_API_HOST=/.test(l))
-      .pop()
-    if (line) return line.slice('CF_API_HOST='.length).trim()
-  } catch {
-    /* fall through to the derived default, which estate-up.sh also suggests */
-  }
-  return `api.${APEX}`
-}
+export const API_HOST =
+  process.env.CF_API_HOST || fromTraefikEnv('CF_API_HOST') || `api.${APEX}`
 
 /**
  * Where each service is, and whether the request crosses the gateway.
