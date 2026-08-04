@@ -982,7 +982,10 @@ else
     ok "every product surface has content"
   else
     ok "at least one product surface is still EMPTY after seeding — see /tmp/estate-seed-check.log; ./scripts/estate-verify.sh fails on this"
-    grep -E 'is EMPTY|status page' /tmp/estate-seed-check.log | head -10
+    # Only the failures. `status page` was in this pattern and matched the OK
+    # line too, so a run with one empty surface printed a green line underneath
+    # its own failure summary.
+    sed 's/\x1b\[[0-9;]*m//g' /tmp/estate-seed-check.log | grep -E '^ *FAIL' | head -10
   fi
 fi
 
