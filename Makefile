@@ -116,6 +116,21 @@ check-surfaces: ## Every registry surface has a gateway route, and every route a
 	@# wrong, which is exactly why a comment could never have caught it.
 	@python3 scripts/surface-routes.py
 
+gateway-reload: ## Validate gateway/dynamic in a throwaway Traefik, then reload the live one
+	@# NOT `docker compose restart gateway`. That reloads whatever is on disk,
+	@# including a directory that does not render — and a template failure rejects
+	@# EVERY file in gateway/dynamic/, which took every surface in this estate
+	@# down at once for three minutes. This renders a copy under the same Traefik
+	@# image first and refuses to touch the live gateway unless it comes up clean.
+	@./scripts/gateway-reload.sh
+
+check-gateway-fresh: ## Is the running gateway serving the files that are on disk?
+	@# The file provider's watch does not fire on a virtiofs mount, so an edit to
+	@# gateway/dynamic/ can sit on disk indefinitely while the gateway routes the
+	@# previous table — and every check in this repository would pass, against
+	@# configuration nobody can read any more. This is the one that notices.
+	@./scripts/gateway-reload.sh --check
+
 check-cert: ## Mint the gateway's local CA and leaf, and verify the chain
 	@# The estate was only ever verified with `curl -k` and `ignoreHTTPSErrors`,
 	@# so its transport had never been exercised the way a person exercises it.

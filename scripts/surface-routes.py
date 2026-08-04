@@ -67,6 +67,51 @@ WHAT IT CHECKS
      in `{{ if env … }}` is present in the file whether or not it exists at
      runtime — so without this, a conditional router is a route the check
      believes in and the gateway does not.
+  7. No router, service or middleware is DEFINED TWICE in `gateway/dynamic/`.
+     Traefik's file provider merges a directory into one map per section and
+     keeps the FIRST definition of a name, so a second one does not conflict,
+     does not error and does not override — it is DROPPED. See below.
+
+TWO ROUTERS OF ONE NAME IS ONE ROUTER, AND NOBODY IS TOLD WHICH
+---------------------------------------------------------------
+Check 7 was added the same way check 4 was: after this script passed clean over
+the defect it should have been the thing to catch.
+
+`cf-api-worlds` was a router in `public-api.yml` — `api.<apex>` with the four
+worlds prefixes — and, since `worlds-api.<apex>` was routed, a DIFFERENT router
+of the same name in `estate-web.yml`. The file provider iterates the directory
+in sorted filename order and skips a name it has already seen, so `estate-web`
+won on the `e`, `public-api`'s router never loaded, and the estate's public API
+lost `/v1/titles`, `/v1/players`, `/v1/provisions` and `/v1/seasons`. All four
+answered 502 from `cf-api-unrouted` — the catch-all, doing exactly its job on a
+request that should never have reached it.
+
+The whole announcement was one line, once, at startup:
+
+    WRN HTTP router already configured, skipping
+        filename=public-api.yml providerName=file routerName=cf-api-worlds
+
+in a container whose log is otherwise the access log. Nothing polls it, no
+alert reads it, and it does not repeat.
+
+Checks 1-6 could not have caught it, and each reason is a real limit:
+
+  * Check 1 passed: `api.<apex>` HAS a router — six of them, and the file that
+    defines them is registered wholesale by `api_host_subdomain()`.
+  * Check 2 passed: `api` is a declared registry subdomain.
+  * Check 4 passed: both names are DEFINED. That check asks whether prose
+    describes something real; this one is the opposite failure — two real
+    definitions, one of which does not exist at runtime.
+  * Checks 3, 5 and 6 never look at a router name at all.
+
+Every one of them reads the FILE, and the file was right. What was wrong was
+what the file provider MADE of two files, which is why this check is the only
+one here that compares the directory against itself.
+
+It is namespaced by section, deliberately: `cf-api-worlds` is legitimately both
+a router and a service in `public-api.yml:154` and `:206`, because Traefik keys
+those in different maps. Flagging that pair would be a check firing on correct
+configuration, which check 3's docstring already records as worse than no check.
 
 A ROUTER DESCRIBED IN PROSE IS NOT A ROUTER
 -------------------------------------------
@@ -361,6 +406,74 @@ def described_but_undefined():
         )
 
 
+SECTION_RE = re.compile(r"^([a-z]+):\s*$")
+SUBSECTION_RE = re.compile(r"^  ([a-zA-Z]+):\s*$")
+
+
+def defined_twice():
+    """── 7: no name is DEFINED TWICE in this directory ─────────────────────────
+
+    THE FAILURE IS THAT THERE IS NO FAILURE. Two routers of one name do not
+    conflict and do not merge: `pkg/provider/file/file.go` walks the directory in
+    sorted filename order and, for a name already present, logs one WARN and moves
+    on. The second definition is discarded in full — rule, priority, middlewares,
+    upstream — and everything downstream of it behaves exactly as if it had never
+    been written. See the module docstring for the instance that cost the public
+    API four resources.
+
+    Which of the two survives is decided by FILENAME ORDER, so the same directory
+    can route differently after a file is renamed, and nothing in the diff would
+    say so. That is the property this check exists to remove: not "a duplicate is
+    wrong" but "a duplicate makes the routing order-dependent".
+
+    Namespaced by `<section>.<subsection>` — `http.routers`, `http.services`,
+    `http.middlewares`, `tcp.routers`, `tls.stores` — because Traefik keys each
+    map separately and a router MAY share a name with its own service. It reads
+    the files by line rather than with a YAML parser for the reason check 4 gives:
+    the file provider renders Go template actions BEFORE parsing, so on disk these
+    are templates and not YAML. Line-reading also means a router inside an
+    `{{ if env … }}` is counted, which is correct — a conditional does not make a
+    name safe to reuse, it makes the collision depend on the environment too.
+    """
+    directory = WEB_MAP.parent
+    if not directory.is_dir():
+        bad(f"{directory} is not a directory — the duplicate-definition check cannot run")
+        return
+    seen = {}
+    for path in sorted(directory.glob("*.yml")):
+        section = subsection = None
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                continue
+            m = SECTION_RE.match(line)
+            if m:
+                section, subsection = m.group(1), None
+                continue
+            m = SUBSECTION_RE.match(line)
+            if m:
+                subsection = m.group(1)
+                continue
+            m = DEFINITION_RE.match(line)
+            if m and section and subsection:
+                key = (f"{section}.{subsection}", m.group(1))
+                seen.setdefault(key, []).append(f"{path.name}:{lineno}")
+    if not seen:
+        bad(f"no definition found anywhere in {directory.name}/ — this check reads router, "
+            f"service and middleware names, and finding none means it is asserting nothing")
+        return
+    for (namespace, name), sites in sorted(seen.items()):
+        if len(sites) < 2:
+            continue
+        kept, dropped = sites[0], sites[1:]
+        bad(
+            f"'{name}' is defined {len(sites)} times under `{namespace}` — {', '.join(sites)}. "
+            f"Traefik's file provider keeps the FIRST by sorted filename ({kept}) and SILENTLY "
+            f"DROPS the rest ({', '.join(dropped)}), logging one WARN at startup and nothing "
+            f"afterwards. Everything the dropped definition routes is unreachable, and which one "
+            f"survives depends on what the files are called. Rename one of them"
+        )
+
+
 TEMPLATE_ENV_RE = re.compile(r'\{\{\s*(?:if\s+)?env\s+"([A-Z0-9_]+)"\s*\}\}')
 ENV_DIR = ROOT / "compose" / "env"
 
@@ -610,6 +723,9 @@ def main():
 
     # ── 6: every template variable the gateway reads is set in every env file ─
     env_vars_are_set()
+
+    # ── 7: no name defined twice — a dropped router is not a failed one ───────
+    defined_twice()
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:

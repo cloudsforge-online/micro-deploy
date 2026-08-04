@@ -1697,6 +1697,34 @@ else
   bad "no gateway on https://…:$GW_PORT — run ./scripts/estate-up.sh, or 'docker compose -p cfmicro -f compose/docker-compose.telemetry.yml -f compose/docker-compose.gateway.yml -f compose/docker-compose.estate-gateway.yml up -d'"
 fi
 
+# ── AND IS IT ANSWERING FROM THE FILES THAT ARE ON DISK? ──────────────────────
+#
+# Answering is not the same as answering from the current configuration, and the
+# difference is invisible from outside: every assertion below drives the ROUTING,
+# so a gateway running a router table from an hour ago passes or fails this suite
+# on rules nobody can read any more. The failure that costs is not the red one —
+# it is the GREEN run that verified configuration that no longer exists, and then
+# the edit that gets reverted because "it did not work".
+#
+# `--providers.file.watch=true` does not fire on this host: the dynamic directory
+# is a virtiofs bind mount out of a Lima VM, and virtiofs forwards no host-side
+# inotify events into the guest. Measured, and written up in the script this
+# calls. It IS correct on a Linux host, which is why the flag stays.
+#
+# Cheap enough to run every time — two numbers and a digest, no network — and it
+# is here rather than only in the deploy path because the person who needs to be
+# told is the one reading a result, not the one who ran the deploy.
+if [ -x ./scripts/gateway-reload.sh ]; then
+  if reload_out=$(./scripts/gateway-reload.sh --check 2>&1); then
+    ok "the gateway is serving the configuration that is on disk"
+  else
+    bad "the gateway is running STALE configuration — every routing assertion below is about a router table that is no longer what this repository says. Run ./scripts/gateway-reload.sh"
+    printf '%s\n' "$reload_out" | sed 's/^/     /'
+  fi
+else
+  bad "scripts/gateway-reload.sh is missing or not executable — nothing here can tell whether the gateway is serving the current route map"
+fi
+
 # Every surface on its registry hostname. The subdomain is the `subdomain` field
 # of that surface's row in ui/packages/ui/src/surfaces.ts — which is why Forge
 # Create is `create.` though its repository is micro-mint-web, and the developer

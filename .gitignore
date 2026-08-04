@@ -39,3 +39,17 @@ compose/docker-compose.release.yml
 # files are derived — a committed certificate outliving the key that signed it is
 # the stale-artefact failure this repository keeps finding.
 gateway/certs/
+
+# scripts/gateway-reload.sh's two working files, both DERIVED and both under the
+# repository rather than /tmp for a reason it records at length: /tmp is not in
+# the Lima VM's shared set, so a bind mount of it appears inside the container as
+# an existing, empty, readable directory. The validator "passed" over nothing.
+#
+# `.gateway-validate/` is a copy of gateway/dynamic/ that a throwaway Traefik
+# renders before the live one is touched; it is deleted on every exit path.
+# `.gateway-loaded` is one line — the reload timestamp and the digest of the
+# directory at that reload — and is a CACHE, never an authority: a missing or
+# stale one falls through to "stale", so deleting it can only cause an
+# unnecessary reload and never a missed one.
+.gateway-validate/
+.gateway-loaded

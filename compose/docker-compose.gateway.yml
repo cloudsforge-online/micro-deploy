@@ -109,6 +109,29 @@ services:
       # the CORS list. Policy belongs in a file under review, not in a label on
       # the service it is supposed to constrain.
       - --providers.file.directory=/etc/traefik/dynamic
+      # ── THE WATCH IS TRUE AND, ON A MAC, IT NEVER FIRES ──────────────────────
+      #
+      # Left on deliberately, and the reason it cannot simply be believed is
+      # written here rather than discovered again. `gateway/dynamic/` reaches this
+      # container as a bind mount out of a Lima VM — `/proc/mounts` inside it says
+      # `lima-… /etc/traefik/dynamic virtiofs ro`, and `colima status` says
+      # `mountType: virtiofs`. virtiofs does not forward host-originated
+      # filesystem change notifications into the guest, so the inotify watch
+      # Traefik registers here is on a filesystem that will never tell it
+      # anything. The write happens on macOS; the watcher is in Linux.
+      #
+      # Measured against this estate: a file written at epoch 1785837810 left the
+      # gateway reporting `traefik_config_last_reload_success 1785836079` and
+      # routing the old table twenty seconds later. It changed only on restart.
+      #
+      # The flag stays because it is CORRECT where this estate deploys — a Linux
+      # host, where this is a real bind mount and inotify works — and turning it
+      # off would break reload there to describe a developer machine. What closes
+      # the gap instead is `scripts/gateway-reload.sh`: `--check` compares this
+      # exact metric against the newest mtime under gateway/dynamic/ and fails
+      # when the gateway is behind, and it runs in `estate-up.sh` and in every
+      # `estate-verify.sh`. The state announces itself rather than being
+      # something a person has to suspect.
       - --providers.file.watch=true
 
       # --- entrypoints -------------------------------------------------------

@@ -270,6 +270,33 @@ fi
 # instantaneous, and a loop here would hide a genuinely dead provider.
 sleep 3
 
+# ── AND THE WATCH IS THE PART THAT DOES NOT WORK HERE ─────────────────────────
+#
+# The comment above was written believing the file provider's watch picks up an
+# edit. On this host it does not, and the reason is the mount rather than
+# Traefik: `gateway/dynamic/` is a virtiofs bind mount out of a Lima VM
+# (`colima status` says `mountType: virtiofs`), and virtiofs forwards no
+# host-originated inotify event into the guest. The watcher is registered on a
+# filesystem that will never tell it anything.
+#
+# `docker compose up -d` does NOT close the gap, and that is the trap this
+# closes: compose only recreates a container whose own definition changed, and
+# editing a file INSIDE a bind mount changes nothing compose can see. So the
+# ordinary "edit a router, run estate-up.sh" loop brings up an estate whose
+# gateway is still routing the previous table, and the step below would then
+# verify it and report green.
+#
+# So: ask, and only reload if the answer is no. Asking is two numbers and a
+# digest; reloading unconditionally would restart the gateway on every run of
+# this script and drop every connection through it for no reason.
+if ! ./scripts/gateway-reload.sh --check >/dev/null 2>&1; then
+  echo "  the gateway is serving configuration older than gateway/dynamic/ — reloading it"
+  ./scripts/gateway-reload.sh || {
+    echo "the gateway's dynamic directory does not render; the surfaces would be unreachable" >&2
+    exit 1
+  }
+fi
+
 # ── 3c. THE SEEDERS ───────────────────────────────────────────────────────────
 #
 # A chain alone makes the solvency check compare 0 against 0, which is the

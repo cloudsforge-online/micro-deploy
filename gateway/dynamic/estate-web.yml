@@ -295,7 +295,36 @@ http:
     # THE WHOLE HOST, not `PathPrefix(/v1)`. Nothing serves a bundle at `worlds-api.<apex>` — it
     # is an API hostname with no surface on it — so there is no second router for a path to lose a
     # priority tie against, and enumerating prefixes would be a copy of worlds' route table.
-    cf-api-worlds:
+    #
+    # ── AND THE NAME IS `cf-api-worlds-api`, NOT `cf-api-worlds`, WHICH IS NOT COSMETIC ──
+    #
+    # It was `cf-api-worlds` when this router was written, and `public-api.yml:154` has been a
+    # DIFFERENT router of that same name since the public API existed. Traefik's file provider
+    # merges a directory into ONE router map and does not merge two entries into one name: the
+    # first file wins by sorted filename and the rest are dropped. `estate-web.yml` sorts before
+    # `public-api.yml`, so THIS router silently deleted the public API's worlds router, and
+    # `api.<apex>/v1/titles`, `/v1/players`, `/v1/provisions` and `/v1/seasons` fell through to
+    # `cf-api-catchall` and answered 502 from the unrouted upstream. Measured, not deduced:
+    #
+    #     WRN HTTP router already configured, skipping
+    #         filename=public-api.yml providerName=file routerName=cf-api-worlds
+    #
+    # One WARN line, at startup, in a container whose logs are ninety-nine percent access log.
+    # Nothing failed, nothing 404'd in a way that looked like configuration, and four public
+    # resources were simply gone. Counted in a throwaway Traefik over this directory: 55 routers
+    # before the rename, 56 after, and the one that appears is the public API's.
+    #
+    # The name follows the rule the rest of this section already uses and only this router broke:
+    # a router here is named for the SUBDOMAIN it serves, and the subdomain is `worlds-api`.
+    # That is also why `cf-api-market-host`, `cf-api-trade-host` and `cf-api-worlds-host` carry a
+    # suffix — they are `market.<apex>/v1`, not `api.<apex>/v1/listings`, and the bare names
+    # belong to `public-api.yml`. Renaming is the whole fix; both routers are correct and both
+    # are wanted.
+    #
+    # `scripts/surface-routes.py` check 7 now fails on any name defined twice in this directory,
+    # so this cannot recur quietly — it was invisible to checks 1-6 because every one of them
+    # reads the FILE, and the file contained both routers exactly as intended.
+    cf-api-worlds-api:
       rule: 'Host(`worlds-api.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
       entryPoints: [websecure]
