@@ -34,6 +34,12 @@ ok()  { printf '  \033[32mok\033[0m   %s\n' "$1"; }
 bad() { printf '  \033[31mFAIL\033[0m %s\n' "$1"; rc=1; }
 rc=0
 
+# A throwaway used to measure the entrypoint split left this behind when the host
+# dropped off the network mid-run. Untracked, harmless, and it would sit in
+# `git status` forever if nothing removed it.
+docker rm -f cf-tunnel-probe >/dev/null 2>&1
+rm -rf "$D/.tunnel-probe"
+
 echo "── 1. track main ────────────────────────────────────────────────────────"
 git pull --ff-only origin main || { echo "FATAL: pull failed"; exit 1; }
 git log --oneline -1
