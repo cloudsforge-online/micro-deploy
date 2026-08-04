@@ -3,6 +3,26 @@ name: CI
 # A content repository: no service, no suite, no image. What CI owes it is the one check that
 # guards the failure that cannot be undone — a committed secret is compromised the moment it
 # lands, whatever kind of repository it lands in.
+#
+# ── AND THE DRIFT CHECK, WHICH USED TO RUN NOWHERE ──────────────────────────────────────────────
+#
+# `scripts/surface-routes.py` asserts that every surface in the registry has a gateway route and
+# every route has a surface. It existed and CI never ran it, so it only ever ran when somebody
+# remembered — which is how the thing it guards went wrong in the first place. The gateway carried
+# a COMMENT describing a `cf-api-explorer` router that was never defined, so the indexer was
+# unroutable on every web host, and the network site's chain panel rendered "no figures" for days.
+#
+# The reason it was not wired is that it needs micro-ui checked out: it reads `SURFACES` by
+# EXECUTING micro-ui's own module rather than re-parsing it, so there is one registry and never
+# two. A sibling checkout is ordinary here — `micro-aetherholm-web` does it so its route citations
+# are verified rather than asserted. It would have needed a token when micro-ui was private; it is
+# public now, so it does not.
+#
+# The `path:` values are explicit because GitHub checks a repository out to `work/<repo>/<repo>` by
+# default, while the script resolves `MICRO = ROOT.parent` and `UI = MICRO/ui/packages/ui`. The
+# default layout puts them at different depths. That would be LOUD rather than silent — the script
+# treats a missing micro-ui as a failure and not a skip, deliberately, "because every surface below
+# would go unchecked" — but it would still be wrong.
 
 on:
   push:
@@ -17,3 +37,31 @@ jobs:
       require-dockerignore: false
     permissions:
       contents: read
+
+  drift:
+    name: The registry and the gateway agree
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: deploy
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-ui
+          path: ui
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      # The registry is executed, not parsed, so micro-ui's dependencies must be present.
+      - name: Install micro-ui
+        working-directory: ui
+        run: corepack enable && pnpm install --frozen-lockfile
+
+      - name: Every registry surface has a route, and every route has a surface
+        working-directory: deploy
+        run: python3 scripts/surface-routes.py
