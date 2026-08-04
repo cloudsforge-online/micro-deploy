@@ -759,8 +759,31 @@ services:
       NOTIFY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/notify
       NOTIFY_INGEST_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       NOTIFY_PUBLIC_URL: http://localhost:4110
-      # SMTP deliberately unset: unconfigured is a supported mode, and the drill
-      # needs rows, not emails.
+      # ── SMTP: PASSED THROUGH, NEVER WRITTEN HERE ─────────────────────────────
+      #
+      # Unconfigured is still a supported mode and still the default: every value
+      # below falls back to empty, and `notify` treats an unset SMTP_HOST as "this
+      # deployment does without email" rather than as an error. A local drill needs
+      # rows, not emails.
+      #
+      # What changed is that a deployment which DOES send can now say so without
+      # editing this file. The values arrive from `compose/estate/tokens.env` —
+      # gitignored, symlinked as `compose/.env`, and loaded by Compose
+      # automatically. **A credential must never be written into this file**, which
+      # is committed and public.
+      #
+      # SMTP_SECURE is the one worth reading twice: it means IMPLICIT TLS, which is
+      # port 465 only. On 587 and 2525 the session starts in the clear and upgrades
+      # with STARTTLS, so `SMTP_SECURE=true` on 587 does not harden anything — it
+      # makes the connection fail. Default false, because 587 is the port to use.
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
+      MAIL_DOMAIN: ${MAIL_DOMAIN:-}
       INSTANCE_ID: notify-estate
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}110:4000"
