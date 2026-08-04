@@ -109,22 +109,48 @@ x-identity-trust: &identity-trust
   IDENTITY_ISSUER: http://identity:4000
   IDENTITY_JWKS_URL: http://identity:4000/.well-known/jwks.json
 
+# ── THE PROBE SPAWNS A NODE RUNTIME, SO ITS INTERVAL IS A CAPACITY DECISION ────
+#
+# `node -e` is a whole process: measured at **0.387s of CPU per probe** on the
+# ProLiant. At the 3s interval this used to carry, ~46 containers meant about 15
+# process spawns a second, and the healthchecks alone accounted for **roughly 218%
+# of that box's 400%** — more than half a four-core machine spent asking services
+# whether they were ready. It was the single largest consumer on the host, ahead
+# of every service, and it is what made a second environment look impossible on
+# hardware that can in fact carry one.
+#
+# The split below is strictly better than either a fast or a slow interval alone,
+# because startup and steady state want opposite things:
+#
+#   start_interval 2s   during start_period, probe FASTER than the old 3s, so
+#                       `up --wait` and `depends_on: service_healthy` settle
+#                       sooner rather than later. Failures here are not counted.
+#   interval 30s        afterwards, 10x less often. A ready service that has been
+#                       ready for an hour does not need asking every 3 seconds.
+#   retries 3           3 x 30s = 90s to unhealthy, which is exactly what 30 x 3s
+#                       gave before. Detection time is unchanged.
+#
+# Needs Docker >= 25 for `start_interval` (the estate runs 29.x).
 x-healthcheck: &healthcheck
   # /readyz, not /livez: liveness answers while the database is unreachable,
   # which is the whole distinction those two endpoints exist to draw.
   test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
-  interval: 3s
+  interval: 30s
   timeout: 5s
-  retries: 30
+  retries: 3
+  start_period: 90s
+  start_interval: 2s
 
 # The same probe, against 4022 — one of the TWO services in this file that do
 # not bind 4000. See the `tessera` block for why that is deliberate and must not
 # be "tidied" by setting PORT=4000 on it.
 x-healthcheck-4022: &healthcheck-4022
   test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4022/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
-  interval: 3s
+  interval: 30s
   timeout: 5s
-  retries: 30
+  retries: 3
+  start_period: 90s
+  start_interval: 2s
 
 # And against 4021 — `foresight`, the second. Same argument as tessera's, and it
 # is NOT the aetherholm/nda case: see the long note in the `foresight` block for
@@ -132,9 +158,11 @@ x-healthcheck-4022: &healthcheck-4022
 # that it is not 4000.
 x-healthcheck-4021: &healthcheck-4021
   test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4021/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
-  interval: 3s
+  interval: 30s
   timeout: 5s
-  retries: 30
+  retries: 3
+  start_period: 90s
+  start_interval: 2s
 
 x-migrate-defaults: &migrate-defaults
   command: ["node", "--import", "tsx", "src/migrator.ts"]
@@ -217,10 +245,17 @@ x-web-defaults: &web-defaults
   # server-side probe green. That is what `scripts/estate-verify.sh` §"the
   # frontends" exists to catch, and why nothing here is treated as proof.
   healthcheck:
+    # Same startup-fast / steady-slow split as the backend probes above, for the
+    # same reason. `wget` is far cheaper than their `node -e` — measured at 1.36%
+    # per frontend against 8.63% per backend — so this is the smaller half of the
+    # saving, but sixteen frontends probing every 3s is still five spawns a second
+    # to ask a static file server a question it has answered the same way all day.
     test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
-    interval: 3s
+    interval: 30s
     timeout: 5s
-    retries: 30
+    retries: 3
+    start_period: 90s
+    start_interval: 2s
 
 # The build identity, stamped into the `cf-release` meta tag by each frontend's
 # Dockerfile and read back by estate-verify. It is the cheapest possible defence
