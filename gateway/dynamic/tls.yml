@@ -103,6 +103,43 @@
 # because a fresh clone has run `gateway-cert.sh` and has no origin certificate
 # at all, and the fallback for a name that does not resolve is the
 # `CN=TRAEFIK DEFAULT CERT` this whole file exists to have ended.
+#
+# ── WHAT THIS DOES NOT FIX ON ITS OWN, MEASURED AFTER THE SWITCH ───────────────
+#
+# The tunnel still answers 502, AND THE REASON HAS CHANGED, which is the whole
+# value of the change and is why both errors are written down here. `cloudflared`
+# validates the origin certificate against THE HOSTNAME IN ITS SERVICE URL, not
+# against the hostname of the request it is carrying, and the owner's tunnel is
+# remotely managed — the running unit is `cloudflared … tunnel run --token-file`,
+# so `cloudflared/config.*.yml` in this repository, `noTLSVerify: true` and all,
+# is NOT what it reads. Every ingress rule points at `https://127.0.0.1:443`:
+#
+#   before   x509: certificate signed by unknown authority
+#   after    x509: cannot validate certificate for 127.0.0.1 because it doesn't
+#            contain any IP SANs
+#
+# The ISSUER objection is gone and cannot come back. What is left is a NAME, and
+# Cloudflare Origin CA signs names in the zone and will never sign `127.0.0.1`.
+# Nor can an SNI entry rescue it: a Go client dialling an IP literal sends no
+# SNI, so the origin serves `defaultCertificate` whatever a `certificates:` list
+# might say — a second, independent reason the per-environment variable above is
+# the right mechanism.
+#
+# So the last step is one field in the Cloudflare dashboard and it is the owner's:
+# per public hostname, Additional application settings → TLS → ORIGIN SERVER NAME
+# = `cloudsforge.online`. Measured against the running gateway rather than
+# predicted — an OpenSSL client trusting ONLY Cloudflare's Origin CA root, with
+# that server name and hostname verification on, returns `Verify return code: 0
+# (ok)`; the same client validating against the literal `127.0.0.1` returns
+# `64 (IP address mismatch)`.
+#
+# `No TLS Verify`, in the same panel, would also clear it and is the wrong one:
+# it is the trade this estate made 183 times with `curl -k`, on the one leg that
+# faces the public internet.
+#
+# TESTNET IS UNCHANGED AND STILL FAILS ON THE ISSUER, which is correct — it has
+# no Cloudflare-issued certificate to serve, because Universal SSL does not cover
+# `*.testnet.cloudsforge.online`.
 tls:
   stores:
     default:
