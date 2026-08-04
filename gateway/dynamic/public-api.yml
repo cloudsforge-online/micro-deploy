@@ -79,7 +79,7 @@ http:
     cf-api-pricing:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/rates`)'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers, cf-api-strip-version]
       service: cf-api-pricing
 
@@ -88,7 +88,7 @@ http:
     cf-api-activity:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/feed`)'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers, cf-api-strip-version]
       service: cf-api-activity
 
@@ -97,7 +97,7 @@ http:
     cf-api-foresight:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/markets`) || PathPrefix(`/v1/categories`))'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers, cf-api-strip-version]
       service: cf-api-foresight
 
@@ -109,7 +109,7 @@ http:
     cf-api-identity:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/auth`)'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers, cf-api-strip-version]
       service: cf-api-identity
 
@@ -118,7 +118,7 @@ http:
     cf-api-wallet:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/wallets`) || PathPrefix(`/v1/deposits`) || PathPrefix(`/v1/withdrawals`) || PathPrefix(`/v1/spend`) || PathPrefix(`/v1/transfers`) || PathPrefix(`/v1/conversions`) || PathPrefix(`/v1/portfolio`))'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers]
       service: cf-api-wallet
 
@@ -126,7 +126,7 @@ http:
     cf-api-market:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/listings`) || PathPrefix(`/v1/orders`) || PathPrefix(`/v1/offers`) || PathPrefix(`/v1/collections`) || PathPrefix(`/v1/verifications`))'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers]
       service: cf-api-market
 
@@ -134,7 +134,7 @@ http:
     cf-api-mint:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/catalogue`) || PathPrefix(`/v1/tokens`))'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers]
       service: cf-api-mint
 
@@ -154,14 +154,14 @@ http:
     cf-api-worlds:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/titles`) || PathPrefix(`/v1/players`) || PathPrefix(`/v1/provisions`) || PathPrefix(`/v1/seasons`))'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers]
       service: cf-api-worlds
 
     cf-api-devplatform:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/apps`) || PathPrefix(`/v1/keys`) || PathPrefix(`/v1/oauth-clients`) || PathPrefix(`/v1/organisations`) || PathPrefix(`/v1/projects`) || PathPrefix(`/v1/scopes`) || PathPrefix(`/v1/webhook-endpoints`))'
       priority: 1000
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers]
       service: cf-api-devplatform
 
@@ -171,7 +171,7 @@ http:
     cf-api-catchall:
       rule: 'Host(`{{ env "CF_API_HOST" }}`)'
       priority: 1
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers]
       service: cf-api-unrouted
 

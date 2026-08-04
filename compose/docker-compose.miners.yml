@@ -106,13 +106,31 @@ services:
       - "--status-ms"
       - "60000"
     network_mode: host
-    extra_hosts:
-      - "rpc.cloudsforge.online:127.0.0.1"
+    # ── NO extra_hosts, NO TRUST MOUNT: THIS GOES OUT THROUGH CLOUDFLARE ───────
+    #
+    # `rpc.cloudsforge.online` used to be pinned to 127.0.0.1 here and verified
+    # against a mounted `trust.crt`, so the miner reached the gateway's TLS port
+    # directly and never left the box. All three of those — the pin, the mount and
+    # the private trust store — existed only to make that shortcut work.
+    #
+    # It resolves PUBLICLY now: DNS -> Cloudflare -> the tunnel -> this host's
+    # gateway over plain HTTP on 127.0.0.1. The certificate presented is
+    # Cloudflare's own, which the base image's trust store already carries, so
+    # `NODE_EXTRA_CA_CERTS` has nothing left to add.
+    #
+    # WHAT THIS BUYS BEYOND FEWER LINES: the miner now exercises the SAME path a
+    # third-party miner has to use. The loopback shortcut meant this estate's own
+    # miner could keep producing blocks while `rpc.<apex>` was completely broken
+    # for everyone else — which is exactly the state the tunnel was in.
+    #
+    # AND WHAT IT COSTS, SAID OUT LOUD: mining now depends on the tunnel. If the
+    # tunnel's ingress is wrong, these stop. That is the correct dependency —
+    # a public endpoint that only the local miner can reach is not a public
+    # endpoint — but it is a real one, and it is why the Cloudflare dashboard
+    # entries must be pointing at the plaintext origin before these are recreated.
     environment:
-      NODE_EXTRA_CA_CERTS: /trust.crt
       HEARTH_NO_TTY: "1"
     volumes:
-      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/trust.crt:/trust.crt:ro
       - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/mainnet:/minerdata
     restart: unless-stopped
 
@@ -121,9 +139,11 @@ services:
     container_name: cf-miner-testnet
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
-      # Port 10443 is the testnet gateway's browser port (compose/testnet.env).
+      # NO PORT. 10443 was the testnet gateway's LOCAL bind (compose/testnet.env),
+      # reachable only through the `extra_hosts` pin that is now gone. Publicly
+      # this host is behind Cloudflare on 443 like every other name in the estate.
       - "--url"
-      - "https://rpc.testnet.cloudsforge.online:10443"
+      - "https://rpc.testnet.cloudsforge.online"
       - "--data"
       - "/minerdata"
       - "--network"
@@ -133,12 +153,10 @@ services:
       - "--status-ms"
       - "60000"
     network_mode: host
-    extra_hosts:
-      - "rpc.testnet.cloudsforge.online:127.0.0.1"
+    # Public resolution, Cloudflare's certificate, no loopback pin and no mounted
+    # trust store — see the block on the mainnet miner above for the whole reason.
     environment:
-      NODE_EXTRA_CA_CERTS: /trust.crt
       HEARTH_NO_TTY: "1"
     volumes:
-      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/trust.crt:/trust.crt:ro
       - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/testnet:/minerdata
     restart: unless-stopped

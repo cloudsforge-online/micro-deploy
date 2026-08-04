@@ -212,12 +212,64 @@ http:
         customRequestHeaders:
           X-Forwarded-Proto: https
         customResponseHeaders:
-          # Traefik generates the id itself when tracing is on; this ensures it
-          # reaches the browser so an error page can print it.
+          # ── THIS LINE DOES THE OPPOSITE OF WHAT IT SAYS, AND HAS ALL ALONG ───
+          #
+          # It used to read "Traefik generates the id itself when tracing is on;
+          # this ensures it reaches the browser so an error page can print it."
+          # Neither half is true, and both were checked against the running estate
+          # rather than reasoned about:
+          #
+          #   * AN EMPTY VALUE IN `customResponseHeaders` REMOVES THE HEADER. That
+          #     is Traefik's documented semantic for the empty string, so this line
+          #     deletes `X-Request-Id` from every response instead of emitting one.
+          #   * Traefik does not mint an `X-Request-Id` under `--tracing`. It mints
+          #     a `traceparent`. There is no id for this line to have passed on.
+          #
+          # Measured on the LIVE mainnet gateway, `https://hub.cloudsforge.online/`
+          # with the Origin root as `--cacert`: `strict-transport-security` and
+          # `x-content-type-options` are present and `x-request-id` is ABSENT. It
+          # is absent on the plaintext `tunnel` path in exactly the same way, for
+          # exactly this reason — so the new entrypoint does not bypass this
+          # middleware, it inherits a middleware that has never done this job.
+          #
+          # LEFT AS IT IS, DELIBERATELY, and recorded instead of quietly patched.
+          # Stock Traefik has no middleware that can GENERATE a random id, so
+          # making the surrounding prose true is a real change — a plugin, or the
+          # id minted by each service — and not a line edit smuggled into a
+          # gateway change about a tunnel. What is fixed here is the sentence: the
+          # workflow this file claims already works ("an id a user reads off an
+          # error page and an operator pastes into one search box") DOES NOT, and
+          # the next reader should inherit that fact rather than rediscover it.
           X-Request-Id: ""
 
     cf-security-headers:
       headers:
+        # ── WITHOUT THIS LINE THE TUNNEL PATH LOSES HSTS, AND ONLY HSTS ────────
+        #
+        # Traefik's headers middleware is `unrolled/secure`, which emits
+        # `Strict-Transport-Security` only when it believes the request arrived
+        # over TLS. It decides that from `r.TLS`, from the URL scheme, and from
+        # the headers named HERE — and nowhere else. On `websecure` the first of
+        # those is true and this line changes nothing. On `tunnel` — the plaintext
+        # loopback entrypoint cloudflared uses — all three were false, so the
+        # header was silently dropped on THE ONLY PATH REAL USERS TRAVERSE while
+        # :443 kept it.
+        #
+        # MEASURED, not reasoned about, on traefik:v3.2.3 over this directory:
+        # every other header in this middleware (nosniff, referrer-policy,
+        # X-Frame-Options, X-XSS-Protection) appeared on the plaintext path
+        # already; `strict-transport-security` was the one absentee, and adding
+        # this made the two responses match.
+        #
+        # IT IS NOT CLIENT-CONTROLLABLE, which is the only reason it is safe.
+        # `cf-request-id` runs FIRST in both entrypoint chains and force-sets
+        # `X-Forwarded-Proto: https` as a custom REQUEST header, overwriting
+        # whatever arrived. Verified by sending `X-Forwarded-Proto: http` and
+        # `: ftp` from the client: HSTS was emitted both times. And the claim it
+        # asserts is true — the browser's hop really is HTTPS; the plaintext
+        # segment is a loopback socket inside this one machine.
+        sslProxyHeaders:
+          X-Forwarded-Proto: https
         stsSeconds: 31536000
         stsIncludeSubdomains: true
         contentTypeNosniff: true
@@ -238,7 +290,17 @@ http:
     cf-internal-refusal:
       rule: "PathRegexp(`(?i)^/+internal(/|$)`)"
       priority: 100000
-      entryPoints: [web, websecure]
+      # `tunnel` IS NOT OPTIONAL IN THIS LIST. It is the plaintext loopback
+      # entrypoint cloudflared reaches the estate on
+      # (compose/docker-compose.gateway.yml, --entrypoints.tunnel.address), which
+      # makes it the only entrypoint a request from OFF THIS BOX actually arrives
+      # on. A refusal that names `web` and `websecure` and not `tunnel` would
+      # refuse /internal on the two paths nobody can reach and serve it on the one
+      # everybody can — the exact inversion of what this router is for.
+      #
+      # Verified on the plaintext path rather than assumed: `/internal/credit` and
+      # the `//Internal/credit` bypass shape both answer 502 there, matching :443.
+      entryPoints: [web, websecure, tunnel]
       service: cf-refuse
 
   services:

@@ -252,7 +252,7 @@ http:
     cf-web-hub:
       rule: 'Host(`hub.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-hub
 
@@ -262,7 +262,7 @@ http:
     cf-api-hub:
       rule: 'Host(`hub.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-hub-api
 
     # ─────────────────────────────────────────────────────────────── the apex ──
@@ -272,7 +272,7 @@ http:
     cf-web-site:
       rule: 'Host(`{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-site
 
@@ -280,52 +280,52 @@ http:
     cf-web-market:
       rule: 'Host(`market.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-market
     cf-api-market-host:
       rule: 'Host(`market.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-market
 
     # ─────────────────────────────────────────────── create (micro-mint-web) ──
     cf-web-create:
       rule: 'Host(`create.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-create
     cf-api-create:
       rule: 'Host(`create.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-mint
 
     # ───────────────────────────────────────────────────────────────── trade ──
     cf-web-trade:
       rule: 'Host(`trade.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-trade
     cf-api-trade-host:
       rule: 'Host(`trade.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-trade
 
     # ──────────────────────────────────────────────────────────────── worlds ──
     cf-web-worlds:
       rule: 'Host(`worlds.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-worlds
     cf-api-worlds-host:
       rule: 'Host(`worlds.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-worlds
 
     # ──────────────────────────────────────────────── worlds-api — THE MISSING DOOR ──
@@ -388,7 +388,7 @@ http:
     cf-api-worlds-api:
       rule: 'Host(`worlds-api.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-worlds
 
     # ────────────────────────────────────────────────────────────── explorer ──
@@ -458,7 +458,7 @@ http:
     cf-web-explorer:
       rule: 'Host(`explorer.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-explorer
     # Priority 600 beats `cf-web-explorer`'s 500 on the same host, which is how every
@@ -467,20 +467,20 @@ http:
     cf-api-explorer:
       rule: 'Host(`explorer.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-indexer
 
     # ────────────────────────────────────── developers (micro-devportal-web) ──
     cf-web-developers:
       rule: 'Host(`developers.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-developers
     cf-api-developers:
       rule: 'Host(`developers.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-devplatform
 
     # ───────────────────────────────────────────────────────────────── admin ──
@@ -490,13 +490,13 @@ http:
     cf-web-admin:
       rule: 'Host(`admin.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-admin
     cf-api-admin:
       rule: 'Host(`admin.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-admin-api
 
     # ──────────────────── surfaces whose service WAS absent — four have arrived ──
@@ -531,13 +531,13 @@ http:
     cf-web-network:
       rule: 'Host(`network.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-network
     cf-api-network:
       rule: 'Host(`network.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-faucet
 
     # ── status — the page whose whole job is to work when everything else does not ────
@@ -565,13 +565,13 @@ http:
     cf-web-status:
       rule: 'Host(`status.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-status
     cf-api-status-public:
       rule: 'Host(`status.{{ env "CF_WEB_APEX" }}`) && Path(`/api/status/public`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-beacon
 
     # ── beacon — THE HOST THAT WAS ALL API, AND NOW CARRIES A CONSOLE TOO ─────
@@ -635,13 +635,13 @@ http:
     cf-web-beacon:
       rule: 'Host(`beacon.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-beacon
     cf-api-beacon:
       rule: 'Host(`beacon.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/api`) || PathPrefix(`/metrics`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-beacon
 
     # ── foresight — the fifth backend to arrive, and the only one whose API COLLIDES
@@ -695,18 +695,18 @@ http:
     cf-web-foresight:
       rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-foresight
     cf-api-foresight-resources:
       rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`))'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-foresight
     cf-api-foresight-markets:
       rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/markets`) && HeaderRegexp(`Accept`, `application/json`)'
       priority: 700
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-foresight
 
     # ── THE FORESIGHT-ADMIN BUNDLE ROUTER WAS HERE, and the P13 fold removed it ───────────
@@ -749,25 +749,25 @@ http:
     cf-web-emberkin:
       rule: 'Host(`emberkin.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-emberkin
     cf-api-emberkin:
       rule: 'Host(`emberkin.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-emberkin
 
     cf-web-aetherholm:
       rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-aetherholm
     cf-api-aetherholm:
       rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-aetherholm
     # `/readyz` is not under `/v1`, so the prefix router above never saw it and the bundle's nginx
     # 404'd it. `aetherholm-web` reads it to render whether the game is up, so a routing gap told
@@ -781,7 +781,7 @@ http:
     cf-api-aetherholm-readyz:
       rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`) && Path(`/readyz`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-aetherholm
 
     # ─────────────────────────────── tessera — THE FIRST TITLE WITH A SERVICE ──
@@ -812,13 +812,13 @@ http:
     cf-web-tessera:
       rule: 'Host(`tessera.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-tessera
     cf-api-tessera:
       rule: 'Host(`tessera.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-tessera
 
     # ──────────────────────────────────────────────────────────────── nimbus ──
@@ -839,7 +839,7 @@ http:
     cf-web-nimbus:
       rule: 'Host(`nimbus.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-identity
 
     # ────────────────────────────────── pay and vault — the two money hosts ──
@@ -907,18 +907,18 @@ http:
     cf-web-pay:
       rule: 'Host(`pay.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-wallet
     cf-api-pay-billing:
       rule: 'Host(`pay.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/entitlements`) || PathPrefix(`/products`) || PathPrefix(`/purchases`) || PathPrefix(`/subscriptions`))'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-billing
 
     cf-web-vault:
       rule: 'Host(`vault.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-custody
 
     # ──────────────────────────────── lantern — where the browsers report to ──
@@ -986,13 +986,13 @@ http:
     cf-web-lantern:
       rule: 'Host(`lantern.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-lantern
     cf-api-lantern:
       rule: 'Host(`lantern.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/otlp`) || PathPrefix(`/ingest`) || PathPrefix(`/metrics`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       service: cf-svc-lantern
 
     # ── rpc — THE CHAIN, AND THE LAST INGRESS RULE THAT SKIPPED THIS FILE ─────
@@ -1052,7 +1052,7 @@ http:
     cf-api-rpc:
       rule: 'Host(`rpc.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-rpc-throttle]
       service: cf-svc-hearth-rpc
 {{ end }}
@@ -1145,7 +1145,7 @@ http:
     cf-api-mining:
       rule: 'Host(`rpc.{{ env "CF_WEB_APEX" }}`) && (Path(`/mining/template`) || Path(`/mining/submit`))'
       priority: 600
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-mining-throttle]
       service: cf-svc-hearth-mining
 {{ end }}
@@ -1198,7 +1198,7 @@ http:
     cf-api-p2p:
       rule: 'Host(`p2p.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/p2p`)'
       priority: 500
-      entryPoints: [websecure]
+      entryPoints: [websecure, tunnel]
       middlewares: [cf-p2p-dial-throttle]
       service: cf-svc-hearth-p2p
 {{ end }}

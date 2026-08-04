@@ -144,11 +144,48 @@ services:
 
       # --- entrypoints -------------------------------------------------------
       - --entrypoints.web.address=:80
-      - --entrypoints.web.http.redirections.entrypoint.to=websecure
-      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      # ── THE 301 TO https:// IS GONE, BECAUSE THERE IS NO https:// ANY MORE ───
+      #
+      # These two flags turned every request on `web` into
+      # `301 -> https://<host>`. With this gateway terminating no TLS that is a
+      # redirect to a door that does not open, and it is the reason `web` could
+      # never have served the tunnel: cloudflared would have followed it to a
+      # scheme nothing here answers.
+      #
+      # `web` is left DEFINED and bound because `${CF_GW_PORT_BASE}95` is
+      # published for it and because removing an entrypoint is a change to every
+      # router that names one; it simply carries no routers, and answers 404. The
+      # door the estate is served on is `tunnel` below.
       - --entrypoints.websecure.address=:443
-      # TLS termination. ACME in production; the local stack runs Traefik's
-      # self-signed default, which is correct for loopback and wrong to ship.
+      # ── 443 STILL TERMINATES, AND IT IS NOT THE TUNNEL'S DOOR ────────────────
+      #
+      # The tunnel does NOT use this entrypoint any more — `tunnel` below is
+      # plaintext and is what cloudflared reaches. This one exists for the six
+      # consumers INSIDE this host that address the gateway directly and never go
+      # through Cloudflare:
+      #
+      #   both miners        docker-compose.miners.yml — `rpc.<apex>` pinned to
+      #                      127.0.0.1 by extra_hosts, verifying with trust.crt
+      #   beacon             docker-compose.estate.yml — probes all 19 surfaces at
+      #                      `https://<sub>.<apex>` through the compose aliases
+      #   estate-verify.sh   `--cacert`, and deliberately no `-k`
+      #   three seeders + foresight-market-journey.mjs, over NODE_EXTRA_CA_CERTS
+      #
+      # BEACON IS THE ONE THAT DECIDES IT. It probes the addresses a person uses,
+      # and it takes no configuration for a scheme or a port — those come from the
+      # surface registry inside `micro-beacon`. Serving plaintext here would turn
+      # all 19 probes into connection failures, and `BEACON_PUBLIC_STATUS: "true"`
+      # would publish a full outage that is not happening. The `estate:` network
+      # block at the bottom of this file records that incident from the last time
+      # it happened.
+      #
+      # ON THE ESTATE LEAF IN BOTH ENVIRONMENTS NOW. The mainnet gateway used to
+      # serve a Cloudflare Origin CA leaf here, to stop the tunnel answering 502.
+      # It never could: cloudflared validates against the hostname in its service
+      # URL, and that URL is the IP literal `127.0.0.1`, which no Origin CA will
+      # sign. The plaintext entrypoint below is what actually ended it, so the
+      # Origin certificate has no remaining purpose — deleted from the host, along
+      # with the `CF_TLS_DEFAULT_CERT` lever that chose between the two issuers.
       - --entrypoints.websecure.http.tls=true
       # Every request gets an x-request-id at the edge if it does not have one.
       # This is the id a user reads off an error page and an operator pastes
@@ -158,6 +195,75 @@ services:
       # 100000 in gateway/dynamic/policy.yml, because a middleware cannot refuse
       # a request and a route can. Nothing a service labels can outrank it.
       - --entrypoints.websecure.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+
+      # ── THE PLAINTEXT LOOPBACK ENTRYPOINT, AND IT HAS EXACTLY ONE CALLER ─────
+      #
+      # `cloudflared`, on this host, over 127.0.0.1. It terminates NO TLS, and
+      # that is not an oversight — it is the whole reason it exists.
+      #
+      # THE 502 THIS ENDS, AND WHY THREE FIXES BEFORE IT DID NOT. cloudflared
+      # validates a certificate against THE HOSTNAME IN ITS SERVICE URL, and that
+      # URL is an IP literal. Measured on this box, from the tunnel's own journal:
+      #
+      #   estate CA leaf   -> x509: certificate signed by unknown authority
+      #   Origin CA leaf   -> x509: cannot validate certificate for 127.0.0.1
+      #                      because it doesn't contain any IP SANs
+      #
+      # and no Origin CA will ever sign an IP literal, so the second error is
+      # terminal rather than a step forward. The two dashboard settings that would
+      # sidestep it — *No TLS Verify* and *Origin Server Name* — the owner could
+      # not find in their UI, twice.
+      #
+      # `cloudflared/config.*.yml` in this repository sets `noTLSVerify: true` and
+      # IS NOT WHAT THE RUNNING TUNNEL READS. The unit is
+      # `cloudflared tunnel run --token-file`, so its ingress arrives from the
+      # dashboard over the API — 48 rules, and `journalctl -u cloudflared` logs
+      # every revision of them — and a file on disk cannot override one.
+      #
+      # So stop giving it a certificate to check. On an `http://` service URL
+      # there is no handshake on that hop at all and the entire class of failure
+      # disappears, with no dashboard setting to find.
+      #
+      # NOTHING A USER TOUCHES IS DOWNGRADED. browser -> Cloudflare is HTTPS,
+      # Cloudflare -> this host is the tunnel's own encrypted connection, and the
+      # only plaintext segment is a loopback socket INSIDE this machine between
+      # two processes on 127.0.0.1. The published port below is 127.0.0.1-only,
+      # like every other port in this stack, so nothing on the LAN can reach it.
+      #
+      # WHY NOT `web` ON :80. It cannot serve this and never could: the two
+      # redirection flags above turn every request on `web` into a 301 to
+      # `websecure`, so cloudflared would follow it straight back to the https://
+      # URL it cannot verify. The same 502, one hop later.
+      - --entrypoints.tunnel.address=:81
+      # ── THE SAME CHAIN AS `websecure`, AND THE WORD "SAME" IS LOAD-BEARING ───
+      #
+      # An entrypoint's middleware chain is PER ENTRYPOINT. Traefik splits a router
+      # listed on two entrypoints into one runtime router each and applies the
+      # model of ITS OWN entrypoint to each half — measured on traefik:v3.2.3
+      # against this exact directory, through the API of a throwaway:
+      #
+      #   cf-web-hub  entryPoints: [websecure, tunnel]
+      #     -> websecure-cf-web-hub  tls set    [request-id, sec-headers, cors, web-headers]
+      #     -> tunnel-cf-web-hub     tls unset  [request-id, sec-headers, cors, web-headers]
+      #
+      # That measurement is also what proves the TLS setting does NOT bleed across
+      # the split: `--entrypoints.websecure.http.tls=true` reaches only the
+      # websecure half, so these routers answer plaintext here and still REQUIRE
+      # TLS on :443. A router pinned to both is not a router that stopped caring.
+      #
+      # The consequence to be afraid of is the other half of it. If this list ever
+      # stops matching the websecure list above, the tunnel path — WHICH IS THE
+      # ONLY PATH REAL USERS TRAVERSE — silently loses request-id, the security
+      # headers and the CORS allowlist, while :443 keeps all three and every local
+      # check stays green, because every local check drives :443.
+      # `scripts/surface-routes.py` check 9 fails when the two lists differ.
+      #
+      # The /internal refusal is not in this chain here either, for the reason
+      # given above: it is `cf-internal-refusal` at priority 100000 in
+      # gateway/dynamic/policy.yml, and `tunnel` is named in its `entryPoints`
+      # beside `web` and `websecure`. Verified on the plaintext path — `/internal`
+      # and `//Internal` both answer 502 there, exactly as they do on 443.
+      - --entrypoints.tunnel.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
 
       # --- observability -----------------------------------------------------
       - --metrics.prometheus=true
@@ -179,6 +285,21 @@ services:
       - "127.0.0.1:${CF_GW_PORT_BASE:-90}95:80"
       - "127.0.0.1:${CF_GW_PORT_BASE:-90}96:443"
       - "127.0.0.1:${CF_GW_PORT_BASE:-90}97:8082"
+      # The plaintext tunnel entrypoint. `98` would have continued the run above
+      # and IS ALREADY TAKEN: docker-compose.telemetry.yml:45-46 publishes the
+      # otel collector on 9098 and 9099, so 9090-9099 is fully allocated on the
+      # mainnet base and only the testnet base has room. A suffix that is free in
+      # one environment and not the other is precisely the collision this
+      # numbering exists to prevent, so it is `81` — mirroring the container port,
+      # and free on both bases.
+      #
+      #   mainnet   CF_GW_PORT_BASE unset -> 90   ->  127.0.0.1:9081
+      #   testnet   CF_GW_PORT_BASE=91          ->  127.0.0.1:9181
+      #
+      # 127.0.0.1 and not 0.0.0.0, which is the single most important detail in
+      # this line: this entrypoint terminates no TLS, so a bind on any other
+      # address would publish the whole estate in the clear to the LAN.
+      - "127.0.0.1:${CF_GW_PORT_BASE:-90}81:81"
       # 443 ITSELF, because every URL in the estate is written without a port.
       # `https://hub.<apex>/` means 443, the surface registry composes addresses
       # with no port, and the browser suites and `beacon smoke` all drive those

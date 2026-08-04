@@ -128,6 +128,39 @@ if [ -z "$image" ]; then
   exit 1
 fi
 
+# ── AND THE ENTRYPOINTS, FOR THE SAME REASON AND A SHARPER ONE ────────────────
+#
+# The probe below used to declare `--entrypoints.web.address=:80` and
+# `--entrypoints.websecure.address=:443` and nothing else — a second copy of a
+# list that lives in the compose file, of exactly the kind the note above rejects
+# for the image and the metrics port.
+#
+# WHAT MAKES IT SHARPER THAN STALENESS: a router naming an entrypoint the probe
+# does not define is not ignored. Traefik logs
+#
+#     ERR EntryPoint doesn't exist        entryPointName=tunnel routerName=…
+#     ERR No valid entryPoint for this router  routerName=…
+#
+# and assertion 1 below counts any ERR as a directory that does not render. So on
+# the day the `tunnel` entrypoint was added to this stack and to the 53 routers
+# that answer on it, `--validate` would have failed — and `reload` calls
+# `validate` first and refuses to touch the gateway when it fails. The check
+# written to stop a bad configuration reaching the live gateway would instead have
+# blocked a good one, and said "the dynamic directory does not render cleanly"
+# about a directory that renders perfectly under the real gateway's flags.
+# Measured on traefik:v3.2.3, not predicted.
+#
+# Read as ADDRESSES ONLY. The `http.tls` and `http.middlewares` flags are
+# deliberately not mirrored: this probe is asserting that the directory renders,
+# and TLS on the probe would make assertion 1 depend on the certificate directory
+# in a way `--check` already covers.
+ep_flags=$(grep -oE -- '--entrypoints\.[A-Za-z0-9_-]+\.address=:[0-9]+' compose/docker-compose.gateway.yml | sort -u)
+if [ -z "$ep_flags" ]; then
+  bad "no --entrypoints.<name>.address= in compose/docker-compose.gateway.yml — the probe would define none,"
+  bad "and every router in the directory would fail to bind with 'EntryPoint doesn't exist'"
+  exit 1
+fi
+
 [ -d "$DYNAMIC" ] || { bad "$DYNAMIC does not exist"; exit 1; }
 [ -f "$ENV_FILE" ] || { bad "$ENV_FILE does not exist — the probe would render every Host() empty"; exit 1; }
 
@@ -232,8 +265,7 @@ validate() {
       --log.level=INFO \
       --providers.file.directory=/etc/traefik/dynamic \
       --providers.file.watch=false \
-      --entrypoints.web.address=:80 \
-      --entrypoints.websecure.address=:443 \
+      $ep_flags \
       --api=true --api.insecure=true >/dev/null; then
     bad "the throwaway gateway would not start at all"
     rm -rf "$SCRATCH"

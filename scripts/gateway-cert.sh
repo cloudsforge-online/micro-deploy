@@ -284,46 +284,42 @@ echo "       SAN: $(openssl x509 -in "$leaf_crt" -noout -ext subjectAltName 2>/d
 
 # ── THE TRUST BUNDLE: ONE FILE EVERY INTERNAL CLIENT CAN POINT AT ─────────────
 #
-# The estate CA is no longer the only issuer this estate's own gateways serve.
-# The MAINNET gateway now terminates on `origin.crt`, a Cloudflare Origin CA leaf
-# (see `gateway/dynamic/tls.yml` for why: Cloudflare Tunnel trusts public roots
-# and its own Origin CA, refused the estate leaf, and answered 502). The TESTNET
-# gateway still serves this script's leaf, because the origin certificate is one
-# label deep and does not cover `*.testnet.<apex>`.
+# `trust.crt` is `ca.crt` plus every `gateway/trust/*.pem`, rebuilt on every run.
+# Six consumers point at it and none of them should have to know how many issuers
+# this estate has: `estate-verify.sh` (`--cacert`), the three seeders and
+# `foresight-market-journey.mjs` (`NODE_EXTRA_CA_CERTS`), beacon in its container
+# (docker-compose.estate.yml), and both miners (docker-compose.miners.yml).
 #
-# So there are two issuers and roughly a dozen internal clients that have to
-# accept BOTH — `estate-verify.sh`, the three seeders, `foresight-market-journey`,
-# beacon in its container, and both miners over `rpc.<apex>`. Handing each of
-# them a per-environment root would be the hand-maintained list this repository
-# has already paid for four times. One bundle is one path, and every consumer
-# keeps a single `--cacert` / `NODE_EXTRA_CA_CERTS` argument.
+# ── IT IS BACK TO ONE ISSUER, AND `gateway/trust/` IS NOW EMPTY ───────────────
+#
+# It briefly held Cloudflare's Origin CA root, because the mainnet gateway
+# terminated on a Cloudflare Origin leaf to stop the tunnel answering 502. That
+# leaf is gone — the tunnel reaches the gateway over plain HTTP now
+# (compose/docker-compose.gateway.yml, the `tunnel` entrypoint), so nothing in
+# this estate serves a Cloudflare-issued certificate and nothing needs to verify
+# one. A root left in this bundle would be an AUTHORITY THE ESTATE DOES NOT USE,
+# trusted by all six consumers above, able to vouch for origin certificates
+# Cloudflare issued to other customers. It came out with the leaf.
+#
+# THE DIRECTORY AND THE LOOP STAY. `roots` is 0 today and the bundle is `ca.crt`
+# alone, which is what it was before the Origin leaf and what every consumer
+# already handles. Keeping the mechanism means the next deployment that genuinely
+# terminates on a public issuer drops a root in and changes nothing else — and
+# the loop already refuses a file that is not a PEM certificate, which is the
+# failure a concatenation cannot otherwise report.
 #
 # ── AND IT IS A SEPARATE FILE RATHER THAN AN APPEND TO ca.crt ─────────────────
 #
-# Appending Cloudflare's root to `ca.crt` would need no consumer change at all,
-# which is why it was tried first. Three things say no, and the third is decisive:
+# Unchanged, and still the right shape even at zero extra roots:
 #
 #   1. `ca.crt` IS AN INPUT TO SIGNING, twenty lines above — `openssl x509 -req
-#      -CA "$ca_crt" -CAkey "$ca_key"`. Measured rather than assumed: openssl
-#      takes the FIRST certificate in a bundle and signs correctly, so this alone
-#      does not break. It does make the signing input depend on file order.
+#      -CA "$ca_crt" -CAkey "$ca_key"`. Appending would make the signing input
+#      depend on file order.
+#   2. IT IS NOT IDEMPOTENT. `--force` rewrites `ca.crt` wholesale and would
+#      silently drop anything appended; a re-run of an append duplicates it.
+#   3. `ca.crt` IS THE FILE THE OWNER INSTALLS IN A KEYCHAIN. Appending a public
+#      root would quietly widen what "trust the estate CA" means on their machine.
 #
-#   2. IT IS NOT IDEMPOTENT. This script rewrites `ca.crt` wholesale on `--force`
-#      (`openssl req -x509 … -out "$ca_crt"`), silently dropping the appended
-#      root and leaving every consumer failing against mainnet with nothing
-#      naming the cause; and a re-run of the append duplicates the root instead.
-#      A derived file rebuilt from its inputs on every run has neither problem.
-#
-#   3. `ca.crt` IS THE FILE THE OWNER INSTALLS IN A KEYCHAIN. The footer of this
-#      script prints that command. Appending would quietly make "trust the estate
-#      CA" also mean "trust Cloudflare's Origin CA as a system root", which is a
-#      root Cloudflare deliberately does not ship to browsers, and which would
-#      then validate origin certificates issued to OTHER Cloudflare customers for
-#      the names they carry. Nobody asked for that and nothing would have said it
-#      happened.
-#
-# The bundle is rebuilt from `ca.crt` plus every `gateway/trust/*.pem` on every
-# run. That directory is committed and public; `$CERTS` is not.
 trust_crt="$CERTS/trust.crt"
 trust_dir="gateway/trust"
 
@@ -360,24 +356,14 @@ if ! openssl verify -CAfile "$trust_crt" "$leaf_crt" >/tmp/gateway-cert-trust.lo
   exit 1
 fi
 
-# `origin.crt` is placed by hand — there is no Cloudflare API call here and no
-# private key this script ever sees. Absent is a supported state and means this
-# deployment is not behind a Cloudflare tunnel; PRESENT AND UNVERIFIABLE is not,
-# because that is the mainnet gateway serving a leaf its own estate cannot check.
-origin_crt="$CERTS/origin.crt"
-if [ -s "$origin_crt" ]; then
-  if ! openssl verify -CAfile "$trust_crt" "$origin_crt" >/tmp/gateway-cert-origin.log 2>&1; then
-    echo "FATAL: $origin_crt is installed but does not verify against $trust_crt:" >&2
-    cat /tmp/gateway-cert-origin.log >&2
-    echo "       The issuer's root is missing from $trust_dir/. Every internal check" >&2
-    echo "       against the mainnet gateway would fail with no explanation." >&2
-    exit 1
-  fi
-  echo "  ok   $trust_crt verifies both the estate leaf and $origin_crt ($roots public root(s) added)"
-  echo "       origin SAN: $(openssl x509 -in "$origin_crt" -noout -ext subjectAltName 2>/dev/null | tail -1 | tr -d ' ')"
-else
-  echo "  ok   $trust_crt verifies the estate leaf ($roots public root(s) added; no origin.crt installed)"
-fi
+# THE `origin.crt` BRANCH THAT WAS HERE IS GONE. It verified an installed
+# Cloudflare Origin leaf against this bundle and FATAL'd when it did not verify.
+# With the Origin root deliberately out of `gateway/trust/` that check could only
+# ever fail, so an `origin.crt` left on a host — or restored by someone reading
+# the old runbook — would have stopped this script dead with a message about a
+# missing root, for a certificate nothing serves any more. A check that can only
+# fail is worse than no check; the certificate is simply not part of this estate.
+echo "  ok   $trust_crt verifies the estate leaf ($roots public root(s) added)"
 
 # ── the step that is the owner's, and is printed rather than run ──────────────
 #

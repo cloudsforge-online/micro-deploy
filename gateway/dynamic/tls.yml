@@ -140,14 +140,46 @@
 # TESTNET IS UNCHANGED AND STILL FAILS ON THE ISSUER, which is correct — it has
 # no Cloudflare-issued certificate to serve, because Universal SSL does not cover
 # `*.testnet.cloudsforge.online`.
+# ── AND `CF_TLS_DEFAULT_CERT` IS GONE, BECAUSE THERE IS ONE ISSUER AGAIN ──────
+#
+# Everything above this line is the record of a problem this deployment no longer
+# has. It is kept because the reasoning is what stops it being re-introduced.
+#
+# The mainnet gateway terminated on a Cloudflare Origin CA leaf to stop the tunnel
+# answering 502. That is not how the 502 was fixed. cloudflared validates a
+# certificate against THE HOSTNAME IN ITS SERVICE URL, and that URL is the IP
+# literal `127.0.0.1`; no Origin CA will ever sign an IP literal, so the Origin
+# leaf only moved the error from `unknown authority` to `doesn't contain any IP
+# SANs`. What fixed it was giving cloudflared an `http://` service URL — the
+# `tunnel` entrypoint in compose/docker-compose.gateway.yml — so that hop performs
+# no handshake and needs no certificate at all.
+#
+# With that hop plaintext, NOTHING IN THIS DEPLOYMENT SERVES A CLOUDFLARE-ISSUED
+# LEAF, and the variable that chose between two issuers has one possible value. A
+# lever with one position is not a lever, so it is a constant here, and
+# `CF_TLS_DEFAULT_CERT` is removed from both `compose/env/traefik*.env`. The two
+# had to move together: `scripts/surface-routes.py` check 6 fails when this
+# directory reads a variable an env file does not set, and an env file setting a
+# variable nothing reads is the dead lever this change exists to remove.
+#
+# Deleted with it: `gateway/certs/origin.crt` and `origin.key` — that private key
+# passed through a chat transcript, so the fewest copies is the right number — and
+# `gateway/trust/cloudflare-origin-rsa-root.pem`, which was the last authority in
+# `trust.crt` this estate does not issue for itself.
+#
+# ── TLS IS NOT REMOVED, AND THIS IS THE BLOCK THAT KEEPS IT ──────────────────
+#
+# 443 still terminates, on the estate leaf, in BOTH environments. The tunnel does
+# not use it — `tunnel` is plaintext and is what cloudflared reaches — but six
+# consumers inside this host do, and none of them go through Cloudflare:
+# `estate-verify.sh` (`--cacert`, no `-k`), the three seeders and
+# `foresight-market-journey.mjs` (`NODE_EXTRA_CA_CERTS`), beacon in its container,
+# and both miners over `rpc.<apex>`. Beacon is the one that decides it: it probes
+# every surface at `https://<sub>.<apex>` and takes no configuration for a scheme
+# or a port, so plaintext here would publish a full outage that is not happening.
 tls:
   stores:
     default:
       defaultCertificate:
-{{ if env "CF_TLS_DEFAULT_CERT" }}
-        certFile: /etc/traefik/certs/{{ env "CF_TLS_DEFAULT_CERT" }}.crt
-        keyFile: /etc/traefik/certs/{{ env "CF_TLS_DEFAULT_CERT" }}.key
-{{ else }}
         certFile: /etc/traefik/certs/estate.crt
         keyFile: /etc/traefik/certs/estate.key
-{{ end }}
