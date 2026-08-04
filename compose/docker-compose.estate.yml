@@ -606,7 +606,14 @@ services:
       # would be an `if (asset === 'EMBER')` on the one asset this whole release
       # is about, which is the defect it removed wearing a new name.
       LEDGER_RECONCILE_ASSETS: "SHARD,EMBER"
-      LEDGER_RECONCILE_NETWORK: testnet
+      # WHICH NETWORK'S CUSTODY TOTAL IS RECONCILED — and it has to be the same
+      # one `indexer` follows or the call is `GET /v1/custody/ember/testnet/total`
+      # against a follower that only has `ember/mainnet` rows. That reads as
+      # `undefined`, which freezes EMBER, which is the honest failure and also an
+      # invisible one: nothing distinguishes "the chain is unreachable" from "the
+      # deploy named two different networks". So this is the SAME variable the
+      # indexer's `env_file` is keyed on, and the two cannot drift.
+      LEDGER_RECONCILE_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
       # ── the indexer call, and the one rule it must hold ───────────────────
       #
       # URL and timeout for `GET /v1/custody/:chain/:network/total`. UNREACHABLE
@@ -1050,18 +1057,23 @@ services:
       INDEXER_CUSTODY_MAX_ADDRESSES: "2000"
       INDEXER_CUSTODY_CONCURRENCY: "8"
       # ══════════════════════════════════════════════════════════════════════
-      # THE CHAIN THIS ESTATE FOLLOWS — and it is a real one now.
+      # THE CHAIN THIS ESTATE FOLLOWS IS IN `env/chain.<network>.env`, NOT HERE.
       #
-      # `hearth/docker-compose.testnet.yml`, run AS IS by
-      # `scripts/ember-testnet.sh`: a non-mining seed plus two miners on chain
-      # id 7412, network `hearth-testnet`. Nothing about it is tuned for this
-      # environment, and that is deliberate. `contracts/packages/chain` has
-      # exactly two networks — `mainnet | testnet` — so a third "devnet"
-      # vocabulary would have had nowhere to live in the type system, and
-      # EMBER's 60 confirmations are described there as "the number Hearth
-      # publishes to exchanges". An environment that indexed a chain with
-      # different constants from the ones `chainSpec()` reads would be testing
-      # a chain that does not exist.
+      # `INDEXER_CHAINS`, `INDEXER_RPC_EMBER_<NETWORK>` and
+      # `INDEXER_START_HEIGHT_EMBER_<NETWORK>` used to be three literals in this
+      # block naming `testnet`. They moved to the `env_file` below, and the move
+      # is forced rather than stylistic: TWO OF THE THREE CARRY THE NETWORK IN
+      # THE VARIABLE NAME, and a compose `environment:` key cannot be
+      # interpolated. `INDEXER_RPC_EMBER_${CF_EMBER_NETWORK}` is not a thing this
+      # file can write. An `env_file:` PATH can be interpolated, and — measured on
+      # this host with Compose v5.1.1, not assumed — the VALUES inside one are
+      # interpolated too, so `${EMBER_RPC_URL}` still reaches through it.
+      #
+      # It is also not enough to add the mainnet variable beside the testnet one
+      # and let the unused one sit: `env.ts:351` is a MIRROR CHECK that refuses to
+      # boot when an `INDEXER_RPC_*` names a scope `INDEXER_CHAINS` does not list.
+      # Exactly one of the two files may ever be loaded, which is what an
+      # interpolated path gives and what a merged map does not.
       #
       # HOST NETWORKING, NOT A COMPOSE LINK, and the reason is ownership.
       # `hearth` is the frozen legacy repository: it is read, run and never
@@ -1069,30 +1081,15 @@ services:
       # editing its compose file. `host.docker.internal` reaches the port that
       # file already publishes, and costs this estate nothing but a hostname.
       #
-      # The endpoint is NAMED `hearth-testnet-seed` rather than left to derive
-      # from the host, because the name is the primary key of `provider_health`
-      # and the `provider` label of `indexer_provider_failures_total` — and
-      # `host.docker.internal` as a health row identifies the machine, not the
-      # node.
-      #
       # WITH THE CHAIN DOWN this service still boots and still reports healthy:
       # env.ts validates the URL, not the socket. What changes is only WHICH
       # honest refusal the custody route gives — `nothing_indexed` instead of
       # `chain_not_followed`. Both reach ledger as `undefined`, both freeze
       # EMBER, and neither is a number nobody measured.
-      INDEXER_CHAINS: "ember:testnet"
-      INDEXER_RPC_EMBER_TESTNET: "hearth-testnet-seed=${EMBER_RPC_URL:-http://host.docker.internal:8545}"
-      # FROM GENESIS, and this one is load-bearing rather than tidy. With no
-      # start height the follower cold-starts at `tip − 2 × depth` = `tip − 120`,
-      # which on a chain younger than 120 blocks is a window that does not
-      # reach back to the confirmed height — and `custodyTotal` then refuses
-      # with `depth_not_walked` because it cannot vouch for the node's block
-      # where it must read the balances. A testnet mined from scratch on a
-      # laptop is exactly that chain. Indexing from 0 is cheap here and is the
-      # only setting under which the aggregate can be produced at all.
-      INDEXER_START_HEIGHT_EMBER_TESTNET: "0"
       # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: indexer-estate
+    env_file:
+      - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
     # Docker Desktop resolves `host.docker.internal` for free; the Linux daemon
     # does not, and there the indexer would report a healthy follower that can
     # reach no provider — the exact failure env.ts's mirror check exists to stop.
@@ -2084,9 +2081,14 @@ services:
   #     and the operator queue stays empty. `index.ts:79` logs
   #     `proposerConfigured: false` at boot so an operator can see which mode they
   #     are in without an error line every six hours.
-  #   * `FORESIGHT_MAINNET_ENABLED`. False by default, and `FORESIGHT_NETWORK` is
-  #     `testnet` — two deliberate settings are required to reach a mainnet, which
-  #     is the fail-closed default doing its job.
+  #   * `FORESIGHT_MAINNET_ENABLED`. NO LONGER IN THIS GROUP, and the correction
+  #     belongs here rather than only where the change is. This bullet used to say
+  #     the variable was unset and `FORESIGHT_NETWORK` was `testnet`, so two
+  #     deliberate settings stood between this estate and a mainnet. There is a
+  #     real EMBER mainnet now — `hearth`, chain 7411 — and on that environment
+  #     BOTH settings are made, in `env/chain.mainnet.env`, together, with the
+  #     reason written beside them. Still two settings and still deliberate; what
+  #     changed is that one environment has deliberately made them.
   #
   # `ADMIN_API_URL` IS set even though it is optional, and that is the one
   # judgement call in this list. It is `admin:read` on the engagement caps, which
@@ -2156,7 +2158,27 @@ services:
       # upstreams.
       FORESIGHT_SERVICE_TOKEN: ${FORESIGHT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
-      FORESIGHT_NETWORK: testnet
+      # `FORESIGHT_NETWORK` AND `FORESIGHT_MAINNET_ENABLED` ARE IN THE SAME
+      # `env_file` AS THE INDEXER'S, AND THAT IS THE POINT.
+      #
+      # `env.ts:374-379` refuses to boot on `FORESIGHT_NETWORK=mainnet` unless
+      # `FORESIGHT_MAINNET_ENABLED=true`, so that a one-word typo cannot put
+      # strangers' money on a live chain. That gate is worth keeping and is easy
+      # to defeat by accident — the obvious parameterisation here would have been
+      # `FORESIGHT_MAINNET_ENABLED: ${…:-false}` beside a `FORESIGHT_NETWORK`
+      # derived from `CF_EMBER_NETWORK`, which turns two independent settings
+      # into one and removes the whole defence.
+      #
+      # So NEITHER is written here. Both are stated, per network, in
+      # `env/chain.<network>.env` — a committed file whose only subject is which
+      # chain this estate is on, where the pair is visible together and turning
+      # the gate on is a diff somebody has to read. `foresight` reads the same
+      # file as `indexer` so the two cannot name different networks.
+      #
+      # `chainIdOf(chain, market.network)` (`foresight/src/deploy.ts:421`) is what
+      # actually signs, so a `FORESIGHT_NETWORK` disagreeing with the node would
+      # produce transactions the node rejects on EIP-155 — silently, at the one
+      # moment a market is created.
       FORESIGHT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
       # Minted by estate-bootstrap.sh §5f and reused thereafter. The zero
       # placeholders boot the service and cannot produce a market: the contract's
@@ -2166,6 +2188,8 @@ services:
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: foresight-estate
+    env_file:
+      - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
     # Docker Desktop resolves `host.docker.internal`; the Linux daemon does not.
     # Same reason as the `faucet` and `indexer` blocks.
     extra_hosts:
@@ -2442,10 +2466,35 @@ services:
   # the same expression `indexer` uses: `host.docker.internal` plus
   # `extra_hosts`, because hearth is frozen and attaching it to this project's
   # network would mean editing it.
+  #
+  # ── AND THAT IS WHY BOTH FAUCET SERVICES SIT BEHIND A PROFILE ──────────────
+  #
+  # `faucet/src/env.ts:63` is `export const NETWORK = 'testnet' as const`, with
+  # the annotation chosen so that `NETWORK === 'mainnet'` is a COMPILE ERROR and
+  # not a branch. `index.ts:108-120` reads `eth_chainId` at boot and calls
+  # `process.exit(1)` on anything that is not 7412. There is no configuration
+  # under which this service runs against EMBER mainnet, deliberately: its own
+  # header calls a testnet faucet pointed at mainnet "an unauthenticated
+  # withdrawal endpoint".
+  #
+  # So when `CF_EMBER_NETWORK=mainnet` this service must not be started at all.
+  # Started anyway it does not degrade — it crash-loops, taking `--wait` with it.
+  # Compose has no way to REMOVE a service for one environment, only to add one
+  # for a profile, so the profile is on the faucet and `compose/testnet.env` opts
+  # in with `COMPOSE_PROFILES=ember-testnet`. The consequence is stated rather
+  # than buried: a plain `docker compose -f compose/docker-compose.estate.yml up`
+  # now brings up NO FAUCET, because its plain default is the mainnet chain. An
+  # estate that wants a faucet is an estate on the testnet chain, and it is
+  # brought up with `--env-file compose/testnet.env`, which sets both.
+  #
+  # `faucet-migrate` carries the same profile: it imports the same `env.ts` and
+  # would fail the same check, and a migration run for a service that is not
+  # running is a database touched for no reason.
     volumes:
       # Read-only, and only the public certificate — never a key.
       - ../gateway/certs/ca.crt:/etc/ssl/estate/ca.crt:ro
   faucet-migrate:
+    profiles: ["ember-testnet"]
     <<: *migrate-defaults
     build:
       context: ../../faucet
@@ -2469,6 +2518,9 @@ services:
         condition: service_healthy
 
   faucet:
+    # See the long note above `faucet-migrate`: this service cannot run on the
+    # EMBER mainnet, by a compile-time constant in its own source.
+    profiles: ["ember-testnet"]
     <<: *service-defaults
     build:
       context: ../../faucet

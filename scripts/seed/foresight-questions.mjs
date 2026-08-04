@@ -347,7 +347,19 @@ export const TEST_ARTEFACT_VOID_REASON =
   'block height at a time already past, it never reached a chain, and no stake was ever possible on ' +
   'it. Voided rather than deleted so the record of the run survives.'
 
-/** Recognises the journey script\'s questions, so seeding never voids a real market by accident. */
+/**
+ * Recognises the journey script\'s questions, so seeding never voids a real market by accident.
+ *
+ * The network and the chain id are both alternations, not literals. This pattern was pinned to
+ * `testnet` / `7412` and the journey script now emits whichever pair `CF_EMBER_NETWORK` selects
+ * (`foresight-market-journey.mjs:117-118` — `hearth` is 7411, `hearth-testnet` is 7412 per
+ * `hearth/node/src/params.js:37-38`). Left pinned, this would have stopped matching its own
+ * artefacts on the mainnet estate and quietly left every one of them standing as a real market —
+ * a false NEGATIVE, which is the direction that does damage here.
+ *
+ * Still anchored and still specific: it is the exact sentence the journey builds and nothing else,
+ * so the reverse mistake — voiding a market somebody meant — stays impossible.
+ */
 export function isTestArtefact(question) {
-  return /^Will the EMBER testnet \(chain 7412\) be above block height \d+ at /.test(question)
+  return /^Will the EMBER (?:mainnet|testnet) \(chain 741[12]\) be above block height \d+ at /.test(question)
 }

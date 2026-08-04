@@ -76,7 +76,18 @@ import {
 
 const require = createRequire(import.meta.url)
 
-const CHAIN_ID = Number(process.env.EMBER_CHAIN_ID || 7412)
+// `EMBER_CHAIN_ID` stays the explicit override; what changed is the FALLBACK,
+// which was the literal 7412 and is now derived from the same `CF_EMBER_NETWORK`
+// the estate keys its chain `env_file:` on. `EMBER_HOST_RPC` below defaults to
+// 8545 — the MAINNET seed, chain 7411 — so a 7412 fallback beside it was a pair
+// that could not both be right (`hearth/node/src/params.js:37-38`).
+const EMBER_NETWORK = process.env.CF_EMBER_NETWORK || 'mainnet'
+const CHAIN_ID = Number(
+  process.env.EMBER_CHAIN_ID || { mainnet: 7411, testnet: 7412 }[EMBER_NETWORK],
+)
+if (!Number.isSafeInteger(CHAIN_ID)) {
+  throw new Error(`CF_EMBER_NETWORK is "${EMBER_NETWORK}"; known: mainnet, testnet`)
+}
 const RPC_URL = process.env.EMBER_HOST_RPC || 'http://127.0.0.1:8545'
 const HEARTH = process.env.HEARTH_REPO || path.resolve(ROOT, '../hearth')
 const EMBER_HOME =

@@ -71,6 +71,29 @@ TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:4140}
 # posted browser telemetry at it.
 LANTERN=${LANTERN:-http://127.0.0.1:4141}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
+
+# WHICH CHAIN THIS ESTATE IS ON — 0x1cf3 is 7411 (`hearth`), 0x1cf4 is 7412
+# (`hearth-testnet`), per `hearth/node/src/params.js:37-38`.
+#
+# The EMBER section near the end of this file asserted `0x1cf4` as a literal, from
+# when there was one chain, and it had become a check that could not pass: 8545 is
+# now the MAINNET seed and answers 7411, so every EMBER section would have taken
+# the "no chain here" skip on a host with a perfectly healthy chain — a skip that
+# is loud but is still not evidence. `CF_EMBER_NETWORK` is the same variable
+# `docker-compose.estate.yml` keys its `env_file:` on, so this file and the estate
+# cannot disagree about which chain they mean. It is also the value queried as
+# `watched_addresses.network`, which is the row the indexer writes under
+# `INDEXER_CHAINS`.
+#
+# DEFINED HERE, NOT BESIDE ITS FIRST USE: `/v1/custody/ember/<network>/total` is
+# read at line ~2086, long before the EMBER section, and an empty expansion there
+# would have produced a 404 that reads exactly like a broken route.
+EMBER_NETWORK=${CF_EMBER_NETWORK:-mainnet}
+case "$EMBER_NETWORK" in
+  mainnet) ember_chain_want=0x1cf3; ember_chain_dec=7411 ;;
+  testnet) ember_chain_want=0x1cf4; ember_chain_dec=7412 ;;
+  *) echo "estate-verify: CF_EMBER_NETWORK is \"$EMBER_NETWORK\"; expected mainnet or testnet" >&2; exit 2 ;;
+esac
 fails=0
 
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
@@ -2083,7 +2106,7 @@ echo "── the chain-backing loop: solvency, or a refusal ──────�
 # prove it fails closed rather than silently passing.
 INDEXER=${INDEXER:-http://127.0.0.1:4108}
 
-cb_anon=$(code "$INDEXER/v1/custody/ember/testnet/total")
+cb_anon=$(code "$INDEXER/v1/custody/ember/$EMBER_NETWORK/total")
 [ "$cb_anon" = 401 ] && ok "the custody total refuses an anonymous caller (401)" \
   || bad "the custody total answered $cb_anon to no token — every other read here is public because chain facts are; Sigma over a set only the platform knows is not"
 
@@ -2175,7 +2198,7 @@ lleg=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}
 if [ -z "$cb_tok" ]; then
   bad "could not obtain a service token carrying indexer:read; the custody route cannot be driven"
 else
-  cb_status=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/testnet/total")
+  cb_status=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/$EMBER_NETWORK/total")
   cb_code=$(python3 -c "import sys,json;print(json.load(open('/tmp/slice.body')).get('error',{}).get('code',''))" 2>/dev/null)
   case "$cb_status" in
     200)
@@ -2312,17 +2335,18 @@ reconcile_now() {
   return 1
 }
 
-if [ "$ember_chain" != "0x1cf4" ]; then
-  echo "  ..   SKIPPED: no EMBER testnet at $EMBER_RPC_HOST (chain id read: ${ember_chain:-none})."
+if [ "$ember_chain" != "$ember_chain_want" ]; then
+  echo "  ..   SKIPPED: no EMBER $EMBER_NETWORK at $EMBER_RPC_HOST (chain id read: ${ember_chain:-none},"
+  echo "       wanted $ember_chain_want / $ember_chain_dec)."
   echo "       The refusal branch above is the correct verdict for an estate without a chain."
   echo "       To drive the success path:  ./scripts/ember-testnet.sh up && ./scripts/ember-miner.sh start"
   echo "                                   node scripts/ember-seed.js"
-elif [ "$(isql -c "select count(*) from watched_addresses where chain='ember' and network='testnet' and label like 'deposit:%'")" = 0 ]; then
+elif [ "$(isql -c "select count(*) from watched_addresses where chain='ember' and network='$EMBER_NETWORK' and label like 'deposit:%'")" = 0 ]; then
   echo "  ..   SKIPPED: the chain is up but nothing is registered as EMBER custody."
   echo "       A zero-balance custody set proves the plumbing and nothing about the arithmetic."
   echo "       Seed it:  node scripts/ember-seed.js"
 else
-  ok "an EMBER testnet is answering at $EMBER_RPC_HOST on chain 7412"
+  ok "an EMBER $EMBER_NETWORK is answering at $EMBER_RPC_HOST on chain $ember_chain_dec"
 
   # ── 0. THE KEY, WHICH IS THE PART THAT CANNOT BE UNDONE ────────────────────
   #
@@ -2413,9 +2437,9 @@ else
   # Out of the `deposit:` prefix and into one nothing selects. Reversible by
   # construction: the label is prefixed, never rewritten, so step 4 strips it.
   isql -c "update watched_addresses set label = 'broken-by-verify/' || label
-            where chain='ember' and network='testnet' and label like 'deposit:%'" >/dev/null
+            where chain='ember' and network='$EMBER_NETWORK' and label like 'deposit:%'" >/dev/null
 
-  brk=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/testnet/total")
+  brk=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/$EMBER_NETWORK/total")
   brk_code=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('error',{}).get('code',''))" 2>/dev/null)
   if [ "$brk" = 200 ]; then
     brk_total=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('total'))" 2>/dev/null)
@@ -2471,8 +2495,8 @@ else
 
   # ── 4. RESTORED ────────────────────────────────────────────────────────────
   isql -c "update watched_addresses set label = replace(label, 'broken-by-verify/', '')
-            where chain='ember' and network='testnet' and label like 'broken-by-verify/%'" >/dev/null
-  restored=$(isql -c "select count(*) from watched_addresses where chain='ember' and network='testnet' and label like 'deposit:%'")
+            where chain='ember' and network='$EMBER_NETWORK' and label like 'broken-by-verify/%'" >/dev/null
+  restored=$(isql -c "select count(*) from watched_addresses where chain='ember' and network='$EMBER_NETWORK' and label like 'deposit:%'")
   [ "${restored:-0}" -ge 1 ] 2>/dev/null \
     && ok "the custody labels are restored ($restored addresses) — this section leaves the estate as it found it" \
     || bad "the custody labels were NOT restored; EMBER will stay frozen after this verify run"

@@ -104,7 +104,22 @@ const EMBER_HOME = process.env.EMBER_HOME || path.join(process.env.HOME, '.cloud
 const MINER_DATA = process.env.EMBER_MINER_DATA || path.join(EMBER_HOME, 'miner')
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test'
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correct-horse-battery-staple-42'
-const CHAIN_ID = 7412
+// THE CHAIN THIS JOURNEY SIGNS FOR, and it must be derived rather than written.
+//
+// This was the literal 7412. `CHAIN_ID` reaches `TX.sign(..., { chainId })` at
+// :180, so a wrong value here is not a wrong message — it is a transaction bound
+// by EIP-155 to a chain the node will refuse, and the refusal arrives as an
+// opaque RPC error in the middle of a market deploy. There are two chains now:
+// `hearth`/7411 on the mainnet estate and `hearth-testnet`/7412 on the testnet
+// one (`hearth/node/src/params.js:37-38`), and `EMBER_HOST_RPC` above defaults to
+// 8545, which is the MAINNET seed. `CF_EMBER_NETWORK` is the same variable the
+// estate keys its chain `env_file:` on.
+const EMBER_NETWORK = process.env.CF_EMBER_NETWORK || 'mainnet'
+const CHAIN_ID = { mainnet: 7411, testnet: 7412 }[EMBER_NETWORK]
+if (CHAIN_ID === undefined) {
+  console.error(`CF_EMBER_NETWORK is "${EMBER_NETWORK}"; known: mainnet, testnet`)
+  process.exit(2)
+}
 
 const args = process.argv.slice(2)
 const flag = (name, fallback) => {
@@ -310,7 +325,7 @@ async function deployerFor(marketId, utok) {
 async function main() {
   console.log('── 0. the chain, and the estate, both answering ──────────────────────────')
   const chainId = Number(big(await rpc('eth_chainId')))
-  chainId === CHAIN_ID ? ok(`EMBER testnet chain id ${chainId}, height ${Number(big(await rpc('eth_blockNumber')))}`)
+  chainId === CHAIN_ID ? ok(`EMBER ${EMBER_NETWORK} chain id ${chainId}, height ${Number(big(await rpc('eth_blockNumber')))}`)
                        : bad(`chain id ${chainId}, expected ${CHAIN_ID}`)
   // `/categories` rather than `/readyz`, and the difference was found by running this: the gateway
   // routes the API RESOURCES on `foresight.<apex>` and deliberately not the health endpoints, so
@@ -335,7 +350,7 @@ async function main() {
   console.log('── 1. a draft market ─────────────────────────────────────────────────────')
   const closeTime = new Date(Date.now() + CLOSE_IN * 1_000)
   const draft = {
-    question: `Will the EMBER testnet (chain 7412) be above block height ${Number(big(await rpc('eth_blockNumber'))) + 10} at ${closeTime.toISOString()}?`,
+    question: `Will the EMBER ${EMBER_NETWORK} (chain ${CHAIN_ID}) be above block height ${Number(big(await rpc('eth_blockNumber'))) + 10} at ${closeTime.toISOString()}?`,
     resolutionCriteria:
       'YES if the chain\'s reported head height at the close time is strictly greater than the height named in the question, read from the node named below. NO otherwise.',
     category: 'protocol_network',
@@ -344,7 +359,7 @@ async function main() {
     // treats a non-URL reference as unprobeable and therefore resolvable — the operator's own
     // check is the resolution for those — which is the honest reading for an RPC endpoint that is
     // not an HTTP GET surface.
-    resolutionSourceRef: 'hearth-testnet-seed eth_getBlockByNumber(latest) on chain 7412',
+    resolutionSourceRef: `${EMBER_NETWORK === 'mainnet' ? 'hearth-seed' : 'hearth-testnet-seed'} eth_getBlockByNumber(latest) on chain ${CHAIN_ID}`,
     closeTime: closeTime.toISOString(),
     // ZERO, deliberately, and it is the one parameter chosen for this script rather than for a
     // market. The default is 86,400s (foresight/src/env.ts:351) — "long enough that a wrong

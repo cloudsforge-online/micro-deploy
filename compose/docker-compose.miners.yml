@@ -68,8 +68,22 @@ services:
       - "https://rpc.cloudsforge.online"
       - "--data"
       - "/minerdata"
+      # `hearth` — CHAIN 7411 — because this is the mainnet environment's miner.
+      # It said `hearth-testnet` while the mainnet seed also said `hearth-testnet`,
+      # which is how both environments came to be chain 7412 at once.
+      #
+      # HONEST ABOUT WHAT THIS FLAG DOES: `bin/hearth-mine.js:123` puts it in
+      # `HEARTH_NETWORK` and `params.js` resolves the id from it, but the only
+      # consumer in this process is the banner at `hearth-mine.js:197` — the light
+      # miner holds no chain, and the header it grinds comes from the node's
+      # `/mining/template`. So this line does not by itself decide which chain is
+      # mined; `docker-compose.hearth-seed.yml` does. It is corrected anyway,
+      # because a status line that names the wrong chain is how the wrong chain
+      # goes unnoticed, and because an unregistered value is a hard error at
+      # startup (`params.js:52-58`) — which makes this flag a cheap assertion that
+      # somebody thought about which network this miner is on.
       - "--network"
-      - "hearth-testnet"
+      - "hearth"
       - "--throttle"
       - "0.25"
       - "--status-ms"

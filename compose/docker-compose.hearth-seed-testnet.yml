@@ -16,16 +16,25 @@
 #   host ports      87xx/88xx instead of 85xx/86xx
 #   volume          namespaced by the `-p cf-testnet-chain` project
 #
-# THE CHAIN ID IS 7412 ON BOTH, AND THAT IS A DEVIATION WORTH READING.
-# `node/src/params.js:37-38` maps hearth->7411 and hearth-testnet->7412. The
-# estate follows the TESTNET chain by design — `docker-compose.estate.yml:1085`
-# names the variable INDEXER_RPC_EMBER_TESTNET and its value keys on
-# `hearth-testnet-seed` — so the mainnet-apex estate is a 7412 consumer too, and
-# pointing it at a 7411 node would fail the indexer's boot-time chain check.
-# These are therefore two INDEPENDENT chains that share a chain id: separate
-# volumes, separate genesis-forward history, no peering between them (8646 is
-# unpublished on both). They cannot merge, but a signed transaction is replayable
-# from one to the other, which is why this is stated rather than left to be found.
+# THE CHAIN ID IS 7412 HERE AND 7411 ON THE OTHER ONE, WHICH IT WAS NOT.
+# `node/src/params.js:37-38` maps hearth->7411 and hearth-testnet->7412, and this
+# file used to record that BOTH seeds ran as `hearth-testnet` — two INDEPENDENT
+# chains (separate volumes, separate genesis-forward history, no peering; 8646 is
+# unpublished on both) sharing one identity. They could not merge, but a signed
+# transaction was replayable from either to the other, because EIP-155 binds a
+# signature to the chain id and to nothing else.
+#
+# The obstacle this file recorded was real and has been removed rather than
+# worked around: `docker-compose.estate.yml` hardcoded `INDEXER_CHAINS:
+# "ember:testnet"` and `INDEXER_RPC_EMBER_TESTNET`, and TWO OF THOSE THREE
+# VARIABLES CARRY THE NETWORK IN THEIR NAME — which a compose `environment:` key
+# cannot interpolate, which is why it stayed. They now live in
+# `compose/env/chain.<network>.env`, loaded through an `env_file:` whose PATH is
+# interpolated from `CF_EMBER_NETWORK`. The mainnet estate loads
+# `chain.mainnet.env` and asserts 7411; this one loads `chain.testnet.env` and
+# asserts 7412, at `indexer/src/evm.ts:471-480`, before it will write a block.
+#
+# This seed is unchanged. It was always `hearth-testnet` and it stays that way.
 services:
   hearth-testnet-seed:
     container_name: cf-hearth-seed-testnet

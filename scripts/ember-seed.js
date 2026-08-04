@@ -70,6 +70,26 @@ const HEARTH = process.env.HEARTH_REPO || path.resolve(__dirname, '../../hearth'
 const EMBER_HOME = process.env.EMBER_HOME || path.join(process.env.HOME, '.cloudsforge/ember-testnet');
 const MINER_DATA = process.env.EMBER_MINER_DATA || path.join(EMBER_HOME, 'miner');
 const RPC = process.env.EMBER_HOST_RPC || 'http://127.0.0.1:8545';
+
+// THE CHAIN THIS SEED IS ALLOWED TO WRITE TO, and it is no longer one number.
+//
+// This script asserted 7412 as a literal, from when there was one chain. There
+// are two now — `hearth`/7411 on the mainnet estate and `hearth-testnet`/7412 on
+// the testnet estate (`hearth/node/src/params.js:37-38`) — and 8545 is the
+// mainnet seed, so the DEFAULT here had to move with `EMBER_HOST_RPC`'s default
+// or the script would refuse the very node it points at.
+//
+// `CF_EMBER_NETWORK` is the same variable `docker-compose.estate.yml` keys its
+// `env_file:` on, so seeding and indexing cannot name different chains. The check
+// below is still an assertion and still fatal: seeding deposit addresses onto the
+// wrong chain is money credited against balances that do not exist.
+const EMBER_NETWORK = process.env.CF_EMBER_NETWORK || 'mainnet';
+const EMBER_CHAIN_IDS = { mainnet: 7411, testnet: 7412 };
+const EXPECTED_CHAIN_ID = EMBER_CHAIN_IDS[EMBER_NETWORK];
+if (EXPECTED_CHAIN_ID === undefined) {
+  console.error(`CF_EMBER_NETWORK is "${EMBER_NETWORK}"; known: ${Object.keys(EMBER_CHAIN_IDS).join(', ')}`);
+  process.exit(2);
+}
 const IDENTITY = process.env.IDENTITY || 'http://127.0.0.1:4100';
 const INDEXER = process.env.INDEXER || 'http://127.0.0.1:4108';
 const LEDGER = process.env.LEDGER || 'http://127.0.0.1:4102';
@@ -332,12 +352,15 @@ async function main() {
   const statusOnly = process.argv.includes('--status');
 
   const chainId = Number(hexToBig(await rpc('eth_chainId')));
-  if (chainId !== 7412) {
-    bad(`the node at ${RPC} is chain ${chainId}, not 7412 — that is not the chain the estate indexes`);
+  if (chainId !== EXPECTED_CHAIN_ID) {
+    bad(
+      `the node at ${RPC} is chain ${chainId}, not ${EXPECTED_CHAIN_ID} — that is not the chain `
+      + `the estate indexes with CF_EMBER_NETWORK=${EMBER_NETWORK}`,
+    );
     return 1;
   }
   const head = Number(hexToBig(await rpc('eth_blockNumber')));
-  ok(`chain 7412 at height ${head}`);
+  ok(`chain ${EXPECTED_CHAIN_ID} (EMBER ${EMBER_NETWORK}) at height ${head}`);
 
   const accounts = deriveAccounts(SEED_PHRASE, AMOUNTS.length);
   const targets = accounts.map((a, i) => ({ address: a.address, want: AMOUNTS[i], label: LABEL(i) }));
