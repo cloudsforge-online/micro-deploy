@@ -100,6 +100,7 @@ const DOMAINS = [
   { name: 'mint', load: () => import('./seed/mint.mjs').then((m) => m.seedMint) },
   { name: 'nda', load: () => import('./seed/nda.mjs').then((m) => m.seedNda) },
   { name: 'billing', load: () => import('./seed/billing.mjs').then((m) => m.seedBilling) },
+  { name: 'beacon', load: () => import('./seed/beacon.mjs').then((m) => m.seedBeacon) },
 ]
 
 async function main() {

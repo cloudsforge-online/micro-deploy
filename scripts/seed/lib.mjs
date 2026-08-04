@@ -332,6 +332,8 @@ export const COUNTED = {
   // determine would make the idempotency proof depend on a dice roll.
   nda: ['worlds', 'players', 'reports', 'objectives'],
   billing: ['products', 'prices', 'entitlements', 'purchases'],
+  // `slos` is counted precisely because it must STAY zero — see seed/beacon.mjs.
+  beacon: ['probes', 'slos'],
 }
 
 export function counts() {
