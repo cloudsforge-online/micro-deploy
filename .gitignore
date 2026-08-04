@@ -8,7 +8,29 @@ compose/estate/tokens.env
 
 # Rendered from a release manifest by scripts/release-render.py. Generated, never
 # authored: committing it would let a stale overlay outlive the manifest it came from.
-compose/docker-compose.release.yml
+#
+# THE GLOB, NOT THE ONE NAME. This rule named `docker-compose.release.yml` alone,
+# and the moment a second environment appeared `release-render.py` wrote
+# `docker-compose.release.testnet.yml` beside it — an identically generated file
+# that the rule did not cover and that therefore showed up as untracked, inviting
+# exactly the `git add` this comment argues against. One `.testnet` suffix should
+# not be the difference between a generated artefact being ignored and being
+# committed.
+compose/docker-compose.release*.yml
+
+# The operator's own environment for the estate's default project, read by compose
+# from the repository root the way `compose/.env` is read from `compose/`.
+#
+# NOT A TEMPLATE AND NOT PLACEHOLDERS. On the live host this file holds a 28-char
+# Grafana admin password and a 64-hex beacon token — real credentials for surfaces
+# that are reachable from the network. It sat untracked-but-committable for the
+# whole of the estate's life; the only reason it is not in the history is that
+# nobody happened to run `git add -A` from the root.
+#
+# `.env.local` below already covers the convention this repository documents. This
+# line covers the one the operator actually used, which is the point: an ignore
+# file is only worth what it stops in practice.
+/.env
 
 # ── ANYTHING LOCAL, AND ESPECIALLY ANYTHING WITH A KEY IN IT ──────────────────
 #

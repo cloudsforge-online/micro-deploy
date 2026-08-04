@@ -1,0 +1,47 @@
+# THE TESTNET ENVIRONMENT'S OWN SEED. A sibling of docker-compose.hearth-seed.yml.
+#
+#   cd ../hearth && docker compose -p cf-testnet-chain \
+#     -f docker-compose.testnet.yml \
+#     -f ../deploy/compose/docker-compose.hearth-seed-testnet.yml \
+#     up -d hearth-testnet-seed
+#
+# Everything the mainnet-estate seed's header argues applies here unchanged:
+# seed only (the two miners stay down by naming the service), HEARTH_DATA in a
+# subdirectory so the retired UTXO history can never be read as account-model
+# blocks, and both 127.0.0.1 and 172.17.0.1 published because a loopback-only
+# node answers the operator and 502s every container.
+#
+# WHAT DIFFERS, AND IT IS ONLY THE THREE THINGS THAT WOULD COLLIDE:
+#   container name  cf-hearth-seed-testnet   (names are global to the daemon)
+#   host ports      87xx/88xx instead of 85xx/86xx
+#   volume          namespaced by the `-p cf-testnet-chain` project
+#
+# THE CHAIN ID IS 7412 ON BOTH, AND THAT IS A DEVIATION WORTH READING.
+# `node/src/params.js:37-38` maps hearth->7411 and hearth-testnet->7412. The
+# estate follows the TESTNET chain by design — `docker-compose.estate.yml:1085`
+# names the variable INDEXER_RPC_EMBER_TESTNET and its value keys on
+# `hearth-testnet-seed` — so the mainnet-apex estate is a 7412 consumer too, and
+# pointing it at a 7411 node would fail the indexer's boot-time chain check.
+# These are therefore two INDEPENDENT chains that share a chain id: separate
+# volumes, separate genesis-forward history, no peering between them (8646 is
+# unpublished on both). They cannot merge, but a signed transaction is replayable
+# from one to the other, which is why this is stated rather than left to be found.
+services:
+  hearth-testnet-seed:
+    container_name: cf-hearth-seed-testnet
+    environment:
+      HEARTH_DATA: /data/evm
+    ports: !override
+      - "127.0.0.1:8745:8545"     # Ethereum JSON-RPC  -> CF_RPC_UPSTREAM
+      - "172.17.0.1:8745:8545"
+      - "127.0.0.1:8845:8645"     # REST, /mining/*    -> CF_MINING_UPSTREAM
+      - "172.17.0.1:8845:8645"
+      - "127.0.0.1:8848:8648"     # P2P over WebSocket -> CF_P2P_WS_UPSTREAM
+      - "172.17.0.1:8848:8648"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8645/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 30s

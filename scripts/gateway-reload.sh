@@ -89,7 +89,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 cd "$ROOT" || exit 1
 
 DYNAMIC="$ROOT/gateway/dynamic"
-CERTS="$ROOT/gateway/certs"
+# Same variable as docker-compose.gateway.yml mounts, or `--check` would
+# validate a configuration against a different certificate directory from the one
+# the running gateway serves — a check that passes on the wrong evidence.
+CERTS="${CF_CERT_DIR:-$ROOT/gateway/certs}"
 SCRATCH="$ROOT/.gateway-validate"
 ENV_FILE="$ROOT/compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
 GW_PROJECT=${CF_GW_PROJECT:-cfmicro}

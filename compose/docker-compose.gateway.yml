@@ -199,7 +199,15 @@ services:
       # Docker creates the host directory if it is absent rather than failing, so
       # a stack brought up without the certificate script degrades to the old
       # self-signed default instead of refusing to start.
-      - ../gateway/certs:/etc/traefik/certs:ro
+      #
+      # `CF_CERT_DIR` because this path was HARDCODED, and the gateway is the
+      # file a second environment collides in: two projects mounting one
+      # directory means the second `gateway-cert.sh` run decides what the FIRST
+      # one serves. The leaf is additive now (see that script), so sharing this
+      # default directory is correct and is what both environments do — but the
+      # variable is the escape hatch for a deployment that wants two CAs, and a
+      # hardcoded path is not an escape hatch at all.
+      - ${CF_CERT_DIR:-../gateway/certs}:/etc/traefik/certs:ro
     # ── THE ONE UPSTREAM THAT IS NOT ON A COMPOSE NETWORK ────────────────────
     #
     # `gateway/dynamic/estate-web.yml` routes `rpc.<apex>` and `p2p.<apex>` to the

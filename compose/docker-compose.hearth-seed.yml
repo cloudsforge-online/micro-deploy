@@ -1,0 +1,91 @@
+# THE SEED ONLY, AND IT MUST NOT MINE. An overlay on hearth's own
+# `docker-compose.testnet.yml`, applied from the hearth checkout:
+#
+#   cd ../hearth && docker compose \
+#     -f docker-compose.testnet.yml \
+#     -f ../deploy/compose/docker-compose.hearth-seed.yml \
+#     up -d hearth-testnet-seed
+#
+# ── WHY ONLY THE SEED ─────────────────────────────────────────────────────────
+#
+# `hearth/docker-compose.testnet.yml` declares three services: the seed (:65) and
+# two miners (:84, :103), each with `HEARTH_MINE: "1"` and `HEARTH_THROTTLE: 0.6`
+# (:91-92, :110-111). On this host — 4 cores, already carrying 46 estate services
+# and 7 telemetry containers — those two miners took the load average to 37. This
+# machine is the SEED and the ecosystem; the owner mines from their Mac and PC
+# with `hearth-mine` over HTTPS (`hearth/node/bin/hearth-mine.js:3-13`).
+#
+# The seed needs no `HEARTH_MINE: "0"` override: it never had the variable, and
+# `hearth/node/bin/hearthd.js:68` arms mining only on the exact string `"1"`.
+# Naming the service on the command line is what keeps the miners down —
+# `depends_on` runs seed→miner, never the reverse.
+#
+# ── WHY THE PORTS ARE REPUBLISHED ─────────────────────────────────────────────
+#
+# Upstream publishes 8545/8645/8646/8648 on ALL INTERFACES. Every other port on
+# this box binds 127.0.0.1 only and the chain must not be the exception: nothing
+# here is meant to be reachable from the LAN, only through the gateway.
+#
+# But loopback alone is not enough either. The gateway and the estate reach the
+# chain as `host.docker.internal`, which `docker-compose.gateway.yml:218-219`
+# maps to `host-gateway` — measured on this host as 172.17.0.1, the default
+# bridge. A process bound to 127.0.0.1 does not accept on 172.17.0.1, so a
+# loopback-only node answers the operator's curl and 502s every container.
+#
+# Hence both, and only both:
+#   127.0.0.1  — the operator's own `curl`, and `scripts/ember-*.sh`
+#   172.17.0.1 — the gateway container and the estate's indexer/foresight/faucet
+#
+# `ports:` REPLACES the upstream list rather than adding to it — compose merges
+# service keys but takes the override's sequence whole for `ports` — which is the
+# reason this override can narrow a binding at all.
+services:
+  hearth-testnet-seed:
+    # ── THE NAME, WHICH IS NOT FREE ───────────────────────────────────────────
+    #
+    # `container_name: hearth-testnet-seed` is a LITERAL at
+    # `hearth/docker-compose.testnet.yml:67`, and container names are global to
+    # the daemon. The legacy `stack` project — working dir
+    # /home/malf/dev/fullstack/stack, deliberately stopped with `restart=no` —
+    # still holds that exact name on an exited container, so a plain `up` here
+    # fails with `Conflict. The container name "/hearth-testnet-seed" is already
+    # in use`. Renaming ours is the only option that does not disturb a project
+    # that is meant to stay down. Nothing routes by this name: the gateway and
+    # the estate reach the chain across the host, not by container DNS.
+    container_name: cf-hearth-seed
+    environment:
+      # ── THE DATA DIRECTORY, AND WHY THE DEFAULT IS A TRAP ───────────────────
+      #
+      # `docker-compose.testnet.yml` sets HEARTH_EVM=1 and does NOT set
+      # HEARTH_DATA, so the account-model node writes `/data/blocks.ndjson` —
+      # the SAME filename the retired UTXO chain uses. `hearth/docker-compose.yml`
+      # sets `HEARTH_DATA: /data/evm` at :27 for exactly this reason and states
+      # it at :20-23: "both chains write the same `blocks.ndjson` filename and an
+      # EVM node pointed at UTXO history READS GARBAGE RATHER THAN REFUSING."
+      # The testnet file never got that fix.
+      #
+      # This is not hypothetical here. The volume the legacy `stack` project left
+      # behind holds 1827 blocks of UTXO history — `ember1…` outputs and a
+      # 44-byte DER Ed25519 `coinbasePub` (`302a300506032b6570…`), not the
+      # 65-byte uncompressed secp256k1 key the account model requires at
+      # `node/src/chain/miner.js:141`. Subdirectory, so the two can never meet.
+      HEARTH_DATA: /data/evm
+    ports: !override
+      - "127.0.0.1:8545:8545"     # Ethereum JSON-RPC     -> CF_RPC_UPSTREAM
+      - "172.17.0.1:8545:8545"
+      - "127.0.0.1:8645:8645"     # REST, /mining/*       -> CF_MINING_UPSTREAM
+      - "172.17.0.1:8645:8645"
+      - "127.0.0.1:8648:8648"     # P2P over WebSocket    -> CF_P2P_WS_UPSTREAM
+      - "172.17.0.1:8648:8648"
+    # 8646 (raw TCP gossip) is deliberately NOT published. It is the transport a
+    # tunnel cannot carry, it has no in-estate consumer, and the two miners that
+    # used it are the two services this file exists to keep down.
+    restart: unless-stopped
+    healthcheck:
+      # /info is the REST port's cheapest truthful answer (`evmnode.js:434`).
+      # No curl in node:22-alpine; node itself is the one dependency guaranteed.
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8645/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 20s

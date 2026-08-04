@@ -227,19 +227,53 @@ services:
 # Nothing in THIS file sits on `vault`; it is declared here so that the gateway
 # overlay and the eventual service overlays attach to networks that already
 # exist with the right properties, rather than each inventing their own.
+#
+# ── THESE FOUR NAMES WERE LITERALS, AND THAT MADE THE OVERLAY A FICTION ───────
+#
+# `compose/testnet.env` says a second environment is "six variables, no second
+# copy of anything", and names `CF_NET_PREFIX` as the one that moves the three
+# shared networks. THIS FILE IGNORED IT. It is also the file that OWNS them —
+# `docker-compose.gateway.yml` says so where it declares the same three
+# `external: true` ("created by docker-compose.telemetry.yml, which is the file
+# that owns them"), and gateway.yml has interpolated `${CF_NET_PREFIX:-cf-micro}`
+# all along. So the consumer was parameterised and the producer was not: setting
+# `CF_NET_PREFIX=cf-testnet` made the testnet gateway ask for `cf-testnet-edge`
+# and `cf-testnet-app`, and left the only file that could create them building
+# `cf-micro-*` regardless. Measured before this change — `CF_NET_PREFIX=cf-testnet
+# CF_PROJECT=cf-testnet docker compose -f docker-compose.telemetry.yml config`
+# emitted `cf-micro-app`, `cf-micro-edge` and `stack_default`, byte-identical to
+# the unset run.
+#
+# UNSET STILL RENDERS EXACTLY AS BEFORE for the three prefixed names, which is
+# the property testnet.env claims for the whole mechanism and which is verified
+# for this file by `docker compose config` diff, not assumed.
+#
+# ── `estate` IS A DIFFERENT BUG IN THE SAME BLOCK, AND IT IS NOT A NO-OP ──────
+#
+# It said `stack_default`: the network of the LEGACY `stack` project, which is
+# deliberately stopped. The live estate is `cloudsforge-estate_default`, and
+# `docker-compose.gateway.yml` already derives it as
+# `${CF_PROJECT:-cloudsforge-estate}_default`. Today the trio is brought up
+# together and gateway.yml is merged LAST, so its correct value silently wins and
+# the wrong one here is invisible. Bring THIS FILE up on its own — which is what
+# the header invites — and Prometheus attaches to a stopped project's network and
+# scrapes nothing, while reporting itself healthy.
+#
+# So this line changes behaviour on purpose, and only in the case that was
+# already broken.
 networks:
   edge:
-    name: cf-micro-edge
+    name: ${CF_NET_PREFIX:-cf-micro}-edge
   app:
-    name: cf-micro-app
+    name: ${CF_NET_PREFIX:-cf-micro}-app
   vault:
-    name: cf-micro-vault
+    name: ${CF_NET_PREFIX:-cf-micro}-vault
     internal: true
   estate:
-    # The running eighteen-container estate. `external` means compose attaches
-    # to it and never creates, modifies or removes it.
+    # The running estate. `external` means compose attaches to it and never
+    # creates, modifies or removes it.
     external: true
-    name: stack_default
+    name: ${CF_PROJECT:-cloudsforge-estate}_default
 
 volumes:
   prometheus-data:

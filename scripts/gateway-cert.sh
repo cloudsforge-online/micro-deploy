@@ -78,6 +78,51 @@ cd "$(dirname "$0")/.." || exit 1
 
 APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
 CERTS=${CF_CERT_DIR:-gateway/certs}
+
+# ── EVERY APEX THIS ONE LEAF ANSWERS FOR, AND WHY IT IS A LIST ────────────────
+#
+# THE DEFECT THIS REMOVES: this script used to write a leaf for exactly ONE apex
+# into a FIXED directory, and `docker-compose.gateway.yml` mounted that directory
+# by a hardcoded path. So running it for a second environment
+# (`CF_WEB_APEX=testnet.cloudsforge.online`) overwrote `estate.crt` with a leaf
+# that no longer named `cloudsforge.online` — and the LIVE MAINNET GATEWAY, which
+# reads the same file, started serving a certificate for the wrong apex. A second
+# environment could not be stood up without taking the first one down.
+#
+# A WILDCARD CANNOT ABSORB THIS. `*.cloudsforge.online` matches ONE label, as the
+# SAN comment below says, so it does NOT match `hub.testnet.cloudsforge.online`.
+# The extra names have to be in the certificate however this is arranged.
+#
+# ── WHY ONE LEAF FOR BOTH, RATHER THAN A DIRECTORY PER ENVIRONMENT ────────────
+#
+# `CF_CERT_DIR` above already allows the per-environment split, and it stays
+# supported. It is not the DEFAULT because of what it costs the owner: the CA is
+# minted INSIDE $CERTS (`ca.key`/`ca.crt` below), so a second directory is a
+# SECOND AUTHORITY, and trusting an authority is the one step this script refuses
+# to automate — it needs an administrator password (see the footer). The owner
+# runs a browser on a Mac and a PC, so a second CA is four more trust operations
+# and four more chances for one machine to be quietly wrong. One CA, one leaf,
+# both apexes: the trust step stays a thing done once.
+#
+# `tls.yml` needs NO change for this — it names a single `defaultCertificate`
+# pair, and one leaf naming both apexes is still a single pair. That preserves
+# its own argument against an SNI list ("enumerating them here would be the
+# sixteenth copy of the registry").
+#
+# ── THE LIST IS ADDITIVE, WHICH IS THE PART THAT ACTUALLY FIXES IT ────────────
+#
+# Defaulting `CF_CERT_APEXES` to `$APEX` and asking the operator to remember to
+# widen it would leave the defect exactly where it was: testnet's own
+# `estate-up.sh` would call this with only its own apex and clobber mainnet
+# again. So the required set is UNIONED WITH WHAT THE EXISTING LEAF ALREADY
+# COVERS, read back off the certificate itself. Running this for testnet now
+# ADDS to the leaf instead of replacing it, with no variable set anywhere and
+# nothing to coordinate between two environments.
+#
+# `--force` is the escape: it deletes the leaf first, so the union starts empty
+# and the SAN collapses back to just the current apexes. That is the way to
+# retire a name, and it is the only way, deliberately.
+APEXES=${CF_CERT_APEXES:-$APEX}
 FORCE=0
 [ "${1:-}" = "--force" ] && FORCE=1
 
@@ -135,24 +180,51 @@ fi
 # does not match the host — `ERR_CERT_COMMON_NAME_INVALID`, a DIFFERENT opaque
 # browser error from the one this script exists to remove, and one that
 # `--cacert` alone would not catch either.
+#
+# The check is now over EVERY apex in the list, not just one: a leaf covering
+# mainnet but not testnet must be regenerated, and so must the reverse. Checking
+# only `$APEX` is what let a narrower certificate look satisfactory.
+existing_san=""
+if [ -s "$leaf_crt" ]; then
+  existing_san=$(openssl x509 -in "$leaf_crt" -noout -ext subjectAltName 2>/dev/null | tr -d " " | tr "," "\n" | grep "^DNS:" || true)
+fi
+
+covers_all=1
+for a in $APEXES; do
+  printf "%s\n" "$existing_san" | grep -qx "DNS:$a"   || covers_all=0
+  printf "%s\n" "$existing_san" | grep -qx "DNS:\*.$a" || covers_all=0
+done
+
 needs_leaf=1
 if [ -s "$leaf_crt" ] && [ -s "$leaf_key" ] && [ "$FORCE" = 0 ]; then
-  if openssl x509 -in "$leaf_crt" -noout -text 2>/dev/null | grep -q "DNS:\*\.$APEX"; then
+  if [ "$covers_all" = 1 ]; then
     # Also require it to still be valid for a week, so a stack that has been up
     # for two years does not hand a browser an expired certificate.
     if openssl x509 -in "$leaf_crt" -noout -checkend 604800 >/dev/null 2>&1; then
       needs_leaf=0
-      echo "  leaf certificate already covers *.$APEX and is not expiring"
+      echo "  leaf certificate already covers $APEXES (and *.each) and is not expiring"
     else
       echo "  leaf certificate expires within a week — regenerating"
     fi
   else
-    echo "  leaf certificate does not cover *.$APEX — regenerating"
+    echo "  leaf certificate does not cover every apex in: $APEXES — regenerating"
   fi
 fi
 
 if [ "$needs_leaf" = 1 ]; then
-  echo "  generating a leaf for $APEX, *.$APEX (${LEAF_DAYS}d)"
+  # THE UNION: every apex asked for now, plus every DNS name the outgoing leaf
+  # already carried. `--force` removed the leaf above, so that case starts clean.
+  san_names=""
+  add_name() {
+    case " $san_names " in *" $1 "*) return 0 ;; esac
+    san_names="$san_names $1"
+  }
+  for a in $APEXES; do add_name "DNS:$a"; add_name "DNS:*.$a"; done
+  for d in $existing_san; do add_name "$d"; done
+  add_name "DNS:localhost"
+  san=$(printf "%s" "$san_names" | sed "s/^ //; s/ /,/g")
+
+  echo "  generating a leaf for:$san_names (${LEAF_DAYS}d)"
   ext=$(mktemp)
   # ── THE SAN LIST, AND THE ONE ENTRY THAT IS NOT OBVIOUS ─────────────────────
   #
@@ -171,7 +243,7 @@ if [ "$needs_leaf" = 1 ]; then
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
-subjectAltName=DNS:$APEX,DNS:*.$APEX,DNS:localhost,IP:127.0.0.1,IP:::1
+subjectAltName=$san,IP:127.0.0.1,IP:::1
 EXT
   csr=$(mktemp)
   if ! openssl req -nodes -newkey rsa:2048 -sha256 \
@@ -209,6 +281,11 @@ echo "       SAN: $(openssl x509 -in "$leaf_crt" -noout -ext subjectAltName 2>/d
 # Checked rather than announced blindly: on macOS `security verify-cert` says
 # whether the system already trusts this CA, so a re-run after the owner has
 # done it stays quiet instead of nagging.
+# Printed paths must survive an ABSOLUTE $CF_CERT_DIR. `$(pwd)/$ca_crt` produced
+# `/…/deploy//tmp/certs/ca.crt` — a path that does not exist, in the one command
+# the owner is asked to run by hand.
+ca_abs=$(cd "$(dirname "$ca_crt")" && pwd)/$(basename "$ca_crt")
+
 trusted=0
 if [ "$(uname -s)" = "Darwin" ] && command -v security >/dev/null 2>&1; then
   security verify-cert -c "$ca_crt" >/dev/null 2>&1 && trusted=1
@@ -227,13 +304,13 @@ else
   if [ "$(uname -s)" = "Darwin" ]; then
     echo "      security add-trusted-cert -d -r trustRoot \\"
     echo "        -k ~/Library/Keychains/login.keychain-db \\"
-    echo "        \"$(pwd)/$ca_crt\""
+    echo "        \"$ca_abs\""
     echo
     echo "  (-d is the admin domain and prompts once. To undo:"
     echo "      security delete-certificate -c 'CloudsForge Estate Local CA' \\"
     echo "        ~/Library/Keychains/login.keychain-db )"
   else
-    echo "      sudo cp $(pwd)/$ca_crt /usr/local/share/ca-certificates/cloudsforge-estate.crt"
+    echo "      sudo cp $ca_abs /usr/local/share/ca-certificates/cloudsforge-estate.crt"
     echo "      sudo update-ca-certificates"
   fi
   echo
