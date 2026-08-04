@@ -2133,6 +2133,23 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
+      # ── BEACON MUST TRUST THE ESTATE CA, BECAUSE IT PROBES OVER REAL TLS ──────────
+      #
+      # Probes target the addresses a person uses — `https://hub.<apex>/` — so they
+      # traverse DNS, TLS, Traefik routing and the upstream. A probe that skipped the
+      # gateway would report healthy while the gateway was broken, which is exactly
+      # how a `cf-api-explorer` router that never existed went unnoticed for days.
+      #
+      # That path is served by the estate's own CA, which nothing inside the estate
+      # trusted. Every probe failed `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, opened a SEV3,
+      # and the public status page reported a full outage that was not happening.
+      #
+      # The fix is to TRUST the certificate, never to stop verifying it. Disabling
+      # verification here would make beacon blind to a real certificate failure — and
+      # the estate has already paid for that once tonight: 183 uses of `curl -k` hid a
+      # gateway serving `CN=TRAEFIK DEFAULT CERT` that every browser refused, while
+      # every check passed.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/estate/ca.crt
       BEACON_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/beacon
       BEACON_TOKEN: estate-only-beacon-breakglass-000000000
       BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000
@@ -2254,6 +2271,9 @@ services:
   # the same expression `indexer` uses: `host.docker.internal` plus
   # `extra_hosts`, because hearth is frozen and attaching it to this project's
   # network would mean editing it.
+    volumes:
+      # Read-only, and only the public certificate — never a key.
+      - ../gateway/certs/ca.crt:/etc/ssl/estate/ca.crt:ro
   faucet-migrate:
     <<: *migrate-defaults
     build:

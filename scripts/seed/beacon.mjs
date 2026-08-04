@@ -135,9 +135,25 @@ export async function seedBeacon(token) {
       token,
       body: {
         target: surface.key,
-        // The registry's own taxonomy, so a probe groups the way the switcher and
-        // the marketing site already group. Not a vocabulary invented here.
-        productGroup: surface.kind,
+        // THE SURFACE'S NAME, not its `kind`.
+        //
+        // This was `surface.kind`, on the reasoning that the registry's own taxonomy is better
+        // than a vocabulary invented here. That is true of the taxonomy and false of this field:
+        // `kind` answers "what sort of thing is this" — `product`, `service`, `surface` — and
+        // there are exactly three of them. It put all nineteen probes into three buckets and
+        // labelled every auto-opened incident with its category, so the public status page read:
+        //
+        //     service   ◌ Investigating   SEV3   Reference df747118-…
+        //
+        // A reader cannot act on that. It does not say Forge Market is down; it says a thing of
+        // the kind "service" is down, twenty-two times. `name` is the field a person recognises
+        // — "Forge Foresight", "Lantern" — and it is still the registry's own vocabulary, just
+        // the part of it addressed to humans.
+        //
+        // One probe per group is the honest shape today: there is one probe per surface, so a
+        // group with a name is exactly as granular as the data. Grouping several surfaces under
+        // a product family is a decision about how outages should READ, and nobody has made it.
+        productGroup: surface.name,
         url: urlFor(surface),
         method: 'GET',
         expectStatus: 200,

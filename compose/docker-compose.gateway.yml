@@ -178,7 +178,50 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-    networks: [edge, app, estate]
+    networks:
+      edge:
+      app:
+      estate:
+        # ── THE GATEWAY MUST ANSWER TO ITS PUBLIC HOSTNAMES FROM INSIDE THE ESTATE ──────────
+        #
+        # `beacon` probes the surfaces at the addresses a person uses —
+        # `https://hub.<apex>/` — because a probe that skips the gateway reports
+        # healthy while the gateway is broken, which is the exact failure that hid
+        # a dead `cf-api-explorer` router for days.
+        #
+        # But `*.localtest.me` resolves to 127.0.0.1, and inside a container that is
+        # THE CONTAINER. Every one of the 19 probes got ECONNREFUSED, opened a SEV3,
+        # and the public status page confidently reported a full outage that was not
+        # happening. A status page that invents an outage is worse than one that says
+        # nothing, and this one had just been fixed to stop saying nothing.
+        #
+        # These aliases point those names at the gateway on the estate's own network,
+        # so a probe traverses the real path: DNS, TLS, Traefik routing, the upstream.
+        #
+        # THE LIST IS STATIC BECAUSE COMPOSE ALIASES CANNOT BE COMPUTED, so it is
+        # CHECKED instead: `scripts/surface-routes.py` compares it against the surface
+        # registry and fails on drift, and that script now runs in CI. A hand-kept copy
+        # that nothing verifies is the defect this estate has paid for four times.
+        aliases:
+          # The bare apex first, because it has no subdomain and a prefixed list
+          # silently omits it — which is exactly what happened: 18 of 19 groups
+          # went operational and the marketing site alone stayed in outage.
+          - ${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - admin.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - create.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - developers.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - explorer.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - foresight.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - foresight-admin.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - hub.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - market.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - network.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - status.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - tessera.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - trade.${CF_WEB_APEX:-cloudsforge.localtest.me}
+          - worlds.${CF_WEB_APEX:-cloudsforge.localtest.me}
 networks:
   # External here: created by docker-compose.telemetry.yml, which is the file
   # that owns them. Two compose files each creating a network called
