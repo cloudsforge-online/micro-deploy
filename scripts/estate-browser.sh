@@ -48,6 +48,20 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
+
+# ── THE SCHEME THE BROWSER DIALS, WHICH IS NOT ALWAYS `https` ────────────────
+#
+# Same `CF_GATEWAY_TLS` as the gateway, defaulted the same way, so an environment
+# that does not set it drives exactly what this suite has always driven. Where it
+# is `false` the gateway terminates no TLS and an `https://` navigation would fail
+# before a byte of HTML arrived — this suite would report a total estate outage
+# that is not happening, which is worse than reporting nothing.
+#
+# `ignoreHTTPSErrors` is untouched and still matters: it is what makes the local
+# TLS estate drivable, and turning this to `http` does not weaken it, because on a
+# plaintext origin there is no certificate to have ignored.
+GW_SCHEME=https
+[ "${CF_GATEWAY_TLS:-true}" = "false" ] && GW_SCHEME=http
 BEACON=${CF_BEACON_DIR:-../beacon}
 
 # ── THE ADDRESSES ─────────────────────────────────────────────────────────────
@@ -73,9 +87,9 @@ BEACON=${CF_BEACON_DIR:-../beacon}
 #
 # `identity` is `nimbus.<apex>` because that is the name the shared UI calls it by
 # and therefore the only one whose CORS allowance and hand-off allowlist are real.
-TARGETS="site=https://${APEX}"
-TARGETS="$TARGETS,account=https://hub.${APEX}/account"
-TARGETS="$TARGETS,identity=https://nimbus.${APEX}"
+TARGETS="site=$GW_SCHEME://${APEX}"
+TARGETS="$TARGETS,account=$GW_SCHEME://hub.${APEX}/account"
+TARGETS="$TARGETS,identity=$GW_SCHEME://nimbus.${APEX}"
 for pair in \
   "hub hub" "market market" "trade trade" "worlds worlds" "create create" \
   "admin admin" "status status" "explorer explorer" "developers developers" \
@@ -84,7 +98,7 @@ for pair in \
   # No `declare -A`: bash here is 3.2, and an associative-array map once silently
   # broke five suites in this repository.
   set -- $pair
-  TARGETS="$TARGETS,$1=https://$2.${APEX}"
+  TARGETS="$TARGETS,$1=$GW_SCHEME://$2.${APEX}"
 done
 
 echo "── the gateway must be answering before a browser is pointed at it ──────"
@@ -97,12 +111,12 @@ echo "── the gateway must be answering before a browser is pointed at it ─
 gw=000
 for _ in 1 2 3; do
   gw=$(curl -sk -o /dev/null -w '%{http_code}' --max-time 10 \
-    --resolve "hub.${APEX}:443:127.0.0.1" "https://hub.${APEX}/account/login")
+    --resolve "hub.${APEX}:443:127.0.0.1" "$GW_SCHEME://hub.${APEX}/account/login")
   [ "$gw" = 200 ] && break
   sleep 2
 done
 if [ "$gw" != 200 ]; then
-  echo "FATAL: https://hub.${APEX}/account/login answered $gw, not 200." >&2
+  echo "FATAL: $GW_SCHEME://hub.${APEX}/account/login answered $gw, not 200." >&2
   echo "       Every estate-level journey begins by signing in, and the sign-in page is" >&2
   echo "       served there. Bring the estate up first:  ./scripts/estate-up.sh" >&2
   exit 2
