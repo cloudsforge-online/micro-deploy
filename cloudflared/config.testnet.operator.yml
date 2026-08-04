@@ -72,17 +72,11 @@ ingress:
     service: http_status:404
 
   - hostname: admin.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: beacon.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: lantern.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   # cloudflared REQUIRES a catch-all and refuses to start without one. 404 rather
   # than a redirect: a hostname that is not in this file is not one this estate
   # serves, and answering it with anything else invents a surface.

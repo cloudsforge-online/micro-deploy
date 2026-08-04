@@ -65,89 +65,47 @@ ingress:
     service: http_status:404
 
   - hostname: testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: aetherholm.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: api.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: create.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: developers.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: emberkin.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: explorer.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: foresight.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: hub.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: market.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: network.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: nimbus.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: p2p.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: pay.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: rpc.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: status.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: tessera.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: trade.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: vault.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: worlds.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   - hostname: worlds-api.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
+    service: http://127.0.0.1:10443
   # cloudflared REQUIRES a catch-all and refuses to start without one. 404 rather
   # than a redirect: a hostname that is not in this file is not one this estate
   # serves, and answering it with anything else invents a surface.

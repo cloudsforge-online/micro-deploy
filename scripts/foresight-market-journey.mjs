@@ -81,12 +81,25 @@ const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/trust.crt'
 // Node reads NODE_EXTRA_CA_CERTS once, at startup. Setting it here and re-execing
 // is the only way to have it apply, and it is preferable to the alternative every
 // other verifier in this estate reached for.
-if (!fs.existsSync(CA)) {
+//
+// ── AND IT IS SKIPPED ENTIRELY WHEN THERE IS NO CERTIFICATE TO TRUST ─────────
+//
+// With `CF_GATEWAY_TLS=false` the gateway terminates no TLS, so there is no
+// handshake for a CA to verify and demanding one would fail this journey on a
+// file the deployment has no reason to hold. That is NOT the fallback this
+// block refuses: the refusal below is against making an UNVERIFIED HTTPS
+// request, which silently accepts any certificate. Plaintext to a loopback port
+// makes no claim to have verified anything, so there is nothing to be lied to
+// about. The transport itself is asserted by `estate-verify.sh`, which on this
+// deployment checks that the origin answers, that the security headers survive
+// it, and that `/internal` is still refused.
+const GW_TLS = process.env.CF_GATEWAY_TLS !== 'false'
+if (GW_TLS && !fs.existsSync(CA)) {
   console.error(`FAIL: no estate CA at ${CA} — run ./scripts/gateway-cert.sh first.`)
   console.error('      This script will not fall back to an unverified request; that is the defect it exists to avoid.')
   process.exit(1)
 }
-if (process.env.NODE_EXTRA_CA_CERTS !== CA) {
+if (GW_TLS && process.env.NODE_EXTRA_CA_CERTS !== CA) {
   const { spawnSync } = await import('node:child_process')
   const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url), ...process.argv.slice(2)], {
     stdio: 'inherit',
@@ -99,9 +112,10 @@ const require = createRequire(import.meta.url)
 
 // ── configuration ────────────────────────────────────────────────────────────
 const APEX = process.env.CF_WEB_APEX || 'cloudsforge.localtest.me'
-const FORESIGHT = process.env.FORESIGHT_URL || `https://foresight.${APEX}`
-const IDENTITY = process.env.IDENTITY_URL || `https://nimbus.${APEX}`
-const CUSTODY = process.env.CUSTODY_URL || `https://vault.${APEX}`
+const GW_SCHEME = GW_TLS ? 'https' : 'http'
+const FORESIGHT = process.env.FORESIGHT_URL || `${GW_SCHEME}://foresight.${APEX}`
+const IDENTITY = process.env.IDENTITY_URL || `${GW_SCHEME}://nimbus.${APEX}`
+const CUSTODY = process.env.CUSTODY_URL || `${GW_SCHEME}://vault.${APEX}`
 const RPC = process.env.EMBER_HOST_RPC || 'http://127.0.0.1:8545'
 const HEARTH = process.env.HEARTH_REPO || path.resolve(ROOT, '../hearth')
 const EMBER_HOME = process.env.EMBER_HOME || path.join(process.env.HOME, '.cloudsforge/ember-testnet')

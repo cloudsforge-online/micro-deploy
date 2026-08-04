@@ -224,8 +224,23 @@ validate() {
   # The certificate directory is mounted too — without it tls.yml logs a real ERR
   # about a store it cannot build, and assertion 1 would fire on every run until
   # somebody learned to ignore it.
+  # ── CF_GATEWAY_TLS HAS TO REACH THE PROBE, OR IT VALIDATES A DIFFERENT ─────
+  #    GATEWAY FROM THE ONE THAT WILL RUN
+  #
+  # `gateway/dynamic/tls.yml` renders its certificate store only when this is
+  # `true`, and the value lives in the COMPOSE environment (`.env`,
+  # `compose/testnet.env`) rather than in `$ENV_FILE`, which is the gateway's
+  # own env_file. Without this line the probe would always see it unset, always
+  # render no store, and always pass assertion 1 — including for a TLS
+  # deployment whose certificate is missing, which is the one case that
+  # assertion exists to catch (`certFile` that does not resolve leaves Traefik
+  # terminating on nothing, and every handshake fails with
+  # `tlsv1 unrecognized name`).
+  #
+  # Defaulted identically to the compose file, so the two cannot disagree.
   if ! docker run -d --rm --name "$PROBE" \
       --env-file "$ENV_FILE" \
+      -e "CF_GATEWAY_TLS=${CF_GATEWAY_TLS:-true}" \
       -v "$SCRATCH/dynamic":/etc/traefik/dynamic:ro \
       -v "$CERTS":/etc/traefik/certs:ro \
       "$image" \

@@ -83,12 +83,28 @@ function readApiHost() {
  * is written down here so the report can name the four services whose content
  * this seeder created without a browser ever being able to reach them.
  */
+/**
+ * The scheme the GATEWAY-CROSSING entries use, which is not always `https`.
+ *
+ * The same `CF_GATEWAY_TLS` the gateway itself reads, defaulted the same way, so
+ * an environment that does not set it seeds exactly what it always seeded. A
+ * deployment behind Cloudflare Tunnel sets it `false` and the gateway terminates
+ * no TLS there — cloudflared validates a certificate against the hostname in its
+ * service URL, that hostname is `127.0.0.1`, and no Origin CA will ever sign an
+ * IP literal. `gateway/dynamic/tls.yml` carries the diagnosis.
+ *
+ * The four `gateway: false` entries below are untouched by it: they are loopback
+ * container ports that were never TLS in the first place, which is exactly the
+ * distinction that flag was written down to make.
+ */
+export const GW_SCHEME = process.env.CF_GATEWAY_TLS === 'false' ? 'http' : 'https'
+
 export const SERVICES = {
-  identity: { base: `https://nimbus.${APEX}`, gateway: true },
-  custody: { base: `https://vault.${APEX}`, gateway: true },
-  foresight: { base: `https://foresight.${APEX}`, gateway: true },
-  market: { base: `https://${API_HOST}`, gateway: true },
-  mint: { base: `https://${API_HOST}`, gateway: true },
+  identity: { base: `${GW_SCHEME}://nimbus.${APEX}`, gateway: true },
+  custody: { base: `${GW_SCHEME}://vault.${APEX}`, gateway: true },
+  foresight: { base: `${GW_SCHEME}://foresight.${APEX}`, gateway: true },
+  market: { base: `${GW_SCHEME}://${API_HOST}`, gateway: true },
+  mint: { base: `${GW_SCHEME}://${API_HOST}`, gateway: true },
   // Not published by the gateway; loopback host ports from the compose file.
   ledger: { base: 'http://127.0.0.1:4102', gateway: false },
   billing: { base: 'http://127.0.0.1:4106', gateway: false },

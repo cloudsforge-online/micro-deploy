@@ -140,14 +140,48 @@
 # TESTNET IS UNCHANGED AND STILL FAILS ON THE ISSUER, which is correct — it has
 # no Cloudflare-issued certificate to serve, because Universal SSL does not cover
 # `*.testnet.cloudsforge.online`.
+# ── EVERYTHING ABOVE DESCRIBES A PROBLEM THIS HOST NO LONGER HAS ──────────────
+#
+# The long argument above is kept because it is the record of how the 502 was
+# diagnosed, and every measurement in it still holds. What changed is the
+# CONCLUSION it reaches. It ends by asking the owner to set ORIGIN SERVER NAME in
+# the dashboard, per hostname, so that a Cloudflare Origin CA leaf can be
+# validated against a name instead of against `127.0.0.1`. That field could not be
+# found in the owner's UI, twice, across three attempts at this fix.
+#
+# So the origin stops presenting a certificate instead of presenting a better one.
+# With `CF_GATEWAY_TLS=false` the gateway terminates no TLS, the tunnel's service
+# URL is `http://`, and there is no handshake on that hop to fail — which removes
+# the entire class of failure rather than satisfying one more of its conditions.
+#
+# `CF_TLS_DEFAULT_CERT` IS GONE WITH IT, and it is worth saying why rather than
+# just deleting it. It existed for exactly one value: `origin`, the Cloudflare
+# Origin CA leaf mainnet served so that the tunnel would trust it. No environment
+# needs that leaf now, so the variable had one remaining setting — `estate` — and
+# a per-environment lever with one setting is not a lever. `origin.crt` and
+# `origin.key` are removed from the deployment host as well: that private key
+# passed through a chat transcript, and fewer copies of it is strictly better.
+#
+# WHAT IS LEFT IS THE ESTATE'S OWN LEAF, AND IT IS NOT VESTIGIAL. It is what the
+# owner's local estate terminates on, and that estate serving real TLS to a real
+# browser is the arrangement that caught a gateway serving `CN=TRAEFIK DEFAULT
+# CERT` while 183 assertions and sixteen browser journeys reported green. Removing
+# the capability to keep a deployment tidy would delete the check that found the
+# defect this file exists for.
+#
+# THE WHOLE BLOCK IS CONDITIONAL, not just its contents. A `defaultCertificate`
+# naming files that are not there makes Traefik log
+# `ERR Error while creating certificate store` and then serve NO certificate at
+# all — every handshake fails with `tlsv1 unrecognized name`, which is worse than
+# either intended state. Rendering nothing at all is the only correct shape for a
+# gateway that terminates no TLS, and it renders clean: verified against
+# traefik:v3.2.3 with `CF_GATEWAY_TLS=false` and an empty certificate directory,
+# no ERR of any kind.
+{{ if eq (env "CF_GATEWAY_TLS") "true" }}
 tls:
   stores:
     default:
       defaultCertificate:
-{{ if env "CF_TLS_DEFAULT_CERT" }}
-        certFile: /etc/traefik/certs/{{ env "CF_TLS_DEFAULT_CERT" }}.crt
-        keyFile: /etc/traefik/certs/{{ env "CF_TLS_DEFAULT_CERT" }}.key
-{{ else }}
         certFile: /etc/traefik/certs/estate.crt
         keyFile: /etc/traefik/certs/estate.key
 {{ end }}

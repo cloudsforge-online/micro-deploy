@@ -221,7 +221,7 @@ def gateway_port_agrees():
     """`compose/testnet.env`'s gateway port must equal GATEWAY_PORT + offset.
 
     Two files hold the same number in different notations. This one writes the
-    tunnel's origin as `https://127.0.0.1:{GATEWAY_PORT + offset}`; testnet.env
+    tunnel's origin as `http://127.0.0.1:{GATEWAY_PORT + offset}`; testnet.env
     writes what the gateway BINDS, as a literal, because compose cannot do
     arithmetic. If they disagree the tunnel terminates TLS at Cloudflare and then
     connects to a closed port, and every hostname on that environment returns a
@@ -377,11 +377,15 @@ def render(env, tunnel_name, rules, *, note):
     for hostname, service in rules:
         lines.append(f"  - hostname: {hostname}")
         lines.append(f"    service: {service}")
+        # ── NO `originRequest` BLOCK ON AN `http://` SERVICE ─────────────────
+        #
+        # Kept as a conditional rather than deleted, because it is correct for
+        # any `https://` origin someone adds later — but with the origin now
+        # plaintext this never fires, and that is the point: `noTLSVerify` is a
+        # setting that only exists to excuse a certificate nobody can validate.
+        # An origin that presents none needs no excuse.
         if service.startswith("https://"):
             lines.append("    originRequest:")
-            # Traefik serves its self-signed default on loopback (estate-gateway.yml
-            # says so and calls shipping it wrong). The public certificate is
-            # Cloudflare's; this leg never leaves the host.
             lines.append("      noTLSVerify: true")
     lines.append("""\
   # cloudflared REQUIRES a catch-all and refuses to start without one. 404 rather
@@ -539,7 +543,35 @@ def main():
     for env in ENVIRONMENTS:
         cfg = ENVIRONMENTS[env]
         apex, offset = cfg["apex"], cfg["offset"]
-        origin = f"https://127.0.0.1:{GATEWAY_PORT + offset}"
+        # ── `http`, AND THAT IS THE FIX RATHER THAN A COMPROMISE ─────────────
+        #
+        # This was `https://` and it is what made every hostname on both
+        # environments answer 502. cloudflared validates a certificate against
+        # THE HOSTNAME IN ITS SERVICE URL, and that hostname is `127.0.0.1`:
+        #
+        #   estate CA leaf   -> x509: certificate signed by unknown authority
+        #   Origin CA leaf   -> x509: cannot validate certificate for 127.0.0.1
+        #                      because it doesn't contain any IP SANs
+        #
+        # No Origin CA will ever sign an IP literal, so the second error is
+        # terminal. `noTLSVerify: true` below cleared it in THESE files and not on
+        # the running tunnel, which is dashboard-managed
+        # (`cloudflared tunnel run --token-file`) and reads its ingress from the
+        # API — so the file that said the problem was solved was not a file
+        # anything read.
+        #
+        # With `http://` there is no handshake on this hop, so there is nothing to
+        # verify and nothing to configure. The gateway is what changed to allow
+        # it: `CF_GATEWAY_TLS=false` makes the websecure entrypoint terminate no
+        # TLS (compose/docker-compose.gateway.yml), and the middleware chain that
+        # carries request-id, the security headers and the CORS allowlist is
+        # attached to the ENTRYPOINT rather than to the TLS on it, so none of the
+        # three is lost. Measured, not assumed.
+        #
+        # The port is unchanged, deliberately: 46 dashboard entries already name
+        # it, and asking for one edit per entry rather than two is the difference
+        # between a change that lands and one that lands in 45 of them.
+        origin = f"http://127.0.0.1:{GATEWAY_PORT + offset}"
 
         pub_subs = [s["subdomain"] for s in public + api if s["subdomain"] not in NOT_ROUTED]
         op_subs = [s["subdomain"] for s in operator if s["subdomain"] not in NOT_ROUTED]

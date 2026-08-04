@@ -1655,10 +1655,28 @@ echo "── THE GATEWAY: the surfaces on the hostnames a browser will use ─�
 WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
 GW_PORT=${CF_GATEWAY_HTTPS_PORT:-443}
 
+# ── WHICH SCHEME THIS SUITE DIALS, AND WHY IT IS NOT ALWAYS `https` ───────────
+#
+# The same `CF_GATEWAY_TLS` the gateway itself reads
+# (`compose/docker-compose.gateway.yml`), defaulted the same way, so an
+# environment that does not set it drives exactly what this suite has always
+# driven. A deployment behind Cloudflare Tunnel sets it `false`: the gateway
+# terminates no TLS there, because cloudflared validates a certificate against
+# the hostname in its service URL and that hostname is `127.0.0.1`, which no
+# Origin CA will ever sign. `gateway/dynamic/tls.yml` carries the diagnosis.
+#
+# THIS IS THE HOP, NOT THE ADDRESS. Every `ok`/`bad` message below still prints
+# `https://<host>` and that is correct rather than stale: the address a person
+# uses is `https://hub.<apex>`, terminated by Cloudflare, and what changes here
+# is only the last leg from this script to a loopback port on the same machine.
+# The two are different facts and only one of them is a scheme this curl sets.
+GW_TLS=${CF_GATEWAY_TLS:-true}
+if [ "$GW_TLS" = "false" ]; then GW_SCHEME=http; else GW_SCHEME=https; fi
+
 gw() {
   gw_host=$1; gw_path=$2; shift 2
   curl -sk -o /tmp/estate-gw.body -w '%{http_code}' \
-    --resolve "$gw_host:$GW_PORT:127.0.0.1" "https://$gw_host:$GW_PORT$gw_path" "$@"
+    --resolve "$gw_host:$GW_PORT:127.0.0.1" "$GW_SCHEME://$gw_host:$GW_PORT$gw_path" "$@"
 }
 
 # ── THE TLS ASSERTION, AND WHY IT IS THE FIRST ONE IN THIS SECTION ────────────
@@ -1700,8 +1718,60 @@ gw() {
 # It is NOT a weakening of this assertion. A bundle adds ISSUERS, not exemptions:
 # a certificate from an issuer in neither, one whose SAN does not cover the host,
 # and an expired one all still fail here exactly as before. `-k` remains absent.
+#
+# ── AND WHEN THERE IS NO CERTIFICATE, THIS ASKS A DIFFERENT QUESTION ──────────
+#
+# It does NOT skip. A check that quietly stops checking is the failure this file
+# has been bitten by more than any other, and on a plaintext deployment the
+# transport is the ONLY path any user traverses — so it gets more scrutiny here,
+# not less. What is assertable changes, because "the certificate verifies" has no
+# meaning when none is offered. Three things take its place, and each of them is
+# a property this estate would be broken without:
+#
+#   * every host ANSWERS over the plaintext hop (a routed host, not a refused one)
+#   * the security headers survive it — `cf-security-headers` is attached to the
+#     ENTRYPOINT rather than to the TLS on it, and `strict-transport-security` in
+#     particular is emitted only because `policy.yml` sets `sslProxyHeaders`;
+#     without that line it vanishes on this path and nowhere else
+#   * `/internal` is still refused, which is the one rule whose failure is an
+#     act-as-anyone primitive rather than an outage
+#
+# `CF_CA_FILE` is still honoured when TLS is on, and `trust.crt` is still the
+# default for it. The bundle exists because two environments once terminated on
+# different issuers; only `estate.crt` is minted now, but a bundle that contains
+# one CA verifies exactly what that CA signed.
 CA_FILE=${CF_CA_FILE:-gateway/certs/trust.crt}
-if [ ! -s "$CA_FILE" ]; then
+if [ "$GW_TLS" = "false" ]; then
+  pt_fails=""
+  pt_hdr_fails=""
+  for pt_host in "$WEB_APEX" "hub.$WEB_APEX" "nimbus.$WEB_APEX" "worlds-api.$WEB_APEX"; do
+    pt_code=$(curl -s -o /dev/null -w '%{http_code}' \
+      --resolve "$pt_host:$GW_PORT:127.0.0.1" "http://$pt_host:$GW_PORT/livez" 2>/dev/null)
+    [ "$pt_code" = "000" ] && pt_fails="$pt_fails $pt_host"
+  done
+  pt_headers=$(curl -s -o /dev/null -D - \
+    --resolve "hub.$WEB_APEX:$GW_PORT:127.0.0.1" "http://hub.$WEB_APEX:$GW_PORT/" 2>/dev/null)
+  printf '%s' "$pt_headers" | grep -qi '^strict-transport-security:' || pt_hdr_fails="$pt_hdr_fails strict-transport-security"
+  printf '%s' "$pt_headers" | grep -qi '^x-content-type-options:' || pt_hdr_fails="$pt_hdr_fails x-content-type-options"
+  pt_internal=$(curl -s -o /dev/null -w '%{http_code}' \
+    --resolve "pay.$WEB_APEX:$GW_PORT:127.0.0.1" "http://pay.$WEB_APEX:$GW_PORT/internal/credit" 2>/dev/null)
+
+  if [ -n "$pt_fails" ]; then
+    bad "the gateway terminates no TLS (CF_GATEWAY_TLS=false) and these hosts answer nothing on the plaintext hop:$pt_fails — the tunnel reaches this port and nothing else does, so every one of them is a 502 to a real user"
+  else
+    ok "the plaintext origin answers on the apex and three subdomains — this is the hop Cloudflare Tunnel terminates on"
+  fi
+  if [ -n "$pt_hdr_fails" ]; then
+    bad "the plaintext origin is MISSING response headers:$pt_hdr_fails — the entrypoint middleware chain is not applied on the only path users traverse (see policy.yml sslProxyHeaders, and the websecure middleware list in compose/docker-compose.gateway.yml)"
+  else
+    ok "security headers survive the plaintext hop (HSTS and nosniff both present)"
+  fi
+  if [ "$pt_internal" = "502" ]; then
+    ok "/internal is refused on the plaintext origin ($pt_internal) — cf-internal-refusal still outranks every service router"
+  else
+    bad "/internal answered $pt_internal on the plaintext origin and MUST answer 502 — Pay's /internal routes take a userId as a parameter, so reaching one from off the box is an act-as-anyone primitive"
+  fi
+elif [ ! -s "$CA_FILE" ]; then
   bad "no CA bundle at $CA_FILE — the gateway is serving Traefik's self-signed default, so every CROSS-ORIGIN call from a real browser fails with ERR_CERT_AUTHORITY_INVALID while every check here passes. Run ./scripts/gateway-cert.sh"
 else
   tls_fails=""
@@ -1729,7 +1799,7 @@ fi
 if [ "$(gw "hub.$WEB_APEX" /healthz)" = 200 ]; then
   ok "the gateway is answering on :$GW_PORT"
 else
-  bad "no gateway on https://…:$GW_PORT — run ./scripts/estate-up.sh, or 'docker compose -p cfmicro -f compose/docker-compose.telemetry.yml -f compose/docker-compose.gateway.yml -f compose/docker-compose.estate-gateway.yml up -d'"
+  bad "no gateway on $GW_SCHEME://…:$GW_PORT — run ./scripts/estate-up.sh, or 'docker compose -p cfmicro -f compose/docker-compose.telemetry.yml -f compose/docker-compose.gateway.yml -f compose/docker-compose.estate-gateway.yml up -d'"
 fi
 
 # ── AND IS IT ANSWERING FROM THE FILES THAT ARE ON DISK? ──────────────────────
@@ -1873,10 +1943,23 @@ echo "── the two OPERATOR consoles: the bundle and the API must not shadow �
 # `lantern.<apex>` would leave every one of these green under `-k` and every real
 # browser refusing the page. `%{content_type}` is empty on a rejected handshake,
 # so the `case` arms below fall to their own `bad` rather than passing silently.
+#
+# WITH `CF_GATEWAY_TLS=false` THERE IS NO CERTIFICATE TO PIN, so `--cacert` is
+# dropped rather than pointed at a file that cannot describe the connection. That
+# is not the `-k` trade this comment argues against: `-k` disables a check that
+# WOULD otherwise happen, and here there is no handshake at all. What these
+# assertions are actually for — that the bundle is in front of the service on
+# these two hostnames, and that the API is not shadowed by it — is unaffected by
+# the scheme, and the transport itself is asserted in full above.
 gwv() {
   gwv_host=$1; gwv_path=$2; gwv_fmt=$3; shift 3
-  curl -s --cacert "$CA_FILE" -o /tmp/estate-gwv.body -w "$gwv_fmt" \
-    --resolve "$gwv_host:$GW_PORT:127.0.0.1" "https://$gwv_host:$GW_PORT$gwv_path" "$@"
+  if [ "$GW_TLS" = "false" ]; then
+    curl -s -o /tmp/estate-gwv.body -w "$gwv_fmt" \
+      --resolve "$gwv_host:$GW_PORT:127.0.0.1" "http://$gwv_host:$GW_PORT$gwv_path" "$@"
+  else
+    curl -s --cacert "$CA_FILE" -o /tmp/estate-gwv.body -w "$gwv_fmt" \
+      --resolve "$gwv_host:$GW_PORT:127.0.0.1" "https://$gwv_host:$GW_PORT$gwv_path" "$@"
+  fi
 }
 
 for rec in \
@@ -1973,7 +2056,7 @@ allow=$(curl -sk -D - -o /dev/null -X OPTIONS \
   -H "origin: https://hub.$WEB_APEX" \
   -H 'access-control-request-method: POST' \
   -H 'access-control-request-headers: content-type' \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  "$GW_SCHEME://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
   | tr -d '\r' | grep -i '^access-control-allow-origin:' | head -1)
 case "$allow" in
   *"https://hub.$WEB_APEX"*) ok "the gateway permits hub.$WEB_APEX to call identity ($allow)" ;;
@@ -2000,7 +2083,7 @@ for rec in "pay /v1/deposits wallet" "vault /v1/exports custody"; do
   pa=$(curl -sk -D - -o /dev/null -X OPTIONS --resolve "$sub.$WEB_APEX:$GW_PORT:127.0.0.1" \
     -H "origin: https://hub.$WEB_APEX" -H 'access-control-request-method: POST' \
     -H 'access-control-request-headers: content-type,authorization' \
-    "https://$sub.$WEB_APEX:$GW_PORT$path" | tr -d '\r' \
+    "$GW_SCHEME://$sub.$WEB_APEX:$GW_PORT$path" | tr -d '\r' \
     | grep -i '^access-control-allow-origin:' | head -1)
   case "$pa" in
     *"https://hub.$WEB_APEX"*) ok "  …and Hub's origin is allowed to call it" ;;
@@ -2034,7 +2117,7 @@ so_tok=$(printf '%s' "$so_reg" | python3 -c "import sys,json;print(json.load(sys
 
 # Hub mints a code for Market — one real surface handing a session to another.
 so_code=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+  "$GW_SCHEME://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -H "origin: https://hub.$WEB_APEX" \
   -d "{\"redirectOrigin\":\"https://market.$WEB_APEX\"}" \
@@ -2050,7 +2133,7 @@ fi
 # minted for and matched against the browser's own header
 # (identity/src/handoff.ts:73-86).
 so_new=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  "$GW_SCHEME://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
   -H 'content-type: application/json' -H "origin: https://market.$WEB_APEX" \
   -d "{\"code\":\"${so_code:-nothing-was-minted}\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
@@ -2063,13 +2146,13 @@ fi
 # THE BINDING ITSELF. A code minted for Market must be worthless from anywhere
 # else, or the allowlist is decoration. Minted fresh: the one above is spent.
 so_code2=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+  "$GW_SCHEME://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -d "{\"redirectOrigin\":\"https://market.$WEB_APEX\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
 so_theft=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
   --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  "$GW_SCHEME://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
   -H 'content-type: application/json' -H 'origin: https://not-a-cloudsforge-surface.example' \
   -d "{\"code\":\"${so_code2:-nothing-was-minted}\"}")
 case "$so_theft" in
@@ -2080,7 +2163,7 @@ esac
 # And an origin that is not a surface must not get a code at all.
 so_bad=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
   --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+  "$GW_SCHEME://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -d '{"redirectOrigin":"https://not-a-cloudsforge-surface.example"}')
 [ "$so_bad" = 403 ] && ok "an origin off the allowlist is refused a code (403)" \
