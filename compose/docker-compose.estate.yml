@@ -2247,7 +2247,21 @@ services:
       NODE_EXTRA_CA_CERTS: /etc/ssl/estate/ca.crt
       BEACON_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/beacon
       BEACON_TOKEN: estate-only-beacon-breakglass-000000000
-      BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000
+      # ── `wallet` AND `custody` ADDED 2026-08-04, AND THE ABSENCE WAS NOT NEUTRAL ────
+      #
+      # `estate.reachable` has named `wallet` in its service list since it was written and
+      # had no address for it, so it quietly skipped that target on every cycle — a service
+      # the estate runs, that beacon believed it was watching, and was not.
+      #
+      # `custody` is new here and is what `ecosystem.deposit-address` needs. That journey
+      # asks custody directly whether it is holding the key wallet just handed out, which is
+      # the assertion no per-service suite can make: `POST /v1/deposits` answered 500 for the
+      # whole life of the service because wallet sent no `orderId`, and both suites passed.
+      #
+      # Compose-network names, not gateway hostnames, exactly like the six beside them.
+      # These are SERVICE targets — the browser tier is the only one that must use a real
+      # public hostname, because a page derives its API hosts from the one it was loaded from.
+      BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000,wallet=http://wallet:4000,custody=http://custody:4000
       BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
       # The SSO origin the handoff journey hands off TO. Unset, `identity.handoff`
       # SKIPS rather than guesses an origin — correctly, since a guessed origin would
