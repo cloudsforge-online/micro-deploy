@@ -37,6 +37,7 @@ BASE=${BASE:-compose/docker-compose.estate.yml}
 RELEASES=${RELEASES:-../org/releases}
 OVERLAY=${OVERLAY:-compose/docker-compose.release.yml}
 
+
 version=""
 dry_run=0
 rollback=0
@@ -52,6 +53,46 @@ for arg in "$@"; do
     *)   version="$arg" ;;
   esac
 done
+
+# ── THE APEX, WHICH THIS SCRIPT USED TO WALK STRAIGHT PAST ─────────────────────
+#
+# `estate-up.sh:86-105` refuses to start when the shell's `CF_WEB_APEX` disagrees
+# with the gateway's, because "the surfaces would be served on one apex and
+# identity's hand-off allowlist would name another". This script never mentioned
+# the apex at all, so the release path bypassed that guard entirely — and it cost
+# exactly what the guard predicts.
+#
+# Measured on the first real deployment: the gateway served `cloudsforge.online`
+# while `IDENTITY_HANDOFF_ORIGINS` and `LANTERN_RUM_ORIGINS` on the live
+# containers were built for the default `cloudsforge.localtest.me`. Every surface
+# answered 200 and looked healthy; cross-surface SSO and the RUM sink were dead,
+# because they are allowlists and an allowlist that names the wrong origin fails
+# silently rather than loudly.
+#
+# DERIVED, not merely checked. Requiring the operator to remember `CF_WEB_APEX=…`
+# on every deploy is the same class of trap one rung higher: it would be right
+# until somebody forgot, and forgetting produces a healthy-looking estate. The
+# gateway's own env file is the single source, so read it and adopt it. An
+# explicit shell value still wins if it AGREES, and is fatal if it does not —
+# that disagreement is a real mistake worth stopping for.
+TRAEFIK_ENV="compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
+gateway_apex=$(grep -E '^CF_WEB_APEX=' "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
+if [ -z "$gateway_apex" ]; then
+  echo "FATAL: $TRAEFIK_ENV defines no CF_WEB_APEX." >&2
+  echo "       The gateway would render its routers with an empty Host() and serve nothing," >&2
+  echo "       silently, while every container reported healthy." >&2
+  exit 1
+fi
+if [ -n "${CF_WEB_APEX:-}" ] && [ "$CF_WEB_APEX" != "$gateway_apex" ]; then
+  echo "FATAL: CF_WEB_APEX disagrees between the shell and the gateway." >&2
+  echo "         shell          : $CF_WEB_APEX" >&2
+  echo "         $TRAEFIK_ENV : $gateway_apex" >&2
+  echo "       Deploying this would serve the surfaces on one apex while identity's" >&2
+  echo "       hand-off allowlist named another — every surface 200, SSO dead." >&2
+  exit 1
+fi
+export CF_WEB_APEX="$gateway_apex"
+echo "apex: $CF_WEB_APEX  (from $TRAEFIK_ENV)"
 
 # ── which manifest ─────────────────────────────────────────────────────────────
 if [ "$rollback" -eq 1 ]; then
