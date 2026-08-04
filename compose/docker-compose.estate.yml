@@ -64,6 +64,29 @@
 name: cloudsforge-estate
 
 # ── shared fragments ───────────────────────────────────────────────────────────
+# ── `compose/.env` IS A COMMITTED SYMLINK, AND IT IS LOAD-BEARING ────────────
+#
+# Every credential below is `${NAME:-}` shell interpolation, so a plain
+# `docker compose up` with no `--env-file` resolves ALL of them to EMPTY and
+# silently reverts a service to a broken auth state. Two agents hit that in one
+# night: one recreated `wallet` as a dependency of a web service and blanked
+# `WALLET_IDENTITY_CREDENTIAL`; another ran `up -d --build ledger` and blanked
+# `LEDGER_IDENTITY_CREDENTIAL`, producing a `no_credential` reconciliation. No
+# error, no log line — the service starts and fails closed somewhere else.
+#
+# `compose/.env` -> `estate/tokens.env` fixes it, because Compose auto-loads
+# `.env` from the project directory. The SYMLINK is committed and carries no
+# secret; the TARGET is gitignored, untracked and absent from history.
+#
+# This is not the `env_file:` fan-out rule 9 refuses — that rule is about each
+# service naming its own file. This is one project-wide default, and it is the
+# mechanism Compose already provides.
+#
+# A dangling symlink is harmless and was measured: before `estate-bootstrap.sh`
+# has minted anything, `docker compose config` succeeds with the target missing.
+# So a fresh clone works, and the credentials appear the moment bootstrap writes
+# them.
+
 # Anchors rather than an `env_file:` fan-out. Rule 9 of 03 §2 — "a repo declares
 # the variables it needs; the deploy provides exactly those" — and pricing's
 # env.ts calls the fan-out out by name: handing every container the whole
