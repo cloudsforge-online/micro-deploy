@@ -309,6 +309,25 @@ services:
       # and it is loopback — an allowlist entry that only an attacker running
       # code on the developer's own machine could reach, at which point the
       # hand-off code is not the exposure.
+      #
+      # ── THE TWO OPERATOR CONSOLES, ADDED WITH THEIR CONTAINERS ────────────────
+      #
+      # `lantern.` and `beacon.` are the two entries before that dev port. Both
+      # bundles are `adminOnly` and render a SIGN-IN PANEL rather than fetching
+      # anything while signed out, so WITHOUT THESE TWO LINES NEITHER SURFACE
+      # OPENS AT ALL — `createHandoffCode` returns null for an origin not on this
+      # list, `POST /auth/handoff` answers 403, and the page reports a failed
+      # sign-in with nothing server-side saying why. A 403 there is
+      # indistinguishable from a wrong password.
+      #
+      # NOTE FOR THE NEXT EDITOR, LEARNED BY DOING IT WRONG: everything below the
+      # `>-` is a FOLDED BLOCK SCALAR, not YAML. A `#` line inside it is CONTENT,
+      # not a comment — it is folded into the value, and `docker compose config`
+      # then rejects the whole file with "invalid interpolation format" pointing
+      # at a `${…}` written inside the prose. That is why this note sits up here
+      # rather than beside the two lines it is about, and it is the same shape as
+      # the trap estate-web.yml's header records for Go template actions inside
+      # YAML comments.
       IDENTITY_HANDOFF_ORIGINS: >-
         https://${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://hub.${CF_WEB_APEX:-cloudsforge.localtest.me},
@@ -326,6 +345,8 @@ services:
         https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://lantern.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://beacon.${CF_WEB_APEX:-cloudsforge.localtest.me},
         http://localhost:5172
 
       # ══════════════════════════════════════════════════════════════════════════
@@ -2768,6 +2789,84 @@ services:
       tessera-assets-check:
         condition: service_completed_successfully
 
+  # ═══════════════════ the two OPERATOR consoles — and the only containers ═════
+  #                     in this file with NO PUBLISHED HOST PORT
+  #
+  # ── WHY THEY EXIST ────────────────────────────────────────────────────────────
+  #
+  # `lantern` and `beacon` are `inSwitcher: true` in ui/packages/ui/src/surfaces.ts
+  # and, until tonight, `servesUi: false`: the operator switcher offered every
+  # admin two entries that answered **404 application/json** on their own
+  # hostnames, because estate-web.yml routed the WHOLE host to the API and said so
+  # in as many words — "no bundle is served at `beacon.<apex>`". `micro-lantern-web`
+  # and `micro-beacon-web` were written to fill exactly that gap, and this is the
+  # half of it that lives here.
+  #
+  # ── WHY THERE IS NO `ports:` BLOCK, WHICH IS THE ONE THING THAT LOOKS WRONG ───
+  #
+  # Every other frontend above publishes `127.0.0.1:41xx:8080`, derived as
+  # `4100 + the repository's index in micro-org's deployableRepos()`. These two
+  # publish NOTHING, and that is a decision rather than an omission:
+  #
+  #   1. **`micro-lantern-web` and `micro-beacon-web` have no row in micro-org's
+  #      registry**, so there is no index for them and therefore no derived port.
+  #      `scripts/web-check.py` check 4 is explicit about what happens if one is
+  #      chosen anyway — "a chosen port in a derived block is how 'tessera' ended
+  #      up on 4140" — and it FAILS on a 4100+ pin whose name the registry does
+  #      not carry. Publishing 4145/4146 here would go red immediately.
+  #
+  #   2. **Adding the rows is not free and is not this repository's to make.**
+  #      The port IS the index, so two `web()` rows inserted beside the other
+  #      frontends would push `lantern` (4142), `beacon` (4143) and `faucet`
+  #      (4144) down by two and move every pin below them — the same mid-list
+  #      insertion that silently moved sixteen ports during the 46→70 sweep.
+  #      Appending after `faucet` would avoid the shift, but micro-org is not a
+  #      repository this change owns, and a registry row added from here would be
+  #      a second copy of the very list whose drift these checks exist to end.
+  #
+  #   3. **Nothing needs the port.** A host port on a frontend is a developer
+  #      convenience; the estate reaches these bundles by container name on the
+  #      compose network, which is what `cf-web-lantern` and `cf-web-beacon` in
+  #      gateway/dynamic/estate-web.yml point at (`http://lantern-web:8080`).
+  #      And a loopback port is the WRONG way to open either of them anyway:
+  #      both are `adminOnly` bundles that sign in through `nimbus.<apex>` and
+  #      read their own API same-origin, so on `127.0.0.1:41xx` `cloudsforgeHosts()`
+  #      takes the LOCAL_HOSTS branch and the page resolves an estate that is not
+  #      there. `https://lantern.<apex>` is the only address either one works at,
+  #      and it is the address `estate-verify.sh` drives them on.
+  #
+  # `web-check.py` reads pins, not services: a container with no `127.0.0.1:`
+  # mapping is simply not in `compose_pins()`, so this is not a hole in the check
+  # — there is no number here for it to have an opinion about.
+
+  # ------------------------------------------ lantern-web (lantern.<apex>)
+  # Shares `lantern.<apex>` with micro-lantern, which is what makes
+  # `resolveApiBase()` return the empty string and every `/v1/issues` request
+  # relative (lantern-web/src/lib/hosts.ts). estate-web.yml splits the hostname:
+  # `/v1`, `/otlp`, `/ingest`, `/metrics`, `/livez`, `/readyz` to the service at
+  # priority 600, everything else to this bundle at 500.
+  lantern-web:
+    <<: *web-defaults
+    build:
+      context: ../../lantern-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+
+  # ------------------------------------------ beacon-web (beacon.<apex>)
+  # Same arrangement, and for this one same-origin is not a preference but the
+  # only workable option: micro-beacon sends no `access-control-*` header
+  # anywhere in its source and answers 404 to a preflight, so a bundle on any
+  # other hostname could not read it at all. micro-beacon-web's own nginx.conf
+  # carries a plain-text 404 on `/v1|/api|/metrics|/livez|/readyz` naming this
+  # exact gateway rule, so a mis-ordered priority reports itself instead of
+  # rendering the console under an API address.
+  beacon-web:
+    <<: *web-defaults
+    build:
+      context: ../../beacon-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+
   # ------------------------------------------------ lantern (ops)          4142
   #
   # ══════════════════════════════════════════════════════════════════════════════
@@ -2838,9 +2937,24 @@ services:
       # cannot complete, and an allowlist entry that can never match is another
       # check that cannot fail.
       #
-      # Sixteen surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
+      # Eighteen surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
       # above. `site` is the bare apex — empty `subdomain` in the registry — which
       # is why the first entry carries no label.
+      #
+      # ── THE LAST TWO, AND WHY `lantern.` ITSELF IS ON ITS OWN ALLOWLIST ───────
+      #
+      # `lantern.` and `beacon.` are the operator consoles that now share these
+      # two hostnames with their services. `beacon.` is the ordinary case — one
+      # more surface shipping the shared UI, so one more origin posting to
+      # `${hosts().lantern}/ingest/client` from `src/lib/obs.ts`.
+      #
+      # `lantern.` looks like a mistake and is not. `isAllowedOrigin` is
+      # `env.rumOrigins.includes(origin)` over the browser's `Origin` header, and
+      # a browser sends `Origin` on a cross-site-capable POST whether or not the
+      # target happens to be the page's own host. So the console that exists to
+      # READ Lantern would have had its own error reports refused with 400 — a
+      # blind spot precisely over the pages an operator opens when something is
+      # already wrong, which is the worst possible place for one.
       # ══════════════════════════════════════════════════════════════════════════
       LANTERN_RUM_ORIGINS: >-
         https://${CF_WEB_APEX:-cloudsforge.localtest.me},
@@ -2858,7 +2972,9 @@ services:
         https://foresight-admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me}
+        https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://lantern.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://beacon.${CF_WEB_APEX:-cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate
     ports:
       # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.

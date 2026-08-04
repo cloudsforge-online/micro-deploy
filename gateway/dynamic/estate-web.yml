@@ -1,5 +1,12 @@
-# The surface route map — where the fifteen browser surfaces are served, and where each one's
+# The surface route map — where the browser surfaces are served, and where each one's
 # own API is served BEHIND THE SAME HOSTNAME.
+#
+# Eighteen of them now. The count is deliberately not written into the prose below any more:
+# it was "fifteen" while sixteen frontends were routed, and then two operator consoles
+# (`lantern.` and `beacon.`) arrived on hostnames this file had been treating as API-only.
+# A number in a header is a copy of something countable, and this estate's whole record is
+# that copies go stale. `scripts/surface-routes.py` counts the routers against the registry
+# on every run and prints the total; that is the figure to trust.
 #
 # ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
 #
@@ -34,7 +41,7 @@
 #
 # This file refuses to reproduce that. Every router lives inside a conditional on CF_WEB_APEX (the
 # action at the head of the document below), so an unset variable yields an empty document and NO
-# ROUTERS AT ALL, rather than fifteen routers that silently match nothing.
+# ROUTERS AT ALL, rather than a full set of routers that silently match nothing.
 # `scripts/estate-verify.sh` then fails on the first surface it cannot reach, which is a symptom
 # pointing at its own cause.
 #
@@ -415,32 +422,73 @@ http:
       entryPoints: [websecure]
       service: cf-svc-beacon
 
-    # ── beacon — a declared surface with no door, found by scripts/surface-routes.py ──
+    # ── beacon — THE HOST THAT WAS ALL API, AND NOW CARRIES A CONSOLE TOO ─────
     #
     # `beacon` is a registry SERVICE with `subdomain: 'beacon'`, so every bundle in the
-    # estate composes `https://beacon.<apex>` from the registry — and nothing answered
-    # there. It is also what `status-web` reads: its own hosts.ts says the status page's
-    # API base "is neither `hosts().status` — nothing serves an API there — nor
-    # unconditionally `hosts().beacon`", which is only a decision it can make if the
+    # estate composes `https://beacon.<apex>` from the registry — and for a while nothing
+    # answered there at all. It is also what `status-web` reads: its own hosts.ts says the
+    # status page's API base "is neither `hosts().status` — nothing serves an API there —
+    # nor unconditionally `hosts().beacon`", which is only a decision it can make if the
     # second address exists.
     #
-    # The container joined this estate earlier tonight and this file was not opened, which
-    # is the third time in one night that a service arrived without its router. That is
-    # what `scripts/surface-routes.py` now fails on, and this line is the first thing it
-    # caught.
+    # ── WHAT CHANGED, AND WHY THE ROUTER WAS RENAMED RATHER THAN REPOINTED ─────
     #
-    # THE WHOLE HOST, like nimbus and lantern: no bundle is served at `beacon.<apex>`, so
-    # there is no priority tie for a path prefix to break, and beacon serves `/v1` reads,
-    # `/metrics` and the health endpoints — enumerating them here would be a second,
-    # drifting copy of its route table.
+    # What stood here was ONE router, `cf-web-beacon`, matching the whole host and pointing
+    # at `cf-svc-beacon`, with a paragraph arguing for exactly that: "no bundle is served at
+    # `beacon.<apex>`, so there is no priority tie for a path prefix to break". **That
+    # premise expired when `micro-beacon-web` was built.** `ui/packages/ui/src/surfaces.ts`
+    # quotes the sentence above as the evidence for `servesUi: false`, and the consequence
+    # it records is the defect: `beacon` is `inSwitcher: true`, so the operator switcher
+    # offered every admin an entry that answered `404 application/json`.
+    #
+    # So the API router keeps its upstream and takes the name that describes it —
+    # `cf-api-beacon`, at priority 600 — and `cf-web-beacon` is now the BUNDLE at 500, which
+    # is the surface-plus-API shape every other pair in this file uses. Renaming rather than
+    # adding a third router matters: `cf-web-*` pointing at a `cf-svc-*` upstream is the
+    # whole-host shape that `scripts/surface-routes.py` reads to decide whether a host has an
+    # API router at all, and leaving that name on the API would have made the two directions
+    # of this file's own vocabulary disagree.
+    #
+    # ── THE PREFIX LIST IS READ OFF `beacon/src/server.ts`, NOT INHERITED ──────
+    #
+    # Every route micro-beacon defines, enumerated from its own `define(...)` calls:
+    #
+    #     /v1/gate  /v1/gate/history  /v1/gate/overrides  /v1/journeys
+    #     /v1/journeys/:name/mute  /v1/probes  /v1/probes/:name  /v1/incidents
+    #     /v1/incidents/:id/close  /v1/incidents/:id/updates  /v1/slos  /v1/slos/:name
+    #     /v1/conformance     /api/status/public   /api/alerts/webhook
+    #     /metrics   /livez   /readyz
+    #
+    # which is `/v1`, `/api`, `/metrics`, `/livez` and `/readyz` and nothing else. Checked
+    # against the bundle's client routes in the other direction too: beacon-web's `ROUTES`
+    # are `/`, `/journeys`, `/probes`, `/incidents`, `/objectives` and `/conformance`
+    # (beacon-web/src/lib/routes.ts) — top-level names that look like the API's resources and
+    # are NOT them, because the API's are all under `/v1`. There is no collision to break,
+    # which is why this needs none of the `Accept`-header machinery foresight does.
+    #
+    # SAME ORIGIN IS MANDATORY HERE, NOT PREFERRED. micro-beacon sends no `access-control-*`
+    # header anywhere in its source and answers 404 to a preflight, so a console on any other
+    # hostname could not read it at all. That is why the bundle shares this host rather than
+    # taking a `beacon-console.` of its own, and it is why beacon-web's nginx.conf answers
+    # these same five prefixes with a plain-text 404 naming this file: if the priorities are
+    # ever inverted, the operator gets that sentence instead of the console rendered under an
+    # API address with a 404 status.
     #
     # NOT A PUBLIC READ SURFACE: every `/v1` route on beacon is gated on `BEACON_TOKEN` or
     # an identity token, checked inside the service. Routing the host does not open it —
     # and `/internal` stays refused above every router here by policy.yml's priority-100000
-    # rule, which nothing in this file can outrank.
+    # rule, which nothing in this file can outrank. `/api/status/public` is the one exception
+    # and it is the service's own decision, taken with `BEACON_PUBLIC_STATUS`; see the
+    # `cf-api-status-public` block above.
     cf-web-beacon:
       rule: 'Host(`beacon.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-beacon
+    cf-api-beacon:
+      rule: 'Host(`beacon.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/api`) || PathPrefix(`/metrics`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
+      priority: 600
       entryPoints: [websecure]
       service: cf-svc-beacon
 
@@ -710,20 +758,64 @@ http:
     # cross-origin 404. Two distinct faults, one indistinguishable symptom; that
     # is why this survived unnoticed for months.
     #
-    # The WHOLE host, like nimbus above: the browser sink is `POST /ingest/client`
-    # but the service also answers `/otlp/v1/logs` and the `/v1` reads an operator
-    # uses, and enumerating prefixes here would be a second copy of that route
-    # list with its own drift. `/internal` stays refused by policy.yml's
-    # priority-100000 rule, which nothing in this file can outrank.
+    # ── AND NOW ALSO WHERE AN OPERATOR READS WHAT THEY REPORTED ────────────────
     #
-    # The sink itself is NOT protected by this router — it answers without a
+    # These lines used to route the WHOLE host to the service, "like nimbus
+    # above", on the argument that "enumerating prefixes here would be a second
+    # copy of that route list with its own drift". **That argument was right
+    # while nothing else lived on this hostname and is wrong now.**
+    # `micro-lantern-web` is the console the registry has been promising: `lantern`
+    # is `inSwitcher: true`, and an operator who chose it got 404 JSON, because
+    # this router matched `/` and handed it to a service that renders no HTML.
+    #
+    # So the API router keeps the upstream and takes the name for it —
+    # `cf-api-lantern` at 600 — and `cf-web-lantern` becomes the bundle at 500.
+    # The rename is not cosmetic: `scripts/surface-routes.py` reads a `cf-svc-*`
+    # upstream as "this host has an API router", and a `cf-web-*` name on an API
+    # would leave this file's own vocabulary disagreeing with the check that
+    # reads it.
+    #
+    # THE PREFIXES ARE READ OFF `lantern/src/server.ts`, ROUTE BY ROUTE. Every
+    # `define(...)` in that file:
+    #
+    #     /livez  /readyz  /metrics  POST /otlp/v1/logs
+    #     POST /ingest/client  OPTIONS /ingest/client
+    #     /v1/requests/:requestId  /v1/issues  /v1/events  /v1/rum
+    #
+    # — which is `/v1`, `/otlp`, `/ingest`, `/metrics`, `/livez`, `/readyz` and
+    # nothing else. `/otlp` and `/ingest` are the two a `/v1`-only rule would have
+    # dropped, and dropping them is the expensive mistake here: `/otlp/v1/logs`
+    # begins with `/otlp` and NOT with `/v1`, so a prefix list copied from the
+    # surface above would have sent every service's log export and every
+    # browser's error report to a static file server. The bundle's nginx would
+    # have answered 404 with the app shell, `obs.ts` would have reported
+    # `Failed to fetch`, and the estate would have gone quietly blind — which is
+    # the failure this hostname already suffered once, for months, and which the
+    # block above this one was written to record.
+    #
+    # Checked in the other direction too. lantern-web's client routes are `/`,
+    # `/events`, `/browser` and `/request` (lantern-web/src/lib/routes.ts). None
+    # is a prefix of the six above and none is prefixed BY them — `/events` and
+    # `/v1/events` are different addresses, which is the whole reason the API is
+    # versioned — so there is no collision for a priority to resolve wrongly.
+    #
+    # The sink is still NOT protected by the router — it answers without a
     # credential by design, because a browser holds none. It is defended by
     # lantern's own origin allowlist (`LANTERN_RUM_ORIGINS`, set in
     # docker-compose.estate.yml) and a per-client quota. Its `/v1` read routes and
-    # `/metrics` DO require a token, checked inside the service.
+    # `/metrics` DO require a token, checked inside the service, which is what
+    # makes it safe to serve an unauthenticated bundle in front of them.
+    # `/internal` stays refused by policy.yml's priority-100000 rule, which
+    # nothing in this file can outrank.
     cf-web-lantern:
       rule: 'Host(`lantern.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-web-headers]
+      service: cf-web-lantern
+    cf-api-lantern:
+      rule: 'Host(`lantern.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/otlp`) || PathPrefix(`/ingest`) || PathPrefix(`/metrics`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
+      priority: 600
       entryPoints: [websecure]
       service: cf-svc-lantern
 
@@ -779,6 +871,22 @@ http:
     cf-web-tessera:
       loadBalancer:
         servers: [{ url: "http://tessera-web:8080" }]
+    # The two operator consoles. 8080 for the same reason as every bundle above —
+    # `nginx-unprivileged` cannot bind 80 — read from each repository's Dockerfile
+    # `EXPOSE`, not chosen.
+    #
+    # These two containers are the only frontends in docker-compose.estate.yml with
+    # NO published host port, and that is deliberate: neither repository has a row
+    # in micro-org's registry, so neither has a derived `4100 + index`, and
+    # `scripts/web-check.py` fails on a chosen port in the derived block. The
+    # container name is the only address the gateway needs and the only one either
+    # bundle works at — see the block above them in the compose file.
+    cf-web-lantern:
+      loadBalancer:
+        servers: [{ url: "http://lantern-web:8080" }]
+    cf-web-beacon:
+      loadBalancer:
+        servers: [{ url: "http://beacon-web:8080" }]
 
     # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
     # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are
@@ -878,7 +986,7 @@ http:
       loadBalancer:
         servers: [{ url: "http://foresight:4021" }]
 {{ else }}
-# CF_WEB_APEX is unset, so this file contributes NOTHING rather than fifteen routers whose rules
+# CF_WEB_APEX is unset, so this file contributes NOTHING rather than a full set of routers whose rules
 # read `Host(``)` and match no request ever sent. That distinction is the whole of the comment at
 # the top of compose/env/traefik.env, and it cost this estate a dead public API once already.
 {}

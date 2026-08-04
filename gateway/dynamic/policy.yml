@@ -125,6 +125,32 @@ http:
           - https://emberkin.{{ env "CF_WEB_APEX" }}
           - https://aetherholm.{{ env "CF_WEB_APEX" }}
           - https://tessera.{{ env "CF_WEB_APEX" }}
+          # ── the two operator consoles ──────────────────────────────────────
+          #
+          # `lantern.` and `beacon.` were API-only hostnames until micro-lantern-web
+          # and micro-beacon-web joined this estate. They are here for the reason
+          # every entry above them is here — sign-in is cross-origin from every
+          # surface, `consumeAuthCallback` posts to `nimbus.<apex>/auth/handoff/redeem`
+          # from whatever origin the page is on, and an origin missing from this
+          # list cannot complete one. Both bundles are `adminOnly`, so a missing
+          # entry does not degrade them: it leaves a sign-in panel that never
+          # succeeds, which is the failure shape hardest to attribute.
+          #
+          # They need NOTHING for their own APIs. Both share a hostname with the
+          # service they read (estate-web.yml, the `cf-web-lantern`/`cf-api-lantern`
+          # and `cf-web-beacon`/`cf-api-beacon` pairs), so `resolveApiBase()`
+          # returns the empty string and every one of those requests is
+          # same-origin. That is not an optimisation for beacon — micro-beacon
+          # sends no `access-control-*` header of its own and 404s a preflight,
+          # so same-origin is the only arrangement a browser can use, and no
+          # entry in this list could have substituted for it.
+          #
+          # Deliberately NOT added to the `cloudsforge.online` block above: these
+          # two bundles are deployed in this estate and nowhere else yet, and an
+          # allowlist entry for a production origin nothing serves is the
+          # `mint.cloudsforge.online` defect two paragraphs up, written fresh.
+          - https://lantern.{{ env "CF_WEB_APEX" }}
+          - https://beacon.{{ env "CF_WEB_APEX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:

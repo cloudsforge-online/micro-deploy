@@ -1687,6 +1687,15 @@ fi
 # of that surface's row in ui/packages/ui/src/surfaces.ts — which is why Forge
 # Create is `create.` though its repository is micro-mint-web, and the developer
 # platform is `developers.` though its repository is micro-devportal-web.
+#
+# `lantern` and `beacon` are the last two, and they are the only entries here whose
+# hostname ALSO serves an API — see the next loop, which drives the other half of
+# each. They are checked here for the reason this loop exists at all: both are
+# `inSwitcher: true` in the registry, so an operator can click them, and until
+# micro-lantern-web and micro-beacon-web were deployed both answered
+# `404 application/json` from their own service. That is a failure a bundle-only
+# check on the other sixteen could never have seen, because on those sixteen no
+# service ever owned the hostname.
 for rec in \
   "hub hub-web" \
   ". site" \
@@ -1703,7 +1712,9 @@ for rec in \
   "foresight-admin foresight-admin-web" \
   "emberkin emberkin-web" \
   "aetherholm aetherholm-web" \
-  "tessera tessera-web"; do
+  "tessera tessera-web" \
+  "lantern lantern-web" \
+  "beacon beacon-web"; do
   set -- $rec
   sub=$1; repo=$2
   # `site` has an EMPTY subdomain in the registry: it is the bare apex.
@@ -1736,7 +1747,9 @@ for rec in \
   "trade /v1/bots trade" \
   "worlds /v1/titles worlds" \
   "developers /v1/scopes devplatform" \
-  "tessera /v1/wards tessera"; do
+  "tessera /v1/wards tessera" \
+  "lantern /v1/issues lantern" \
+  "beacon /v1/gate beacon"; do
   set -- $rec
   sub=$1; path=$2; svc=$3
   apic=$(gw "$sub.$WEB_APEX" "$path")
@@ -1744,6 +1757,105 @@ for rec in \
     404|502|000) bad "https://$sub.$WEB_APEX$path answered $apic — $svc is not routed behind its own surface's hostname" ;;
     *) ok "https://$sub.$WEB_APEX$path → $svc ($apic)" ;;
   esac
+done
+
+echo "── the two OPERATOR consoles: the bundle and the API must not shadow ────"
+#
+# ── WHY THIS IS A SEPARATE BLOCK AND NOT TWO MORE LINES IN THE LOOP ABOVE ─────
+#
+# **A STATUS CODE CANNOT ANSWER THIS QUESTION, AND THE LOOP ABOVE ONLY READS ONE.**
+# It fails on 404, 502 and 000, which catches "no router" and "a router pointing at
+# nothing". It cannot catch the opposite fault, which is the one these two
+# hostnames are exposed to: a `cf-web-*` router matching the WHOLE host would
+# answer `/v1` with the bundle's own index.html — a **200 carrying text/html where
+# JSON was expected** — and the loop would print `ok`. This estate has been bitten
+# by exactly that: `explorer.<apex>/chains/…` returned 200 index.html for weeks
+# while a reader checking status codes concluded the route worked.
+#
+# So both directions are asserted, by CONTENT TYPE, on both hosts:
+#
+#   the bundle  `/`      must be text/html   — the console, not the API's 404 JSON
+#   the API     `/v1/…`  must be JSON        — the service, not the bundle's shell
+#
+# `lantern` and `beacon` are the only two hostnames in this estate where a bundle
+# was added IN FRONT OF a service that already owned the whole host, so they are
+# the only pair where the priorities could be inverted by a later edit and
+# everything above would stay green.
+#
+# The status is deliberately NOT pinned on the API side. Both services refuse an
+# anonymous read — 401 is the right answer and proves the service replied — and
+# pinning 401 would turn a future decision to open a read into a false alarm. The
+# content type is the invariant; the status is the service's business.
+#
+# ── AND THIS BLOCK VERIFIES THE CERTIFICATE, WHERE `gw()` DOES NOT ────────────
+#
+# `gwv` below is `gw()` with `--cacert` in place of `-k`. The argument for `-k` on
+# `gw()` is real and unchanged — 183 assertions all failing on one bad certificate
+# would report one fault 183 times — but it does not reach this far: there are a
+# dozen requests here, and these two hostnames are new, so nothing has ever established
+# that the estate's certificate covers them. A SAN that does not cover
+# `lantern.<apex>` would leave every one of these green under `-k` and every real
+# browser refusing the page. `%{content_type}` is empty on a rejected handshake,
+# so the `case` arms below fall to their own `bad` rather than passing silently.
+gwv() {
+  gwv_host=$1; gwv_path=$2; gwv_fmt=$3; shift 3
+  curl -s --cacert "$CA_FILE" -o /tmp/estate-gwv.body -w "$gwv_fmt" \
+    --resolve "$gwv_host:$GW_PORT:127.0.0.1" "https://$gwv_host:$GW_PORT$gwv_path" "$@"
+}
+
+for rec in \
+  "lantern /v1/issues" \
+  "beacon /v1/gate"; do
+  set -- $rec
+  sub=$1; path=$2
+  host="$sub.$WEB_APEX"
+
+  webct=$(gwv "$host" / '%{content_type}')
+  webcode=$(gwv "$host" / '%{http_code}')
+  case "$webct" in
+    text/html*)
+      if [ "$webcode" = 200 ]; then
+        ok "https://$host/ → the bundle ($webcode $webct)"
+      else
+        bad "https://$host/ is text/html but answered $webcode — the console is routed and broken, which is not the same as unrouted"
+      fi ;;
+    *) bad "https://$host/ answered $webcode $webct — the bundle is NOT in front of the service on this host, so every operator who picks it out of the switcher gets the API's refusal instead of a page" ;;
+  esac
+
+  apict=$(gwv "$host" "$path" '%{content_type}')
+  apicode=$(gwv "$host" "$path" '%{http_code}')
+  case "$apict" in
+    *json*) ok "https://$host$path → $sub ($apicode $apict)" ;;
+    text/html*) bad "https://$host$path answered $apicode TEXT/HTML — THE BUNDLE IS SHADOWING ITS OWN API. The client will fail parsing JSON and name the wrong file; check that cf-api-$sub outranks cf-web-$sub in gateway/dynamic/estate-web.yml" ;;
+    *) bad "https://$host$path answered $apicode $apict — neither the service's JSON nor the bundle's shell" ;;
+  esac
+done
+
+# `/otlp` and `/ingest` are lantern's, and they are the two prefixes a `/v1`-only
+# rule would have dropped: `/otlp/v1/logs` begins with `/otlp`, NOT with `/v1`.
+# Dropping them would send every service's log export and every browser's error
+# report to a static file server, and the estate would go silently blind — the
+# exact fault this hostname already suffered for months. A JSON body here proves
+# micro-lantern answered; the bundle's nginx has no such path and would serve the
+# shell.
+for path in /otlp/v1/logs /ingest/client; do
+  ct=$(gwv "lantern.$WEB_APEX" "$path" '%{content_type}')
+  case "$ct" in
+    *json*) ok "https://lantern.$WEB_APEX$path reaches micro-lantern, not the bundle ($ct)" ;;
+    *) bad "https://lantern.$WEB_APEX$path answered $ct — the telemetry sink is behind the bundle, so every log export and every browser error report is being answered by a static file server" ;;
+  esac
+done
+
+# The sink itself, end to end, from an origin the allowlist now carries. The two
+# consoles were added to LANTERN_RUM_ORIGINS with their containers; without those
+# entries this answers 400 "origin is not allowed" and Lantern is blind to exactly
+# the pages an operator opens when something is already wrong.
+for origin in "https://lantern.$WEB_APEX" "https://beacon.$WEB_APEX"; do
+  sinkcode=$(gwv "lantern.$WEB_APEX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
+    -H 'content-type: application/json' -d '{"samples":[]}')
+  [ "$sinkcode" = 202 ] \
+    && ok "the RUM sink accepts $origin ($sinkcode)" \
+    || bad "the RUM sink refused $origin ($sinkcode) — that console's own error reports are dropped; check LANTERN_RUM_ORIGINS"
 done
 
 echo "── THE SIGN-IN SEAM: the blocker doc 22 §8.1 calls the largest ──────────"
