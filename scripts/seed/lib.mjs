@@ -211,6 +211,91 @@ export async function serviceToken(userToken, service, scopes) {
   return body.token
 }
 
+/**
+ * Re-mint one service's ten-minute token and recreate its container.
+ *
+ * ── WHY A SEEDER NEEDS THIS AT ALL ───────────────────────────────────────────
+ *
+ * Two services this seeder drives still PRESENT a ten-minute JWT verbatim rather
+ * than exchanging a long-lived credential — `foresight/src/index.ts:101` and
+ * `market/src/index.ts:83` are both `const token = () => env.serviceToken`. Both
+ * compose entries default that variable to
+ * `estate-placeholder-token-0000000000000000`, so ANY plain `docker compose up`
+ * silently replaces a working credential with a string that is not a JWT.
+ *
+ * The consequence is not a clean failure. micro-market sends the placeholder to
+ * micro-policy, policy answers 401 `Invalid Compact JWS`, and market's policy
+ * client treats any peer-decided 4xx as a DENY (`market/src/policyclient.ts`) —
+ * so every listing on the platform is refused 403 `policy_denied`. That file's
+ * own header says this must never happen: "failing CLOSED here would mean a
+ * policy outage stops every seller on the platform from listing anything… the
+ * failure looks to a seller exactly like being banned." A credential fault is
+ * not policy deciding, and the marketplace should not close for one.
+ *
+ * ── AND WHY IT RECREATES RATHER THAN JUST RE-MINTING ─────────────────────────
+ *
+ * The value lives in the container's environment, so a new token only takes
+ * effect on a recreate. The recreate has a second effect this seeder relies on
+ * for foresight: every recurring job in that service re-arms only at process
+ * start, so recreating is also how a stalled `market.deploy` is retried without
+ * INSERTing into the jobs table.
+ *
+ * This is a workaround in the open for a defect in two other repositories. The
+ * fix belongs to them — `ServiceTokenProvider`, as micro-foresight has now
+ * adopted for its other seam — and the deploy-side half is an empty default
+ * instead of a placeholder that looks like a value, so an unset token is loud.
+ */
+export async function refreshServiceToken(userToken, service, varName, scopes) {
+  const token = await serviceToken(userToken, service, scopes)
+  const file = path.join(ROOT, process.env.TOKENS_FILE || 'compose/estate/tokens.env')
+  let lines
+  try {
+    lines = fs.readFileSync(file, 'utf8').split('\n').filter((l) => l !== '')
+  } catch {
+    bad(`${file} is missing — run ./scripts/estate-bootstrap.sh first`)
+    return false
+  }
+  const next = lines.filter((l) => !new RegExp(`^${varName}=`).test(l))
+  next.push(`${varName}=${token}`)
+  fs.writeFileSync(file, next.join('\n') + '\n')
+
+  const r = spawnSync(
+    'docker',
+    [
+      'compose',
+      '--env-file',
+      process.env.TOKENS_FILE || 'compose/estate/tokens.env',
+      '-f',
+      COMPOSE,
+      'up',
+      '-d',
+      '--wait',
+      service,
+    ],
+    { cwd: ROOT, encoding: 'utf8' },
+  )
+  if (r.status !== 0) {
+    bad(`could not recreate ${service}: ${(r.stderr || '').slice(0, 200)}`)
+    return false
+  }
+  // The recreate returns when the container is healthy; a job runner or an
+  // upstream client starts a beat later.
+  await sleep(4_000)
+  return true
+}
+
+/** Does a container hold the compose placeholder rather than a real credential? */
+export function holdsPlaceholderToken(container, varName) {
+  const r = spawnSync(
+    'docker',
+    ['inspect', container, '--format', `{{range .Config.Env}}{{println .}}{{end}}`],
+    { encoding: 'utf8' },
+  )
+  if (r.status !== 0) return false
+  const line = (r.stdout || '').split('\n').find((l) => l.startsWith(`${varName}=`))
+  return Boolean(line && line.includes('estate-placeholder-token'))
+}
+
 /* ── reading the estate's own row counts, for the idempotency proof ────────── */
 
 /**

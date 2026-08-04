@@ -96,6 +96,7 @@ const countsOnly = args.includes('--counts')
 const DOMAINS = [
   { name: 'foresight', load: () => import('./seed/foresight.mjs').then((m) => m.seedForesight) },
   { name: 'community', load: () => import('./seed/community.mjs').then((m) => m.seedCommunity) },
+  { name: 'market', load: () => import('./seed/market.mjs').then((m) => m.seedMarket) },
   { name: 'mint', load: () => import('./seed/mint.mjs').then((m) => m.seedMint) },
   { name: 'nda', load: () => import('./seed/nda.mjs').then((m) => m.seedNda) },
   { name: 'billing', load: () => import('./seed/billing.mjs').then((m) => m.seedBilling) },
