@@ -292,9 +292,10 @@ def main():
             continue
         if not any(serves_api for _, serves_api in routers[sub]):
             bad(
-                f"'{sub}' is a service in docker-compose.estate.yml AND a routed surface, but "
-                f"no router mounts /v1 on its host: the bundle answers its own API calls with "
-                f"its own index.html, which is a 200 carrying HTML where JSON was expected"
+                f"'{sub}' is a service in docker-compose.estate.yml AND a routed surface, but no "
+                f"router on its host points at a cf-svc-* upstream: the bundle answers its own "
+                f"API calls with its own index.html, which is a 200 carrying HTML where JSON was "
+                f"expected"
             )
 
     # ── 2: no router for a host the registry does not declare ─────────────────

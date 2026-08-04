@@ -352,6 +352,23 @@ echo "── 5. mint one service token per credential ────────�
 # The ten-minute expiry is real and is not papered over: a firing attempted more
 # than ten minutes after a bootstrap 401s until the next run. The fix is
 # micro-tessera adopting `ServiceTokenProvider`, which its own comment names.
+#
+# ── FORESIGHT IS ON THIS LIST, AND ITS CLIFF IS THE WORST OF THE THREE ────────
+#
+# Checked the same way, not assumed from the variable's name: `foresight/src/
+# index.ts:101` is `const token = () => env.serviceToken`, handed straight to the
+# `HttpClient` for custody, the indexer, the ledger, policy and admin-api. There
+# is no `ServiceTokenProvider`, no `/service-tokens/exchange` call and no `cfsc_`
+# handling anywhere in `foresight/src`. So the value is PRESENTED and must be a
+# ten-minute JWT; `FORESIGHT_IDENTITY_CREDENTIAL` (which 5b mints, and which sits
+# in this same file looking like the obvious answer) would 401 all five.
+#
+# Unlike tessera's and emberkin's, foresight's custody calls come from LEASED
+# BACKGROUND JOBS — `market.deploy` and `resolution.post`. That is exactly the
+# shape that froze EMBER through `ledger`: a 600-second token behind a longer
+# timer. A market approved eleven minutes after a bootstrap sits unfinished until
+# the next one. Recorded rather than papered over; micro-foresight owns the fix
+# and `index.ts:101` is already the seam for it.
 CREDENTIALS="
 SETTLEMENT_SERVICE_TOKEN|settlement|
 MARKET_SERVICE_TOKEN|market|
@@ -361,6 +378,7 @@ ADMIN_API_SERVICE_TOKEN|admin-api|
 TESSERA_SERVICE_CREDENTIAL|tessera|
 EMBERKIN_SERVICE_TOKEN|emberkin|
 FAUCET_CUSTODY_TOKEN|faucet|
+FORESIGHT_SERVICE_TOKEN|foresight|
 "
 
 # The grants, read from the compose file the estate actually runs with. `python3`
@@ -718,55 +736,76 @@ echo "── 5e. the faucet's own custody address — minted once, then reused �
 # deliberately does not name the one that disagreed (`custody/src/keys.ts:277`),
 # so a second hand-typed copy of `faucet-estate-treasury-1` would be a 403 that
 # cannot be debugged from any response.
-faucet_user=$(grep -m1 'FAUCET_CUSTODY_USER_ID:' "$COMPOSE" | sed 's/.*: *//')
-faucet_order=$(grep -m1 'FAUCET_CUSTODY_ORDER_ID:' "$COMPOSE" | sed 's/.*: *//')
-if [ -z "$faucet_user" ] || [ -z "$faucet_order" ]; then
-  bad "could not read the faucet's custody binding out of $COMPOSE — the faucet cannot sign"
-else
+#
+# ── ONE FUNCTION, BECAUSE THERE ARE NOW THREE OF THESE ──────────────────────────
+#
+# `custody_address <purpose> <userId> <orderId> <minting-service> <what>` sets
+# `CUSTODY_ADDR` to a reused or freshly minted `(ember, testnet)` address, and to
+# the empty string on failure. A global rather than stdout: `ok`/`bad` print to
+# stdout, and a helper that both reported and returned would have to choose one.
+#
+# `<minting-service>` is the service whose GRANT is asked for the one-off
+# `custody:address:create` token. It is a parameter rather than a constant
+# because the honest answer differs per caller and the difference is a real
+# least-privilege decision: see each call site.
+custody_address() {
+  cad_purpose=$1; cad_user=$2; cad_order=$3; cad_service=$4; cad_what=$5
+  CUSTODY_ADDR=""
+
   # The operator surface, which serves userId and orderId. The SIGNING surface
   # deliberately does not (`GET /v1/addresses/:address` publishes existence and
   # placement only), because publishing the binding under the same credential
   # that uses it would make the /sign check circular.
-  faucet_addr=$(curl -s "$CUSTODY/v1/admin/keys" -H "authorization: Bearer $utok" | \
-    USER_ID="$faucet_user" ORDER_ID="$faucet_order" python3 -c "
+  CUSTODY_ADDR=$(curl -s "$CUSTODY/v1/admin/keys" -H "authorization: Bearer $utok" | \
+    USER_ID="$cad_user" ORDER_ID="$cad_order" PURPOSE="$cad_purpose" python3 -c "
 import sys, json, os
 try: keys = json.load(sys.stdin).get('keys', [])
 except Exception: keys = []
 for k in keys:
     if (k.get('userId') == os.environ['USER_ID'] and k.get('orderId') == os.environ['ORDER_ID']
-            and k.get('purpose') == 'treasury' and k.get('chain') == 'ember'
+            and k.get('purpose') == os.environ['PURPOSE'] and k.get('chain') == 'ember'
             and k.get('network') == 'testnet'):
         print(k['address']); break" 2>/dev/null)
 
-  if [ -n "$faucet_addr" ]; then
-    ok "the faucet already has a treasury address: $faucet_addr"
-  else
-    # `custody:address:create` is minted for this one call rather than taken from
-    # the faucet's own grant, which is `custody:sign:treasury` and nothing else.
-    # The faucet does not provision its own key and must not be able to: an
-    # address-creating faucet is a faucet that can mint itself a fresh unfunded
-    # signer and report a balance problem as a configuration one.
-    op_scopes='["custody:address:create"]'
-    op_tok=$(curl -s -X POST "$IDENTITY/service-tokens" \
-      -H "authorization: Bearer $utok" -H 'content-type: application/json' \
-      -d "{\"service\":\"wallet\",\"scopes\":$op_scopes}" | jsonfield token)
-    if [ -z "$op_tok" ]; then
-      bad "identity would not mint custody:address:create — the faucet gets no address"
-    else
-      created=$(curl -s -X POST "$CUSTODY/v1/addresses" \
-        -H "authorization: Bearer $op_tok" -H 'content-type: application/json' \
-        -d "{\"chain\":\"ember\",\"network\":\"testnet\",\"purpose\":\"treasury\",\"scheme\":\"hd_bip44\",\"userId\":\"$faucet_user\",\"orderId\":\"$faucet_order\"}")
-      faucet_addr=$(printf '%s' "$created" | python3 -c "
+  if [ -n "$CUSTODY_ADDR" ]; then
+    ok "$cad_what already exists: $CUSTODY_ADDR"
+    return 0
+  fi
+
+  cad_tok=$(curl -s -X POST "$IDENTITY/service-tokens" \
+    -H "authorization: Bearer $utok" -H 'content-type: application/json' \
+    -d "{\"service\":\"$cad_service\",\"scopes\":[\"custody:address:create\"]}" | jsonfield token)
+  if [ -z "$cad_tok" ]; then
+    bad "identity would not mint custody:address:create for $cad_service — no $cad_what"
+    return 1
+  fi
+  cad_created=$(curl -s -X POST "$CUSTODY/v1/addresses" \
+    -H "authorization: Bearer $cad_tok" -H 'content-type: application/json' \
+    -d "{\"chain\":\"ember\",\"network\":\"testnet\",\"purpose\":\"$cad_purpose\",\"scheme\":\"hd_bip44\",\"userId\":\"$cad_user\",\"orderId\":\"$cad_order\"}")
+  CUSTODY_ADDR=$(printf '%s' "$cad_created" | python3 -c "
 import sys, json
 try: print(json.load(sys.stdin).get('key', {}).get('address', ''))
 except Exception: print('')" 2>/dev/null)
-      if [ -n "$faucet_addr" ]; then
-        ok "minted the faucet a treasury-purpose address: $faucet_addr"
-      else
-        bad "custody would not mint the faucet an address: $(printf '%s' "$created" | head -c 200)"
-      fi
-    fi
+  if [ -n "$CUSTODY_ADDR" ]; then
+    ok "minted $cad_what ($cad_purpose): $CUSTODY_ADDR"
+  else
+    bad "custody would not mint $cad_what: $(printf '%s' "$cad_created" | head -c 200)"
+    return 1
   fi
+}
+
+faucet_user=$(grep -m1 'FAUCET_CUSTODY_USER_ID:' "$COMPOSE" | sed 's/.*: *//')
+faucet_order=$(grep -m1 'FAUCET_CUSTODY_ORDER_ID:' "$COMPOSE" | sed 's/.*: *//')
+if [ -z "$faucet_user" ] || [ -z "$faucet_order" ]; then
+  bad "could not read the faucet's custody binding out of $COMPOSE — the faucet cannot sign"
+else
+  # Minted under `wallet`'s grant rather than the faucet's own, which is
+  # `custody:sign:treasury` and nothing else. The faucet does not provision its
+  # own key and must not be able to: an address-creating faucet is a faucet that
+  # can mint itself a fresh unfunded signer and report a balance problem as a
+  # configuration one.
+  custody_address treasury "$faucet_user" "$faucet_order" wallet "the faucet's treasury address"
+  faucet_addr=$CUSTODY_ADDR
 
   # Appended to the tokens file so section 6's `--env-file` hands it to the
   # container. It is NOT a secret — the address is public on chain the moment the
@@ -776,6 +815,61 @@ except Exception: print('')" 2>/dev/null)
   if [ -n "$faucet_addr" ]; then
     echo "FAUCET_FUNDING_ADDRESS=$faucet_addr" >> "$TOKENS_FILE"
   fi
+fi
+
+echo "── 5f. foresight's oracle and treasury addresses ────────────────────────"
+#
+# Two more addresses that cannot be compose values, for section 5e's reason
+# exactly: neither exists until custody derives it off a BIP-44 seed whose state
+# lives in custody's own database. `foresight/src/env.ts` makes both REQUIRED and
+# validates the 0x-prefixed 20-byte shape, and `ForesightMarket`'s constructor
+# reverts `BadConstruction` on a zero oracle or a zero treasury — so the
+# placeholders in the compose file boot the service and cannot produce a working
+# market. Fail-closed, exactly as `FAUCET_FUNDING_ADDRESS` is.
+#
+# ── THE ORACLE IS `purpose: deployer`, AND THAT IS NOT A MISTAKE ──────────────
+#
+# `custody/src/gates.ts:35` has three signable purposes and none of them signs a
+# contract CALL: `transfer` requires empty calldata and says in terms that
+# widening it would turn the key into a signing oracle. So foresight's oracle
+# resolves a market by CREATING a contract — `ForesightResolver`, whose
+# constructor calls `oracleAct` and which then deploys with no runtime code — and
+# the market checks `msg.sender == createAddress(oracle, nonce)`, which is
+# exactly as strong as checking the oracle address itself
+# (`foresight/src/resolve.ts:19-33`, `ForesightMarket._isOracle`). A
+# `treasury`-purpose oracle would be refused by custody's shape gate at the first
+# resolution, with a market's winners waiting on it.
+#
+# **THE ORACLE NEEDS GAS.** It broadcasts a real creation transaction per
+# resolution. A freshly derived address holds nothing, so an unfunded oracle is a
+# market that resolves in the database and never on chain. That top-up is an
+# operator act on this testnet (`scripts/ember-seed.js` holds the only funding
+# key and deliberately does not spend it for anything but the custody seed set),
+# and it is named here rather than left to be discovered from a stuck job.
+#
+# ── THE MINTING SERVICE IS `foresight` ITSELF, UNLIKE THE FAUCET ──────────────
+#
+# `custody:address:create` IS in foresight's derived grant — it mints a deployer
+# address per market at `deploy.ts:340` and must be able to. So asking under its
+# own name here is honest, where asking under `wallet` for the faucet was the
+# point (the faucet has no such grant and must not).
+foresight_user=$(grep -m1 'FORESIGHT_ORACLE_USER_ID:' "$COMPOSE" | sed 's/.*: *//')
+foresight_order=$(grep -m1 'FORESIGHT_ORACLE_ORDER_ID:' "$COMPOSE" | sed 's/.*: *//')
+if [ -z "$foresight_user" ] || [ -z "$foresight_order" ]; then
+  bad "could not read foresight's oracle binding out of $COMPOSE — no market can resolve"
+else
+  custody_address deployer "$foresight_user" "$foresight_order" foresight "foresight's oracle address"
+  [ -n "$CUSTODY_ADDR" ] && echo "FORESIGHT_ORACLE_ADDRESS=$CUSTODY_ADDR" >> "$TOKENS_FILE"
+
+  # The settlement fee's destination, bound into every market at deploy time.
+  # `purpose: treasury` and a DIFFERENT orderId from the oracle's: one address
+  # per role, because custody binds seven fields per key and a shared row would
+  # put the fee and the oracle on one nonce — `settlement/src/worker.ts:8-18`'s
+  # lesson. It never signs anything here; `ForesightMarket.settle()` pushes to it
+  # permissionlessly, and it is an EOA rather than a contract precisely because a
+  # reverting treasury is how a market becomes unsettleable.
+  custody_address treasury "$foresight_user" foresight-estate-treasury-1 foresight "foresight's treasury address"
+  [ -n "$CUSTODY_ADDR" ] && echo "FORESIGHT_TREASURY_ADDRESS=$CUSTODY_ADDR" >> "$TOKENS_FILE"
 fi
 
 echo "── 6. hand the tokens to the services that need them ────────────────────"

@@ -94,11 +94,21 @@ x-healthcheck: &healthcheck
   timeout: 5s
   retries: 30
 
-# The same probe, against 4022 — the ONE service in this file that does not bind
-# 4000. See the `tessera` block for why that is deliberate and must not be
-# "tidied" by setting PORT=4000 on it.
+# The same probe, against 4022 — one of the TWO services in this file that do
+# not bind 4000. See the `tessera` block for why that is deliberate and must not
+# be "tidied" by setting PORT=4000 on it.
 x-healthcheck-4022: &healthcheck-4022
   test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4022/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+  interval: 3s
+  timeout: 5s
+  retries: 30
+
+# And against 4021 — `foresight`, the second. Same argument as tessera's, and it
+# is NOT the aetherholm/nda case: see the long note in the `foresight` block for
+# why the two are distinguished by WHICH number a service binds, not by the fact
+# that it is not 4000.
+x-healthcheck-4021: &healthcheck-4021
+  test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4021/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
   interval: 3s
   timeout: 5s
   retries: 30
@@ -1776,6 +1786,232 @@ services:
         condition: service_healthy
     healthcheck: *healthcheck
 
+  # ---------------------------------------------------------------- foresight
+  #
+  # ── THE LAST OF THE FIVE, AND THE ONE THAT PUTS A CONTRACT ON A CHAIN ───────
+  #
+  # The aetherholm block above names five deployables this file never served:
+  # `aetherholm`, `emberkin`, `foresight`, `beacon`, `faucet`. This is the fifth
+  # and last. `foresight-web` and `foresight-admin-web` have both been up on
+  # their own hostnames with this API absent since the day they were added, and
+  # `foresight-admin` answered 404 to `/ideas` and `/categories` for exactly that
+  # reason — the gateway routed them at a service that was not running.
+  #
+  # ── HOST PORT 4123 IS DERIVED, NOT CHOSEN ───────────────────────────────────
+  #
+  # Index 23 in `deployableRepos()`, via `portFor` (org/tools/cfctl.ts:987), and
+  # re-derived rather than copied from a brief: `node --experimental-strip-types`
+  # over `org/tools/registry.ts` prints `4123 foresight` at position 23, between
+  # `4122 emberkin` and `4124 aetherholm`. `make check-web` recomputes it.
+  #
+  # ── THE BIND PORT IS 4021 AND IT IS NOT NORMALISED TO 4000 ──────────────────
+  #
+  # This was handed to me as "it binds a non-4000 port that collides with existing
+  # host pins — follow the `nda` normalisation argued in the aetherholm block".
+  # **That is wrong, and checking it is the whole point of the two-case rule the
+  # tessera and aetherholm blocks set up between them.** The two cases are told
+  # apart by WHICH number a service binds, never by the bare fact that it is not
+  # 4000:
+  #
+  #   * aetherholm binds 4120, which is admin-api's HOST port in this file, and
+  #     nda binds 4110, which is notify's. Those numbers are taken, here, today —
+  #     so both are normalised to 4000 by `x-common-env`.
+  #   * tessera binds 4022, which sits BELOW the derived 4100+ block where no
+  #     number of repositories appended to `deployableRepos()` can ever reach it.
+  #     So it keeps its port and the healthcheck moves.
+  #
+  # foresight binds 4021 (`foresight/src/env.ts:316`, `Dockerfile:86 EXPOSE 4021`,
+  # and micro-ui's registry row, whose test pins it as "the port the service
+  # actually binds"). 4021 is tessera's case exactly — one below 4022, in the same
+  # unreachable region — and it collides with nothing: every host pin in this file
+  # is 4100–4144. So the port stays and `x-healthcheck-4021` is the one extra
+  # anchor it costs, exactly as tessera's did.
+  #
+  # There is a second, decisive reason not to normalise it, and it is already
+  # committed: `gateway/dynamic/public-api.yml:193` sends the public API's
+  # `/v1/markets` and `/v1/categories` to `http://foresight:4021`, read off this
+  # image's own `EXPOSE`. Setting `PORT: "4000"` here would break the public API
+  # surface and put this file in drift with the gateway, which
+  # `scripts/surface-routes.py` now fails on.
+  #
+  # ── FORESIGHT_SERVICE_TOKEN IS *PRESENTED*, NOT EXCHANGED ───────────────────
+  #
+  # The tessera/emberkin trap for a third time, and it is settled by reading the
+  # code rather than the variable's name. `foresight/src/index.ts:101` is
+  #
+  #     const token = () => env.serviceToken
+  #
+  # handed straight to the `HttpClient` for all four upstreams (:104, :109, :114,
+  # :120) and to the admin-api client at :242. There is no `ServiceTokenProvider`,
+  # no `POST /service-tokens/exchange` call and no `cfsc_` handling anywhere in
+  # `foresight/src` — checked by grep, not inferred. So the value is PRESENTED
+  # verbatim as a bearer and must be a ten-minute JWT from `POST /service-tokens`.
+  # Handing it `FORESIGHT_IDENTITY_CREDENTIAL`, which section 5b of
+  # `estate-bootstrap.sh` already mints and which is sitting in `tokens.env`
+  # looking like the obvious answer, would send custody, the indexer, the ledger
+  # and policy a Bearer that is not a JWT and earn 401 with nothing in any log
+  # naming the cause.
+  #
+  # It is therefore minted as a TOKEN, in the CREDENTIALS list of section 5.
+  #
+  # **THE TEN-MINUTE CLIFF IS REAL HERE AND IT BITES HARDER THAN IT DOES FOR
+  # tessera OR emberkin.** Those two call upstreams on request paths, so a
+  # bootstrap usually outruns the token. This service's custody calls are made
+  # from LEASED BACKGROUND JOBS — `market.deploy` and `resolution.post`, driven by
+  # `jobs.ts` — which is precisely the shape that froze EMBER through `ledger`: a
+  # 600-second token behind a longer timer. A market approved eleven minutes after
+  # a bootstrap will sit in `awaiting_funds`/`pending` with a 401 from custody
+  # until the bootstrap is re-run. Recorded, not hidden; the fix belongs to
+  # micro-foresight and is one seam wide — `index.ts:101` is already a function
+  # called per request, exactly so that it could become
+  # `serviceTokenProvider(...).token` reading `FORESIGHT_IDENTITY_CREDENTIAL`.
+  #
+  # ── TWO CUSTODY ADDRESSES, AND WHY NEITHER IS WRITTEN HERE ──────────────────
+  #
+  # `FORESIGHT_ORACLE_ADDRESS` and `FORESIGHT_TREASURY_ADDRESS` are both required
+  # and both must be REAL: `ForesightMarket`'s constructor reverts `BadConstruction`
+  # on a zero oracle or a zero treasury, so the placeholders below boot the service
+  # and refuse to produce a working market — which is the fail-closed shape the
+  # faucet's `FAUCET_FUNDING_ADDRESS` has. Neither can be written into this file,
+  # for the reason section 5e already gives: an address does not exist until
+  # custody derives it, and custody takes the next BIP-44 index off a seed whose
+  # state lives in its own database. `estate-bootstrap.sh` section 5f mints both,
+  # reuses them on every later run, and appends them to `tokens.env`.
+  #
+  # The ORACLE is `purpose: 'deployer'`, which looks wrong and is not.
+  # `custody/src/gates.ts:35` has three signable purposes and none of them signs a
+  # contract CALL — `transfer` requires empty calldata and says widening it would
+  # make the key a signing oracle. So foresight's oracle resolves a market by
+  # CREATING a contract (`ForesightResolver`, whose constructor calls `oracleAct`
+  # and which then has no runtime code), and the market checks
+  # `msg.sender == createAddress(oracle, nonce)`, which is exactly as strong as
+  # checking the oracle address itself. Nothing about custody changed.
+  #
+  # The per-market DEPLOYER addresses are NOT bootstrapped: the service mints one
+  # per market itself, idempotently on `(chain, network, userId='foresight',
+  # orderId=<market id>)` (`deploy.ts:340`), which is what `custody:address:create`
+  # is in its grant for. Each one needs gas before its market can deploy; the
+  # service reports that as `awaiting_funds` and logs the exact shortfall rather
+  # than burning an attempt.
+  #
+  # ── WHAT IS DELIBERATELY ABSENT, BECAUSE ABSENT IS A DECLARED MODE ──────────
+  #
+  # `foresight/src/env.ts` names three groups whose absence its header calls a
+  # supported mode rather than an error, and all three stay unset:
+  #
+  #   * `FORESIGHT_HOUSE_ADDRESS` (21 §5). The house seed address must hold its
+  #     own key OUTSIDE this estate's custody — `houseseed.ts` explains that
+  #     custody has no transaction shape that can call `stake(uint8)` at all — and
+  #     this estate has no such key. So it runs no engagement programme and
+  #     `POST /markets/:id/approve` refuses a `houseSeedPerOutcomeWei` plainly,
+  #     which is the documented behaviour and not a degradation.
+  #   * `FORESIGHT_PROPOSER_*` and `FORESIGHT_SEARCH_*`. No external model or
+  #     search adapter is wired here, so the idea pipeline records "no proposals"
+  #     and the operator queue stays empty. `index.ts:79` logs
+  #     `proposerConfigured: false` at boot so an operator can see which mode they
+  #     are in without an error line every six hours.
+  #   * `FORESIGHT_MAINNET_ENABLED`. False by default, and `FORESIGHT_NETWORK` is
+  #     `testnet` — two deliberate settings are required to reach a mainnet, which
+  #     is the fail-closed default doing its job.
+  #
+  # `ADMIN_API_URL` IS set even though it is optional, and that is the one
+  # judgement call in this list. It is `admin:read` on the engagement caps, which
+  # is unreachable while there is no house address — so by the aetherholm rule
+  # ("a variable nothing reads is a secret nothing needed") it could go. It stays
+  # because the moment a house address exists this deployment must read caps
+  # BEFORE anything moves (21 §8), and because leaving it out would make
+  # `admin:read` an unexplained entry in a DERIVED grant map. The token it is
+  # handed is the same one, so it is no extra secret.
+  #
+  # ── FORESIGHT_RPC_URLS IS THE ONE THING WITHOUT WHICH NOTHING REACHES A CHAIN
+  #
+  # Empty by default, so a chain with no endpoint is refused rather than falling
+  # back to a public node nobody chose. `host.docker.internal` and `extra_hosts`
+  # for the reason the faucet and indexer blocks give: Docker Desktop resolves it
+  # and the Linux daemon does not, and there this service would boot, log
+  # `rpcConfigured: false`, serve, and refuse every deploy.
+  foresight-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../foresight
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      # Explicit, and it OVERRIDES the 4000 in `x-common-env` — an explicit key
+      # beats a merge key in YAML. tessera's reasoning: the migrator binds
+      # nothing, but it loads the same `env.ts`, and a migrator that disagreed
+      # with its service about the port would be one more copy of a fact to drift.
+      PORT: "4021"
+      FORESIGHT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/foresight
+      # The migrator imports the same `env.ts`, which builds the WHOLE config
+      # before it opens a connection — so every required value is supplied here
+      # too. It dials none of them and signs nothing.
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      LEDGER_URL: http://ledger:4000
+      POLICY_URL: http://policy:4000
+      FORESIGHT_SERVICE_TOKEN: ${FORESIGHT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_ORACLE_USER_ID: foresight-estate
+      FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
+      INSTANCE_ID: foresight-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  foresight:
+    build:
+      context: ../../foresight
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      PORT: "4021"
+      FORESIGHT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/foresight
+      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
+      CUSTODY_URL: http://custody:4000
+      INDEXER_URL: http://indexer:4000
+      LEDGER_URL: http://ledger:4000
+      POLICY_URL: http://policy:4000
+      ADMIN_API_URL: http://admin-api:4000
+      # A TOKEN, NOT A CREDENTIAL. See the long note above; it is presented
+      # verbatim by `index.ts:101` and a `cfsc_…` secret here 401s all five
+      # upstreams.
+      FORESIGHT_SERVICE_TOKEN: ${FORESIGHT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      FORESIGHT_NETWORK: testnet
+      FORESIGHT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
+      # Minted by estate-bootstrap.sh §5f and reused thereafter. The zero
+      # placeholders boot the service and cannot produce a market: the contract's
+      # constructor reverts on either.
+      FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_ORACLE_USER_ID: foresight-estate
+      FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
+      INSTANCE_ID: foresight-estate
+    # Docker Desktop resolves `host.docker.internal`; the Linux daemon does not.
+    # Same reason as the `faucet` and `indexer` blocks.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:4123:4021"
+    depends_on:
+      foresight-migrate:
+        condition: service_completed_successfully
+      identity:
+        condition: service_healthy
+      custody:
+        condition: service_healthy
+      indexer:
+        condition: service_healthy
+      ledger:
+        condition: service_healthy
+      policy:
+        condition: service_healthy
+      admin-api:
+        condition: service_healthy
+    healthcheck: *healthcheck-4021
+
   # ------------------------------------------------------------------- beacon
   #
   # ── THE RELEASE GATE, WHICH HAD NEVER RUN IN ANY ENVIRONMENT ────────────────
@@ -1875,6 +2111,20 @@ services:
       BEACON_TOKEN: estate-only-beacon-breakglass-000000000
       BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000
       BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
+      # ── A STATUS PAGE BEHIND A LOGIN IS NOT A STATUS PAGE ────────────────────
+      #
+      # `BEACON_PUBLIC_STATUS` defaults FALSE (`beacon/src/env.ts:330`) and was set nowhere here,
+      # so `GET /api/status/public` ran `authorise(ctx, deps, READ_SCOPE)` first
+      # (`beacon/src/server.ts:459`) and answered 401 to the browser that is meant to read it.
+      # `status-web` therefore rendered "Not determined — our status service answered with HTTP
+      # 404" (404 because the gateway had no route either; both halves are fixed together, and
+      # adding only the route would have turned the 404 into a 401, which is not progress).
+      #
+      # Turning it on is safe because of what the route serves, not because of who reaches it:
+      # `beacon/src/publicstatus.ts` PROJECTS the document rather than redacting one, so no target
+      # name, no error string, no latency and no journey step name can appear in it — a field it
+      # was never told about is a field it cannot leak.
+      BEACON_PUBLIC_STATUS: "true"
       INSTANCE_ID: beacon-estate
     ports:
       - "127.0.0.1:4143:4000"

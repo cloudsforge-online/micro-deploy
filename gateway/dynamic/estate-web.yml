@@ -333,12 +333,39 @@ http:
       entryPoints: [websecure]
       service: cf-svc-faucet
 
+    # ── status — the page whose whole job is to work when everything else does not ────
+    #
+    # `status-web` asks for `/api/status/public` SAME-ORIGIN, deliberately, and its own hosts.ts
+    # argues the case: a relative request needs one hostname, one handshake and one certificate —
+    # the ones the reader has already completed by having the page on screen — where a
+    # cross-origin call to `beacon.<apex>` needs a second DNS answer, a second certificate and a
+    # CORS preflight, "and every one of those is a way for the status page to fail during the
+    # event it exists to describe".
+    #
+    # Nothing routed it. The page rendered *"Not determined — our status service answered with
+    # HTTP 404"*, which is the honest thing for it to say and is why the frontend was left alone.
+    #
+    # `Path`, not `PathPrefix`, and exactly one of them. Beacon's other `/v1` routes are gated on
+    # `BEACON_TOKEN` or an identity token and have no business on a public bundle's hostname; this
+    # is the ONE projection built to be read by strangers, and `publicstatus.ts` is what makes that
+    # safe — no target name, no error string, no latency and no journey step name is written into
+    # the document at all.
+    #
+    # **THE ROUTE ALONE WOULD HAVE TURNED A 404 INTO A 401.** `beacon/src/server.ts:459` is
+    # `if (!deps.publicStatus) await authorise(ctx, deps, READ_SCOPE)`, and `BEACON_PUBLIC_STATUS`
+    # defaults FALSE (`beacon/src/env.ts:330`) and was set nowhere here. So the compose block sets
+    # it, and the two changes are one change: a status page behind a login is not a status page.
     cf-web-status:
       rule: 'Host(`status.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
       entryPoints: [websecure]
       middlewares: [cf-web-headers]
       service: cf-web-status
+    cf-api-status-public:
+      rule: 'Host(`status.{{ env "CF_WEB_APEX" }}`) && Path(`/api/status/public`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-beacon
 
     # ── beacon — a declared surface with no door, found by scripts/surface-routes.py ──
     #
@@ -369,12 +396,63 @@ http:
       entryPoints: [websecure]
       service: cf-svc-beacon
 
+    # ── foresight — the fifth backend to arrive, and the only one whose API COLLIDES
+    #    WITH ITS OWN BUNDLE'S CLIENT ROUTES ──────────────────────────────────
+    #
+    # `foresight` is now a container in docker-compose.estate.yml, so this surface gets an API
+    # router beside its bundle for the emberkin/aetherholm/tessera reason. Two things make it
+    # unlike all four of those, and both are read off the repositories rather than assumed.
+    #
+    # **1. THE UPSTREAM SERVES NO `/v1`.** `foresight/src/server.ts` defines every route at the
+    # root — `/categories`, `/markets`, `/markets/:id`, `/markets/:id/stake-intent`, `/ideas`,
+    # `/ideas/:id/approve` and the rest. That is the same shape identity has, and public-api.yml
+    # already carries the consequence: it strips `/v1` for foresight (`cf-api-strip-version`)
+    # because "11 §288 specifies the public API as URL-versioned" and the service is not. Here
+    # there is no version to strip — foresight-web and foresight-admin-web both call the
+    # unversioned paths directly — so the routers below name the RESOURCES.
+    #
+    # **2. `/markets` IS BOTH AN API PATH AND A CLIENT ROUTE.** `foresight-web/src/lib/routes.ts`
+    # declares `{ path: 'markets', wildcard: true }` — `/markets/<uuid>` "is the address people
+    # paste at each other" — and its nginx.conf serves the app shell for it. The SAME path is
+    # what `foresight.ts:334` fetches for the market list. A plain `PathPrefix(/markets)` router
+    # at priority 600 would therefore answer a person's pasted link with JSON, which is the
+    # emberkin defect exactly inverted and no better.
+    #
+    # `/ideas` and `/categories` have no such collision: neither is in `ROUTES`, so nginx already
+    # 404s them "on purpose, so that a wrong address answers 404 rather than 200" — and THAT 404
+    # is the one foresight-admin has been getting, because the console calls this host's API
+    # cross-origin (`foresight-admin-web/src/lib/hosts.ts:33`, `API_SURFACE = 'foresight'`) and
+    # nothing here answered. Those two are routed unconditionally.
+    #
+    # `/markets` is separated by `Accept`, which is a FACT ABOUT THE TWO CALLERS and not a
+    # heuristic: `foresight-web/src/lib/api.ts:265` and `foresight-admin-web/src/lib/api.ts` both
+    # set `accept: application/json` on every request they make, and a browser NAVIGATION sends
+    # `text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8` — which contains
+    # `application/xml` and `application/xhtml+xml` and never `application/json`. So the deep link
+    # gets the shell and the fetch gets the market. Priority 700 so it outranks both the resource
+    # routers and the bundle.
+    #
+    # This is worth stating plainly because it is the kind of rule that looks clever and rots: if
+    # foresight-web ever stops sending that header, the market list breaks and the deep link keeps
+    # working — a visible failure in the surface that changed, not a silent one somewhere else.
+    # The alternative was asking micro-foresight-web to move its client routes or micro-foresight
+    # to version its API, and neither repository is mine tonight.
     cf-web-foresight:
       rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
       entryPoints: [websecure]
       middlewares: [cf-web-headers]
       service: cf-web-foresight
+    cf-api-foresight-resources:
+      rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`))'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-foresight
+    cf-api-foresight-markets:
+      rule: 'Host(`foresight.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/markets`) && HeaderRegexp(`Accept`, `application/json`)'
+      priority: 700
+      entryPoints: [websecure]
+      service: cf-svc-foresight
 
     # The one hostname in this file with no registry row behind it. See the header.
     cf-web-foresight-admin:
@@ -416,6 +494,20 @@ http:
       service: cf-web-aetherholm
     cf-api-aetherholm:
       rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-aetherholm
+    # `/readyz` is not under `/v1`, so the prefix router above never saw it and the bundle's nginx
+    # 404'd it. `aetherholm-web` reads it to render whether the game is up, so a routing gap told
+    # every visitor a perfectly healthy service was degraded. `Path`, exactly one, and NOT
+    # `PathPrefix`: `/livez` and `/metrics` stay unrouted, because liveness is for the orchestrator
+    # and `/metrics` is for Prometheus on the compose network.
+    #
+    # This is the only health endpoint published anywhere in this file, and it is published because
+    # a BUNDLE consumes it. It is the same shape as the status page above: a frontend asking its
+    # own origin for something only its backend can answer.
+    cf-api-aetherholm-readyz:
+      rule: 'Host(`aetherholm.{{ env "CF_WEB_APEX" }}`) && Path(`/readyz`)'
       priority: 600
       entryPoints: [websecure]
       service: cf-svc-aetherholm
@@ -508,11 +600,48 @@ http:
     # "without the app CORS allowlist" is not true today; the entrypoint gives it one. Recorded
     # here rather than silently corrected there, because narrowing that chain is a policy change
     # and policy.yml is the file that owns it.)
+    # ── `pay.<apex>` HAS TWO BACKENDS, AND ROUTING IT TO EITHER ONE IS WRONG ────
+    #
+    # It was pointed wholly at wallet, and `emberkin.<apex>`'s wardrobe 404'd on `/entitlements`.
+    # The obvious repair — repoint it at billing — was checked against both consumers first and is
+    # ALSO wrong. Two bundles resolve this one hostname, and each is right about its own half:
+    #
+    #   * `hub-web/src/lib/money.ts:47-49` — `const wallet = (path) => request(hosts().pay, path)`,
+    #     and every call through it is `/v1/withdrawals` or `/v1/deposits`. Sending those to
+    #     billing would break withdrawal and deposit in the Hub, which is the money path.
+    #   * `emberkin-web/src/lib/hosts.ts:106-113` — `billingBase() { return hosts().pay }`, for
+    #     `GET /entitlements` (`emberkin-web/src/lib/billing.ts:75`). Wallet has no such route —
+    #     it has no `/entitlements` at all — so this has been a 404 since the host was routed.
+    #
+    # The registry calls the surface the "Forge Pay API" and gives it no repository: it is a
+    # FAMILY, not a service. `money.ts:30-33` says so, and says what to do about it: "`pay` is the
+    # estate's row for the payments API family … and the gateway routes wallet's resources by path
+    # prefix (public-api.yml:118-124), so one host serving both by prefix is consistent with how
+    # the public surface is already laid out."
+    #
+    # So the host is split by RESOURCE, exactly as `api.<apex>` is, and for the same stated reason:
+    # which service owns a resource is an implementation detail, and publishing it turns an
+    # internal refactor into a breaking change for a browser.
+    #
+    # BILLING'S ROUTER IS THE NARROW ONE and wallet keeps the host. That is deliberate: wallet's
+    # surface here is the whole `/v1` money API and is the one that grows, while billing's use of
+    # this hostname is the four resources it actually serves — enumerated from
+    # `billing/src/server.ts` (`/products` :375, `/purchases` :409, `/entitlements` :473,
+    # `/subscriptions` :580) rather than guessed. `/internal/entitlements/:userId` (:505) is
+    # deliberately NOT among them and could not be reached if it were: policy.yml refuses
+    # `/internal` at priority 100000, above every router in this file, and its header explains
+    # that Pay's internal routes take a `userId` as a parameter and are therefore an
+    # act-as-anyone primitive from off the box.
     cf-web-pay:
       rule: 'Host(`pay.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
       entryPoints: [websecure]
       service: cf-svc-wallet
+    cf-api-pay-billing:
+      rule: 'Host(`pay.{{ env "CF_WEB_APEX" }}`) && (PathPrefix(`/entitlements`) || PathPrefix(`/products`) || PathPrefix(`/purchases`) || PathPrefix(`/subscriptions`))'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-billing
 
     cf-web-vault:
       rule: 'Host(`vault.{{ env "CF_WEB_APEX" }}`)'
@@ -650,6 +779,11 @@ http:
     cf-svc-custody:
       loadBalancer:
         servers: [{ url: "http://custody:4000" }]
+    # The second half of `pay.<apex>`. See the block beside `cf-api-pay-billing` for why one
+    # hostname has two backends and why splitting it by resource is the registry's own model.
+    cf-svc-billing:
+      loadBalancer:
+        servers: [{ url: "http://billing:4000" }]
     # 4000, like every other service here: the estate sets `PORT: "4000"` through
     # `*common-env`. Lantern's own DEFAULT is 4010 — the number the registry
     # carries as its devPort, and the one a bundle resolves on a loopback origin —
@@ -678,6 +812,15 @@ http:
     cf-svc-beacon:
       loadBalancer:
         servers: [{ url: "http://beacon:4000" }]
+    # 4021, and it is the SECOND upstream in this file that is not 4000 — tessera's 4022 was the
+    # first. Read from `foresight/src/env.ts:316` and its Dockerfile's `EXPOSE 4021`, not chosen
+    # here, and it agrees with `public-api.yml`'s `http://foresight:4021`, which is the same fact
+    # written down by the same rule. The compose file deliberately does NOT normalise this to 4000
+    # the way it does emberkin's 4100 and aetherholm's 4120: 4021 sits below the derived 4100+
+    # host-port block where nothing can grow into it, which is tessera's case and not theirs.
+    cf-svc-foresight:
+      loadBalancer:
+        servers: [{ url: "http://foresight:4021" }]
 {{ else }}
 # CF_WEB_APEX is unset, so this file contributes NOTHING rather than fifteen routers whose rules
 # read `Host(``)` and match no request ever sent. That distinction is the whole of the comment at
