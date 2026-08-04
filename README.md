@@ -402,12 +402,20 @@ legal at all. It owns TLS, CORS, and the `/internal` refusal.
 
 ### The `/internal` refusal moved, and so did its invariant
 
-Today `/internal` is refused by a path rule in
-`deploy/cloudflared/config.example.yml`, asserted by a CI job that parses that
-YAML (`.github/workflows/ci.yml:155`). AD-17 moves routing and TLS to the
-gateway, so the **mechanism** moves — and the invariant has to move with it, or
-the check keeps passing against a file nothing reads any more, which is worse
-than no check at all.
+This paragraph used to say that `/internal` was refused by a path rule in
+`deploy/cloudflared/config.example.yml`, "asserted by a CI job that parses that
+YAML (`.github/workflows/ci.yml:155`)". **Neither of those existed.** There was
+no `cloudflared/` directory in this repository, and `ci.yml` had a single job in
+it running `scripts/surface-routes.py`. Two other files repeated the same claim
+(`gateway/dynamic/policy.yml:13`, `compose/docker-compose.gateway.yml:17`), so
+the estate's record of where this control lived cited a file and a check that
+were never written — which is exactly the defect `surface-routes.py`'s check 4
+exists to catch, sitting one directory outside what that check reads.
+
+Both copies are real now, and the invariant is asserted in both places. AD-17
+moved routing and TLS to the gateway, so the **mechanism** moved — and the
+invariant had to move with it, or a check keeps passing against a file nothing
+reads any more, which is worse than no check at all.
 
 It is now a router in `gateway/dynamic/policy.yml` at priority 100000, pointed at
 an unreachable service. It is a *route*, not a middleware, because a middleware

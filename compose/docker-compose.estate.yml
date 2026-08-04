@@ -61,7 +61,7 @@
 # literal and weak on purpose: a real one in a committed compose file is a real
 # one in the fork network.
 
-name: cloudsforge-estate
+name: ${CF_PROJECT:-cloudsforge-estate}
 
 # ── shared fragments ───────────────────────────────────────────────────────────
 # ── `compose/.env` IS A COMMITTED SYMLINK, AND IT IS LOAD-BEARING ────────────
@@ -428,7 +428,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: identity-estate
     ports:
-      - "127.0.0.1:4100:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}100:4000"
     depends_on:
       identity-migrate:
         condition: service_completed_successfully
@@ -462,7 +462,7 @@ services:
       POLICY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/policy
       INSTANCE_ID: policy-estate
     ports:
-      - "127.0.0.1:4101:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}101:4000"
     depends_on:
       policy-migrate:
         condition: service_completed_successfully
@@ -593,7 +593,7 @@ services:
       # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: ledger-estate
     ports:
-      - "127.0.0.1:4102:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}102:4000"
     depends_on:
       ledger-migrate:
         condition: service_completed_successfully
@@ -631,7 +631,7 @@ services:
       PRICING_MIN_SOURCES: "1"
       INSTANCE_ID: pricing-estate
     ports:
-      - "127.0.0.1:4105:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}105:4000"
     depends_on:
       pricing-migrate:
         condition: service_completed_successfully
@@ -670,7 +670,7 @@ services:
       ACTIVITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: activity-estate
     ports:
-      - "127.0.0.1:4109:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}109:4000"
     depends_on:
       activity-migrate:
         condition: service_completed_successfully
@@ -710,7 +710,7 @@ services:
       # needs rows, not emails.
       INSTANCE_ID: notify-estate
     ports:
-      - "127.0.0.1:4110:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}110:4000"
     depends_on:
       notify-migrate:
         condition: service_completed_successfully
@@ -809,7 +809,7 @@ services:
     volumes:
       - studio-assets:/var/lib/studio/assets
     ports:
-      - "127.0.0.1:4111:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}111:4000"
     depends_on:
       studio-assets-init:
         condition: service_completed_successfully
@@ -846,7 +846,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: devplatform-estate
     ports:
-      - "127.0.0.1:4118:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}118:4000"
     depends_on:
       devplatform-migrate:
         condition: service_completed_successfully
@@ -987,7 +987,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:4108:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}108:4000"
     depends_on:
       indexer-migrate:
         condition: service_completed_successfully
@@ -1024,7 +1024,7 @@ services:
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: analytics-estate
     ports:
-      - "127.0.0.1:4121:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}121:4000"
     depends_on:
       analytics-migrate:
         condition: service_completed_successfully
@@ -1099,7 +1099,7 @@ services:
     volumes:
       - custody-keys:/var/lib/custody
     ports:
-      - "127.0.0.1:4107:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}107:4000"
     depends_on:
       custody-migrate:
         condition: service_completed_successfully
@@ -1184,7 +1184,7 @@ services:
       WALLET_IDENTITY_CREDENTIAL: ${WALLET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: wallet-estate
     ports:
-      - "127.0.0.1:4103:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}103:4000"
     depends_on:
       wallet-migrate:
         condition: service_completed_successfully
@@ -1234,7 +1234,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: settlement-estate
     ports:
-      - "127.0.0.1:4104:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}104:4000"
     depends_on:
       settlement-migrate:
         condition: service_completed_successfully
@@ -1278,7 +1278,7 @@ services:
       BILLING_IDENTITY_CREDENTIAL: ${BILLING_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: billing-estate
     ports:
-      - "127.0.0.1:4106:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}106:4000"
     depends_on:
       billing-migrate:
         condition: service_completed_successfully
@@ -1319,7 +1319,7 @@ services:
       MINT_IDENTITY_CREDENTIAL: ${MINT_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: mint-estate
     ports:
-      - "127.0.0.1:4112:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}112:4000"
     depends_on:
       mint-migrate:
         condition: service_completed_successfully
@@ -1367,7 +1367,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: market-estate
     ports:
-      - "127.0.0.1:4113:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}113:4000"
     depends_on:
       market-migrate:
         condition: service_completed_successfully
@@ -1415,7 +1415,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: trade-estate
     ports:
-      - "127.0.0.1:4114:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}114:4000"
     depends_on:
       trade-migrate:
         condition: service_completed_successfully
@@ -1458,7 +1458,7 @@ services:
       WORLDS_IDENTITY_CREDENTIAL: ${WORLDS_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: worlds-estate
     ports:
-      - "127.0.0.1:4115:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}115:4000"
     depends_on:
       worlds-migrate:
         condition: service_completed_successfully
@@ -1499,7 +1499,7 @@ services:
       NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: nda-estate
     ports:
-      - "127.0.0.1:4116:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}116:4000"
     depends_on:
       nda-migrate:
         condition: service_completed_successfully
@@ -1542,7 +1542,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: community-estate
     ports:
-      - "127.0.0.1:4117:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}117:4000"
     depends_on:
       community-migrate:
         condition: service_completed_successfully
@@ -1665,7 +1665,7 @@ services:
       TESSERA_SERVICE_CREDENTIAL: ${TESSERA_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: tessera-estate
     ports:
-      - "127.0.0.1:4125:4022"
+      - "127.0.0.1:${CF_PORT_BASE:-4}125:4022"
     depends_on:
       tessera-migrate:
         condition: service_completed_successfully
@@ -1741,7 +1741,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: aetherholm-estate
     ports:
-      - "127.0.0.1:4124:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}124:4000"
     depends_on:
       aetherholm-migrate:
         condition: service_completed_successfully
@@ -1816,7 +1816,7 @@ services:
       EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: emberkin-estate
     ports:
-      - "127.0.0.1:4122:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}122:4000"
     depends_on:
       emberkin-migrate:
         condition: service_completed_successfully
@@ -2041,7 +2041,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:4123:4021"
+      - "127.0.0.1:${CF_PORT_BASE:-4}123:4021"
     depends_on:
       foresight-migrate:
         condition: service_completed_successfully
@@ -2191,7 +2191,7 @@ services:
       BEACON_PUBLIC_STATUS: "true"
       INSTANCE_ID: beacon-estate
     ports:
-      - "127.0.0.1:4143:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}143:4000"
     depends_on:
       beacon-migrate:
         condition: service_completed_successfully
@@ -2356,7 +2356,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:4144:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}144:4000"
     depends_on:
       faucet-migrate:
         condition: service_completed_successfully
@@ -2406,7 +2406,7 @@ services:
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: admin-api-estate
     ports:
-      - "127.0.0.1:4120:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}120:4000"
     depends_on:
       admin-api-migrate:
         condition: service_completed_successfully
@@ -2449,7 +2449,7 @@ services:
       HUB_API_IDENTITY_CREDENTIAL: ${HUB_API_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: hub-api-estate
     ports:
-      - "127.0.0.1:4119:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}119:4000"
     depends_on:
       ledger:
         condition: service_healthy
@@ -2542,7 +2542,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4126:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}126:8080"
 
   # ------------------------------------------------------------- site (apex)
   # The apex. It has no subdomain in the registry, which is why the gateway routes
@@ -2554,7 +2554,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4127:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}127:8080"
 
   # --------------------------------------------------------- admin-web (admin)
   admin-web:
@@ -2564,7 +2564,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4128:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}128:8080"
 
   # --------------------------------------------------------- mint-web (create)
   # `create.<apex>`, not `mint.`: the repository is micro-mint-web and the surface
@@ -2578,7 +2578,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4129:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}129:8080"
 
   # --------------------------------------------------------- trade-web (trade)
   trade-web:
@@ -2588,7 +2588,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4130:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}130:8080"
 
   # ------------------------------------------------------- worlds-web (worlds)
   worlds-web:
@@ -2598,7 +2598,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4131:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}131:8080"
 
   # --------------------------------------------------- explorer-web (explorer)
   explorer-web:
@@ -2608,7 +2608,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4132:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}132:8080"
 
   # ------------------------------------------------------ network-site (network)
   network-site:
@@ -2618,7 +2618,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4133:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}133:8080"
 
   # ------------------------------------------------------- market-web (market)
   market-web:
@@ -2628,7 +2628,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4134:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}134:8080"
 
   # -------------------------------------------------- devportal-web (developers)
   # `developers.<apex>`, from the registry — NOT `devportal.`, which is the
@@ -2641,7 +2641,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4135:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}135:8080"
 
   # ------------------------------------------------------- status-web (status)
   status-web:
@@ -2651,7 +2651,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4136:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}136:8080"
 
   # --------------------------------------------- foresight-web (foresight) 4138
   # From here down, the four surfaces micro-org's registry did not carry until the
@@ -2668,7 +2668,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4138:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}138:8080"
 
   # -------------------------------- foresight-admin-web (no micro-ui row)  4139
   # micro-org's registry now carries this repository, so the PORT is derived. What
@@ -2712,7 +2712,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4139:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}139:8080"
 
   # ------------------------------------------ emberkin-web (emberkin)      4137
   emberkin-web:
@@ -2722,7 +2722,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4137:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}137:8080"
 
   # ------------------------------------------ aetherholm-web (aetherholm)  4140
   aetherholm-web:
@@ -2732,7 +2732,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4140:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}140:8080"
 
   # ------------------------------------------ tessera-web (tessera)        4141
   # The SIXTEENTH frontend, and the first whose service is also in this file.
@@ -2749,7 +2749,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:4141:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}141:8080"
     # ── `/world-assets/`, THE ONE micro-tessera-web NAMED AS MOST LIKELY TO BE
     #    MISSED — AND `materialise.py` HAS SINCE LANDED ────────────────────────
     #
@@ -2979,7 +2979,7 @@ services:
     ports:
       # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.
       # Derived, not chosen; `make check-web` re-derives it from micro-org.
-      - "127.0.0.1:4142:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}142:4000"
     depends_on:
       lantern-migrate:
         condition: service_completed_successfully

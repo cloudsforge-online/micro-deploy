@@ -52,24 +52,24 @@ services:
     ports:
       # Merged with the base file's three, not replacing them. Compose appends `ports` across
       # files, so 9095/9096/9097 are still bound and every existing recipe still works.
-      - "127.0.0.1:443:443"
+      - "127.0.0.1:${CF_GATEWAY_PORT:-443}:443"
     networks:
       - estate
 
 networks:
   edge:
     external: true
-    name: cf-micro-edge
+    name: ${CF_NET_PREFIX:-cf-micro}-edge
   app:
     external: true
-    name: cf-micro-app
+    name: ${CF_NET_PREFIX:-cf-micro}-app
   vault:
     external: true
-    name: cf-micro-vault
+    name: ${CF_NET_PREFIX:-cf-micro}-vault
   # `external` means compose attaches and never creates: the estate owns this network and this
   # file must not be able to bring a second one into existence under the same intent. If the
   # estate is not up, `docker compose up` fails HERE with a named missing network rather than
   # starting a gateway that resolves nothing.
   estate:
     external: true
-    name: cloudsforge-estate_default
+    name: ${CF_PROJECT:-cloudsforge-estate}_default

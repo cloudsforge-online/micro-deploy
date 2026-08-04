@@ -65,3 +65,57 @@ jobs:
       - name: Every registry surface has a route, and every route has a surface
         working-directory: deploy
         run: python3 scripts/surface-routes.py
+
+      # ── The tunnel ingress is GENERATED, so the check is a diff ──────────────
+      #
+      # `cloudflared/gen.py` derives every hostname and its tunnel from the same
+      # registry the step above reads — `adminOnly` and `servesUi` are what split
+      # the 24 host surfaces into 14 public / 4 operator / 6 API, so a new
+      # surface is a registry row and nothing else. `--check` regenerates in
+      # memory and fails if the committed files differ.
+      #
+      # Wired in the same job rather than a new one because it needs the same
+      # micro-ui checkout and the same pnpm install, which is the expensive part.
+      - name: The tunnel ingress matches the registry
+        working-directory: deploy
+        run: python3 cloudflared/gen.py --check
+
+      # ── No surface may take an environment's apex prefix ─────────────────────
+      #
+      # Guards the one way `testnet.cloudsforge.online` could start resolving its
+      # own links to mainnet: a registry row with `subdomain: 'testnet'` would put
+      # `testnet` in KNOWN_SUBS, and `cloudsforgeHosts()` would then strip it from
+      # the bare apex. Nothing would error; every address would be real and wrong.
+      - name: No registry surface collides with an environment prefix
+        working-directory: deploy
+        run: python3 scripts/check-apex-prefix.py
+
+      # ── The two projects stay renderable, and mainnet stays unchanged ────────
+      #
+      # `compose/testnet.env` is six variables that turn these files into a second
+      # isolated project. The value of the defaults is that an unset environment
+      # renders IDENTICALLY to before — so that is asserted here rather than
+      # trusted, by rendering both and requiring the mainnet ports to be the 41xx
+      # set and the testnet ports to be disjoint from them.
+      - name: The two compose projects do not collide
+        working-directory: deploy
+        run: |
+          set -euo pipefail
+          docker compose -f compose/docker-compose.estate.yml config --format json \
+            > /tmp/mainnet.json
+          docker compose --env-file compose/testnet.env \
+            -f compose/docker-compose.estate.yml config --format json > /tmp/testnet.json
+          python3 - <<'PY'
+          import json
+          mn = json.load(open('/tmp/mainnet.json'))
+          tn = json.load(open('/tmp/testnet.json'))
+          def ports(d):
+              return {p['published'] for s in d['services'].values() for p in s.get('ports', [])}
+          mp, tp = ports(mn), ports(tn)
+          assert mn['name'] == 'cloudsforge-estate', f"mainnet project name changed: {mn['name']}"
+          assert tn['name'] == 'cf-testnet', f"testnet project name wrong: {tn['name']}"
+          overlap = sorted(mp & tp)
+          assert not overlap, f"the two projects would both bind: {overlap}"
+          print(f"ok — {len(mp)} mainnet ports, {len(tp)} testnet ports, no overlap; "
+                f"projects {mn['name']} / {tn['name']}")
+          PY

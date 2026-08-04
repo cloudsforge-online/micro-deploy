@@ -14,7 +14,7 @@
 #                 has already drifted once (:4004 in nimbus's list and missing
 #                 from everyone else's, so ForgeMint's SPA could sign in and
 #                 could not call Pay). One middleware, one list.
-#   /internal   — today: a hand-written path rule in deploy/cloudflared/
+#   /internal   — cloudflared/config.*.yml, FIRST ingress rule (generated)
 #                 config.example.yml, asserted by a CI invariant that parses
 #                 that YAML. The MECHANISM moves, so the INVARIANT moves with
 #                 it: see the CI check at the bottom of this file.
@@ -42,7 +42,12 @@ services:
     # No container_name, deliberately, and it is the first place to prove the
     # point: this service is discovered by label like everything behind it.
     env_file:
-      - env/traefik.env
+      # PARAMETERISED so a second compose project on this host can serve a
+      # different apex. `traefik.env` pins CF_WEB_APEX and CF_API_HOST, and both
+      # are per-environment facts — the testnet project sets
+      # CF_TRAEFIK_ENV=traefik.testnet and gets env/traefik.testnet.env.
+      # Unset is mainnet, byte-for-byte what it always was.
+      - env/${CF_TRAEFIK_ENV:-traefik}.env
     command:
       - --global.checknewversion=false
       - --global.sendanonymoususage=false
@@ -140,9 +145,9 @@ services:
     ports:
       # Loopback, like every other port in this stack. Public exposure is the
       # tunnel's job and it is the tunnel that terminates on a public address.
-      - "127.0.0.1:9095:80"
-      - "127.0.0.1:9096:443"
-      - "127.0.0.1:9097:8082"
+      - "127.0.0.1:${CF_GW_PORT_BASE:-90}95:80"
+      - "127.0.0.1:${CF_GW_PORT_BASE:-90}96:443"
+      - "127.0.0.1:${CF_GW_PORT_BASE:-90}97:8082"
       # 443 ITSELF, because every URL in the estate is written without a port.
       # `https://hub.<apex>/` means 443, the surface registry composes addresses
       # with no port, and the browser suites and `beacon smoke` all drive those
@@ -151,7 +156,7 @@ services:
       # class of defect as the credentials that vanished on a plain compose up.
       # Recreating the gateway to remove a dead provider is exactly how it was
       # found: every route returned 000 while the container reported healthy.
-      - "127.0.0.1:443:443"
+      - "127.0.0.1:${CF_GATEWAY_PORT:-443}:443"
     volumes:
       # Read-only. Traefik reads container labels; it never needs to create,
       # stop or exec anything — the same reasoning that makes Lantern's socket
@@ -228,17 +233,17 @@ networks:
   # `cf-micro-edge` is two networks or one error, depending on ordering.
   edge:
     external: true
-    name: cf-micro-edge
+    name: ${CF_NET_PREFIX:-cf-micro}-edge
   app:
     external: true
-    name: cf-micro-app
+    name: ${CF_NET_PREFIX:-cf-micro}-app
   # Declared so that a service overlay adding custody to this stack attaches to
   # the network with the right properties rather than inventing one. NOTHING in
   # this file joins it: the gateway must not be able to reach custody, and the
   # way to guarantee that is for the gateway to have no route to it at all.
   vault:
     external: true
-    name: cf-micro-vault
+    name: ${CF_NET_PREFIX:-cf-micro}-vault
 
   # The estate's own network, and it was NOT declared here until 2026-08-04.
   #
@@ -255,4 +260,4 @@ networks:
   # why, so the next recreate silently undid it.
   estate:
     external: true
-    name: cloudsforge-estate_default
+    name: ${CF_PROJECT:-cloudsforge-estate}_default

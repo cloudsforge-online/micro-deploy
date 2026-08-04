@@ -125,6 +125,7 @@ MICRO = ROOT.parent
 UI = MICRO / "ui" / "packages" / "ui"
 WEB_MAP = ROOT / "gateway" / "dynamic" / "estate-web.yml"
 API_MAP = ROOT / "gateway" / "dynamic" / "public-api.yml"
+POLICY = ROOT / "gateway" / "dynamic" / "policy.yml"
 TRAEFIK_ENV = ROOT / "compose" / "env" / "traefik.env"
 ESTATE = ROOT / "compose" / "docker-compose.estate.yml"
 
@@ -186,7 +187,8 @@ def registry_surfaces():
     script = (
         "import {SURFACES} from './src/surfaces.ts';"
         "console.log(JSON.stringify(SURFACES.map(s=>"
-        "({key:s.key,kind:s.kind,subdomain:s.subdomain,basePath:s.basePath ?? null}))))"
+        "({key:s.key,kind:s.kind,subdomain:s.subdomain,basePath:s.basePath ?? null,"
+        "servesUi:s.servesUi}))))"
     )
     try:
         out = subprocess.run(
@@ -352,6 +354,88 @@ def described_but_undefined():
         )
 
 
+CORS_ENTRY_RE = re.compile(
+    r'^\s*-\s*https://(?:([a-z0-9-]+)\.)?\{\{\s*env\s+"CF_WEB_APEX"\s*\}\}\s*$'
+)
+
+
+def cors_allowlist():
+    """Subdomains in the templated half of `cf-cors`, in policy.yml.
+
+    Only the `{{ if env "CF_WEB_APEX" }}` block is read. The literal
+    `cloudsforge.online` entries above it are a DIFFERENT list about a different
+    deployment and are deliberately not checked here: policy.yml argues that an
+    allowlist entry for a production origin nothing serves is its own defect
+    (`mint.cloudsforge.online`), so the two halves cannot be required to match.
+    """
+    if not POLICY.exists():
+        bad(f"{POLICY} does not exist — the CORS allowlist cannot be checked")
+        return None
+    return {m.group(1) or "" for line in POLICY.read_text().splitlines()
+            if (m := CORS_ENTRY_RE.match(line))}
+
+
+def cors_drift(surfaces):
+    """── 5: every surface a BROWSER loads has a CORS origin, and vice versa ────
+
+    THE FOURTH COPY OF THE SAME DEFECT, AND THE ONE STILL UNCHECKED.
+
+    `cf-cors` in policy.yml carries a hand-written list of eighteen origins under
+    `{{ if env "CF_WEB_APEX" }}`. Every entry is `https://<sub>.<apex>`, and the
+    set of subdomains is exactly `servesUi === true` in the registry — eighteen
+    of them, derivable in one line, written out by hand and maintained by nobody.
+
+    That file's own comments record it drifting FOUR TIMES, each found by a human
+    noticing a broken page rather than by a check:
+
+      * `mint` was allowlisted; the registry subdomain is `create`, and
+        `mint.<apex>` is a host nothing serves.
+      * `devportal` was allowlisted, written from the repository name
+        micro-devportal-web; the registry subdomain is `developers`.
+      * `network` and `foresight` were MISSING — "the only two registry products
+        absent from this list, found when micro-network-site's chain panel could
+        fetch nothing".
+      * `emberkin`, `aetherholm`, `tessera` and `foresight-admin` were missing,
+        added only when someone opened the file.
+
+    policy.yml says of each of these, correctly and four times over: "An allowlist
+    that omits an origin FAILS CLOSED AND SILENTLY: the browser refuses the
+    response and nothing server-side records that anything was refused." That is
+    the worst possible failure shape — no log, no status code, no trace — and it
+    is why this is checked rather than trusted.
+
+    The list is still hand-written, for the same reason `estate-web.yml` is: it
+    is interleaved with the argument for each entry. So, like that file, it is
+    made impossible for it to be wrong quietly.
+
+    `servesUi` is the right predicate and not an approximation. Every one of these
+    origins is here because `consumeAuthCallback` POSTs to
+    `nimbus.<apex>/auth/handoff/redeem` from whatever origin the page is on
+    (ui/packages/ui/src/index.tsx), so an origin missing here cannot complete a
+    sign-in. A surface that serves no UI has no page and no origin; the six API
+    hosts are correctly absent, and requiring them would be requiring a CORS entry
+    for a browser tab that never exists.
+    """
+    allowed = cors_allowlist()
+    if allowed is None:
+        return
+    needed = {s["subdomain"] for s in surfaces if not s["basePath"] and s["servesUi"]}
+    for sub in sorted(needed - allowed):
+        bad(
+            f"surface '{sub or '<apex>'}' serves a UI and has NO entry in the cf-cors allowlist "
+            f"(gateway/dynamic/policy.yml). Every bundle posts to nimbus cross-origin on boot, so "
+            f"a missing origin means sign-in cannot complete there — and it fails closed and "
+            f"silently: the browser refuses the response and nothing server-side records it"
+        )
+    for sub in sorted(allowed - needed):
+        bad(
+            f"the cf-cors allowlist names origin 'https://{sub or ''}.<apex>', which no registry "
+            f"surface serves a UI on. That is the `mint`/`devportal` defect — an entry written "
+            f"from a repository name rather than from the registry — and it grants an origin "
+            f"nothing needs"
+        )
+
+
 def main():
     surfaces = registry_surfaces()
     routers = gateway_routers()
@@ -443,6 +527,9 @@ def main():
 
     # ── 4: no cf-* name written in a comment that this directory never defines ─
     described_but_undefined()
+
+    # ── 5: the CORS allowlist and the registry agree ──────────────────────────
+    cors_drift(surfaces)
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:
