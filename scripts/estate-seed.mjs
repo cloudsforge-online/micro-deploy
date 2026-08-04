@@ -6,6 +6,7 @@
  *   ./scripts/estate-seed.mjs                 # everything
  *   ./scripts/estate-seed.mjs --only foresight
  *   ./scripts/estate-seed.mjs --counts        # just the row counts, change nothing
+ *   ./scripts/estate-seed.mjs --check         # FAIL if any surface is empty, write nothing
  *
  * `scripts/estate-bootstrap.sh` calls this as its last step. It is a separate
  * file rather than another section of that script because it will grow: every
@@ -90,6 +91,18 @@ const { login, counts, printCounts, tally, head, bad, note } = await import('./s
 const args = process.argv.slice(2)
 const only = args.includes('--only') ? args[args.indexOf('--only') + 1] : null
 const countsOnly = args.includes('--counts')
+/**
+ * `--check` asks the estate whether its surfaces have anything on them and
+ * writes nothing at all. See `seed/check.mjs` for what it reads and why.
+ *
+ * It is a MODE OF THIS FILE rather than a script of its own because it needs the
+ * same three things this one already has: the trust bundle re-exec above, the
+ * `SERVICES` map, and the knowledge of which four services the gateway does not
+ * publish. `estate-verify.sh` calls it; so does the tail of a seeding run, so a
+ * bootstrap that seeded and still left a page empty says so on the spot rather
+ * than waiting for somebody to open the page.
+ */
+const checkOnly = args.includes('--check')
 
 /**
  * The domains, in the order a reader would want them.
@@ -111,6 +124,25 @@ async function main() {
   if (countsOnly) {
     printCounts('row counts', counts())
     return 0
+  }
+
+  if (checkOnly) {
+    const { checkSurfaces } = await import('./seed/check.mjs')
+    // The operator token is OPTIONAL here and its absence is not fatal. Three of
+    // the reads need a principal; four do not, and a run that refused to assert
+    // the four public surfaces because it could not sign in would report a
+    // credential fault as a content fault. `checkSurfaces` fails each row it
+    // could not check, so nothing is quietly passed over.
+    let token = null
+    try {
+      token = await login()
+    } catch (err) {
+      console.error(`\n  could not sign in as the operator — ${err.message}`)
+      console.error('  the surfaces that need a principal will be reported as unchecked, not as ok.')
+    }
+    const empty = await checkSurfaces(token)
+    console.log(`\n  ${tally.ok} surface(s) have content, ${empty} do not.`)
+    return empty === 0 ? 0 : 1
   }
 
   console.log('seeding the estate — everything below goes through the real APIs\n')

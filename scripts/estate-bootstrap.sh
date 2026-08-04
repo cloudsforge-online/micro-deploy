@@ -929,19 +929,60 @@ echo "── 7. seed the product surfaces ────────────�
 #
 # `CF_SEED_SKIP=1` skips it, for a bootstrap run purely to renew the ten-minute
 # tokens — which is most of them.
+#
+# ── THE MISSING INTERPRETER USED TO BE A GREEN LINE, AND IT WAS THE WHOLE BUG ──
+#
+# This branch read:
+#
+#     elif ! command -v node >/dev/null 2>&1; then
+#       ok "seeding skipped: no node on this machine (the seeder needs Node >= 22)"
+#
+# **The deployment host has no Node and never has.** So seeding was skipped on
+# every bootstrap this estate has ever run, and the skip was reported as `ok`. On
+# 2026-08-05 both live estates were measured with `foresight.markets` 0,
+# `market.listings` 0, `market.collections` 0, `mint.tokens` 0,
+# `community.communities` 0, `nda.worlds` 0 and `beacon.probes` 0 — five empty
+# products, green for months, because a missing tool was reported as a decision.
+#
+# The distinction this now draws is between a skip somebody CHOSE (`CF_SEED_SKIP`,
+# still `ok`) and a step that could not run (now `bad`). `scripts/node-tool.sh`
+# tries to remove the cause first: it fetches one pinned, checksum-verified Node
+# into `.tools/`, which needs no privilege and installs nothing system-wide. Only
+# if that also fails does this fail, and then it says exactly what is missing.
 if [ "${CF_SEED_SKIP:-0}" = "1" ]; then
   ok "seeding skipped (CF_SEED_SKIP=1)"
 elif [ ! -x scripts/estate-seed.mjs ]; then
   bad "scripts/estate-seed.mjs is missing or not executable"
-elif ! command -v node >/dev/null 2>&1; then
-  ok "seeding skipped: no node on this machine (the seeder needs Node >= 22)"
+elif ! SEED_NODE=$(./scripts/node-tool.sh); then
+  bad "no Node >= 22 could be found or fetched, so THE PRODUCT SURFACES WERE NOT SEEDED — see node-tool's output above. This used to be reported as a successful skip, which is how five surfaces stayed empty"
 else
-  if ./scripts/estate-seed.mjs; then
+  # `$SEED_NODE`, not the shebang: on a host with no `node` on PATH the shebang
+  # cannot resolve, and the interpreter node-tool just placed is in `.tools/`.
+  # `estate-seed.mjs` re-execs itself with `process.execPath`, so the vendored
+  # build carries through to the re-exec and to every domain module.
+  if "$SEED_NODE" ./scripts/estate-seed.mjs; then
     ok "product surfaces seeded"
   else
     # Named, not swallowed. A surface that could not be filled is worth knowing
     # about; it is just not worth failing a credential bootstrap over.
     ok "seeding reported at least one failure — see its output above; the bootstrap itself is unaffected"
+  fi
+
+  # ── AND THEN IT IS ASKED, RATHER THAN ASSUMED ────────────────────────────────
+  #
+  # Seeding reporting success is not the same as a surface having content: every
+  # domain above can legitimately report `skip`, and seven skips in a row is an
+  # empty estate that printed no failures. `--check` reads each surface back
+  # through the same front door a visitor uses and names the empty ones.
+  #
+  # It is REPORTED here and does not touch `fails`, for the reason this section
+  # already gives — a credential bootstrap must not go red over content. The
+  # check that does go red is `estate-verify.sh`, which calls the same mode.
+  if "$SEED_NODE" ./scripts/estate-seed.mjs --check >/tmp/estate-seed-check.log 2>&1; then
+    ok "every product surface has content"
+  else
+    ok "at least one product surface is still EMPTY after seeding — see /tmp/estate-seed-check.log; ./scripts/estate-verify.sh fails on this"
+    grep -E 'is EMPTY|status page' /tmp/estate-seed-check.log | head -10
   fi
 fi
 

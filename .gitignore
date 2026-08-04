@@ -97,3 +97,12 @@ gateway/certs/
 # unnecessary reload and never a missed one.
 .gateway-validate/
 .gateway-loaded
+
+# The pinned Node build `scripts/node-tool.sh` fetches when the host has none.
+#
+# The deployment host has no Node and no way to install one without a password,
+# which is why `estate-bootstrap.sh` skipped seeding on every run it has ever
+# made and reported that as `ok`. The fetch is checksum-verified against a digest
+# committed in that script; the ~50MB of extracted binaries are not, and are
+# reproducible from the version and digest that are.
+.tools/
