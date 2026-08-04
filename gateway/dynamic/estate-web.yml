@@ -560,7 +560,15 @@ http:
     # and honestly means 'there is no such service'." The faucet's container
     # exists in one of the two environments, so the router does too.
     #
-    # ── WHY `eq` AND NOT AN `{{ if env "CF_FAUCET_UPSTREAM" }}` ───────────────
+    # ── WHY `eq` AND NOT A BARE `if env` ON A CF_FAUCET_UPSTREAM ─────────────
+    #
+    # (Written without the braces on purpose. The file provider renders Go
+    # template actions BEFORE it parses YAML, so `{`+`{ if … }`+`}` inside a `#`
+    # comment is a REAL action — an unbalanced one here took the whole directory
+    # down with `template: :1487: unexpected EOF`, and with it every router for
+    # all twenty-four hostnames. `scripts/gateway-reload.sh --validate` caught it
+    # in the throwaway and the live gateway was never touched. No other comment
+    # in this file has ever contained one.)
     #
     # The chain upstreams at the foot of this file use the bare-`env` shape,
     # where an unset variable produces no router. That shape is unavailable here
