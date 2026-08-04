@@ -512,7 +512,26 @@ def defined_twice():
         )
 
 
-TEMPLATE_ENV_RE = re.compile(r'\{\{\s*(?:if\s+)?env\s+"([A-Z0-9_]+)"\s*\}\}')
+# ── THIS USED TO REQUIRE `env "X"` TO BE THE WHOLE ACTION ─────────────────────
+#
+# It was `\{\{\s*(?:if\s+)?env\s+"([A-Z0-9_]+)"\s*\}\}` — the variable had to be
+# the entire template action, optionally behind a bare `if`. That covered the two
+# shapes the directory had at the time and NOTHING ELSE, so the first conditional
+# to compare a value instead of testing for emptiness became invisible to check
+# 6 below:
+#
+#     {{ if eq (env "CF_EMBER_NETWORK") "testnet" }}
+#
+# That is the router that decides whether an estate publishes a faucet. Under the
+# old pattern the variable it reads could have been absent from one environment's
+# env file, or from both, and this check — the one written specifically to stop a
+# router existing in one of two estates — would have reported nothing.
+#
+# So the anchor is the `env "X"` CALL, wherever it appears in a line. `{{` is no
+# longer required on the same line either: a nested action can be broken across
+# lines, and a variable that goes unseen because of where somebody put a newline
+# is the same blindness in a smaller form.
+TEMPLATE_ENV_RE = re.compile(r'\benv\s+"([A-Z0-9_]+)"')
 ENV_DIR = ROOT / "compose" / "env"
 
 
@@ -549,6 +568,15 @@ def env_vars_are_set():
     wanted = {}
     for path in sorted(directory.glob("*.yml")):
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            # Comments are skipped, as check 5 already does, and the widened
+            # pattern above is what made it necessary: this directory ARGUES
+            # about its own templating in prose, and a variable NAMED in a
+            # comment explaining why it was not used is not a variable Traefik
+            # reads. Demanding a value for it would fail a check on the strength
+            # of a sentence, which is how a suite teaches people to delete
+            # explanations.
+            if line.lstrip().startswith("#"):
+                continue
             for name in TEMPLATE_ENV_RE.findall(line):
                 wanted.setdefault(name, f"{path.name}:{lineno}")
     if not wanted:

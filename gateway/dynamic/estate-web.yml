@@ -534,11 +534,63 @@ http:
       entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-network
+    # ── AND THE ROUTER EXISTS ONLY WHERE THE FAUCET CAN ──────────────────────
+    #
+    # This router was UNCONDITIONAL, and on the mainnet estate it answered 502:
+    #
+    #     https://network.cloudsforge.online/v1/faucet  ->  502   (2026-08-05)
+    #     https://network.cloudsforge.online/faucet     ->  200 text/html
+    #
+    # There is no faucet container in the mainnet estate and there is never going
+    # to be one. `faucet/src/env.ts:63` is `export const NETWORK = 'testnet' as
+    # const`, annotated that way so `NETWORK === 'mainnet'` is a COMPILE ERROR
+    # rather than a branch, and `faucet/src/index.ts:108-120` reads `eth_chainId`
+    # at boot and exits on anything that is not 7412. Its own header says why: a
+    # faucet is an unauthenticated withdrawal endpoint that happens to be pointed
+    # at a worthless chain, and the EMBER mainnet on this host is mined, publicly
+    # reachable and backs the ledger. So both faucet services carry
+    # `profiles: ["ember-testnet"]` and mainnet starts neither.
+    #
+    # A 502 is the estate saying "there is a faucet here and it has fallen over".
+    # That is a wrong diagnosis, permanently — and it is EXACTLY the failure the
+    # rule at the head of this section already forbids: "a router pointing at a
+    # container that does not exist answers 502… so a `/v1` router is written
+    # HERE ONLY WHEN the container exists, and a surface whose backend is still
+    # absent keeps the bundle-only treatment, where its API call 404s from nginx
+    # and honestly means 'there is no such service'." The faucet's container
+    # exists in one of the two environments, so the router does too.
+    #
+    # ── WHY `eq` AND NOT AN `{{ if env "CF_FAUCET_UPSTREAM" }}` ───────────────
+    #
+    # The chain upstreams at the foot of this file use the bare-`env` shape,
+    # where an unset variable produces no router. That shape is unavailable here
+    # and `scripts/surface-routes.py` check 6 is the reason, in its own words:
+    # "An environment that genuinely should not carry that router changes the
+    # ROUTER, where the reason can be written down — not this file, where its
+    # absence looks like an oversight." An empty `CF_FAUCET_UPSTREAM=` in
+    # `traefik.env` would be indistinguishable from somebody having deleted the
+    # line. So the variable is SET IN BOTH environments, carries the estate's
+    # actual chain, and the decision is taken here where this comment is.
+    #
+    # `CF_EMBER_NETWORK` is not a new fact either — `docker-compose.estate.yml`
+    # already keys `env/chain.${CF_EMBER_NETWORK}.env` and the ledger's
+    # reconciliation network on it, and `compose/testnet.env:126` sets it. The
+    # gateway simply had no copy of the one variable that decides whether the
+    # service behind this router exists.
+    #
+    # WHAT MAINNET ANSWERS INSTEAD: `cf-web-network` at priority 500 takes the
+    # path, and the bundle's nginx answers `404 application/json` — measured on
+    # `explorer.cloudsforge.online/v1/nope`, which has no `/v1` router and is the
+    # same image. That is the honest answer and `estate-verify.sh` asserts both
+    # the status and the content type, because a 404 of index.html would be the
+    # right number from the wrong thing.
+{{ if eq (env "CF_EMBER_NETWORK") "testnet" }}
     cf-api-network:
       rule: 'Host(`network.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
       service: cf-svc-faucet
+{{ end }}
 
     # ── status — the page whose whole job is to work when everything else does not ────
     #
@@ -1351,9 +1403,16 @@ http:
     cf-svc-aetherholm:
       loadBalancer:
         servers: [{ url: "http://aetherholm:4000" }]
+    # Behind the same condition as its router, and not because it would break —
+    # an unreferenced service is harmless. Because a `cf-svc-faucet` defined in
+    # an estate that runs no faucet is a standing invitation to point something
+    # at it, and the next person to add a router would find the upstream already
+    # written and assume somebody had checked. See the note above the router.
+{{ if eq (env "CF_EMBER_NETWORK") "testnet" }}
     cf-svc-faucet:
       loadBalancer:
         servers: [{ url: "http://faucet:4000" }]
+{{ end }}
     cf-svc-beacon:
       loadBalancer:
         servers: [{ url: "http://beacon:4000" }]
