@@ -98,11 +98,21 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 # ── the two environments ──────────────────────────────────────────────────────
 #
-# One host, two compose projects, two apexes. `CF_PORT_OFFSET` is the single
-# number that separates every published port in the testnet project from its
-# mainnet twin, and it is 10000 because that keeps every shifted port readable as
-# its original with a `1` in front (443 -> 10443, 8545 -> 18545, 9090 -> 19090)
-# and every one of them below 65535. See compose/docker-compose.testnet.yml.
+# One host, two compose projects, two apexes. `offset` is the single number that
+# separates every published port in the testnet project from its mainnet twin,
+# and it is 10000 because that keeps every shifted port readable as its original
+# with a `1` in front (443 -> 10443, 8545 -> 18545) and every one below 65535.
+#
+# It is the ONLY thing here that has a twin elsewhere: `compose/testnet.env` sets
+# the same shift for the compose project, expressed as leading digits
+# (CF_PORT_BASE=5, CF_GATEWAY_PORT=10443) because compose cannot do arithmetic.
+# The two must agree — this file's `offset` decides where the TUNNEL sends a
+# request, testnet.env decides where the gateway LISTENS, and a disagreement is a
+# tunnel pointed at a closed port on a box nobody can reach yet. So it is
+# CHECKED, by `gateway_port_agrees()` below, rather than left to the go-live
+# checklist: neither side can be RUN on the machine this was written on, but both
+# sides are text in this repository and a mismatch between two texts is exactly
+# the class of defect this estate keeps paying for.
 ENVIRONMENTS = {
     "mainnet": {"apex": "cloudsforge.online", "offset": 0, "project": "cloudsforge-estate"},
     "testnet": {"apex": "testnet.cloudsforge.online", "offset": 10000, "project": "cf-testnet"},
@@ -183,6 +193,39 @@ NOT_ROUTED = {
 # `runbooks/` are written against `docker` and `psql` on the host, not against a
 # browser, so the incident path does not depend on this.
 UTILITY_SERVICES = ["grafana", "prometheus", "tempo", "loki", "alertmanager"]
+
+
+TESTNET_ENV = ROOT / "compose" / "testnet.env"
+
+
+def gateway_port_agrees():
+    """`compose/testnet.env`'s gateway port must equal GATEWAY_PORT + offset.
+
+    Two files hold the same number in different notations. This one writes the
+    tunnel's origin as `https://127.0.0.1:{GATEWAY_PORT + offset}`; testnet.env
+    writes what the gateway BINDS, as a literal, because compose cannot do
+    arithmetic. If they disagree the tunnel terminates TLS at Cloudflare and then
+    connects to a closed port, and every hostname on that environment returns a
+    502 that names nothing.
+    """
+    if not TESTNET_ENV.exists():
+        return [f"{TESTNET_ENV} does not exist — the testnet project's gateway port cannot "
+                f"be checked against this file's offset"]
+    text = TESTNET_ENV.read_text()
+    m = re.search(r"^CF_GATEWAY_PORT=(\d+)", text, re.M)
+    if not m:
+        return [f"{TESTNET_ENV.name} defines no CF_GATEWAY_PORT, so the gateway would bind the "
+                f"default 443 and collide with mainnet"]
+    bound = int(m.group(1))
+    expected = GATEWAY_PORT + ENVIRONMENTS["testnet"]["offset"]
+    if bound != expected:
+        return [
+            f"{TESTNET_ENV.name} binds the testnet gateway on {bound}, but this file sends the "
+            f"testnet tunnel to {expected} (GATEWAY_PORT {GATEWAY_PORT} + offset "
+            f"{ENVIRONMENTS['testnet']['offset']}). The tunnel would connect to a closed port "
+            f"and every testnet hostname would 502"
+        ]
+    return []
 
 
 def die(msg):
@@ -377,8 +420,59 @@ OPERATOR_NOTE = """\
 # checklist gates on this being verified by hand, per hostname."""
 
 
+def validate_yaml(paths, strict):
+    """Parse what was generated and assert cloudflared's own structural rules.
+
+    THE GENERATOR IS NOT ITS OWN PROOF. It emits YAML by string concatenation, so
+    "gen.py ran" says nothing about whether the result parses — and the one
+    property cloudflared enforces at startup, that the LAST rule is a catch-all
+    with no `hostname`, is exactly the kind of thing a template edit breaks
+    silently. A tunnel that refuses to start takes both environments down.
+
+    `--strict` makes a missing PyYAML a FAILURE rather than a skip, and CI passes
+    it. Locally it is a skip, because the machine this was written on has neither
+    PyYAML nor a `cloudflared` binary and a check that cannot run there would
+    just train someone to ignore the warning. CI has both available and is the
+    place the guarantee actually has to hold.
+    """
+    try:
+        import yaml
+    except ImportError:
+        if strict:
+            print("FAIL: --strict was passed and PyYAML is not installed, so the generated "
+                  "ingress was never parsed. A config that does not parse stops the tunnel.")
+            return ["PyYAML missing under --strict"]
+        print("  note pyyaml not installed — generated YAML was NOT parsed "
+              "(pass --strict in CI, where it is)")
+        return []
+    problems = []
+    for path in paths:
+        try:
+            doc = yaml.safe_load(path.read_text())
+        except yaml.YAMLError as exc:
+            problems.append(f"{path.name} is not valid YAML: {exc}")
+            continue
+        rules = doc.get("ingress")
+        if not rules:
+            problems.append(f"{path.name} has no ingress rules")
+            continue
+        if "hostname" in rules[-1]:
+            problems.append(
+                f"{path.name}'s last ingress rule has a `hostname`. cloudflared REFUSES TO "
+                f"START without a catch-all as the final rule, so this file would take the "
+                f"whole tunnel down rather than mis-route one host"
+            )
+        hosts = [r["hostname"] for r in rules if "hostname" in r]
+        dupes = {h for h in hosts if hosts.count(h) > 1}
+        if dupes:
+            problems.append(f"{path.name} lists {sorted(dupes)} more than once — the first "
+                            f"match wins and the second rule is dead")
+    return problems
+
+
 def main():
     check = "--check" in sys.argv
+    strict = "--strict" in sys.argv
     surfaces = registry_surfaces()
     public, operator, api = classify(surfaces)
     uports = utility_ports()
@@ -402,6 +496,7 @@ def main():
             fails.append(f"utility '{sub}' has no NOT_ROUTED entry stating why it is unexposed")
 
     written = []
+    all_hostnames = []
     for env in ENVIRONMENTS:
         cfg = ENVIRONMENTS[env]
         apex, offset = cfg["apex"], cfg["offset"]
@@ -433,6 +528,7 @@ def main():
             else:
                 path.write_text(body)
             written.append((name, len(rules)))
+            all_hostnames.extend((h, tunnel) for h, _ in rules)
 
         # A utility hostname must not appear in either file, in either direction.
         for name, _, rules, _ in files:
@@ -443,6 +539,26 @@ def main():
                         f"{name} routes '{hostname}', which NOT_ROUTED says is deliberately "
                         f"unexposed. One of the two is wrong and neither is safe to guess"
                     )
+
+    # A hostname must not appear in TWO tunnels. Cloudflare resolves a hostname to
+    # one tunnel, so the second claim does not load-balance — it silently loses, or
+    # wins, depending on which connector registered last. For these files that
+    # would mean an operator console sometimes answered by the PUBLIC tunnel,
+    # which has no Access policy in front of it. Checked across every generated
+    # file rather than within each one.
+    owner = {}
+    for hostname, tunnel in all_hostnames:
+        if hostname in owner and owner[hostname] != tunnel:
+            fails.append(
+                f"'{hostname}' is claimed by both the '{owner[hostname]}' and '{tunnel}' "
+                f"tunnels. Cloudflare binds a hostname to ONE tunnel, so which one answers is "
+                f"decided by registration order — and for an operator console that is the "
+                f"difference between Access being in front of it and not"
+            )
+        owner[hostname] = tunnel
+
+    fails.extend(gateway_port_agrees())
+    fails.extend(validate_yaml([HERE / n for n, _ in written], strict))
 
     if fails:
         print()

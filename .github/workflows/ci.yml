@@ -78,7 +78,15 @@ jobs:
       # micro-ui checkout and the same pnpm install, which is the expensive part.
       - name: The tunnel ingress matches the registry
         working-directory: deploy
-        run: python3 cloudflared/gen.py --check
+        # `--strict` makes a missing PyYAML a failure rather than a skip, so the
+        # generated ingress is actually PARSED here. It is not parsed on the
+        # machine it was written on: that laptop has neither PyYAML nor a
+        # `cloudflared` binary, so the one property cloudflared enforces at
+        # startup — a catch-all as the final rule, absent which the tunnel does
+        # not come up at all — could not be checked there.
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 cloudflared/gen.py --check --strict
 
       # ── No surface may take an environment's apex prefix ─────────────────────
       #
