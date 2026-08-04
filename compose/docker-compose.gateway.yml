@@ -61,38 +61,45 @@ services:
 
       # --- discovery ---------------------------------------------------------
       #
-      # ⚠ THE DOCKER PROVIDER DOES NOT WORK ON DOCKER DESKTOP, AND HAS NEVER
-      #   WORKED HERE. Every ~10 seconds, for the life of the container:
+      # ⚠ THE DOCKER PROVIDER IS GONE, AND NOTHING LOST A ROUTE.
+      #
+      #   It never worked here. Traefik v3.2.3 pins its Docker API version to
+      #   1.24 in code and Docker Desktop's daemon refuses anything below 1.40,
+      #   so every ~4 seconds, for the life of the container, it logged:
       #
       #     ERR Failed to retrieve information of the docker client and server
-      #         host  error="client version 1.24 is too old. Minimum supported
-      #         API version is 1.40"  providerName=docker
+      #         host  error="client version 1.24 is too old..."  providerName=docker
+      #     ERR Provider error, retrying in 4.17s
       #
-      #   Traefik v3.2.3 pins its Docker API version to 1.24 in code; Docker
-      #   Desktop's daemon (API 1.54 on this machine) refuses anything below
-      #   1.40. Neither `DOCKER_API_VERSION` in the env file nor v3.3.7 changes
-      #   it — both were tried and the error is byte-identical.
+      #   Neither `DOCKER_API_VERSION` nor v3.3.7 changed it; both were tried and
+      #   the error was byte-identical. It was recorded rather than fixed on the
+      #   grounds that it had no live symptom.
       #
-      #   SO EVERY ROUTE THIS GATEWAY SERVES COMES FROM THE **FILE** PROVIDER,
-      #   and the header above — "LABEL-BASED DISCOVERY, which is the whole
-      #   point" — describes an intention rather than this deployment. Nothing
-      #   was broken by it because nothing has ever carried a routing label:
-      #   `gateway/dynamic/` addresses every upstream by DNS name instead. The
-      #   consequence the header draws is still unpaid, though: `deploy.replicas`
-      #   is still illegal for anything routed by name.
+      #   IT HAD TWO. A provider retrying forever floods the log a real provider
+      #   failure would have to be noticed in — the file provider's errors land
+      #   in the same stream. And it required `/var/run/docker.sock` in a
+      #   container that terminates TLS for the whole estate, which is the single
+      #   most valuable mount an attacker can reach, held for a feature that has
+      #   never once routed a request.
       #
-      #   Fixing it is a Traefik upgrade past the pinned constant, or a socket
-      #   proxy in front of the daemon. Recorded rather than attempted here: the
-      #   estate has no label-routed container to regress, so it is a real defect
-      #   with no live symptom, and a version bump with no test for what it buys
-      #   is the wrong trade at 3am.
+      #   MEASURED BEFORE REMOVING, not assumed: no container in the estate
+      #   carries a routing label. The only `traefik.enable=true` was on this
+      #   container, described here as "the cheapest possible proof that label
+      #   discovery is working" — a self-test for a mechanism that has never
+      #   worked, routing a dashboard that does not exist either, since there is
+      #   no `--api` flag and `:8082` is the metrics entrypoint. Three vestigial
+      #   things propping each other up.
       #
-      # Only containers that opt in with `traefik.enable=true` are routed.
-      # Exposing everything by default is how an admin surface ends up on the
-      # internet because somebody added a label for an unrelated reason.
-      - --providers.docker=true
-      - --providers.docker.exposedbydefault=false
-      - --providers.docker.network=cf-micro-edge
+      #   SO THE FILE PROVIDER IS THE MECHANISM, not a fallback. Every upstream
+      #   is addressed by DNS name in `gateway/dynamic/`, and `surface-routes.py`
+      #   now runs in CI to keep that in step with the registry.
+      #
+      #   The consequence the old header drew is unchanged and still unpaid:
+      #   `deploy.replicas` remains illegal for anything routed by name. If label
+      #   discovery is ever wanted, it needs a Traefik past the pinned constant
+      #   or a socket proxy — and re-adding the flags alone will silently do
+      #   nothing, which is why this says so here.
+      #
       # Dynamic configuration that is NOT a container: the /internal refusal and
       # the CORS list. Policy belongs in a file under review, not in a label on
       # the service it is supposed to constrain.
@@ -136,11 +143,19 @@ services:
       - "127.0.0.1:9095:80"
       - "127.0.0.1:9096:443"
       - "127.0.0.1:9097:8082"
+      # 443 ITSELF, because every URL in the estate is written without a port.
+      # `https://hub.<apex>/` means 443, the surface registry composes addresses
+      # with no port, and the browser suites and `beacon smoke` all drive those
+      # addresses. This binding existed on the running container and NOT in this
+      # file, so it survived only until the next `up` recreated it — the same
+      # class of defect as the credentials that vanished on a plain compose up.
+      # Recreating the gateway to remove a dead provider is exactly how it was
+      # found: every route returned 000 while the container reported healthy.
+      - "127.0.0.1:443:443"
     volumes:
       # Read-only. Traefik reads container labels; it never needs to create,
       # stop or exec anything — the same reasoning that makes Lantern's socket
       # mount read-only.
-      - /var/run/docker.sock:/var/run/docker.sock:ro
       - ../gateway/dynamic:/etc/traefik/dynamic:ro
       # The estate's own CA and leaf, minted by `scripts/gateway-cert.sh` and
       # referenced by `gateway/dynamic/tls.yml`. Read-only, and never committed:
@@ -163,12 +178,7 @@ services:
       timeout: 5s
       retries: 10
       start_period: 10s
-    networks: [edge, app]
-    labels:
-      # The gateway routes to itself for its own dashboard, which is the
-      # cheapest possible proof that label discovery is working.
-      traefik.enable: "true"
-
+    networks: [edge, app, estate]
 networks:
   # External here: created by docker-compose.telemetry.yml, which is the file
   # that owns them. Two compose files each creating a network called
@@ -186,3 +196,20 @@ networks:
   vault:
     external: true
     name: cf-micro-vault
+
+  # The estate's own network, and it was NOT declared here until 2026-08-04.
+  #
+  # `docker-compose.estate.yml` creates `cloudsforge-estate_default` for its ~60
+  # services. The gateway proxies to them BY DNS NAME, so without this it
+  # resolves nothing and every route answers 502 — which is exactly what happened
+  # when the gateway was recreated to remove a dead Docker provider: healthy
+  # container, correct certificate, 502 on every host.
+  #
+  # It had been attached by hand on the running container. That is the third
+  # piece of undeclared runtime state found in one night, after the credentials
+  # that blanked on a plain `up` and the missing `443:443` binding above. All
+  # three shared a shape: the estate worked, and nothing in the repository said
+  # why, so the next recreate silently undid it.
+  estate:
+    external: true
+    name: cloudsforge-estate_default
