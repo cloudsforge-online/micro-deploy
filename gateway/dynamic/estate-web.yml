@@ -233,35 +233,83 @@ http:
       service: cf-svc-worlds
 
     # ────────────────────────────────────────────────────────────── explorer ──
-    # THE BUNDLE ONLY, AND IT IS THE ONE CASE WORTH EXPLAINING.
+    # THE CHAIN INDEX IS ROUTED NOW, AND THE COMMENT THAT SAID IT WAS NOT IS THE DEFECT.
     #
-    # `indexer` IS defined in docker-compose.estate.yml and is NOT started: it sits behind
-    # `profiles: [indexer]`, because at the time that profile was added micro-indexer's working
-    # tree failed `pnpm typecheck` inside its own Dockerfile. The estate builds from working
-    # trees, so it is only ever as green as every checkout on the machine.
+    # What stood here until this edit described `cf-api-explorer` — "the same shape as cf-api-hub
+    # above, with the host templated on explorer, PathPrefix `/v1`, priority 600, and a
+    # cf-svc-indexer loadBalancer pointing at http://indexer:4000" — as a thing to add ONE DAY,
+    # and read, to anyone skimming, exactly like documentation of a router that was present.
+    # It was never defined. A DESCRIBED-BUT-UNDEFINED ROUTER IS WORSE THAN AN ABSENT ONE: it
+    # answers the question "is the indexer routed?" with a yes, in prose, in the file that would
+    # know.
     #
-    # So no `/v1` router here either, for the same reason as the five below: a router to a
-    # container that is not running answers 502, which reads as "the indexer fell over" — a wrong
-    # diagnosis, permanently, of a service that was never asked to start. The day it comes off the
-    # profile, this is one router and one service block:
+    # Its premise had also expired. The comment's whole argument was that `indexer` sat behind
+    # `profiles: [indexer]` and was not started, so a router would answer 502 and read as "the
+    # indexer fell over". THAT PROFILE IS GONE — compose/docker-compose.estate.yml:820-834 records
+    # its removal and the reason ("THAT WORK IS COMMITTED … AND THE IMAGE BUILDS") — and the
+    # container has been up and healthy on `cloudsforge-estate_default`, which this gateway is
+    # also attached to, resolving `indexer` to a live address. The precondition for the omission
+    # dissolved; the paragraph explaining the omission did not.
     #
-    #   cf-api-explorer:  the same shape as cf-api-hub above, with the host templated on
-    #                     explorer, PathPrefix `/v1`, priority 600, and a cf-svc-indexer
-    #                     loadBalancer pointing at http://indexer:4000.
+    # ── WHAT IT COST, MEASURED BEFORE THIS EDIT ─────────────────────────────────────────────
     #
-    # The rule is not written out literally here on purpose: a Go template action inside a YAML
-    # comment is still an action to the file provider, which renders the file BEFORE anything
-    # parses the YAML and has no idea what a comment is.
+    #   http://127.0.0.1:4108/chains/ember/testnet/status         -> 200  application/json
+    #   http://127.0.0.1:4108/v1/chains/ember/testnet/status      -> 200  application/json
+    #   https://explorer.<apex>/v1/chains/ember/testnet/status    -> 404  TEXT/HTML
+    #   https://network.<apex>/v1/chains/ember/testnet/status     -> 404  from cf-svc-faucet
     #
-    # `/v1` is the right prefix when it lands: indexer mounts every route twice — `PREFIXES` is
-    # `['/v1', '']` (indexer/src/server.ts:134) — and explorer-web deliberately uses the `/v1`
-    # form (explorer-web/src/lib/indexer.ts:15-16).
+    # `micro-network-site`'s chain panel resolves the chain index through the registry key
+    # `explorer` (network-site/src/lib/hosts.ts, `CHAIN_INDEX_SURFACE`), so the request it makes
+    # is the third line. The panel rendered "No figures for ember:testnet — Request failed (404)"
+    # against a live chain at tip height 2594, which is the correct behaviour for this estate and
+    # the wrong answer to give a visitor.
+    #
+    # AND CHECK THE CONTENT TYPE, NOT THE STATUS. `cf-web-explorer` below matches the host with no
+    # path constraint, so before this router existed some indexer paths returned **200 carrying
+    # index.html** rather than a 404 — `/chains/ember/testnet/status` did exactly that. A reader
+    # verifying by status code alone concludes the route works. The prefixed form 404'd only
+    # because the bundle's own static server has no `/v1` fallback; that is luck, not routing.
+    #
+    # `/v1` IS THE CORRECT PREFIX AND BOTH CALLERS WERE ALREADY RIGHT. indexer mounts every route
+    # twice — `PREFIXES` is `['/v1', '']` (indexer/src/server.ts:144), looped over in `buildRoutes`
+    # (indexer/src/server.ts:416) — so there is no path mismatch to resolve and NO REWRITE
+    # MIDDLEWARE IS WARRANTED. `/v1` is the estate convention; the service's own comment at
+    # indexer/src/server.ts:137-143 says the bare form exists for its operator runbooks rather than
+    # for new callers. Both bundles that read this surface already use the `/v1` form
+    # (explorer-web/src/lib/indexer.ts:14-16, network-site/src/lib/chainstatus.ts:320), so this
+    # router is prefixed and the bare form is deliberately NOT routed at the edge: mounting it here
+    # would publish the runbook spelling as a public contract and make the estate's one convention
+    # two.
+    #
+    # CORS needs nothing added. `network-site` reads this host CROSS-ORIGIN — the bundle is served
+    # from `network.<apex>` and resolves the chain index to `explorer.<apex>` — and micro-indexer
+    # sends no `access-control-*` header of its own anywhere in its source. The estate's CORS is
+    # one middleware on the entrypoint chain (compose/docker-compose.gateway.yml:117,
+    # `cf-cors@file`), so it applies to this router without being listed on it, and the network
+    # surface's origin under the estate apex is already in that allowlist
+    # (gateway/dynamic/policy.yml, the CF_WEB_APEX block, the `network.` line). The reads are
+    # anonymous — `authoriseRead` returns null and lets the handler run when no bearer is
+    # presented (indexer/src/server.ts:794) — so nothing here needs a credential.
+    #
+    # The templated hostname is spelled out in the RULE below and nowhere in this prose, and that
+    # is the file's standing rule rather than a stylistic choice: a Go template action inside a
+    # YAML comment is still an action to the file provider, which renders this file BEFORE
+    # anything parses the YAML and has no idea what a comment is. An unclosed one takes every file
+    # in this directory down with it.
     cf-web-explorer:
       rule: 'Host(`explorer.{{ env "CF_WEB_APEX" }}`)'
       priority: 500
       entryPoints: [websecure]
       middlewares: [cf-web-headers]
       service: cf-web-explorer
+    # Priority 600 beats `cf-web-explorer`'s 500 on the same host, which is how every
+    # surface-plus-API pair in this file separates a bundle from its service. No `cf-web-headers`:
+    # that middleware sets a bundle's CSP and frame policy, and this upstream answers JSON.
+    cf-api-explorer:
+      rule: 'Host(`explorer.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/v1`)'
+      priority: 600
+      entryPoints: [websecure]
+      service: cf-svc-indexer
 
     # ────────────────────────────────────── developers (micro-devportal-web) ──
     cf-web-developers:
@@ -756,6 +804,14 @@ http:
     cf-svc-devplatform:
       loadBalancer:
         servers: [{ url: "http://devplatform:4000" }]
+    # The chain index. Named for the SERVICE (`indexer`) rather than for the surface it sits
+    # under (`explorer`), because they are two different things and the registry has no `indexer`
+    # key at all — which is the substitution micro-network-site had to name in its own header
+    # (network-site/src/lib/hosts.ts, `CHAIN_INDEX_SURFACE`). 4000 is read from
+    # `indexer/src/env.ts` and the container's published `127.0.0.1:4108->4000`, not assumed.
+    cf-svc-indexer:
+      loadBalancer:
+        servers: [{ url: "http://indexer:4000" }]
     # 4022, and it is the ONE upstream in this file that is not 4000. Read from
     # `tessera/src/env.ts:55` and from its Dockerfile's `EXPOSE 4022`, not chosen here — the same
     # rule public-api.yml states for its upstreams. Writing 4000 out of habit would produce a

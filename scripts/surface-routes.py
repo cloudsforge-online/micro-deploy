@@ -58,6 +58,50 @@ WHAT IT CHECKS
      API router as well as a bundle router. This is the emberkin/aetherholm case
      and the one that recurs, because a service arriving is a compose-file edit
      and nothing pointed at this file.
+  4. Every `cf-api-*`, `cf-web-*` or `cf-svc-*` name written in a COMMENT in
+     `gateway/dynamic/*.yml` is actually defined there. See below.
+
+A ROUTER DESCRIBED IN PROSE IS NOT A ROUTER
+-------------------------------------------
+Check 4 was added after this script passed clean over the defect it should have
+been the thing to catch. `estate-web.yml` carried, for weeks, a paragraph saying
+what the explorer's API router would look like "the day it comes off the
+profile":
+
+    #   cf-api-explorer:  the same shape as cf-api-hub above, with the host
+    #                     templated on explorer, PathPrefix `/v1`, priority 600,
+    #                     and a cf-svc-indexer loadBalancer pointing at
+    #                     http://indexer:4000.
+
+The router was never defined, and the profile that was the reason had since been
+removed — so the paragraph read, to anyone skimming the file that would know,
+exactly like documentation of a router that was present. Meanwhile
+`https://explorer.<apex>/v1/chains/ember/testnet/status` answered 404 with
+`text/html`, `micro-network-site`'s chain panel rendered "Request failed (404)"
+against a chain at tip height 2594, and every read `micro-explorer-web` made was
+answered by its own index.html.
+
+CHECKS 1-3 COULD NOT HAVE CAUGHT IT, and the reasons are worth stating because
+each is a real limit rather than an oversight:
+
+  * Check 1 passed: `explorer.<apex>` HAS a router — `cf-web-explorer`, the
+    bundle — so the host was routed and the surface was not missing.
+  * Check 2 passed: `explorer` is a declared registry subdomain.
+  * Check 3 never ran for it. It resolves a surface to its backend by NAME
+    EQUALITY — a compose service called `explorer` — and the service is called
+    `indexer`. The registry has no `indexer` key at all; `explorer` IS the key
+    that means "the chain index". So the surface fell into exactly the class the
+    old comment on check 3 waved past as "the ones where the names differ …
+    which are argued individually in estate-web.yml and are already routed".
+    Four pairs were named there. `explorer`/`indexer` was a FIFTH, it was not
+    named, and it was not routed. That comment was the bug.
+
+Both holes are now closed: `BACKEND_BY_SUBDOMAIN` makes the name-mismatch pairs
+data that check 3 reads rather than prose it trusts, and check 4 makes the
+weaker but far more general claim that this file may not NAME a router it does
+not DEFINE. Check 4 is the cheap one and the one that generalises: it needs no
+registry, no compose file and no knowledge of what any surface is for, and it
+would have fired on line 248 the day that paragraph was written.
 
 DELIBERATE OMISSIONS ARE DECLARED, NOT SILENT
 ---------------------------------------------
@@ -105,6 +149,31 @@ EXPECTED_UNROUTED = {
     # name — this entry exists so the key/subdomain mismatch is stated once rather
     # than looking like a gap.
     # (no entry needed: the check resolves by SUBDOMAIN, not by key)
+}
+
+
+# ── surfaces whose backend compose service has a DIFFERENT name ──────────────
+#
+# Check 3 otherwise resolves a surface to its backend by name equality, and every
+# pair below would silently fall out of the check because the two names differ.
+# That is not hypothetical: `explorer`/`indexer` fell out of it, and the explorer
+# API router went undefined for weeks while this script reported no drift. See the
+# module docstring.
+#
+# An entry is a CLAIM that `<subdomain>.<apex>` should carry an API router, so it
+# is checked in both directions like EXPECTED_UNROUTED: a compose service named
+# here that no longer exists is a stale mapping and fails too.
+BACKEND_BY_SUBDOMAIN = {
+    # The chain index. The registry has no `indexer` key — `explorer` IS the key
+    # that means "the chain index", which is the substitution micro-network-site
+    # had to name in its own header (network-site/src/lib/hosts.ts).
+    "explorer": "indexer",
+    "hub": "hub-api",
+    "admin": "admin-api",
+    # A drip is posted to the Network site's own hostname; `faucet` the registry
+    # row is a PAGE on it (basePath /faucet), not a host.
+    "network": "faucet",
+    "pay": "wallet",
 }
 
 
@@ -236,6 +305,53 @@ def estate_services():
     return names
 
 
+# `cf-api-hub`, `cf-web-explorer`, `cf-svc-indexer` — the three prefixes this
+# directory names a router or a service with. Middleware names (`cf-cors`,
+# `cf-web-headers`, `cf-request-id`) are deliberately NOT matched: they are
+# defined across two files and applied from a compose flag, so "defined in this
+# directory" is not the right test for them.
+CF_NAME_RE = re.compile(r"\b(cf-(?:api|web|svc)-[a-z0-9-]+)\b")
+DEFINITION_RE = re.compile(r"^    ([a-z0-9-]+):\s*$")
+
+
+def described_but_undefined():
+    """Every cf-api/web/svc name in a COMMENT must be defined somewhere in this directory.
+
+    THE POINT. A router that exists only as prose answers "is it routed?" with a
+    yes, in the file that would know, and nothing else in this script looks at
+    prose at all. Checks 1-3 all passed over `cf-api-explorer` because the HOST
+    was routed by the bundle; this one reads the sentence that made the claim.
+
+    Deliberately dumb, and that is the property worth keeping: it needs no
+    registry, no compose file and no idea what a surface is for, so it cannot
+    stop running for an environmental reason. It reads YAML by line rather than
+    by parser because the file provider renders Go template actions BEFORE the
+    YAML is parsed, so on disk this is a template and not YAML at all.
+    """
+    directory = WEB_MAP.parent
+    if not directory.is_dir():
+        bad(f"{directory} is not a directory — the described-but-undefined check cannot run")
+        return
+    defined, mentioned = set(), {}
+    for path in sorted(directory.glob("*.yml")):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            if line.lstrip().startswith("#"):
+                for name in CF_NAME_RE.findall(line):
+                    mentioned.setdefault(name, []).append(f"{path.name}:{lineno}")
+                continue
+            m = DEFINITION_RE.match(line)
+            if m:
+                defined.add(m.group(1))
+    for name, sites in sorted(mentioned.items()):
+        if name in defined:
+            continue
+        bad(
+            f"'{name}' is written in a comment at {', '.join(sites)} and is DEFINED NOWHERE in "
+            f"{directory.name}/. A router or service that exists only in prose reads like one "
+            f"that exists — delete the sentence or define the thing it describes"
+        )
+
+
 def main():
     surfaces = registry_surfaces()
     routers = gateway_routers()
@@ -280,22 +396,38 @@ def main():
 
     # ── 3: a surface whose backend is deployed should have an API router ──────
     #
-    # Resolved by NAME rather than guessed: a compose service whose name equals
-    # the surface's subdomain is that surface's backend. That covers every case
-    # this check exists for (emberkin, aetherholm, foresight, tessera) and
-    # deliberately does not try to be clever about the ones where the names
-    # differ — hub/hub-api, admin/admin-api, network/faucet, pay/wallet — which
-    # are argued individually in estate-web.yml and are already routed.
+    # Resolved by NAME: a compose service whose name equals the surface's
+    # subdomain is that surface's backend, OR the mapping in
+    # `BACKEND_BY_SUBDOMAIN` says which service it is when the two names differ.
+    #
+    # That second half used to be a COMMENT asserting the mismatched pairs were
+    # "already routed" rather than a lookup that checked it, and `explorer`/
+    # `indexer` was a pair the comment did not name and the estate did not route.
+    # A claim in prose beside a check is not covered by the check.
     for s in surfaces:
         sub = s["subdomain"]
-        if s["basePath"] or not sub or sub not in services or sub not in routers:
+        if s["basePath"] or not sub or sub not in routers:
+            continue
+        backend = BACKEND_BY_SUBDOMAIN.get(sub, sub)
+        if backend not in services:
             continue
         if not any(serves_api for _, serves_api in routers[sub]):
+            named = f" (its backend service is '{backend}')" if backend != sub else ""
             bad(
-                f"'{sub}' is a service in docker-compose.estate.yml AND a routed surface, but no "
-                f"router on its host points at a cf-svc-* upstream: the bundle answers its own "
-                f"API calls with its own index.html, which is a 200 carrying HTML where JSON was "
-                f"expected"
+                f"'{sub}' is a service in docker-compose.estate.yml AND a routed surface{named}, "
+                f"but no router on its host points at a cf-svc-* upstream: the bundle answers its "
+                f"own API calls with its own index.html, which is a 200 carrying HTML where JSON "
+                f"was expected"
+            )
+
+    # A mapping that names a service the estate no longer runs is a stale claim,
+    # and this file's whole record is that stale copies are the thing that costs.
+    for sub, backend in sorted(BACKEND_BY_SUBDOMAIN.items()):
+        if services and backend not in services:
+            bad(
+                f"BACKEND_BY_SUBDOMAIN maps '{sub}' to compose service '{backend}', which is not "
+                f"in docker-compose.estate.yml — the mapping has stopped being true, so check 3 "
+                f"silently stopped covering that surface"
             )
 
     # ── 2: no router for a host the registry does not declare ─────────────────
@@ -308,6 +440,9 @@ def main():
             f"configuration (or the registry is missing a row, which is how foresight-admin "
             f"was fixed)"
         )
+
+    # ── 4: no cf-* name written in a comment that this directory never defines ─
+    described_but_undefined()
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:
