@@ -1412,6 +1412,11 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       MINT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/mint
+      # Mint prices in USD and settles in EMBER since its migration 6, so it needs
+      # pricing at boot exactly as billing does. Missing, mint refuses to start and
+      # its migrator never runs — which is how billing spent a morning serving v10
+      # code against a v11 schema. Same variable, same value, same reason.
+      PRICING_URL: http://pricing:4000
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
@@ -1429,6 +1434,11 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       MINT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/mint
+      # Mint prices in USD and settles in EMBER since its migration 6, so it needs
+      # pricing at boot exactly as billing does. Missing, mint refuses to start and
+      # its migrator never runs — which is how billing spent a morning serving v10
+      # code against a v11 schema. Same variable, same value, same reason.
+      PRICING_URL: http://pricing:4000
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
