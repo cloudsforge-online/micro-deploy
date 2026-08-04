@@ -724,12 +724,22 @@ echo "── 5e. the faucet's own custody address — minted once, then reused �
 #
 # ── AND IT MUST NOT MINT A NEW ONE EVERY RUN ────────────────────────────────
 #
-# `POST /v1/addresses` is NOT idempotent — every call derives a fresh index and
-# returns a different address. This script runs several times an hour, so minting
-# unconditionally would strand the faucet's balance on a previous address after
-# every bootstrap and leave a trail of funded keys nothing can spend. The lookup
-# below is therefore the primary path and the mint is the exception: an address
-# is REUSED when one already carries this (userId, orderId) binding.
+# `POST /v1/addresses` was NOT idempotent when this was written — every call
+# derived a fresh index and returned a different address. This script runs several
+# times an hour, so minting unconditionally would strand the faucet's balance on a
+# previous address after every bootstrap and leave a trail of funded keys nothing
+# can spend. The lookup below is therefore the primary path and the mint is the
+# exception: an address is REUSED when one already carries this (userId, orderId)
+# binding.
+#
+# Custody gained idempotency on 2026-08-04 (migration 6: `custody_keys_binding_uniq`
+# and `custody_keys_idempotency_uniq`, with the duplicate-key violation as the
+# correctness path rather than a lookup). A repeat now answers 200 with
+# `reused: true` instead of minting. **The lookup below stays.** It is no longer
+# load-bearing for correctness, but this script parses status-agnostically and is
+# unaffected either way, and a bootstrap that depends on the server having been
+# migrated is a bootstrap that fails on a fresh estate — which is the one case it
+# exists for.
 #
 # The binding fields are read out of the compose file rather than repeated here.
 # custody compares seven identity fields character for character and its 403
