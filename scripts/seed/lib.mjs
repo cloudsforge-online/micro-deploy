@@ -241,7 +241,11 @@ export const COUNTED = {
   market: ['collections', 'listings'],
   mint: ['tokens', 'project_pages'],
   community: ['communities', 'memberships', 'treasury_accounts', 'proposals', 'discussion_posts'],
-  nda: ['worlds', 'players', 'world_events'],
+  // `reports` and `objectives` rather than `world_events`: the first two are
+  // written by every resolved day, and the third is a random event that simply
+  // did not fire in the two days seeded. Counting a table the seeding does not
+  // determine would make the idempotency proof depend on a dice roll.
+  nda: ['worlds', 'players', 'reports', 'objectives'],
   billing: ['products', 'prices', 'entitlements', 'purchases'],
 }
 
