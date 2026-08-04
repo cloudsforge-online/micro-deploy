@@ -1,0 +1,113 @@
+# ONE MINER PER NETWORK, ALWAYS ON. The server used to seed only; it now also
+# mines, because a chain with no miner produces no blocks — so confirmations
+# never accumulate, the indexer has nothing to follow and reconciliation has
+# nothing to read. The owner mining intermittently from a Mac and a PC does not
+# keep an always-on ecosystem moving.
+#
+#   cd deploy && docker compose -p cf-miners -f compose/docker-compose.miners.yml up -d
+#
+# ── THESE ARE LIGHT MINERS, NOT NODES ────────────────────────────────────────
+#
+# `bin/hearth-mine.js` holds no chain and opens no port: it GETs
+# /mining/template?pub=<65-byte uncompressed secp256k1 key>, grinds, and POSTs
+# /mining/submit. That is why one image and no volumes beyond a key file is the
+# whole deployment. Running `hearthd --mine` instead would mean a second full
+# copy of each chain on the same host for no benefit — and on this box the two
+# upstream miner services took the load average to 37, which is the reason
+# `docker-compose.hearth-seed.yml` exists to keep them down.
+#
+# ── WHY THEY GO THROUGH THE GATEWAY RATHER THAN STRAIGHT TO THE SEED ──────────
+#
+# Each miner could talk to its seed directly on loopback. It goes through the
+# public HTTPS path instead, with `--cacert` semantics supplied by
+# NODE_EXTRA_CA_CERTS, so that an always-on process continuously exercises the
+# exact route a remote miner uses. A gateway, certificate or router regression
+# then shows up as blocks stopping, rather than being discovered the next time
+# the owner opens a laptop. `--add-host` is required because the apexes are real
+# public names that must resolve to this host's loopback, not to the internet.
+#
+# ── THE KEY IS THE POINT, AND IT IS NOT OPTIONAL ─────────────────────────────
+#
+# Under the account model the coinbase must SIGN the block, so there is no
+# "mine to this address" mode: `bin/hearthd.js:75-79` refuses `--miner-address`
+# with `--evm` in those words. Each miner therefore holds its own key at
+# <data>/coinbase-key.json, in a directory outside the repository. Whoever holds
+# that file holds the coins; nothing here ever prints it, and `session.js` is
+# written so a private key cannot reach an event a front-end renders.
+#
+# ── THE THROTTLE IS A BUDGET, NOT A PERFORMANCE SETTING ──────────────────────
+#
+# 0.25 of one core each. These exist to keep blocks flowing, not to compete for
+# them: at the current target one core finds a block every few seconds, so a
+# quarter core is already far more than the chain needs, and the estate keeps
+# the rest of a 4-core box. Raise it only with a measurement, not a hunch.
+#
+# ── THE IMAGE IS PINNED BY COMMIT, AND THE CODE IS NOT BIND-MOUNTED ──────────
+#
+# Both miners ran the fix as a read-only bind mount of the hearth checkout over
+# `/hearth-node`, layered on a locally-built seed image. That worked and was the
+# right way to get a stall fixed on a live box — but it meant the running code
+# was whatever happened to be in a directory on one machine. Rebuild the image,
+# recreate from it without the mount, or lose the checkout, and the miners
+# silently go back to re-testing the same nonces for ever.
+#
+# So the image is `hearth-node` at the exact commit that carries the fix, and the
+# entrypoint is the copy INSIDE it. The tag is a `sha-` and not `main` on
+# purpose: `main` moves, and a miner that follows a moving tag changes behaviour
+# on a restart nobody asked for. To take a newer build, change this line — which
+# is a review, not a surprise.
+#
+# 0cf1445 — "carry the nonce across a re-fetch, or the miner stops for good".
+services:
+  miner-mainnet:
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-0cf14451d0e6b1e3dbd8587a3ca2e3e3050a8095
+    container_name: cf-miner-mainnet
+    entrypoint: ["node", "/app/bin/hearth-mine.js"]
+    command:
+      - "--url"
+      - "https://rpc.cloudsforge.online"
+      - "--data"
+      - "/minerdata"
+      - "--network"
+      - "hearth-testnet"
+      - "--throttle"
+      - "0.25"
+      - "--status-ms"
+      - "60000"
+    network_mode: host
+    extra_hosts:
+      - "rpc.cloudsforge.online:127.0.0.1"
+    environment:
+      NODE_EXTRA_CA_CERTS: /ca.crt
+      HEARTH_NO_TTY: "1"
+    volumes:
+      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/ca.crt:/ca.crt:ro
+      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/mainnet:/minerdata
+    restart: unless-stopped
+
+  miner-testnet:
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-0cf14451d0e6b1e3dbd8587a3ca2e3e3050a8095
+    container_name: cf-miner-testnet
+    entrypoint: ["node", "/app/bin/hearth-mine.js"]
+    command:
+      # Port 10443 is the testnet gateway's browser port (compose/testnet.env).
+      - "--url"
+      - "https://rpc.testnet.cloudsforge.online:10443"
+      - "--data"
+      - "/minerdata"
+      - "--network"
+      - "hearth-testnet"
+      - "--throttle"
+      - "0.25"
+      - "--status-ms"
+      - "60000"
+    network_mode: host
+    extra_hosts:
+      - "rpc.testnet.cloudsforge.online:127.0.0.1"
+    environment:
+      NODE_EXTRA_CA_CERTS: /ca.crt
+      HEARTH_NO_TTY: "1"
+    volumes:
+      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/ca.crt:/ca.crt:ro
+      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/testnet:/minerdata
+    restart: unless-stopped
