@@ -1834,37 +1834,38 @@ services:
   # surface and put this file in drift with the gateway, which
   # `scripts/surface-routes.py` now fails on.
   #
-  # ── FORESIGHT_SERVICE_TOKEN IS *PRESENTED*, NOT EXCHANGED ───────────────────
+  # ── FORESIGHT NOW EXCHANGES A CREDENTIAL. THIS BLOCK USED TO SAY THE OPPOSITE ─
   #
-  # The tessera/emberkin trap for a third time, and it is settled by reading the
-  # code rather than the variable's name. `foresight/src/index.ts:101` is
+  # It was right when written, and it is worth keeping the correction visible
+  # rather than swapping the paragraph out. It said `FORESIGHT_SERVICE_TOKEN` is
+  # PRESENTED verbatim — `foresight/src/index.ts:101` was `const token = () =>
+  # env.serviceToken` handed straight to five HttpClients — so handing it the
+  # credential would have sent custody, the indexer, the ledger and policy a
+  # Bearer that is not a JWT, earning 401 with nothing in any log naming why.
   #
-  #     const token = () => env.serviceToken
+  # It also named the consequence exactly: **a ten-minute token behind LEASED
+  # BACKGROUND JOBS**, which is the shape that froze EMBER through `ledger`. A
+  # market approved eleven minutes after a bootstrap sat in `awaiting_funds` with
+  # a 401 from custody until somebody re-ran the bootstrap. And it named the fix —
+  # "one seam wide, `index.ts:101` is already a function called per request,
+  # exactly so that it could become `serviceTokenProvider(...).token`".
   #
-  # handed straight to the `HttpClient` for all four upstreams (:104, :109, :114,
-  # :120) and to the admin-api client at :242. There is no `ServiceTokenProvider`,
-  # no `POST /service-tokens/exchange` call and no `cfsc_` handling anywhere in
-  # `foresight/src` — checked by grep, not inferred. So the value is PRESENTED
-  # verbatim as a bearer and must be a ten-minute JWT from `POST /service-tokens`.
-  # Handing it `FORESIGHT_IDENTITY_CREDENTIAL`, which section 5b of
-  # `estate-bootstrap.sh` already mints and which is sitting in `tokens.env`
-  # looking like the obvious answer, would send custody, the indexer, the ledger
-  # and policy a Bearer that is not a JWT and earn 401 with nothing in any log
-  # naming the cause.
+  # That is what micro-foresight did. `foresight/src/upstreams.ts:142` builds a
+  # real `ServiceTokenProvider`, so **both variables are passed below**: the
+  # credential is what it exchanges, and the token remains for the paths that
+  # still present one. The service prefers the credential when both are set, and
+  # a test pins that precedence — added because the first attempt to break it
+  # passed, since nothing had exercised the state this compose file now creates.
   #
-  # It is therefore minted as a TOKEN, in the CREDENTIALS list of section 5.
+  # Live proof rather than inference: `mirror_cursors` held the before and the
+  # after in one table — the old container's `last_error` was
+  # `GET …/activity → 401`, and the replacement, **13m53s after boot** and well
+  # past the 600-second cliff, had `last_error` null with two tokens minted.
   #
-  # **THE TEN-MINUTE CLIFF IS REAL HERE AND IT BITES HARDER THAN IT DOES FOR
-  # tessera OR emberkin.** Those two call upstreams on request paths, so a
-  # bootstrap usually outruns the token. This service's custody calls are made
-  # from LEASED BACKGROUND JOBS — `market.deploy` and `resolution.post`, driven by
-  # `jobs.ts` — which is precisely the shape that froze EMBER through `ledger`: a
-  # 600-second token behind a longer timer. A market approved eleven minutes after
-  # a bootstrap will sit in `awaiting_funds`/`pending` with a 401 from custody
-  # until the bootstrap is re-run. Recorded, not hidden; the fix belongs to
-  # micro-foresight and is one seam wide — `index.ts:101` is already a function
-  # called per request, exactly so that it could become
-  # `serviceTokenProvider(...).token` reading `FORESIGHT_IDENTITY_CREDENTIAL`.
+  # The `:-` default is empty on purpose. `estate-bootstrap.sh` §5b mints this
+  # into `tokens.env`; an unset credential leaves the service on the old token
+  # and the cliff returns, which is a failure worth being loud about rather than
+  # papering over with a placeholder that looks like a value.
   #
   # ── TWO CUSTODY ADDRESSES, AND WHY NEITHER IS WRITTEN HERE ──────────────────
   #
@@ -1952,6 +1953,7 @@ services:
       LEDGER_URL: http://ledger:4000
       POLICY_URL: http://policy:4000
       FORESIGHT_SERVICE_TOKEN: ${FORESIGHT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
       FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
       FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
@@ -1979,6 +1981,7 @@ services:
       # verbatim by `index.ts:101` and a `cfsc_…` secret here 401s all five
       # upstreams.
       FORESIGHT_SERVICE_TOKEN: ${FORESIGHT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
       FORESIGHT_NETWORK: testnet
       FORESIGHT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
       # Minted by estate-bootstrap.sh §5f and reused thereafter. The zero
