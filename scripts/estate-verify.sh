@@ -1020,9 +1020,23 @@ fi
 
 # The read gate. No token at all must be 401 rather than an empty list: a 200 with `[]` is a world
 # that looks empty rather than a world that refused, and a consumer files those differently.
+# THE EXPECTATION HERE WAS INVERTED ON 2026-08-04, AND THE OLD ONE WAS THE DEFECT.
+#
+# This asserted 401 — "refuses an anonymous caller, rather than answering an empty world" — and
+# micro-tessera decided the opposite, from its own design rather than to make a check pass:
+# `dfa81f9 fix(wards): the Mosaic is public, so stop asking a stranger for a token to see the map`.
+#
+# The reasoning is in doc 23 §5 and worth keeping: the loop opens with "no account wall";
+# micro-worlds already serves its title registry publicly because "a launcher listing games cannot
+# require a token"; and a free self-serve account could already read the ward list, so the gate was
+# a SIGNUP wall, not a security boundary. Opening it moved the 401 one request deeper onto
+# `/v1/wards/:id/parcels`, which was opened too, for the same reason.
+#
+# PRESENCE STAYS 401 — that is live data about who is in a world right now, and it is checked
+# below. So this is not "tessera opened up", it is a line drawn between the map and the people.
 tw_anon=$(code "$TESSERA/v1/wards")
-[ "$tw_anon" = 401 ] && ok "GET /v1/wards refuses an anonymous caller (401), rather than answering an empty world" \
-  || bad "tessera answered $tw_anon to an unauthenticated /v1/wards, expected 401"
+[ "$tw_anon" = 200 ] && ok "GET /v1/wards answers an anonymous caller (200) — the Mosaic is public by design" \
+  || bad "tessera answered $tw_anon to an unauthenticated /v1/wards, expected 200 (see doc 23 §5)"
 
 # ── PROVISIONING, UNDER THE GRANT THE DERIVATION JUST ADDED ───────────────────
 #
