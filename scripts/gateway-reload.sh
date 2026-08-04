@@ -40,7 +40,10 @@
 # So `--check` is the primary mode and the restart is secondary. It compares two
 # numbers that already exist and needs nothing new to be emitted:
 #
-#   * the newest mtime under `gateway/dynamic/`, and
+#   * the newest mtime over `gateway/dynamic/*.yml` AND `gateway/certs/*.crt` —
+#     the certificates were outside this set until 2026-08-04, which made the one
+#     thing a TLS change changes invisible to the check that reports freshness;
+#     see the note on `config_files` below, and
 #   * `traefik_config_last_reload_success`, which Traefik has always exported on
 #     its metrics entrypoint and which Prometheus is already scraping
 #     (`prometheus/prometheus.yml`, job `traefik`).
@@ -155,25 +158,51 @@ if command -v sha256sum >/dev/null 2>&1; then SHA='sha256sum'; else SHA='shasum 
 # reason it is safe to keep a derived file around at all.
 MARKER="$ROOT/.gateway-loaded"
 
-dynamic_digest() {
-  # shellcheck disable=SC2086
-  find "$DYNAMIC" -type f -name '*.yml' | LC_ALL=C sort | xargs $SHA | $SHA | awk '{print $1}'
+# ── AND THE CERTIFICATES ARE IN IT, WHICH THEY WERE NOT ───────────────────────
+#
+# This hashed `gateway/dynamic/*.yml` and nothing else, so THE ONE THING A TLS
+# CHANGE CHANGES WAS INVISIBLE TO THE CHECK THAT REPORTS FRESHNESS. Swap the pair
+# `tls.yml` names and the gateway keeps terminating on the certificate it loaded
+# at startup — Traefik reads a `certFile` when it builds the store, not per
+# handshake — while this said "the gateway is serving what is on disk". A reload
+# check blind to a certificate is worse than none: it is a check that answers the
+# question confidently and about something else.
+#
+# Found while pointing the mainnet gateway at a Cloudflare Origin CA leaf
+# (`gateway/dynamic/tls.yml`). `origin.crt` was installed at 22:45 and the gateway
+# had last reloaded at 19:32, and `--check` was green.
+#
+# `.crt` ONLY, and `-maxdepth 1`. The keys are 0600 and hashing one would put a
+# private key through `xargs` for no gain: a key never changes without its
+# certificate changing, so the certificate is a complete trigger. `ca.srl` is a
+# counter that moves when a leaf is signed and is deliberately out too — a digest
+# that changes when nothing served changed is the false alarm this script's own
+# header spends a paragraph arguing against.
+config_files() {
+  find "$DYNAMIC" -type f -name '*.yml'
+  [ -d "$CERTS" ] && find "$CERTS" -maxdepth 1 -type f -name '*.crt'
 }
 
-newest_mtime() {
+config_digest() {
   # shellcheck disable=SC2086
-  find "$1" -type f -exec $STAT_MTIME {} + 2>/dev/null | sort -rn | head -1
+  config_files | LC_ALL=C sort | xargs $SHA | $SHA | awk '{print $1}'
 }
 
-newest_file() {
-  local newest="" t best=0 f
-  for f in "$1"/*; do
+# The newest mtime, and the file that carries it, over EXACTLY the set above.
+# They were two helpers over a directory each; making them one pass over one list
+# is what keeps the trigger and the answer talking about the same files. Emits
+# `<mtime> <path>`.
+newest_config() {
+  local t best=0 newest="" f
+  while IFS= read -r f; do
     [ -f "$f" ] || continue
     # shellcheck disable=SC2086
-    t=$($STAT_MTIME "$f")
+    t=$($STAT_MTIME "$f" 2>/dev/null) || continue
     [ "$t" -gt "$best" ] && { best=$t; newest=$f; }
-  done
-  echo "$newest"
+  done <<EOF
+$(config_files)
+EOF
+  echo "$best $newest"
 }
 
 gateway_container() {
@@ -219,11 +248,41 @@ validate() {
     sleep 1
   done
 
+  # ── THE ANSI STRIP IS NOT COSMETIC: WITHOUT IT ASSERTION 1 COULD NOT FIRE ────
+  #
+  # Traefik v3.2.3 colourises its console output whether or not it is attached to
+  # a terminal, so every error line reaches `docker logs` as
+  #
+  #     ESC[90m<ts>ESC[0m ESC[1mESC[31mERRESC[0mESC[0m Error while …
+  #
+  # and the character immediately before `ERR` is the `m` that ends the colour
+  # escape. `grep -E '\bERR\b'` therefore matches NOTHING, because `mERR` has no
+  # word boundary in front of it.
+  #
+  # MEASURED, on this host, with the probe below: a `certFile` naming a file that
+  # does not exist makes Traefik log
+  # `ERR Error while creating certificate store … tlsStoreName=default` and serve
+  # NO certificate at all — every handshake fails with `tlsv1 unrecognized name`
+  # — and `grep -cE '\bERR\b'` over those logs returned `0` while `grep -cF ERR`
+  # returned `1`.
+  #
+  # So the assertion this whole function exists for — the one that was supposed to
+  # have caught the template-in-a-comment outage in the header — has been printing
+  # "renders with no error" unconditionally. It is the defect class this
+  # repository names most often, a check that cannot fail, inside the check
+  # written to end another one.
+  #
+  # `$'\033'` rather than `\x1b`: BSD sed does not understand `\x1b` and would
+  # have deleted the literal characters `x1b` instead, which is the quiet
+  # half-fix. Bash resolves the escape before sed ever sees it.
   local rc=0 logs
-  logs=$(docker logs "$PROBE" 2>&1)
+  logs=$(docker logs "$PROBE" 2>&1 | sed $'s/\033\\[[0-9;]*m//g')
 
-  # 1. no ERR. A template failure or an unparseable file rejects the WHOLE
-  #    directory, which is the three-minute outage this file's header records.
+  # 1. no ERR. A template failure, an unparseable file or a `certFile` that does
+  #    not resolve — the first two reject the WHOLE directory, which is the
+  #    three-minute outage this file's header records; the third leaves the
+  #    gateway terminating on nothing, which is worse than the self-signed
+  #    default `gateway/dynamic/tls.yml` was written to end.
   local errs
   errs=$(printf '%s\n' "$logs" | grep -E '\bERR\b' | grep -v 'use of closed network connection')
   if [ -n "$errs" ]; then
@@ -288,8 +347,9 @@ freshness() {
 
   reload=$(printf '%s\n' "$metrics" | awk '/^traefik_config_last_reload_success/ { printf "%.0f", $2; exit }')
   failure=$(printf '%s\n' "$metrics" | awk '/^traefik_config_last_reload_failure/ { printf "%.0f", $2; exit }')
-  mtime=$(newest_mtime "$DYNAMIC")
-  newest=$(newest_file "$DYNAMIC")
+  read -r mtime newest <<EOF
+$(newest_config)
+EOF
 
   if [ -z "$reload" ] || [ "$reload" = "0" ]; then
     bad "the gateway has never successfully loaded a configuration (traefik_config_last_reload_success is unset)"
@@ -307,7 +367,7 @@ freshness() {
   fi
 
   local digest
-  digest=$(dynamic_digest)
+  digest=$(config_digest)
   gap=$((mtime - reload))
 
   if [ "$gap" -le "$TOLERANCE_S" ]; then

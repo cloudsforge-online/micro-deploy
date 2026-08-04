@@ -60,7 +60,29 @@ compose/docker-compose.release*.yml
 # committed one silently reissues duplicate serials across clones, and the .crt
 # files are derived — a committed certificate outliving the key that signed it is
 # the stale-artefact failure this repository keeps finding.
+#
+# THIS DIRECTORY NOW ALSO HOLDS `origin.key`, and that raises the stakes rather
+# than repeating them. It is the private key of a CLOUDFLARE ORIGIN CA
+# certificate for `*.cloudsforge.online` and the bare apex, valid to 2041 —
+# whoever holds it can terminate TLS for every hostname in the estate, for
+# fifteen years, and there is no revocation path in this repository. It is placed
+# by hand, is mode 0600, and no script here ever reads it. `trust.crt` is a
+# derived bundle and lands here too, which is a third reason the rule is the
+# directory and not a pattern.
 gateway/certs/
+
+# ── AND A PATTERN AS WELL AS THE DIRECTORY, DELIBERATELY BELT AND BRACES ──────
+#
+# The rule above is the one that matters and it is scoped to one path. This one
+# costs nothing and covers the case that has actually happened in this
+# repository twice, in other forms: material put NEXT TO where the rule looks.
+# There is no private key anywhere in this tree that is meant to be committed, so
+# a pattern with no exceptions is honest about the policy.
+#
+# `gateway/trust/*.pem` is unaffected and is committed on purpose: those are
+# PUBLIC roots, and the extension difference is what keeps the two categories
+# from ever being confused by an ignore rule.
+*.key
 
 # scripts/gateway-reload.sh's two working files, both DERIVED and both under the
 # repository rather than /tmp for a reason it records at length: /tmp is not in

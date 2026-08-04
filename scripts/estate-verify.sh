@@ -1688,9 +1688,21 @@ gw() {
 # assertions are about routing, and making 183 of them depend on the certificate
 # would report one fault as 183 — but the transport is now checked once, for
 # real, and the estate can no longer be green while unusable in a browser.
-CA_FILE=${CF_CA_FILE:-gateway/certs/ca.crt}
+#
+# ── AND IT IS THE BUNDLE, NOT THE ESTATE CA ALONE ─────────────────────────────
+#
+# `gateway/certs/trust.crt` is `ca.crt` plus every public root in `gateway/trust/`,
+# rebuilt by `gateway-cert.sh` on every run. It exists because the MAINNET gateway
+# terminates on a Cloudflare Origin CA leaf now (`gateway/dynamic/tls.yml`) while
+# TESTNET still serves this repository's own leaf, so one file that verifies both
+# is what keeps a single `--cacert` argument correct in both environments.
+#
+# It is NOT a weakening of this assertion. A bundle adds ISSUERS, not exemptions:
+# a certificate from an issuer in neither, one whose SAN does not cover the host,
+# and an expired one all still fail here exactly as before. `-k` remains absent.
+CA_FILE=${CF_CA_FILE:-gateway/certs/trust.crt}
 if [ ! -s "$CA_FILE" ]; then
-  bad "no CA at $CA_FILE — the gateway is serving Traefik's self-signed default, so every CROSS-ORIGIN call from a real browser fails with ERR_CERT_AUTHORITY_INVALID while every check here passes. Run ./scripts/gateway-cert.sh"
+  bad "no CA bundle at $CA_FILE — the gateway is serving Traefik's self-signed default, so every CROSS-ORIGIN call from a real browser fails with ERR_CERT_AUTHORITY_INVALID while every check here passes. Run ./scripts/gateway-cert.sh"
 else
   tls_fails=""
   # Four hosts, not one, and each is a different SAN case: the bare apex (which a

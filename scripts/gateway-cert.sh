@@ -4,6 +4,12 @@
 #   cd deploy && ./scripts/gateway-cert.sh          # idempotent; regenerates only what is missing
 #   cd deploy && ./scripts/gateway-cert.sh --force  # start again
 #
+# It also writes `gateway/certs/trust.crt` — the estate CA plus every public root
+# in `gateway/trust/` — which is the file every internal client verifies with now
+# that the mainnet gateway terminates on a Cloudflare Origin CA leaf. See the
+# section near the end; the short version is that `ca.crt` stays exactly what it
+# is, because it signs and because the owner installs it.
+#
 # ── WHY THIS EXISTS: THE ESTATE WAS ONLY EVER VERIFIED IN A MODE NO PERSON HAS ─
 #
 # The gateway terminated TLS on **Traefik's built-in self-signed default** —
@@ -275,6 +281,103 @@ fi
 
 echo "  ok   $leaf_crt verifies against $ca_crt"
 echo "       SAN: $(openssl x509 -in "$leaf_crt" -noout -ext subjectAltName 2>/dev/null | tail -1 | tr -d ' ')"
+
+# ── THE TRUST BUNDLE: ONE FILE EVERY INTERNAL CLIENT CAN POINT AT ─────────────
+#
+# The estate CA is no longer the only issuer this estate's own gateways serve.
+# The MAINNET gateway now terminates on `origin.crt`, a Cloudflare Origin CA leaf
+# (see `gateway/dynamic/tls.yml` for why: Cloudflare Tunnel trusts public roots
+# and its own Origin CA, refused the estate leaf, and answered 502). The TESTNET
+# gateway still serves this script's leaf, because the origin certificate is one
+# label deep and does not cover `*.testnet.<apex>`.
+#
+# So there are two issuers and roughly a dozen internal clients that have to
+# accept BOTH — `estate-verify.sh`, the three seeders, `foresight-market-journey`,
+# beacon in its container, and both miners over `rpc.<apex>`. Handing each of
+# them a per-environment root would be the hand-maintained list this repository
+# has already paid for four times. One bundle is one path, and every consumer
+# keeps a single `--cacert` / `NODE_EXTRA_CA_CERTS` argument.
+#
+# ── AND IT IS A SEPARATE FILE RATHER THAN AN APPEND TO ca.crt ─────────────────
+#
+# Appending Cloudflare's root to `ca.crt` would need no consumer change at all,
+# which is why it was tried first. Three things say no, and the third is decisive:
+#
+#   1. `ca.crt` IS AN INPUT TO SIGNING, twenty lines above — `openssl x509 -req
+#      -CA "$ca_crt" -CAkey "$ca_key"`. Measured rather than assumed: openssl
+#      takes the FIRST certificate in a bundle and signs correctly, so this alone
+#      does not break. It does make the signing input depend on file order.
+#
+#   2. IT IS NOT IDEMPOTENT. This script rewrites `ca.crt` wholesale on `--force`
+#      (`openssl req -x509 … -out "$ca_crt"`), silently dropping the appended
+#      root and leaving every consumer failing against mainnet with nothing
+#      naming the cause; and a re-run of the append duplicates the root instead.
+#      A derived file rebuilt from its inputs on every run has neither problem.
+#
+#   3. `ca.crt` IS THE FILE THE OWNER INSTALLS IN A KEYCHAIN. The footer of this
+#      script prints that command. Appending would quietly make "trust the estate
+#      CA" also mean "trust Cloudflare's Origin CA as a system root", which is a
+#      root Cloudflare deliberately does not ship to browsers, and which would
+#      then validate origin certificates issued to OTHER Cloudflare customers for
+#      the names they carry. Nobody asked for that and nothing would have said it
+#      happened.
+#
+# The bundle is rebuilt from `ca.crt` plus every `gateway/trust/*.pem` on every
+# run. That directory is committed and public; `$CERTS` is not.
+trust_crt="$CERTS/trust.crt"
+trust_dir="gateway/trust"
+
+# `cat` into a temporary file and move, so a consumer reading the bundle while
+# this runs never sees half of one. `estate-up.sh` runs this with the estate up.
+trust_tmp=$(mktemp)
+cat "$ca_crt" > "$trust_tmp"
+roots=0
+if [ -d "$trust_dir" ]; then
+  for pem in "$trust_dir"/*.pem; do
+    [ -s "$pem" ] || continue
+    # A file that is not a certificate would land in the bundle as text and be
+    # skipped in silence by every consumer, so it is rejected here instead.
+    if ! openssl x509 -in "$pem" -noout -subject >/dev/null 2>&1; then
+      echo "FATAL: $pem is in $trust_dir but is not a PEM certificate." >&2
+      rm -f "$trust_tmp"
+      exit 1
+    fi
+    cat "$pem" >> "$trust_tmp"
+    roots=$((roots + 1))
+  done
+fi
+mv "$trust_tmp" "$trust_crt"
+chmod 644 "$trust_crt"
+
+# ── THE ASSERTIONS, BECAUSE A BUNDLE THAT VERIFIES NOTHING LOOKS IDENTICAL ────
+#
+# A bundle is a concatenation and a concatenation always succeeds. What can fail
+# is the thing it is FOR, so that is what is checked: the estate leaf must still
+# verify against it, and the origin certificate must too when one is installed.
+if ! openssl verify -CAfile "$trust_crt" "$leaf_crt" >/tmp/gateway-cert-trust.log 2>&1; then
+  echo "FATAL: $leaf_crt does not verify against the bundle $trust_crt:" >&2
+  cat /tmp/gateway-cert-trust.log >&2
+  exit 1
+fi
+
+# `origin.crt` is placed by hand — there is no Cloudflare API call here and no
+# private key this script ever sees. Absent is a supported state and means this
+# deployment is not behind a Cloudflare tunnel; PRESENT AND UNVERIFIABLE is not,
+# because that is the mainnet gateway serving a leaf its own estate cannot check.
+origin_crt="$CERTS/origin.crt"
+if [ -s "$origin_crt" ]; then
+  if ! openssl verify -CAfile "$trust_crt" "$origin_crt" >/tmp/gateway-cert-origin.log 2>&1; then
+    echo "FATAL: $origin_crt is installed but does not verify against $trust_crt:" >&2
+    cat /tmp/gateway-cert-origin.log >&2
+    echo "       The issuer's root is missing from $trust_dir/. Every internal check" >&2
+    echo "       against the mainnet gateway would fail with no explanation." >&2
+    exit 1
+  fi
+  echo "  ok   $trust_crt verifies both the estate leaf and $origin_crt ($roots public root(s) added)"
+  echo "       origin SAN: $(openssl x509 -in "$origin_crt" -noout -ext subjectAltName 2>/dev/null | tail -1 | tr -d ' ')"
+else
+  echo "  ok   $trust_crt verifies the estate leaf ($roots public root(s) added; no origin.crt installed)"
+fi
 
 # ── the step that is the owner's, and is printed rather than run ──────────────
 #

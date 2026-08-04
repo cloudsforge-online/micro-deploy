@@ -37,7 +37,17 @@ import { fileURLToPath } from 'node:url'
 export const HERE = path.dirname(fileURLToPath(import.meta.url))
 /** `deploy/`, the directory every script in this repository runs relative to. */
 export const ROOT = path.resolve(HERE, '../..')
-export const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/ca.crt')
+/**
+ * The trust BUNDLE, not the estate CA alone: `ca.crt` plus every public root in
+ * `gateway/trust/`, rebuilt by `scripts/gateway-cert.sh` on every run.
+ *
+ * The mainnet gateway terminates on a Cloudflare Origin CA leaf now — see
+ * `gateway/dynamic/tls.yml` — while testnet still serves the estate leaf, so a
+ * seeder pointed at `ca.crt` verifies in one environment and fails in the other.
+ * One bundle keeps this a single path and adds ISSUERS rather than exemptions:
+ * a wrong SAN, an expired leaf and an unknown issuer all still fail.
+ */
+export const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/trust.crt')
 
 export const APEX = process.env.CF_WEB_APEX || 'cloudsforge.localtest.me'
 /**

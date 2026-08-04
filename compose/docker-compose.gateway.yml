@@ -128,10 +128,18 @@ services:
       # host, where this is a real bind mount and inotify works — and turning it
       # off would break reload there to describe a developer machine. What closes
       # the gap instead is `scripts/gateway-reload.sh`: `--check` compares this
-      # exact metric against the newest mtime under gateway/dynamic/ and fails
+      # exact metric against the newest mtime over gateway/dynamic/*.yml AND the
+      # certificates in the directory mounted below, and fails
       # when the gateway is behind, and it runs in `estate-up.sh` and in every
       # `estate-verify.sh`. The state announces itself rather than being
       # something a person has to suspect.
+      #
+      # THE CERTIFICATES WERE NOT IN THAT COMPARISON UNTIL 2026-08-04, and a
+      # certificate is the one file here whose change this watch could never have
+      # carried anyway: Traefik reads `certFile` when it builds the TLS store, not
+      # per handshake, so replacing the pair `tls.yml` names does nothing at all
+      # until this container restarts. The check that was supposed to notice was
+      # hashing only `*.yml`.
       - --providers.file.watch=true
 
       # --- entrypoints -------------------------------------------------------

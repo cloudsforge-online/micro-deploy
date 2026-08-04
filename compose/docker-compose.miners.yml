@@ -26,6 +26,23 @@
 # the owner opens a laptop. `--add-host` is required because the apexes are real
 # public names that must resolve to this host's loopback, not to the internet.
 #
+# ── AND THAT IS WHY BOTH MOUNT `trust.crt` AND NOT `ca.crt` ───────────────────
+#
+# The design above is load-bearing here and cuts both ways: the mainnet miner
+# verifies the MAINNET gateway's certificate on every poll, and that gateway now
+# terminates on a Cloudflare Origin CA leaf rather than the estate leaf, so that
+# Cloudflare Tunnel stops refusing the origin and answering 502 (see
+# `gateway/dynamic/tls.yml`). Left on `ca.crt`, `cf-miner-mainnet` would have
+# stopped producing blocks the moment that certificate changed — a live chain
+# halted by a TLS edit, reported as nothing at all until somebody looked at the
+# height.
+#
+# `trust.crt` is `ca.crt` plus every public root in `gateway/trust/`, rebuilt by
+# `scripts/gateway-cert.sh`. The testnet miner keeps working unchanged for the
+# same reason: the testnet gateway still serves the estate leaf, which is in the
+# bundle. NODE_EXTRA_CA_CERTS is read ONCE at startup, so a change to this file
+# needs `docker compose … up -d` and not just a file rewrite.
+#
 # ── THE KEY IS THE POINT, AND IT IS NOT OPTIONAL ─────────────────────────────
 #
 # Under the account model the coinbase must SIGN the block, so there is no
@@ -92,10 +109,10 @@ services:
     extra_hosts:
       - "rpc.cloudsforge.online:127.0.0.1"
     environment:
-      NODE_EXTRA_CA_CERTS: /ca.crt
+      NODE_EXTRA_CA_CERTS: /trust.crt
       HEARTH_NO_TTY: "1"
     volumes:
-      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/ca.crt:/ca.crt:ro
+      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/trust.crt:/trust.crt:ro
       - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/mainnet:/minerdata
     restart: unless-stopped
 
@@ -119,9 +136,9 @@ services:
     extra_hosts:
       - "rpc.testnet.cloudsforge.online:127.0.0.1"
     environment:
-      NODE_EXTRA_CA_CERTS: /ca.crt
+      NODE_EXTRA_CA_CERTS: /trust.crt
       HEARTH_NO_TTY: "1"
     volumes:
-      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/ca.crt:/ca.crt:ro
+      - ${CF_CERTS_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/trust.crt:/trust.crt:ro
       - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/testnet:/minerdata
     restart: unless-stopped

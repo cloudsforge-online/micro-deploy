@@ -2325,7 +2325,23 @@ services:
       # the estate has already paid for that once tonight: 183 uses of `curl -k` hid a
       # gateway serving `CN=TRAEFIK DEFAULT CERT` that every browser refused, while
       # every check passed.
-      NODE_EXTRA_CA_CERTS: /etc/ssl/estate/ca.crt
+      #
+      # ── IT IS THE BUNDLE NOW, AND THE MAINNET GATEWAY IS WHY ─────────────────────
+      #
+      # `trust.crt` is the estate CA plus every public root in `gateway/trust/`,
+      # rebuilt by `scripts/gateway-cert.sh`. The mainnet gateway terminates on a
+      # Cloudflare Origin CA leaf (`gateway/dynamic/tls.yml`) so that Cloudflare
+      # Tunnel stops refusing the origin and answering 502; the testnet gateway
+      # still serves the estate leaf, because the origin certificate is one label
+      # deep and does not cover `*.testnet.<apex>`. Beacon runs in BOTH projects
+      # against BOTH apexes, so `ca.crt` alone would have taken every mainnet probe
+      # to `UNABLE_TO_VERIFY_LEAF_SIGNATURE` — the exact outage this block was
+      # written for, reintroduced from the other end.
+      #
+      # The container path is renamed with the file. `/etc/ssl/estate/ca.crt`
+      # holding two roots would be a name that lies to the next reader, which is
+      # the cost this repository keeps paying for elsewhere.
+      NODE_EXTRA_CA_CERTS: /etc/ssl/estate/trust.crt
       BEACON_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/beacon
       BEACON_TOKEN: estate-only-beacon-breakglass-000000000
       # ── `wallet` AND `custody` ADDED 2026-08-04, AND THE ABSENCE WAS NOT NEUTRAL ────
@@ -2491,8 +2507,13 @@ services:
   # would fail the same check, and a migration run for a service that is not
   # running is a database touched for no reason.
     volumes:
-      # Read-only, and only the public certificate — never a key.
-      - ../gateway/certs/ca.crt:/etc/ssl/estate/ca.crt:ro
+      # Read-only, and only public certificates — never a key. `trust.crt` is a
+      # DERIVED file: `scripts/gateway-cert.sh` rebuilds it from `ca.crt` plus
+      # `gateway/trust/*.pem` on every run, and `estate-up.sh` runs that before
+      # anything here starts. A bind of a file that does not exist yet is created
+      # by Docker as a DIRECTORY, and beacon would then fail to start rather than
+      # probe unverified — loud, and the right way round.
+      - ../gateway/certs/trust.crt:/etc/ssl/estate/trust.crt:ro
   faucet-migrate:
     profiles: ["ember-testnet"]
     <<: *migrate-defaults

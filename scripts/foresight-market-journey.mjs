@@ -70,7 +70,11 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..')
-const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/ca.crt')
+/* The trust BUNDLE — `ca.crt` plus every public root in `gateway/trust/`, built
+ * by `scripts/gateway-cert.sh`. The mainnet gateway terminates on a Cloudflare
+ * Origin CA leaf and testnet on the estate leaf, so the estate CA alone now
+ * verifies exactly one of the two environments. See `gateway/dynamic/tls.yml`. */
+const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/trust.crt')
 
 // ── the CA, before anything else can make a request ──────────────────────────
 //

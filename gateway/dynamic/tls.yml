@@ -48,9 +48,69 @@
 # to where it was rather than losing `policy.yml`'s `/internal` refusal with it.
 # `estate-verify.sh` asserts the good case with `--cacert` and no `-k`, which is
 # an assertion that can fail.
+#
+# That degradation is SILENT, so it is also asserted: `gateway-reload.sh
+# --validate` renders this directory in a throwaway Traefik at the same version
+# and fails on any ERR, and a `certFile` naming a file that is not in the mounted
+# certificate directory produces exactly that ERR. Measured on this estate, not
+# assumed — see the note in that script.
+#
+# ── AND WHICH PAIR IS SERVED IS PER-ENVIRONMENT, WHICH IT WAS NOT ──────────────
+#
+# Both gateways mount THIS DIRECTORY. `docker-compose.gateway.yml` binds
+# `../gateway/dynamic` by a hardcoded relative path — the certificate directory
+# beside it takes `CF_CERT_DIR` and this one takes nothing — so mainnet
+# (`cfmicro`, :443) and testnet (`cf-testnet-gw`, :10443) read the same bytes.
+# One `defaultCertificate` here is therefore one certificate for both estates,
+# and the two now need different ones:
+#
+#   mainnet  `origin.crt` — a CLOUDFLARE ORIGIN CA leaf, `*.cloudsforge.online`
+#            plus the bare apex. Cloudflare Tunnel carries public roots and its
+#            own Origin CA and nothing else, so it refused the estate leaf and
+#            answered 502 on every mainnet hostname. Measured on the box: a
+#            client with only public roots got `000, connection refused` against
+#            :443 while the same request with `--cacert gateway/certs/ca.crt`
+#            got 200.
+#
+#   testnet  `estate.crt`, unchanged. The origin certificate does NOT cover
+#            `*.testnet.cloudsforge.online` — Cloudflare's Universal SSL is one
+#            label deep — so pointing testnet at it would trade a 502 for a
+#            certificate whose SAN does not match the host, which is worse: the
+#            estate CA at least verifies for every internal consumer.
+#
+# ── WHY A VARIABLE AND NOT AN SNI ENTRY, WHICH LOOKS CLEANER AND IS WRONG ──────
+#
+# The obvious alternative keeps one shared file and adds `origin.crt` to a
+# `certificates:` list, letting SNI pick it for the names it covers and falling
+# back to `estate.crt` for everything else. It enumerates nothing, so it does not
+# reopen this file's argument against a hostname list, and it would need no
+# per-environment anything.
+#
+# IT BREAKS TESTNET, and by one label. A wildcard matches one label, so
+# `*.cloudsforge.online` matches `testnet.cloudsforge.online` — the testnet
+# estate's own BARE APEX, which `estate-web.yml` routes to the marketing site.
+# The testnet gateway, reading this same file, would have served a Cloudflare
+# leaf on its front door and the estate leaf on every other testnet host: a split
+# that no internal verifier is arranged to expect and that no reader would
+# predict from this file. `hub.testnet.…` is two labels deep and would have been
+# unaffected, which is precisely what makes it the kind of fault that is found
+# late.
+#
+# So the environment says which pair it serves, in the env file it already has
+# one of. `CF_TLS_DEFAULT_CERT` is the BASENAME of a pair in the mounted
+# certificate directory, set in `compose/env/traefik.env` (mainnet: `origin`) and
+# `compose/env/traefik.testnet.env` (testnet: `estate`). UNSET MEANS `estate`,
+# because a fresh clone has run `gateway-cert.sh` and has no origin certificate
+# at all, and the fallback for a name that does not resolve is the
+# `CN=TRAEFIK DEFAULT CERT` this whole file exists to have ended.
 tls:
   stores:
     default:
       defaultCertificate:
+{{ if env "CF_TLS_DEFAULT_CERT" }}
+        certFile: /etc/traefik/certs/{{ env "CF_TLS_DEFAULT_CERT" }}.crt
+        keyFile: /etc/traefik/certs/{{ env "CF_TLS_DEFAULT_CERT" }}.key
+{{ else }}
         certFile: /etc/traefik/certs/estate.crt
         keyFile: /etc/traefik/certs/estate.key
+{{ end }}
