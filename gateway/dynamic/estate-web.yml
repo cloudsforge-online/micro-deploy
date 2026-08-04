@@ -174,6 +174,66 @@ http:
         sourceCriterion:
           requestHeaderName: Cf-Connecting-Ip
 
+    # ── THE MINING WORK API, AND WHAT ACTUALLY THREATENS IT ───────────────────
+    #
+    # Tighter than the RPC limit above and for a completely different reason, so
+    # the number is argued rather than copied.
+    #
+    # `POST /mining/submit` IS NOT THE DANGEROUS ONE, which is the opposite of
+    # how it reads. It mutates chain state, but a submission carries ONLY proof
+    # fields — `hearth/node/src/mining.js:96` destructures exactly
+    # `{templateId, nonce, powDigest, powSig}`, and `mining.js:110-111` rebuilds
+    # the block as `{ ...t.header, nonce, powDigest, powSig }` with `txs: t.txs`
+    # taken from the template THE NODE BUILT. A caller cannot smuggle in a
+    # transaction, retarget, or repoint the coinbase, because none of that
+    # travels in the body; `BLOCK.verifyPow` then rejects anything without real
+    # work, and `chain.addBlock` revalidates all of it again. Spamming submit
+    # costs the attacker a proof-of-work and buys them a 400.
+    #
+    # `GET /mining/template` IS. Each call makes the node assemble a candidate
+    # block and store it, and the store is capped: `MAX_TEMPLATES = 256`
+    # (`mining.js:32`, whose own comment is "Bounded so an unauthenticated caller
+    # cannot grow this without limit"), with `_evict()` dropping the oldest. The
+    # bound protects the node's MEMORY and does nothing for its USERS — a
+    # stranger pulling templates in a loop evicts the owner's miners' work before
+    # they can finish hashing it, and mining simply stops. Cheap to run, invisible
+    # in any error rate, and the node stays perfectly healthy throughout.
+    #
+    # 2/s with a burst of 10, per client IP. A real miner pulls one template per
+    # block attempt and re-pulls when the tip moves — `TTL_MS = 120_000`
+    # (`mining.js:30`) is how long one stays valid — so single-figure requests per
+    # minute is the honest shape, and 2/s is already generous by two orders of
+    # magnitude. Keyed on `Cf-Connecting-Ip` for the reason the RPC block gives at
+    # length: the node's own limiter sees cloudflared's address for every request
+    # in the world, so this gateway is the only place the real client is visible.
+    #
+    # ── AND THIS IS NOT SUFFICIENT, WHICH IS SAID HERE RATHER THAN IMPLIED ────
+    #
+    # A per-IP limit does not stop a distributed or address-rotating caller from
+    # keeping the 256-entry table churned. The correct protection for this
+    # endpoint is AUTHENTICATION — the owner's miners are known machines, not the
+    # public — and it is not here for one concrete reason: NO CLIENT SENDS A
+    # CREDENTIAL TODAY. `hearth-mine`, the CLI light miner this route exists for,
+    # builds its requests in one helper (`hearth/node/bin/hearth-mine.js:234`)
+    # and sets only `content-type` (`:334`); the browser miner does a plain
+    # `fetch` with no headers at all (`hearth/web/assets/mining/miner.js:213`,
+    # `:282`). Putting basicAuth on this router would publish a route that every
+    # existing caller answers with a 401, which is worse than the griefing risk it
+    # removes.
+    #
+    # It is the RIGHT next step and it is cheap on the CLI side — one header in
+    # one helper — so it is recorded here as owed rather than dismissed. It needs
+    # a change in `hearth`, which is not this repository's to write, and a
+    # credential store this gateway does not have yet (Traefik's basicAuth
+    # `usersFile`, mounted like `gateway/certs/` and gitignored the same way).
+    cf-mining-throttle:
+      rateLimit:
+        average: 2
+        period: 1s
+        burst: 10
+        sourceCriterion:
+          requestHeaderName: Cf-Connecting-Ip
+
   routers:
     # ─────────────────────────────────────────────────────── hub — AND SIGN-IN ──
     #
@@ -972,6 +1032,99 @@ http:
       service: cf-svc-hearth-rpc
 {{ end }}
 
+    # ── mining — THE WORK API WAS ON A PORT NOTHING PUBLISHED ─────────────────
+    #
+    # `rpc.<apex>` reaches `CF_RPC_UPSTREAM`, which is the ETHEREUM JSON-RPC port
+    # (`hearth/node/src/params.js:366`, 8545). The pool-style work API a remote
+    # miner calls is on the REST port — `params.js:306`, 8645, "HTTP REST + legacy
+    # JSON-RPC + SSE" — and NOTHING published it, at any hostname or path. Two
+    # ports on one node, and the ingress had only ever been told about one.
+    #
+    # ── ONLY TWO PATHS, AND THE OTHER FOUR ARE REFUSED ON PURPOSE ─────────────
+    #
+    # `Path`, twice, not `PathPrefix(`/mining`)` and emphatically not the whole
+    # host: the REST port serves six things (`evmnode.js:399-424`) and a miner
+    # needs exactly two of them. Publishing a port because one path on it is
+    # wanted is how the other four become public without anyone deciding they
+    # should be. Each refusal below is a decision:
+    #
+    #   /events    (`:407`) — Server-Sent Events. It holds the socket open and
+    #                registers the response in `this.sseClients`, so every caller
+    #                costs the node a live connection for as long as they care to
+    #                keep it. Unauthenticated, that is connection exhaustion with
+    #                no proof-of-work and no rate limit that helps — the limiter
+    #                counts the DIAL, and one dial is all this costs. The same
+    #                argument as the p2p WebSocket above, with none of the reasons
+    #                that one is worth carrying.
+    #   /mempool   (`:401`) — enumerates every pending transaction. A public
+    #                mempool is normal for a chain and this is not the surface
+    #                that should serve it: the estate already publishes chain
+    #                reads through `indexer` at `explorer.<apex>`, where they are
+    #                shaped, indexed and cached rather than read straight off the
+    #                node a miner is depending on.
+    #   /info,     (`:399`, `:400`) — real chain facts, and duplicates. Same
+    #   /supply      reason: `explorer.<apex>` is where this estate answers "what
+    #                is the state of the chain", and a second address for the same
+    #                answer is a second thing to keep true.
+    #
+    # Priority 600 to outrank `cf-api-rpc`'s 500 on the same hostname, exactly as
+    # `cf-api-hub` outranks `cf-web-hub`. Anything else under `/mining` — a path
+    # this node does not serve — falls through to the RPC router and is answered
+    # by the JSON-RPC port's own 404, which is a truthful "no route here".
+    #
+    # ── WHY IT RIDES `rpc.` AND DID NOT GET ITS OWN HOSTNAME ──────────────────
+    #
+    # A `mining.<apex>` router would fail `scripts/surface-routes.py` check 2 on
+    # its first run: every host a router matches must be a subdomain the REGISTRY
+    # declares, and the registry is `ui/packages/ui/src/surfaces.ts` in a
+    # different repository — the one `rpc` and `p2p` were added to when they were
+    # declared. That row is the right long-term shape and this router should move
+    # to it. It is not done here because that repository is not this one's to
+    # write, and a router on an undeclared host would take the drift check red for
+    # everyone rather than wait.
+    #
+    # Riding `rpc.` is not merely the available option, though: the REST port IS
+    # the node's own RPC surface by its own parameter name (`DEFAULT_RPC_PORT`),
+    # the tunnel already publishes this hostname so no ingress changes, and a
+    # miner configuring one address for a chain is the smaller ask.
+    #
+    # ── THE CLIENT THIS EXISTS FOR, AND A STALE DOC THAT NEARLY GOT REPEATED ──
+    #
+    # `hearth-mine` — a LIGHT miner that "holds no chain, syncs nothing and opens
+    # no ports", written for exactly this case: "for someone who wants to mine on
+    # their Mac and their PC … CloudsForge is published from a home server behind
+    # a Cloudflare Tunnel — a transport that a tunnel can carry. This needs none
+    # of it. It is HTTPS out" (`hearth/node/bin/hearth-mine.js:6-23`). The client
+    # was designed against a tunnel; this router is the tunnel-side half it has
+    # been waiting for.
+    #
+    # AND THE KEY-TYPE DEFECT IS NOT LIVE, THOUGH THREE DOCUMENTS SAY IT IS.
+    # `hearth/docs/mining.md:50-56` says "the browser miner currently cannot mine
+    # a block this node will accept" — the node wanting Ed25519 while the miner
+    # signs secp256k1 — and MAP.md, SECURITY.md and listing-checklist M16 repeat
+    # it. That was written about the LEGACY UTXO chain (`node/src/block.js:45`,
+    # `node/src/mining.js`), and MAP.md:969 says so itself in a note nobody
+    # carried forward: "Note which endpoint this is … on the **UTXO** REST".
+    #
+    # The EVM node this estate runs reconciled long ago: `node/src/chain/
+    # miner.js:141` and `node/src/chain/header.js:250` both require a 65-byte
+    # uncompressed secp256k1 key, which is what the miners sign. Measured through
+    # this very router before this was written — `GET /mining/template` with no
+    # `pub` answered 400 `{"err":"pub must be a 65-byte uncompressed secp256k1
+    # key"}`, from `chain/miner.js:141`, on the EVM path.
+    #
+    # Recorded at this length because the first draft of this comment relayed the
+    # stale doc as a live blocker. Four documents agreeing with each other is not
+    # one of them agreeing with the running node.
+{{ if env "CF_MINING_UPSTREAM" }}
+    cf-api-mining:
+      rule: 'Host(`rpc.{{ env "CF_WEB_APEX" }}`) && (Path(`/mining/template`) || Path(`/mining/submit`))'
+      priority: 600
+      entryPoints: [websecure]
+      middlewares: [cf-mining-throttle]
+      service: cf-svc-hearth-mining
+{{ end }}
+
     # ── p2p — PEER GOSSIP, BECAUSE A TUNNEL CANNOT CARRY A TCP SOCKET ─────────
     #
     # Hearth's peer transport is raw TCP on 8646 (`hearth/node/src/params.js:307`).
@@ -1233,6 +1386,16 @@ http:
     cf-svc-hearth-p2p:
       loadBalancer:
         servers: [{ url: "{{ env "CF_P2P_WS_UPSTREAM" }}" }]
+{{ end }}
+{{ if env "CF_MINING_UPSTREAM" }}
+    # The REST port, 8645 — a DIFFERENT upstream from cf-svc-hearth-rpc above and
+    # the same node. `CF_RPC_UPSTREAM` is 8545, the Ethereum JSON-RPC port, and it
+    # serves no `/mining/*` path at all: pointing this at that port would answer
+    # every mining request with the JSON-RPC listener's 404 and read like an
+    # ingress bug for as long as it took someone to compare two port numbers.
+    cf-svc-hearth-mining:
+      loadBalancer:
+        servers: [{ url: "{{ env "CF_MINING_UPSTREAM" }}" }]
 {{ end }}
 {{ else }}
 # CF_WEB_APEX is unset, so this file contributes NOTHING rather than a full set of routers whose rules

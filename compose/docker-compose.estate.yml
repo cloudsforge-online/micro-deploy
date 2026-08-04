@@ -138,7 +138,53 @@ x-healthcheck-4021: &healthcheck-4021
 
 x-migrate-defaults: &migrate-defaults
   command: ["node", "--import", "tsx", "src/migrator.ts"]
+  # `no` IS THE POLICY HERE, and it is a decision rather than an omission.
+  #
+  # A migrator runs once and exits 0, and `unless-stopped` restarts a container
+  # that exits for ANY reason, including success. A migrator under that policy
+  # runs its migrations again on every daemon start, forever — and the ones that
+  # are not idempotent would fail on the second pass, so the estate would come
+  # back from a reboot with a container in a crash loop and a `depends_on:
+  # service_completed_successfully` that never completes.
+  #
+  # This is what distinguishes a real exception from an unanswered question, and
+  # it is why the `restart:` on this line is spelled out beside the one below.
   restart: "no"
+
+# ── AND EVERY LONG-RUNNING SERVICE, WHICH 30 OF THEM DID NOT HAVE ─────────────
+#
+# Compose has no default restart policy, so a service with no `restart:` key gets
+# Docker's default, which is `no` — the container stays down after a host reboot,
+# a `systemctl restart docker`, or an OOM kill, and nothing starts it again.
+#
+# That is what this file had. Measured with `docker inspect` over the running
+# estate before this anchor existed: the frontends restarted, because
+# `x-web-defaults` happens to carry `restart: unless-stopped`; the migrators did
+# not, correctly, because `x-migrate-defaults` says so. EVERY OTHER SERVICE had
+# no policy at all — all 29 APIs and, worst of all, `postgres`. So a reboot of
+# the host brought back fifteen frontends, each of them talking to nothing, and
+# the database and every API they call stayed down until a person noticed.
+#
+# The split was never designed. It is the shape of "whichever anchor a service
+# happened to use", and the two anchors that existed were both written for
+# reasons that had nothing to do with restarting. A service that MUST NOT restart
+# is a real category — the migrators above, the three root one-shots below — and
+# each of those says why. A service that merely never had the question asked is
+# not a category, and this is the anchor that ends it.
+#
+# `unless-stopped` rather than `always`: the difference is what happens after an
+# operator deliberately stops a container. `always` brings it back when the
+# daemon restarts even then, which turns `docker stop` into something that does
+# not survive a reboot and makes taking one service out for maintenance
+# impossible to express. `unless-stopped` restarts everything the operator did
+# not deliberately stop, which is the intent in every case here.
+#
+# This does NOT make the estate self-healing, and it should not be read that way:
+# a service that crash-loops on a bad config will crash-loop faster. What it
+# changes is the unattended case — a home host that reboots at 4am comes back
+# whole instead of coming back as a frontend serving errors.
+x-service-defaults: &service-defaults
+  restart: unless-stopped
 
 # ── the frontends ──────────────────────────────────────────────────────────────
 #
@@ -211,6 +257,7 @@ services:
   # One server, one database per service. See compose/estate/initdb.sql for why
   # that is a dev-only compromise and why it does not break the ownership rule.
   postgres:
+    <<: *service-defaults
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: cloudsforge
@@ -256,6 +303,7 @@ services:
         condition: service_healthy
 
   identity:
+    <<: *service-defaults
     build:
       context: ../../identity
       additional_contexts: *build-contexts
@@ -454,6 +502,7 @@ services:
         condition: service_healthy
 
   policy:
+    <<: *service-defaults
     build:
       context: ../../policy
       additional_contexts: *build-contexts
@@ -486,6 +535,7 @@ services:
         condition: service_healthy
 
   ledger:
+    <<: *service-defaults
     build:
       context: ../../ledger
       additional_contexts: *build-contexts
@@ -617,6 +667,7 @@ services:
         condition: service_healthy
 
   pricing:
+    <<: *service-defaults
     build:
       context: ../../pricing
       additional_contexts: *build-contexts
@@ -661,6 +712,7 @@ services:
         condition: service_healthy
 
   activity:
+    <<: *service-defaults
     build:
       context: ../../activity
       additional_contexts: *build-contexts
@@ -698,6 +750,7 @@ services:
         condition: service_healthy
 
   notify:
+    <<: *service-defaults
     build:
       context: ../../notify
       additional_contexts: *build-contexts
@@ -789,6 +842,7 @@ services:
         condition: service_healthy
 
   studio:
+    <<: *service-defaults
     build:
       context: ../../studio
       additional_contexts: *build-contexts
@@ -836,6 +890,7 @@ services:
         condition: service_healthy
 
   devplatform:
+    <<: *service-defaults
     build:
       context: ../../devplatform
       additional_contexts: *build-contexts
@@ -903,6 +958,7 @@ services:
         condition: service_healthy
 
   indexer:
+    <<: *service-defaults
     build:
       context: ../../indexer
       additional_contexts: *build-contexts
@@ -1013,6 +1069,7 @@ services:
         condition: service_healthy
 
   analytics:
+    <<: *service-defaults
     build:
       context: ../../analytics
       additional_contexts: *build-contexts
@@ -1073,6 +1130,7 @@ services:
         condition: service_healthy
 
   custody:
+    <<: *service-defaults
     build:
       context: ../../custody
       additional_contexts: *build-contexts
@@ -1154,6 +1212,7 @@ services:
         condition: service_healthy
 
   wallet:
+    <<: *service-defaults
     build:
       context: ../../wallet
       additional_contexts: *build-contexts
@@ -1221,6 +1280,7 @@ services:
         condition: service_healthy
 
   settlement:
+    <<: *service-defaults
     build:
       context: ../../settlement
       additional_contexts: *build-contexts
@@ -1267,6 +1327,7 @@ services:
         condition: service_healthy
 
   billing:
+    <<: *service-defaults
     build:
       context: ../../billing
       additional_contexts: *build-contexts
@@ -1307,6 +1368,7 @@ services:
         condition: service_healthy
 
   mint:
+    <<: *service-defaults
     build:
       context: ../../mint
       additional_contexts: *build-contexts
@@ -1356,6 +1418,7 @@ services:
         condition: service_healthy
 
   market:
+    <<: *service-defaults
     build:
       context: ../../market
       additional_contexts: *build-contexts
@@ -1404,6 +1467,7 @@ services:
         condition: service_healthy
 
   trade:
+    <<: *service-defaults
     build:
       context: ../../trade
       additional_contexts: *build-contexts
@@ -1447,6 +1511,7 @@ services:
         condition: service_healthy
 
   worlds:
+    <<: *service-defaults
     build:
       context: ../../worlds
       additional_contexts: *build-contexts
@@ -1488,6 +1553,7 @@ services:
         condition: service_healthy
 
   nda:
+    <<: *service-defaults
     build:
       context: ../../nda
       additional_contexts: *build-contexts
@@ -1531,6 +1597,7 @@ services:
         condition: service_healthy
 
   community:
+    <<: *service-defaults
     build:
       context: ../../community
       additional_contexts: *build-contexts
@@ -1634,6 +1701,7 @@ services:
         condition: service_healthy
 
   tessera:
+    <<: *service-defaults
     build:
       context: ../../tessera
       additional_contexts: *build-contexts
@@ -1734,6 +1802,7 @@ services:
         condition: service_healthy
 
   aetherholm:
+    <<: *service-defaults
     build:
       context: ../../aetherholm
       additional_contexts: *build-contexts
@@ -1805,6 +1874,7 @@ services:
         condition: service_healthy
 
   emberkin:
+    <<: *service-defaults
     build:
       context: ../../emberkin
       additional_contexts: *build-contexts
@@ -2010,6 +2080,7 @@ services:
         condition: service_healthy
 
   foresight:
+    <<: *service-defaults
     build:
       context: ../../foresight
       additional_contexts: *build-contexts
@@ -2151,6 +2222,7 @@ services:
         condition: service_healthy
 
   beacon:
+    <<: *service-defaults
     build:
       context: ../../beacon
       additional_contexts: *build-contexts
@@ -2326,6 +2398,7 @@ services:
         condition: service_healthy
 
   faucet:
+    <<: *service-defaults
     build:
       context: ../../faucet
       additional_contexts: *build-contexts
@@ -2399,6 +2472,7 @@ services:
         condition: service_healthy
 
   admin-api:
+    <<: *service-defaults
     build:
       context: ../../admin-api
       additional_contexts: *build-contexts
@@ -2431,6 +2505,7 @@ services:
   # upstream, rather than one token with the union of the scopes — which is the
   # least-privilege property the scope vocabulary exists to make possible.
   hub-api:
+    <<: *service-defaults
     build:
       context: ../../hub-api
       additional_contexts: *build-contexts
@@ -2913,6 +2988,7 @@ services:
         condition: service_healthy
 
   lantern:
+    <<: *service-defaults
     build:
       context: ../../lantern
       additional_contexts: *build-contexts
