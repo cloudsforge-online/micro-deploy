@@ -95,6 +95,7 @@ const countsOnly = args.includes('--counts')
  */
 const DOMAINS = [
   { name: 'foresight', load: () => import('./seed/foresight.mjs').then((m) => m.seedForesight) },
+  { name: 'community', load: () => import('./seed/community.mjs').then((m) => m.seedCommunity) },
 ]
 
 async function main() {
