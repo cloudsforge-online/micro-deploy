@@ -68,9 +68,47 @@ WHAT IT CHECKS
      runtime — so without this, a conditional router is a route the check
      believes in and the gateway does not.
   7. No router, service or middleware is DEFINED TWICE in `gateway/dynamic/`.
+  8. Every request header a BUNDLE sends cross-origin is in the CORS
+     `accessControlAllowHeaders` list. A header outside the browser's safelist
+     forces a preflight, and a preflight the gateway does not answer for kills
+     the request before any service sees it. See below.
      Traefik's file provider merges a directory into one map per section and
      keeps the FIRST definition of a name, so a second one does not conflict,
      does not error and does not override — it is DROPPED. See below.
+
+A HEADER MISSING FROM THE CORS LIST IS A ROUTE NO BROWSER CAN CALL
+------------------------------------------------------------------
+Check 8 was added after `idempotency-key` was found absent from `cf-cors`.
+
+`POST /markets/:id/deploy` on foresight REQUIRES an `Idempotency-Key` header of
+8 to 200 characters and answers 400 without one (`idempotencyKeyOf`,
+foresight/src/server.ts:1033-1040). The operator panel is the only browser that
+calls it, and it has always called foresight CROSS-ORIGIN — from
+`foresight-admin.<apex>` before the P13 fold and from `admin.<apex>` after it.
+
+`idempotency-key` is not on the browser's CORS-safelisted request-header list,
+so that call triggers an `OPTIONS` preflight, and the browser compares its
+`Access-Control-Request-Headers` against what the gateway echoes back. The
+gateway echoed `content-type`, `authorization`, `x-request-id` and the three
+W3C trace headers. Not that one. So the browser refused the request before
+sending it, and the deploy control could not have worked at any point.
+
+WHY NOTHING CAUGHT IT, WHICH IS THE PART WORTH KEEPING. The estate's other
+caller of that route is `scripts/foresight-market-journey.mjs`, which runs
+under Node: no origin, no preflight, no CORS at all. It passed, repeatedly,
+against a route no browser could reach — a check exercising a path by a
+mechanism the real client does not use, which is the same class as the tests
+behind the `/v1/quotes` and `market.listing` defects.
+
+And it failed in the worst possible shape: Traefik never sees the refused
+request, the service never sees it, nothing is logged anywhere, and the
+operator gets an unexplained network failure on the screen that deploys a
+market contract. This file already says of a missing CORS ORIGIN that it "fails
+closed and silently"; a missing HEADER does the same thing for the same reason,
+and was not checked.
+
+The list is small and hand-written for the same reason the origin list is, so
+it is made impossible for it to be wrong quietly.
 
 TWO ROUTERS OF ONE NAME IS ONE ROUTER, AND NOBODY IS TOLD WHICH
 ---------------------------------------------------------------
@@ -626,6 +664,69 @@ def cors_drift(surfaces):
         )
 
 
+CORS_HEADER_RE = re.compile(r"^\s*-\s*([a-z][a-z0-9-]*)\s*$")
+
+
+def cors_allowed_headers():
+    """The `accessControlAllowHeaders` list in `cf-cors`, lower-cased."""
+    if not POLICY.exists():
+        bad(f"{POLICY} does not exist — the CORS header list cannot be checked")
+        return None
+    text = POLICY.read_text().splitlines()
+    try:
+        start = next(i for i, l in enumerate(text) if "accessControlAllowHeaders:" in l)
+    except StopIteration:
+        bad("cf-cors declares no accessControlAllowHeaders at all, so every cross-origin request "
+            "carrying a non-safelisted header is refused by the browser before it is sent")
+        return None
+    found = set()
+    for line in text[start + 1:]:
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        m = CORS_HEADER_RE.match(line)
+        if not m:
+            break
+        found.add(m.group(1).lower())
+    return found
+
+
+# ── request headers a bundle sends cross-origin, and what breaks without each ──
+#
+# Every entry is a CLAIM about a real client, cited, and is checked in one
+# direction only: a header a bundle sends MUST be allowlisted. The reverse is
+# deliberately not asserted — an allowlisted header nobody sends grants nothing
+# and costs nothing, unlike a spare ORIGIN, which grants a whole page access.
+REQUIRED_CORS_HEADERS = {
+    "authorization": "every authenticated cross-origin call in the estate; without it no bundle "
+                     "can present a bearer token to a service on another host",
+    "content-type": "every cross-origin POST/PATCH with a JSON body; `application/json` is not a "
+                    "safelisted value, so this is needed even though the header name looks common",
+    "idempotency-key": "admin-web's Foresight deploy control (`POST /markets/:id/deploy`), which "
+                       "foresight REQUIRES the header on (foresight/src/server.ts:1033-1040) and "
+                       "which admin-web calls cross-origin from `admin.<apex>` "
+                       "(admin-web/src/lib/foresight.ts, `deployMarket`)",
+}
+
+
+def cors_headers_drift():
+    """── 8: every header a bundle sends cross-origin is allowlisted ───────────"""
+    allowed = cors_allowed_headers()
+    if allowed is None:
+        return
+    for header, why in sorted(REQUIRED_CORS_HEADERS.items()):
+        if header in allowed:
+            continue
+        bad(
+            f"the cf-cors allowlist does not name the request header '{header}', which is sent by "
+            f"{why}. A header outside the browser's CORS safelist forces an OPTIONS preflight, and "
+            f"a preflight that does not echo the header name makes the browser REFUSE the request "
+            f"before it is sent — so nothing reaches Traefik, nothing reaches the service, and "
+            f"nothing is logged anywhere. It fails closed and silently, exactly like a missing "
+            f"origin"
+        )
+
+
 def main():
     surfaces = registry_surfaces()
     routers = gateway_routers()
@@ -726,6 +827,9 @@ def main():
 
     # ── 7: no name defined twice — a dropped router is not a failed one ───────
     defined_twice()
+
+    # ── 8: every header a bundle sends cross-origin is allowlisted ────────────
+    cors_headers_drift()
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:

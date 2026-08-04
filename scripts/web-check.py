@@ -151,11 +151,49 @@ def compose_pins():
         if m:
             service = m.group(1)
             continue
-        m = re.search(r'127\.0\.0\.1:(\d+):(\d+)', raw)
+        # ── THIS REGEX USED TO BE `127\.0\.0\.1:(\d+):(\d+)` AND MATCHED NOTHING ──────────
+        #
+        # Not one of the forty-one pins in the estate file is written as a bare number. They are
+        # all `127.0.0.1:${CF_PORT_BASE:-4}140:8080` — the leading digit is an environment
+        # variable so a second estate can be brought up beside the first on 5xxx. `(\d+)` does not
+        # match `${CF_PORT_BASE:-4}140`, so `compose_pins()` returned an EMPTY dict and this
+        # script reported, in its own success line, "ok — all 0 compose pins ... match".
+        #
+        # So check 1 — the check this file was written for, the one whose absence let sixteen
+        # ports drift silently during the 46→70 sweep — has been asserting nothing since the
+        # `CF_PORT_BASE` templating was introduced. Checks 3 and 4 read the same dict and were
+        # equally vacuous. The header above describes a guard that existed and did not run.
+        #
+        # A check that cannot fail is worse than no check, because the "ok" is read as evidence.
+        # `zero_pins_is_a_failure()` below now makes emptiness itself a red, so this cannot
+        # silently stop matching a third time.
+        m = re.search(r'127\.0\.0\.1:(?:\$\{CF_PORT_BASE:-(\d+)\})?(\d+):(\d+)', raw)
         if m and service:
-            pins[service] = (int(m.group(1)), n)
+            # The base digit and the rest are concatenated the way compose interpolates them, so
+            # `${CF_PORT_BASE:-4}` + `140` is 4140 — the number the registry derivation produces.
+            host = f"{m.group(1) or ''}{m.group(2)}"
+            pins[service] = (int(host), n)
 
     return pins
+
+
+def zero_pins_is_a_failure(pins):
+    """Finding no pins at all is a RED, not a clean run.
+
+    The failure this exists for is the one recorded beside the regex above: the pattern stopped
+    matching, every check that reads this dict quietly became a no-op, and the script kept printing
+    a success line with a zero in it that nobody read as a problem. The estate compose file has had
+    dozens of published ports for its whole life; zero is not a state it can legitimately be in.
+    """
+    if pins:
+        return False
+    print(
+        "FAIL: no `127.0.0.1:<host>:<container>` mapping was found anywhere in the estate compose "
+        "file. That is not a file with no pins — it is this script's pattern having stopped "
+        "matching, which is what silently disabled checks 1, 3 and 4 once already. Fix the pattern "
+        "rather than the expectation."
+    )
+    return True
 
 
 def verify_pins():
@@ -200,6 +238,10 @@ def main():
           f"  ({ORG})")
 
     compose = compose_pins()
+    # Before anything reads it: an empty dict means the pattern stopped matching, not that the
+    # file is clean. See the note in `compose_pins`.
+    if zero_pins_is_a_failure(compose):
+        return 1
     verify = verify_pins()
     print(f"pinned:   {len(compose)} in {COMPOSE.name}, "
           f"{sum(len(v) for v in verify.values())} in {VERIFY.name}\n")

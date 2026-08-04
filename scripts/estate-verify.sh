@@ -60,15 +60,16 @@ ANALYTICS=${ANALYTICS:-http://127.0.0.1:4121}
 TESSERA=${TESSERA:-http://127.0.0.1:4125}
 # The bundle, not the service. Named rather than written inline at the `/world-assets/` check
 # below, because a bare literal is a port `scripts/web-check.py` cannot resolve to a repository
-# and therefore cannot recompute. It derives to 4141 — the same number it was assigned by hand
-# before the registry carried it, which is coincidence and is not evidence of anything.
-TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:4141}
-# The observability sink. Derived — `deployableRepos()` index 42, immediately after
-# tessera-web's 4141 — and `scripts/web-check.py` recomputes it from micro-org rather
+# and therefore cannot recompute. It derives to 4140 — it was 4141 until the P13 fold removed
+# `foresight-admin-web` from micro-org's registry at index 39 and moved everything below it down
+# by one. `web-check.py` named all seven; this is one of them.
+TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:4140}
+# The observability sink. Derived — `deployableRepos()` index 41, immediately after
+# tessera-web's 4140 — and `scripts/web-check.py` recomputes it from micro-org rather
 # than trusting this line. Until recently there was nothing on this port at all: the
 # service was absent from the estate compose file entirely while sixteen frontends
 # posted browser telemetry at it.
-LANTERN=${LANTERN:-http://127.0.0.1:4142}
+LANTERN=${LANTERN:-http://127.0.0.1:4141}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 fails=0
 
@@ -1606,10 +1607,9 @@ for rec in \
   "devportal-web 4135 /apps" \
   "status-web 4136 /history" \
   "foresight-web 4138 /rules" \
-  "foresight-admin-web 4139 /categories" \
   "emberkin-web 4137 /party" \
-  "aetherholm-web 4140 /cities" \
-  "tessera-web 4141 /wards"; do
+  "aetherholm-web 4139 /cities" \
+  "tessera-web 4140 /wards"; do
   set -- $rec
   web_surface "$1" "$2" "$3"
 done
@@ -1751,7 +1751,6 @@ for rec in \
   "admin admin-web" \
   "status status-web" \
   "foresight foresight-web" \
-  "foresight-admin foresight-admin-web" \
   "emberkin emberkin-web" \
   "aetherholm aetherholm-web" \
   "tessera tessera-web" \

@@ -7,7 +7,7 @@
 #   environment : mainnet
 #   apex        : cloudsforge.online
 #   tunnel      : cf-mainnet-operator
-#   hostnames   : 4
+#   hostnames   : 3
 #
 # Fill in `tunnel:` and `credentials-file:` from `cloudflared tunnel create`.
 # They are the only two values in this file that are not derived, because they
@@ -15,8 +15,11 @@
 
 # THE OPERATOR TUNNEL — A SEPARATE TUNNEL, AND THE REASON IS THE SEPARATION.
 #
-# Four consoles: admin, beacon, lantern, foresight-admin. Every one is
-# `adminOnly` in the registry, which is where this list comes from.
+# Three consoles: admin, beacon, lantern. Every one is `adminOnly` in the
+# registry, which is where this list comes from — so when the Foresight operator
+# panel folded into `admin-web` at P13 and its registry row went, this file lost
+# `foresight-admin.<apex>` on the next run without anybody editing a hostname.
+# That is the property the derivation is for.
 #
 # WHY A SECOND TUNNEL RATHER THAN FOUR MORE RULES IN THE PUBLIC FILE. A tunnel is
 # a credential. `credentials-file` is a token that authorises a process to
@@ -73,10 +76,6 @@ ingress:
     originRequest:
       noTLSVerify: true
   - hostname: beacon.cloudsforge.online
-    service: https://127.0.0.1:443
-    originRequest:
-      noTLSVerify: true
-  - hostname: foresight-admin.cloudsforge.online
     service: https://127.0.0.1:443
     originRequest:
       noTLSVerify: true

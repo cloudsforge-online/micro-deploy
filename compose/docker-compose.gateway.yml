@@ -280,7 +280,6 @@ services:
           - emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me}
           - explorer.${CF_WEB_APEX:-cloudsforge.localtest.me}
           - foresight.${CF_WEB_APEX:-cloudsforge.localtest.me}
-          - foresight-admin.${CF_WEB_APEX:-cloudsforge.localtest.me}
           - hub.${CF_WEB_APEX:-cloudsforge.localtest.me}
           - market.${CF_WEB_APEX:-cloudsforge.localtest.me}
           - network.${CF_WEB_APEX:-cloudsforge.localtest.me}

@@ -43,15 +43,17 @@ was prefixed — and a hand-typed cloudflared ingress would be the fifth.
       because it is not a judgement this script makes. The registry already
       carries the two booleans that separate the three classes:
 
-          operator  =  adminOnly is true          -> admin, foresight-admin,
-                                                     lantern, beacon      (4)
+          operator  =  adminOnly is true          -> admin, lantern,
+                                                     beacon               (3)
           api       =  servesUi is false          -> nimbus, account, api,
                                                      worlds-api, pay, vault,
                                                      rpc, p2p               (8)
           public    =  everything else            -> the apex + 13         (14)
 
-      14 / 4 / 8. Those are the counts the deployment brief arrived at by
-      hand — 14 / 4 / 6 then — reproduced here without a list, from fields that
+      14 / 3 / 8. Those are the counts the deployment brief arrived at by
+      hand — 14 / 4 / 6 then, and the operator column was 4 until the P13 fold
+      took `foresight-admin` out of the registry — reproduced here without a
+      list, from fields that
       already existed for another purpose entirely (`adminOnly` hides a surface
       from the product switcher unless the viewer holds the `admin` role —
       index.tsx:368). A seventh product, or a fifth console, is a registry row
@@ -422,8 +424,11 @@ PUBLIC_NOTE = """\
 OPERATOR_NOTE = """\
 # THE OPERATOR TUNNEL — A SEPARATE TUNNEL, AND THE REASON IS THE SEPARATION.
 #
-# Four consoles: admin, beacon, lantern, foresight-admin. Every one is
-# `adminOnly` in the registry, which is where this list comes from.
+# Three consoles: admin, beacon, lantern. Every one is `adminOnly` in the
+# registry, which is where this list comes from — so when the Foresight operator
+# panel folded into `admin-web` at P13 and its registry row went, this file lost
+# `foresight-admin.<apex>` on the next run without anybody editing a hostname.
+# That is the property the derivation is for.
 #
 # WHY A SECOND TUNNEL RATHER THAN FOUR MORE RULES IN THE PUBLIC FILE. A tunnel is
 # a credential. `credentials-file` is a token that authorises a process to

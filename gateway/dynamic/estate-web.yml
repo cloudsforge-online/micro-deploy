@@ -89,10 +89,11 @@
 #   * The developer platform is `developers.`, though the repository is `micro-devportal-web`.
 #     policy.yml already carries that correction and the story of how it was found.
 #
-# `foresight-admin` is the ONE host here with no registry row to read. Recorded as a gap for
-# micro-ui in docker-compose.estate.yml beside the container; not invented into surfaces.ts from
-# this repository, because a sixteenth hand-maintained copy is the mistake the registry exists to
-# end.
+# Every host below now reads back to a registry row. `foresight-admin` used to be the one that did
+# not — recorded here as a gap for micro-ui rather than invented into surfaces.ts from this
+# repository, because a sixteenth hand-maintained copy is the mistake the registry exists to end.
+# It was given a row, and at P13 the panel folded into `admin-web` and both went: the row, and the
+# router that used to be beside `cf-web-foresight` below.
 
 {{ if env "CF_WEB_APEX" }}
 http:
@@ -655,7 +656,7 @@ http:
     # `/ideas/:id/approve` and the rest. That is the same shape identity has, and public-api.yml
     # already carries the consequence: it strips `/v1` for foresight (`cf-api-strip-version`)
     # because "11 §288 specifies the public API as URL-versioned" and the service is not. Here
-    # there is no version to strip — foresight-web and foresight-admin-web both call the
+    # there is no version to strip — `foresight-web` and the operator console both call the
     # unversioned paths directly — so the routers below name the RESOURCES.
     #
     # **2. `/markets` IS BOTH AN API PATH AND A CLIENT ROUTE.** `foresight-web/src/lib/routes.ts`
@@ -667,12 +668,19 @@ http:
     #
     # `/ideas` and `/categories` have no such collision: neither is in `ROUTES`, so nginx already
     # 404s them "on purpose, so that a wrong address answers 404 rather than 200" — and THAT 404
-    # is the one foresight-admin has been getting, because the console calls this host's API
-    # cross-origin (`foresight-admin-web/src/lib/hosts.ts:33`, `API_SURFACE = 'foresight'`) and
+    # is the one the operator panel used to get, because it calls this host's API cross-origin and
     # nothing here answered. Those two are routed unconditionally.
     #
+    # **THE CROSS-ORIGIN CALLER MOVED AT P13 AND DID NOT GO AWAY.** It was
+    # `foresight-admin.<apex>`; it is now `admin.<apex>/foresight`, a section inside the operator
+    # console (`admin-web/src/lib/hosts.ts`, `FORESIGHT_SURFACE = 'foresight'`). These three
+    # routers are unchanged by that fold — the panel called this host from another origin before
+    # and calls it from another origin still. What DID change is which origin, and therefore which
+    # entry in `policy.yml`'s CORS allowlist has to be there: `https://admin.<apex>` already was.
+    # The header list was the gap, and `idempotency-key` is now in it.
+    #
     # `/markets` is separated by `Accept`, which is a FACT ABOUT THE TWO CALLERS and not a
-    # heuristic: `foresight-web/src/lib/api.ts:265` and `foresight-admin-web/src/lib/api.ts` both
+    # heuristic: `foresight-web/src/lib/api.ts:265` and `admin-web/src/lib/api.ts` both
     # set `accept: application/json` on every request they make, and a browser NAVIGATION sends
     # `text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8` — which contains
     # `application/xml` and `application/xhtml+xml` and never `application/json`. So the deep link
@@ -701,13 +709,30 @@ http:
       entryPoints: [websecure]
       service: cf-svc-foresight
 
-    # The one hostname in this file with no registry row behind it. See the header.
-    cf-web-foresight-admin:
-      rule: 'Host(`foresight-admin.{{ env "CF_WEB_APEX" }}`)'
-      priority: 500
-      entryPoints: [websecure]
-      middlewares: [cf-web-headers]
-      service: cf-web-foresight-admin
+    # ── THE FORESIGHT-ADMIN BUNDLE ROUTER WAS HERE, and the P13 fold removed it ───────────
+    #
+    # Its name is deliberately not written out below. `scripts/surface-routes.py` check 4 fails on
+    # any `cf-api-*`/`cf-web-*`/`cf-svc-*` name that appears in a COMMENT in this directory and is
+    # defined nowhere in it — because "a router that exists only as prose answers 'is it routed?'
+    # with a yes, in the file that would know". A tombstone naming the deleted router is exactly
+    # that sentence, so this one describes it instead. The check caught this comment on its first
+    # run, which is the check doing its job on the person who added the check's neighbour.
+    #
+    # `foresight-admin.<apex>` is served by nothing now. The Foresight operator panel is a SECTION
+    # inside the operator console — `admin.<apex>/foresight` — so it is served by `cf-web-admin`
+    # above, behind the same Cloudflare Access policy as the rest of that host, and it needs no
+    # router of its own.
+    #
+    # Its API router was never here either, and that is the part worth keeping straight: the panel
+    # called `foresight.<apex>` cross-origin then and it still does now from its new home. Those
+    # routers — `cf-api-foresight-resources` and `cf-api-foresight-markets` — are directly above
+    # and are UNCHANGED by the fold. What changed is the browser origin they answer, which is why
+    # `policy.yml` gained `idempotency-key` in the same commit; see the note there.
+    #
+    # The deletion could not have been made here alone. `scripts/surface-routes.py` check 2 fails
+    # on a router for a host no registry row declares, and check 1 fails on a registry row with no
+    # router — so this line and `ui/packages/ui/src/surfaces.ts`'s `foresight-admin` row had to go
+    # together, which is exactly the coupling that script exists to enforce.
 
     # ── emberkin and aetherholm — their backends ARRIVED, and their bundles were still
     #    talking to nginx ──────────────────────────────────────────────────────
@@ -1218,9 +1243,6 @@ http:
     cf-web-foresight:
       loadBalancer:
         servers: [{ url: "http://foresight-web:8080" }]
-    cf-web-foresight-admin:
-      loadBalancer:
-        servers: [{ url: "http://foresight-admin-web:8080" }]
     cf-web-emberkin:
       loadBalancer:
         servers: [{ url: "http://emberkin-web:8080" }]

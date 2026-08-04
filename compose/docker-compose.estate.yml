@@ -424,7 +424,6 @@ services:
         https://admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://status.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://foresight.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://foresight-admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me},
@@ -2342,7 +2341,7 @@ services:
       BEACON_PUBLIC_STATUS: "true"
       INSTANCE_ID: beacon-estate
     ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}143:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}142:4000"
     depends_on:
       beacon-migrate:
         condition: service_completed_successfully
@@ -2508,7 +2507,7 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}144:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}143:4000"
     depends_on:
       faucet-migrate:
         condition: service_completed_successfully
@@ -2824,49 +2823,35 @@ services:
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}138:8080"
 
-  # -------------------------------- foresight-admin-web (no micro-ui row)  4139
-  # micro-org's registry now carries this repository, so the PORT is derived. What
-  # it still has no row in is `ui/packages/ui/src/surfaces.ts` — a different
-  # registry answering a different question — so it has no
-  # registry subdomain either. It is served at `foresight-admin.<apex>` — a name
-  # chosen here, and the only surface hostname in this estate that is not read out
-  # of the registry. Recorded as a gap for micro-ui rather than fixed here: the
-  # registry's own header says the list was maintained by hand in eight places and
-  # had already drifted, and adding a sixteenth copy would be that mistake again.
+  # ── foresight-admin-web WAS HERE (4139), and the P13 fold removed it ────────
   #
-  # ── THAT GAP HAS NOW BEEN OBSERVED BREAKING SIGN-OUT, AND IT IS STILL NOT
-  #    OURS TO FIX ────────────────────────────────────────────────────────────
+  # The Foresight operator panel is a SECTION inside the operator console now —
+  # `admin.<apex>/foresight`, served by the `admin-web` container above — so there
+  # is no second bundle to run and no second hostname to serve it on.
   #
-  # `cloudsforgeHosts()` (ui/packages/ui/src/index.tsx:156) derives the apex by
-  # stripping the leftmost label ONLY when that label is in `KNOWN_SUBS`, and
-  # `KNOWN_SUBS` (ui/packages/ui/src/surfaces.ts:688) is built from the SURFACES
-  # registry's `subdomain` values. `foresight-admin` is in no such row, so the
-  # label is NOT stripped, the whole host is taken to be the apex, and every
-  # address that bundle composes gains a level:
+  # ── The gap recorded here for two months is closed, in both directions ──────
   #
-  #     at    foresight-admin.<apex>
-  #     wrong https://hub.foresight-admin.<apex>/account/logout   ← 404
-  #     right https://hub.<apex>/account/logout
+  # This block used to carry a long note saying `foresight-admin` was the one
+  # surface hostname in the estate not read out of `ui/packages/ui/src/surfaces.ts`,
+  # and that the missing row broke `cloudsforgeHosts()`: the label was not in
+  # `KNOWN_SUBS`, so it was not stripped, the whole host became the apex, and
+  # sign-out resolved to `https://hub.foresight-admin.<apex>/account/logout` — a
+  # 404 — with identity, billing and telemetry composed the same way. The note
+  # ended "THE FIX IS ONE `subdomain: 'foresight-admin'` ROW IN micro-ui."
   #
-  # Reproduced against the built `dist/surfaces.js` rather than inferred. It is
-  # NOT a prefixing bug and NOT gateway routing — this file's own routes for
-  # `foresight-admin.<apex>` are correct, and nothing in the gateway composes
-  # that URL. Falling back to the full host is DELIBERATE (a preview at
-  # `pr-42.example.dev` is its own apex); the fault is the missing registry row.
+  # That row was added, which fixed it. It has now been REMOVED again, and that is
+  # not a regression: the row was needed because a bundle answered at that name,
+  # and none does. The screens derive their apex through the `admin` row, which is
+  # a known subdomain and always was.
   #
-  # Sign-out is only the loudest symptom: identity, billing and telemetry are
-  # composed the same way, which is exactly the Emberkin defect recorded at
-  # surfaces.ts:445 and fixed there by adding the row. A gateway rewrite here
-  # would hide one 404 and leave the other three, so it is deliberately not
-  # done. THE FIX IS ONE `subdomain: 'foresight-admin'` ROW IN micro-ui.
-  foresight-admin-web:
-    <<: *web-defaults
-    build:
-      context: ../../foresight-admin-web
-      additional_contexts: *web-contexts
-      args: *web-build-args
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}139:8080"
+  # Nothing was left behind. `gateway/dynamic/estate-web.yml` lost the bundle
+  # router and its service, `policy.yml` lost the CORS origin, `cloudflared/gen.py`
+  # lost two tunnel hostnames, and micro-org's registry lost the repository row.
+  # `scripts/surface-routes.py` is what forces them to move together.
+  #
+  # Host port 4139 is free. It is deliberately NOT reassigned: the ports in this
+  # file are pinned by hand and other repositories have written some of them down,
+  # so a gap costs nothing and shuffling to close one costs a search.
 
   # ------------------------------------------ emberkin-web (emberkin)      4137
   emberkin-web:
@@ -2886,7 +2871,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}140:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}139:8080"
 
   # ------------------------------------------ tessera-web (tessera)        4141
   # The SIXTEENTH frontend, and the first whose service is also in this file.
@@ -2903,7 +2888,7 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
     ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}141:8080"
+      - "127.0.0.1:${CF_PORT_BASE:-4}140:8080"
     # ── `/world-assets/`, THE ONE micro-tessera-web NAMED AS MOST LIKELY TO BE
     #    MISSED — AND `materialise.py` HAS SINCE LANDED ────────────────────────
     #
@@ -3124,7 +3109,6 @@ services:
         https://admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://status.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://foresight.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://foresight-admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me},
         https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me},
@@ -3134,7 +3118,7 @@ services:
     ports:
       # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.
       # Derived, not chosen; `make check-web` re-derives it from micro-org.
-      - "127.0.0.1:${CF_PORT_BASE:-4}142:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}141:4000"
     depends_on:
       lantern-migrate:
         condition: service_completed_successfully

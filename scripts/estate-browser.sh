@@ -79,7 +79,7 @@ TARGETS="$TARGETS,identity=https://nimbus.${APEX}"
 for pair in \
   "hub hub" "market market" "trade trade" "worlds worlds" "create create" \
   "admin admin" "status status" "explorer explorer" "developers developers" \
-  "network network" "foresight foresight" "foresight-admin foresight-admin" \
+  "network network" "foresight foresight" \
   "emberkin emberkin" "aetherholm aetherholm" "tessera tessera"; do
   # No `declare -A`: bash here is 3.2, and an associative-array map once silently
   # broke five suites in this repository.

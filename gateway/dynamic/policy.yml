@@ -84,11 +84,12 @@ http:
           # `nimbus.<apex>/auth/handoff/redeem` from whatever origin the page is on
           # (ui/packages/ui/src/index.tsx). An origin missing here cannot complete a sign-in.
           #
-          # `foresight-admin` is the one entry with no registry row behind it; see the note beside
-          # its container in compose/docker-compose.estate.yml.
+          # `foresight-admin.cloudsforge.online` was here and is GONE — the P13 fold made the
+          # Foresight operator panel a section inside `admin.<apex>`, which is already allowlisted
+          # eleven lines up. Left behind, it would be the `mint.cloudsforge.online` defect written
+          # fresh: an origin allowlisted for a host nothing serves.
           - https://emberkin.cloudsforge.online
           - https://aetherholm.cloudsforge.online
-          - https://foresight-admin.cloudsforge.online
           # The fourth Forge Worlds title. It needs this entry for the same reason the three
           # above do — sign-in is cross-origin from every surface — and for one more that is
           # specific to it: unlike emberkin and aetherholm, its SERVICE runs in this estate, and
@@ -131,7 +132,6 @@ http:
           - https://admin.{{ env "CF_WEB_APEX" }}
           - https://status.{{ env "CF_WEB_APEX" }}
           - https://foresight.{{ env "CF_WEB_APEX" }}
-          - https://foresight-admin.{{ env "CF_WEB_APEX" }}
           - https://emberkin.{{ env "CF_WEB_APEX" }}
           - https://aetherholm.{{ env "CF_WEB_APEX" }}
           - https://tessera.{{ env "CF_WEB_APEX" }}
@@ -170,6 +170,34 @@ http:
           - traceparent
           - tracestate
           - baggage
+          # ── `idempotency-key` WAS MISSING, AND ONE BROWSER CALL IN THE ESTATE NEEDS IT ───────
+          #
+          # It is not on the browser's CORS-safelisted request-header list, so a cross-origin
+          # request carrying it triggers a preflight, and the browser refuses the real request
+          # unless the name comes back in `Access-Control-Allow-Headers`. It did not come back.
+          #
+          # THE CALL THAT NEEDS IT is `POST /markets/:id/deploy` on foresight, which REQUIRES an
+          # `Idempotency-Key` of 8 to 200 characters and answers 400 without one
+          # (`idempotencyKeyOf`, foresight/src/server.ts:1033-1040). The operator panel is the only
+          # client that calls it from a browser, and it has always called foresight cross-origin —
+          # from `foresight-admin.<apex>` before the P13 fold and from `admin.<apex>` after it. So
+          # the deploy control could not have worked in a browser at any point, and the fold did
+          # not cause that; it inherited it.
+          #
+          # WHY NOTHING CAUGHT IT. The estate's other caller of that route is
+          # `scripts/foresight-market-journey.mjs:372`, which runs under Node — no origin, no
+          # preflight, no CORS. So the journey passed against a route no browser could reach, which
+          # is the shape of defect this directory keeps rediscovering: a check that exercises the
+          # path by a mechanism the real client does not use.
+          #
+          # AND HOW IT FAILED: silently, and in the browser only. Traefik never sees the refused
+          # request, foresight never sees it, nothing logs, and the operator gets a network error
+          # with no status code on the screen that deploys a market contract. `policy.yml` says the
+          # same thing four times about a missing ORIGIN — "fails closed and silently" — and a
+          # missing HEADER fails exactly the same way for exactly the same reason.
+          #
+          # `scripts/surface-routes.py` check 8 now fails if this line is removed.
+          - idempotency-key
         accessControlAllowCredentials: true
         accessControlMaxAge: 600
         addVaryHeader: true
