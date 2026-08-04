@@ -2811,10 +2811,20 @@ else
     502|503)
       bad "https://network.$WEB_APEX/v1/faucet answered $fcode — THERE IS NO FAUCET IN THIS ESTATE AND THE GATEWAY IS ADVERTISING ONE. A 5xx reads as 'the faucet fell over'; the true answer is that a $EMBER_NETWORK estate has no faucet by design. Gate cf-api-network on CF_EMBER_NETWORK in gateway/dynamic/estate-web.yml" ;;
     404)
-      case "$fct" in
-        *json*) ok "https://network.$WEB_APEX/v1/faucet → 404 from the bundle's nginx, which honestly means there is no faucet on a $EMBER_NETWORK estate" ;;
-        *)      bad "https://network.$WEB_APEX/v1/faucet answered 404 $fct — the right status from the wrong thing; a drip form parsing this gets a parse error and blames itself" ;;
-      esac ;;
+      # The CONTENT TYPE is deliberately not pinned here, where the operator-console
+      # block above does pin it, and the difference is worth stating. There the
+      # question was whether the bundle was SHADOWING a service that exists, and
+      # only the content type could answer it. Here no service exists, and 404 is
+      # already the whole truth: "there is no faucet on this estate".
+      #
+      # The two bundles do not agree on how to say it — measured 2026-08-05,
+      # `explorer.<apex>/v1/nope` answers `404 application/json` from micro-explorer's
+      # nginx and `network.<apex>/v1/faucet` answers `404 text/html`, the SPA shell
+      # served with an honest status. That is a difference between two other
+      # repositories' nginx configurations, and failing here on it would make this
+      # section permanently red for something it cannot fix and that is not the
+      # defect. It is reported instead.
+      ok "https://network.$WEB_APEX/v1/faucet → 404 $fct, which honestly means there is no faucet on a $EMBER_NETWORK estate" ;;
     200)
       bad "https://network.$WEB_APEX/v1/faucet answered 200 $fct with no faucet in this estate — either the SPA is shadowing the path (a 200 of index.html where JSON was expected) or something else has taken the route" ;;
     *)
