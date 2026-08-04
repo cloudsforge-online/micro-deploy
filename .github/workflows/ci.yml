@@ -70,9 +70,15 @@ jobs:
       #
       # `cloudflared/gen.py` derives every hostname and its tunnel from the same
       # registry the step above reads — `adminOnly` and `servesUi` are what split
-      # the 24 host surfaces into 14 public / 4 operator / 6 API, so a new
+      # the 26 host surfaces into 14 public / 4 operator / 8 API, so a new
       # surface is a registry row and nothing else. `--check` regenerates in
       # memory and fails if the committed files differ.
+      #
+      # It was 24 into 14 / 4 / 6 until `rpc` and `p2p` were declared. They are
+      # the chain's two hostnames, and declaring them is what let the generator
+      # DELETE its one hand-written rule: `rpc.<apex>` used to be appended after
+      # the derived list, pointed straight at the node's port, past the gateway
+      # every other hostname goes through.
       #
       # Wired in the same job rather than a new one because it needs the same
       # micro-ui checkout and the same pnpm install, which is the expensive part.

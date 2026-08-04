@@ -177,6 +177,23 @@ services:
       # a stack brought up without the certificate script degrades to the old
       # self-signed default instead of refusing to start.
       - ../gateway/certs:/etc/traefik/certs:ro
+    # ── THE ONE UPSTREAM THAT IS NOT ON A COMPOSE NETWORK ────────────────────
+    #
+    # `gateway/dynamic/estate-web.yml` routes `rpc.<apex>` and `p2p.<apex>` to the
+    # EMBER chain, and the chain is not ours to attach: `hearth` is the frozen
+    # upstream repository, run from its own compose file by
+    # `scripts/ember-testnet.sh` on its own `hearth-testnet` network. The estate has
+    # always crossed the host to reach it — docker-compose.estate.yml gives the
+    # indexer, foresight and the faucet the identical entry, each with the identical
+    # reason beside it.
+    #
+    # DOCKER DESKTOP RESOLVES THIS NAME FOR FREE AND THE LINUX DAEMON DOES NOT, which
+    # is precisely why it has to be declared rather than relied on: without it the
+    # gateway would route the chain perfectly on the machine this was written on and
+    # answer 502 on the box it deploys to, with a DNS failure buried in a proxy log.
+    # `host-gateway` is a no-op where the name already resolves.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "traefik", "healthcheck", "--ping"]
       interval: 10s
@@ -203,10 +220,31 @@ services:
         # These aliases point those names at the gateway on the estate's own network,
         # so a probe traverses the real path: DNS, TLS, Traefik routing, the upstream.
         #
-        # THE LIST IS STATIC BECAUSE COMPOSE ALIASES CANNOT BE COMPUTED, so it is
-        # CHECKED instead: `scripts/surface-routes.py` compares it against the surface
-        # registry and fails on drift, and that script now runs in CI. A hand-kept copy
-        # that nothing verifies is the defect this estate has paid for four times.
+        # THE LIST IS STATIC BECAUSE COMPOSE ALIASES CANNOT BE COMPUTED, AND NOTHING
+        # CHECKS IT. This block claimed, until 2026-08-04, that
+        # "`scripts/surface-routes.py` compares it against the surface registry and
+        # fails on drift". IT DOES NOT. That script has five checks — routers against
+        # the registry in both directions, an API router per deployed backend, cf-*
+        # names written in comments, and the CORS allowlist — and the word `aliases`
+        # appears nowhere in `scripts/`. This was a check described in prose, in the
+        # file that would know, which is the exact defect check 4 of that script was
+        # added for.
+        #
+        # AND IT HAD ALREADY DRIFTED, which is how the claim was found. `lantern` and
+        # `beacon` became browser surfaces the day micro-lantern-web and
+        # micro-beacon-web were deployed (`ui/packages/ui/src/surfaces.ts` flipped both
+        # to `servesUi: true` on the measurement), and neither hostname is in the list
+        # below — so beacon, which probes these addresses from inside the estate for
+        # the reason this block explains, cannot resolve the two operator consoles.
+        #
+        # Corrected here rather than fixed: adding the two aliases requires recreating
+        # this container, and both hostnames belong to micro-beacon's probe set, which
+        # another agent holds tonight. Written down so the next reader inherits a true
+        # sentence and a named defect instead of a check that does not exist.
+        #
+        # `rpc` and `p2p` are deliberately absent, and correctly so: this list is the
+        # surfaces a BROWSER opens, which is why the six API hostnames — nimbus, api,
+        # worlds-api, pay, vault and account — are absent from it too.
         aliases:
           # The bare apex first, because it has no subdomain and a prefixed list
           # silently omits it — which is exactly what happened: 18 of 19 groups

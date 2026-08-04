@@ -313,7 +313,14 @@ it is how a service gets left on an old image while everything around it moves.
 
 Everything is in **9xxx**, which was verified clear against `lsof -iTCP -sTCP:LISTEN`
 and `docker ps` before it was chosen. The existing estate holds 3000–3003,
-4001–4006, 4010–4011, 5432, 8080–8081, 8545–8549, 8645–8649 and 18545.
+4001–4006, 4010–4011, 5432, 8080–8081, 8545–8549 and 8645–8649.
+
+**18545 is no longer in that list**, and 8648 is about to join it. 18545 was never
+bound by anything: it was the port the testnet tunnel sent `rpc.<apex>` to, back
+when that one hostname skipped the gateway. Every ingress rule now ends at Traefik,
+so the tunnel needs no chain port at all. 8648 is Hearth's WebSocket P2P transport
+— the one a Cloudflare Tunnel can carry, where the raw TCP peer port 8646 cannot —
+and it is reached the same way 8545 is, across the host from the gateway.
 
 | Host | Container | Component | |
 | --- | --- | --- | --- |

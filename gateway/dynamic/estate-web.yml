@@ -112,6 +112,68 @@ http:
         # frameDeny would break it. Matches what every frontend's nginx.conf already sends.
         customFrameOptionsValue: "SAMEORIGIN"
 
+    # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
+    #
+    # `rpc.<apex>` and `p2p.<apex>` are the only two hostnames in this estate that
+    # take work from a stranger with NO CREDENTIAL AT ALL. Every other unauthenticated
+    # route here is either a static bundle or a service that checks a token inside
+    # itself. An EVM JSON-RPC endpoint answers `eth_call` to anyone, and `eth_call`
+    # runs a program.
+    #
+    # ── THE NODE'S OWN LIMITER CANNOT DO THIS JOB, AND HEARTH SAYS SO ITSELF ────
+    #
+    # `hearth/node/src/jsonrpc/server.js:244-255` bounds concurrent requests per
+    # address, and its own comment names the exact defeat: "Keyed on
+    # `socket.remoteAddress`, so behind a proxy — the public RPC ingress
+    # docs/quickstart.md §9 still lists as pending — every request arrives from one
+    # address and this degrades into a global cap."
+    #
+    # THAT DEGRADATION IS ALREADY LIVE AND IS NOT CAUSED BY THIS CHANGE. cloudflared
+    # connects to the origin over loopback, so before today every tunnelled request
+    # already reached hearth from 127.0.0.1 and already shared one bucket. What
+    # changes is that the true client address is now available to something that can
+    # act on it — which is only true once the request passes through here.
+    #
+    # `Cf-Connecting-Ip` RATHER THAN THE PEER ADDRESS, and that is the whole point:
+    # the peer address is cloudflared's, one value for the entire internet, and a
+    # limiter keyed on it throttles everyone as one client — the same collapse
+    # quoted above, reproduced one layer up. Cloudflare SETS this header at its edge
+    # and overwrites any client-supplied value, and the only path to this gateway is
+    # the tunnel (every published port is bound to 127.0.0.1), so it is not
+    # spoofable here.
+    #
+    # WHAT A REQUEST WITHOUT THE HEADER GETS, STATED. Anything that did not come
+    # through Cloudflare — a loopback `curl`, `scripts/estate-verify.sh`, a probe on
+    # the estate network — has no `Cf-Connecting-Ip`, so Traefik keys it on the empty
+    # string and all such callers share ONE bucket. That is a deliberate acceptance
+    # rather than an oversight: those callers are all on this box, the bucket is
+    # generous, and the alternative (falling back to the peer address) would put the
+    # real internet back into a single bucket to spare the loopback.
+    #
+    # THE NUMBERS. 30 requests/second sustained with a burst of 60 is roughly ten
+    # times what a wallet polling `eth_blockNumber` needs and far below what makes a
+    # single-threaded node — hearthd is one event loop, `scripts/ember-miner.sh:83`
+    # — miss a block. It is a ceiling on abuse, not a quota anyone should meet.
+    cf-rpc-throttle:
+      rateLimit:
+        average: 30
+        period: 1s
+        burst: 60
+        sourceCriterion:
+          requestHeaderName: Cf-Connecting-Ip
+    # The P2P limit counts DIALS, not messages: a WebSocket is one HTTP request and
+    # then a hijacked socket this middleware never sees again, so an established peer
+    # is untouched however much it gossips. 5/s with a burst of 20 bounds connection
+    # churn — the thing a stranger can actually spend the node's memory with — and no
+    # honest peer reconnects anywhere near that often.
+    cf-p2p-dial-throttle:
+      rateLimit:
+        average: 5
+        period: 1s
+        burst: 20
+        sourceCriterion:
+          requestHeaderName: Cf-Connecting-Ip
+
   routers:
     # ─────────────────────────────────────────────────────── hub — AND SIGN-IN ──
     #
@@ -819,6 +881,121 @@ http:
       entryPoints: [websecure]
       service: cf-svc-lantern
 
+    # ── rpc — THE CHAIN, AND THE LAST INGRESS RULE THAT SKIPPED THIS FILE ─────
+    #
+    # `rpc.<apex>` went STRAIGHT FROM THE TUNNEL TO THE NODE. Every other hostname
+    # this estate publishes arrived at `https://127.0.0.1:{gateway}`; this one alone
+    # was `service: http://127.0.0.1:18545` in
+    # `cloudflared/config.testnet.public.yml:128` and the same at :128 of the mainnet
+    # file. One rule, out of twenty, that skipped the layer the other nineteen use.
+    #
+    # WHAT THE BYPASS ACTUALLY COST, rather than merely being inconsistent:
+    #
+    #   * NO THROTTLE WAS POSSIBLE. See the `cf-rpc-throttle` block above: the node's
+    #     own per-address limiter is keyed on the socket's remote address, which is
+    #     cloudflared's for every request in the world, and nothing between the two
+    #     could see the real client. The limiter is now the first thing this request
+    #     meets.
+    #   * NO `/internal` REFUSAL, NO REQUEST ID, NO SECURITY HEADERS, NO ACCESS LOG.
+    #     Those are entrypoint middlewares and a priority-100000 router in policy.yml,
+    #     and all of them are attached to THIS gateway. A request that never entered
+    #     it got none of them, and no line in the estate's access log recorded that it
+    #     had happened at all.
+    #   * IT WAS THE ONE-OFF THAT GETS FORGOTTEN. The generator carried a `RPC_PORT`
+    #     constant and an `rpc=True` flag for exactly one appended rule; that constant
+    #     and that flag are deleted, and the hostname is now derived from the registry
+    #     like the other twenty.
+    #
+    # THE WHOLE HOST, NOT A PATH, AND THIS ONE IS SETTLED BY THE UPSTREAM RATHER THAN
+    # BY PREFERENCE. `hearth/node/src/jsonrpc/server.js` has NO PATH DISPATCH AT ALL:
+    # `httpListener()` (:227-241) hands every request to one `_serve`, whatever the
+    # URL. There is no second thing on that port to keep unreachable, so a path rule
+    # here would buy nothing and would cost the caller hearth's own diagnosis — a GET
+    # is answered `405` with `allow: POST,OPTIONS` and a JSON-RPC error body saying
+    # "JSON-RPC requires POST" (:277-279), which is a better answer than a 404 from a
+    # gateway that will not say why.
+    #
+    # NO `cf-web-headers`: that middleware sets a bundle's frame policy and this
+    # upstream answers JSON, the same reason every `cf-api-*` router omits it.
+    #
+    # CORS NEEDS NOTHING ADDED, and the interaction is worth writing down because two
+    # policies meet here. Hearth sends `access-control-allow-origin: *` on every
+    # response (`jsonrpc/server.js:271-274`) — correct for a public chain endpoint —
+    # while `cf-cors@file` runs on this entrypoint and OVERWRITES that header with the
+    # caller's own origin when the caller is in the estate allowlist, leaving the `*`
+    # untouched when it is not. So a first-party surface gets a credentialed
+    # same-origin echo and a third-party dapp keeps the open header the chain intends.
+    # Neither needed a new allowlist entry: nothing is SERVED at `rpc.<apex>`, so no
+    # page ever has that origin.
+    #
+    # THE CONDITIONAL BELOW IS ON `CF_RPC_UPSTREAM`, for the reason the whole file is
+    # wrapped in one: an unset variable must produce NO ROUTER rather than one pointed
+    # at an empty URL. It is a per-environment fact — which node this estate's chain is —
+    # and it is set in `compose/env/traefik.env` and `compose/env/traefik.testnet.env`.
+    # `scripts/surface-routes.py` check 6 fails when a variable this directory reads is
+    # absent from either file, so "unset" cannot happen quietly.
+{{ if env "CF_RPC_UPSTREAM" }}
+    cf-api-rpc:
+      rule: 'Host(`rpc.{{ env "CF_WEB_APEX" }}`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-rpc-throttle]
+      service: cf-svc-hearth-rpc
+{{ end }}
+
+    # ── p2p — PEER GOSSIP, BECAUSE A TUNNEL CANNOT CARRY A TCP SOCKET ─────────
+    #
+    # Hearth's peer transport is raw TCP on 8646 (`hearth/node/src/params.js:307`).
+    # A Cloudflare Tunnel carries HTTP; there is no ingress rule that publishes a
+    # TCP listener through one. So Hearth gains a WEBSOCKET transport — container
+    # port 8648, env `HEARTH_P2P_WS`, path `/p2p` — and this is the estate's half of
+    # that contract: the hostname, the router and the upstream.
+    #
+    # WRITTEN BEFORE THE UPSTREAM EXISTS, DELIBERATELY, AND THE COST IS STATED. The
+    # section above this file's emberkin block argues that a router pointing at a
+    # container that is not there answers 502 and "reads as 'the service fell over'
+    # — a wrong diagnosis, permanently". That argument is accepted and overridden
+    # here for one reason: this half and Hearth's half are being built in parallel,
+    # and the alternative is an ingress that has to be regenerated and a gateway that
+    # has to be reloaded on the day the other half lands. Until `HEARTH_P2P_WS` is
+    # serving, `p2p.<apex>` answers 502 and that 502 means "the WebSocket transport
+    # is not up yet". It is written here so the next reader is not left to guess.
+    #
+    # `PathPrefix(`/p2p`)` AND NOTHING ELSE ON THIS HOST. Unlike the RPC port above,
+    # this one is a single endpoint on a path the contract names, so the router
+    # publishes exactly that path and the hostname answers 404 everywhere else. The
+    # prefix form rather than `Path` tolerates a trailing slash and a future
+    # `/p2p/v2` without a second edit.
+    #
+    # ── NOTHING HERE MAY KILL A HEALTHY LONG-LIVED CONNECTION, AND NOTHING DOES ──
+    #
+    # This was checked rather than assumed, because it is the failure that would
+    # appear as intermittent peer loss weeks later:
+    #
+    #   * NO TIMEOUT IS SET ON THIS ROUTER OR ITS SERVICE. Traefik has no per-router
+    #     idle timeout; the only ones are the entrypoint's `respondingTimeouts`, and
+    #     `compose/docker-compose.gateway.yml` sets none, so v3's defaults apply.
+    #   * THE DEFAULT `readTimeout` DOES NOT REACH AN UPGRADED CONNECTION. Go's
+    #     `net/http` clears every deadline on the socket when a handler hijacks it —
+    #     `(*conn).hijackLocked` calls `rwc.SetDeadline(time.Time{})` — and a
+    #     WebSocket proxy hijacks. So the 101 ends the reach of every server-side
+    #     read deadline, which is why this needs no entrypoint override and gets
+    #     none: widening `readTimeout` estate-wide to protect this one route would
+    #     trade the whole gateway's slowloris bound for nothing.
+    #   * THE RATE LIMIT COUNTS THE DIAL, NOT THE TRAFFIC. See `cf-p2p-dial-throttle`.
+    #   * CLOUDFLARE IS THE ONE CLOCK THIS FILE CANNOT SET. Its edge closes a
+    #     WebSocket that has been idle, and no gateway setting changes that; it is
+    #     answered by application-level keepalive on Hearth's side, which is why that
+    #     is part of the same contract as the port and the path.
+{{ if env "CF_P2P_WS_UPSTREAM" }}
+    cf-api-p2p:
+      rule: 'Host(`p2p.{{ env "CF_WEB_APEX" }}`) && PathPrefix(`/p2p`)'
+      priority: 500
+      entryPoints: [websecure]
+      middlewares: [cf-p2p-dial-throttle]
+      service: cf-svc-hearth-p2p
+{{ end }}
+
   services:
     # The bundles. Port 8080 because the images are `nginx-unprivileged`: nothing in those
     # containers is root and a non-root process cannot bind 80. Read from each frontend's
@@ -985,6 +1162,49 @@ http:
     cf-svc-foresight:
       loadBalancer:
         servers: [{ url: "http://foresight:4021" }]
+
+    # ── the chain, which is the only upstream here that is not a container of ours ──
+    #
+    # Every other service in this file is a DNS name on the estate's own compose
+    # network. These two are not, and cannot be: the chain is `hearth`, the frozen
+    # upstream repository, run from its own compose file by
+    # `scripts/ember-testnet.sh` on its own `hearth-testnet` network. The estate
+    # reaches it the way `docker-compose.estate.yml:971` already does for the indexer
+    # — through `host.docker.internal`, at the ports that file already publishes —
+    # and the reason is ownership, stated beside that line: attaching hearth's seed
+    # to this project's network would mean editing a repository that is read, run and
+    # never modified.
+    #
+    # THE GATEWAY THEREFORE NEEDS `extra_hosts`, and it did not have it. Docker
+    # Desktop resolves `host.docker.internal` for free and the Linux daemon does not,
+    # which is the whole reason the indexer, foresight and the faucet each carry that
+    # entry. This gateway had no upstream outside the compose network until now, so it
+    # had no reason to — and the failure would have been invisible on the machine this
+    # was written on and total on the box it deploys to. Added in
+    # `compose/docker-compose.gateway.yml` beside the same comment.
+    #
+    # BOTH URLS ARE ENVIRONMENT VARIABLES rather than literals, and that is not
+    # ceremony. Mainnet and testnet are two compose projects on one host reading two
+    # env files, and the one thing they must never share is which chain they answer
+    # for: a literal here would publish the testnet node at `rpc.cloudsforge.online`
+    # the first time a mainnet chain existed, and every symptom of that would be a
+    # correct-looking answer to the wrong question.
+{{ if env "CF_RPC_UPSTREAM" }}
+    cf-svc-hearth-rpc:
+      loadBalancer:
+        servers: [{ url: "{{ env "CF_RPC_UPSTREAM" }}" }]
+{{ end }}
+{{ if env "CF_P2P_WS_UPSTREAM" }}
+    # `http://`, not `ws://`. A WebSocket begins as an HTTP request and Traefik
+    # proxies the upgrade on the connection it already has, so the upstream is an
+    # HTTP origin like every other one in this file. Traefik has no `ws://` scheme:
+    # a URL written that way is rejected when the service is built and the router
+    # that names it serves 502 while everything else in this directory keeps working
+    # — loud enough to find, quiet enough to be worth naming here.
+    cf-svc-hearth-p2p:
+      loadBalancer:
+        servers: [{ url: "{{ env "CF_P2P_WS_UPSTREAM" }}" }]
+{{ end }}
 {{ else }}
 # CF_WEB_APEX is unset, so this file contributes NOTHING rather than a full set of routers whose rules
 # read `Host(``)` and match no request ever sent. That distinction is the whole of the comment at

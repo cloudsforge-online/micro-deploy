@@ -46,24 +46,39 @@ was prefixed — and a hand-typed cloudflared ingress would be the fifth.
           operator  =  adminOnly is true          -> admin, foresight-admin,
                                                      lantern, beacon      (4)
           api       =  servesUi is false          -> nimbus, account, api,
-                                                     worlds-api, pay, vault (6)
+                                                     worlds-api, pay, vault,
+                                                     rpc, p2p               (8)
           public    =  everything else            -> the apex + 13         (14)
 
-      14 / 4 / 6. Those are the counts the deployment brief arrived at by
-      hand, reproduced here without a list, from fields that already existed for
-      another purpose entirely (`adminOnly` hides a surface from the product
-      switcher unless the viewer holds the `admin` role — index.tsx:368). A
-      seventh product, or a fifth console, is a registry row and nothing else.
+      14 / 4 / 8. Those are the counts the deployment brief arrived at by
+      hand — 14 / 4 / 6 then — reproduced here without a list, from fields that
+      already existed for another purpose entirely (`adminOnly` hides a surface
+      from the product switcher unless the viewer holds the `admin` role —
+      index.tsx:368). A seventh product, or a fifth console, is a registry row
+      and nothing else.
+
+      `rpc` and `p2p` ARE THE TWO THAT MADE THAT LAST SENTENCE TRUE OF THIS FILE
+      TOO. `rpc.<apex>` used to be the one hostname here that was not derived: a
+      hand-written rule appended after the loop, pointing PAST the gateway
+      straight at the node, with an `RPC_PORT` constant beside GATEWAY_PORT to
+      support it. The owner's instruction was that "rpc should be behind traefik
+      like everything else", and once it is, it is an ordinary API-class surface
+      — so the flag, the constant and the special case are gone, and the two
+      chain hostnames arrive here the way the other twenty do. The registry rows
+      argue their own case (`ui/packages/ui/src/surfaces.ts`, the `rpc` and `p2p`
+      entries).
 
   DERIVED from `compose/docker-compose.telemetry.yml`: the loopback port each
   utility publishes. They are not routed (see NOT_ROUTED below), but the check
   asserts that they are not, and it cannot assert that against a port it has
   guessed.
 
-  NOT DERIVABLE, and declared here with a reason each: the origin ports of the
-  gateway and the chain RPC, and the port offset that separates the two
-  environments. There is no registry of those; there is this table, and the
-  check reads it.
+  NOT DERIVABLE, and declared here with a reason each: the origin port of the
+  gateway, and the port offset that separates the two environments. There is no
+  registry of those; there is this table, and the check reads it. The chain's
+  RPC port WAS in this paragraph and is not any more — every rule in every file
+  below now ends at the gateway, so the only origin port this generator knows is
+  the gateway's.
 
 THE FILE IS GENERATED, SO THE CHECK IS A DIFF
 ---------------------------------------------
@@ -118,12 +133,14 @@ ENVIRONMENTS = {
     "testnet": {"apex": "testnet.cloudsforge.online", "offset": 10000, "project": "cf-testnet"},
 }
 
-# ── origins that are not in any registry, and why each port is what it is ─────
+# ── the one origin that is not in any registry, and why its port is what it is ─
+#
+# ONE, not two. `RPC_PORT = 8545` stood here and was the chain's own port, because
+# `rpc.<apex>` was routed past the gateway directly to hearth. It is behind Traefik
+# now like every other hostname, so the port that reaches the chain is a gateway
+# concern (`CF_RPC_UPSTREAM`, gateway/dynamic/estate-web.yml) and not a tunnel one.
+# Nothing in this file needs to know what a chain is any more.
 GATEWAY_PORT = 443   # compose/docker-compose.estate-gateway.yml:55, loopback only
-RPC_PORT = 8545      # hearth's eth-compatible JSON-RPC. NOT 8645, which is Hearth's
-                     # native RPC and is a different protocol on a different port;
-                     # the seed publishes 8545, 8645 and 8646 and only the first is
-                     # the one a wallet or an exchange speaks.
 
 # ── hostnames deliberately NOT routed, and the argument for each ─────────────
 #
@@ -298,14 +315,16 @@ def classify(surfaces):
     return public, operator, api
 
 
-def ingress_rules(subdomains, apex, origin, *, rpc=False, offset=0):
-    """`hostname` -> `service`, sorted, with the apex written bare."""
-    out = []
-    for sub in sorted(subdomains, key=lambda s: (s != "", s)):
-        out.append((f"{sub}.{apex}" if sub else apex, origin))
-    if rpc:
-        out.append((f"rpc.{apex}", f"http://127.0.0.1:{RPC_PORT + offset}"))
-    return out
+def ingress_rules(subdomains, apex, origin):
+    """`hostname` -> `service`, sorted, with the apex written bare.
+
+    EVERY RULE ENDS AT THE GATEWAY. There is no second origin and no exception:
+    the `rpc=True` flag that appended one hand-written rule pointing at the chain
+    is deleted, so this function can no longer produce a rule that skips Traefik
+    even if someone asks it to.
+    """
+    return [(f"{sub}.{apex}" if sub else apex, origin)
+            for sub in sorted(subdomains, key=lambda s: (s != "", s))]
 
 
 HEADER = """\
@@ -372,8 +391,23 @@ def render(env, tunnel_name, rules, *, note):
 
 PUBLIC_NOTE = """\
 # THE PUBLIC TUNNEL. Everything on it is reachable by anyone, with no Cloudflare
-# Access policy in front, because every one of these hostnames is either a page
-# meant for the public or an API a first-party browser calls cross-origin.
+# Access policy in front, because every one of these hostnames is a page meant for
+# the public, an API a first-party browser calls cross-origin, or one of the two
+# chain endpoints below.
+#
+# `rpc` AND `p2p` ARE THE TWO THAT ARE NEITHER, and they are the newest entries
+# here. Both are Hearth — the Ethereum JSON-RPC a wallet or an exchange points at,
+# and the WebSocket peer transport, which exists because a tunnel carries HTTP and
+# cannot carry the raw TCP peer socket at all. They answer strangers by design and
+# hold no session, so Access would be the wrong control; what they have instead is
+# a rate limit at the gateway, keyed on `Cf-Connecting-Ip` because the node's own
+# per-address limiter cannot see past the tunnel. `gateway/dynamic/estate-web.yml`
+# argues both at length.
+#
+# UNTIL 2026-08-04 `rpc.<apex>` WAS NOT ON THIS TUNNEL'S GATEWAY AT ALL: its rule
+# pointed straight at the node's port, the only one of these that skipped Traefik,
+# and therefore the only one with no throttle, no request id, no `/internal`
+# refusal and no access-log line. It is an ordinary derived rule now.
 #
 # `pay` and `vault` are on it and that deserves a sentence, because `vault` is
 # the custodial key service and the name is alarming. They cannot be anywhere
@@ -507,7 +541,7 @@ def main():
 
         files = [
             (f"config.{env}.public.yml", f"cf-{env}-public",
-             ingress_rules(pub_subs, apex, origin, rpc=True, offset=offset), PUBLIC_NOTE),
+             ingress_rules(pub_subs, apex, origin), PUBLIC_NOTE),
             (f"config.{env}.operator.yml", f"cf-{env}-operator",
              ingress_rules(op_subs, apex, origin), OPERATOR_NOTE),
         ]

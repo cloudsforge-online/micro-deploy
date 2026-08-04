@@ -7,15 +7,30 @@
 #   environment : testnet
 #   apex        : testnet.cloudsforge.online
 #   tunnel      : cf-testnet-public
-#   hostnames   : 20
+#   hostnames   : 21
 #
 # Fill in `tunnel:` and `credentials-file:` from `cloudflared tunnel create`.
 # They are the only two values in this file that are not derived, because they
 # are issued by Cloudflare and cannot be known until the tunnel exists.
 
 # THE PUBLIC TUNNEL. Everything on it is reachable by anyone, with no Cloudflare
-# Access policy in front, because every one of these hostnames is either a page
-# meant for the public or an API a first-party browser calls cross-origin.
+# Access policy in front, because every one of these hostnames is a page meant for
+# the public, an API a first-party browser calls cross-origin, or one of the two
+# chain endpoints below.
+#
+# `rpc` AND `p2p` ARE THE TWO THAT ARE NEITHER, and they are the newest entries
+# here. Both are Hearth — the Ethereum JSON-RPC a wallet or an exchange points at,
+# and the WebSocket peer transport, which exists because a tunnel carries HTTP and
+# cannot carry the raw TCP peer socket at all. They answer strangers by design and
+# hold no session, so Access would be the wrong control; what they have instead is
+# a rate limit at the gateway, keyed on `Cf-Connecting-Ip` because the node's own
+# per-address limiter cannot see past the tunnel. `gateway/dynamic/estate-web.yml`
+# argues both at length.
+#
+# UNTIL 2026-08-04 `rpc.<apex>` WAS NOT ON THIS TUNNEL'S GATEWAY AT ALL: its rule
+# pointed straight at the node's port, the only one of these that skipped Traefik,
+# and therefore the only one with no throttle, no request id, no `/internal`
+# refusal and no access-log line. It is an ordinary derived rule now.
 #
 # `pay` and `vault` are on it and that deserves a sentence, because `vault` is
 # the custodial key service and the name is alarming. They cannot be anywhere
@@ -97,7 +112,15 @@ ingress:
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
+  - hostname: p2p.testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
   - hostname: pay.testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: rpc.testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
@@ -125,8 +148,6 @@ ingress:
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
-  - hostname: rpc.testnet.cloudsforge.online
-    service: http://127.0.0.1:18545
   # cloudflared REQUIRES a catch-all and refuses to start without one. 404 rather
   # than a redirect: a hostname that is not in this file is not one this estate
   # serves, and answering it with anything else invents a surface.

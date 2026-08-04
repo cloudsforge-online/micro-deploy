@@ -60,6 +60,13 @@ WHAT IT CHECKS
      and nothing pointed at this file.
   4. Every `cf-api-*`, `cf-web-*` or `cf-svc-*` name written in a COMMENT in
      `gateway/dynamic/*.yml` is actually defined there. See below.
+  5. Every surface a browser loads a page from has a CORS origin, and no origin
+     is allowlisted that no surface serves.
+  6. Every `{{ env "X" }}` that `gateway/dynamic/` reads is SET in every
+     `compose/env/traefik*.env`. Checks 1-3 read the FILE, and a router wrapped
+     in `{{ if env … }}` is present in the file whether or not it exists at
+     runtime — so without this, a conditional router is a route the check
+     believes in and the gateway does not.
 
 A ROUTER DESCRIBED IN PROSE IS NOT A ROUTER
 -------------------------------------------
@@ -354,6 +361,76 @@ def described_but_undefined():
         )
 
 
+TEMPLATE_ENV_RE = re.compile(r'\{\{\s*(?:if\s+)?env\s+"([A-Z0-9_]+)"\s*\}\}')
+ENV_DIR = ROOT / "compose" / "env"
+
+
+def env_vars_are_set():
+    """── 6: every variable this directory READS is SET in every gateway env file ──
+
+    THE FAILURE THIS CLOSES IS THE ONE THIS ESTATE HAS ALREADY PAID FOR TWICE, and
+    both times the symptom was a hostname that resolved and answered nothing.
+
+      * `CF_API_HOST` was undefined in the env_file the gateway actually loads, so
+        every router in public-api.yml rendered as ``Host(``) && PathPrefix(...)``
+        — a VALID rule matching no request ever sent. Traefik logged nothing. The
+        whole public API was dead and the only symptom was a 404 from the
+        catch-all. `compose/env/traefik.env` records it at length.
+      * The same shape is now DELIBERATE for `CF_WEB_APEX` and for the two chain
+        upstreams: estate-web.yml wraps its routers in `{{ if env ... }}` so that
+        an unset variable produces NO ROUTER rather than a broken one. That is the
+        right failure — but it is SILENT, and check 1 above cannot see it, because
+        check 1 reads the FILE and the file always contains the rule.
+
+    So the two halves are checked from opposite ends. Check 1 asserts the router is
+    written; this asserts the variable that decides whether it exists is set, in
+    EVERY environment's env file rather than in the one somebody was looking at.
+
+    A new `{{ env "X" }}` anywhere in gateway/dynamic/ therefore fails until X is
+    given a value in each `compose/env/traefik*.env`. That is the intended cost: a
+    variable added to a template and to one environment is a router that exists in
+    one of the two estates, which is the hardest kind of difference to see.
+    """
+    directory = WEB_MAP.parent
+    if not directory.is_dir():
+        bad(f"{directory} is not a directory — the template-variable check cannot run")
+        return
+    wanted = {}
+    for path in sorted(directory.glob("*.yml")):
+        for lineno, line in enumerate(path.read_text().splitlines(), 1):
+            for name in TEMPLATE_ENV_RE.findall(line):
+                wanted.setdefault(name, f"{path.name}:{lineno}")
+    if not wanted:
+        bad(f"no `{{{{ env \"...\" }}}}` reference found anywhere in {directory.name}/ — this "
+            f"check reads templates, and finding none means it is asserting nothing")
+        return
+    files = sorted(ENV_DIR.glob("traefik*.env"))
+    if not files:
+        bad(f"no traefik*.env in {ENV_DIR} — the gateway's environment cannot be checked, and "
+            f"every conditional router in {directory.name}/ would go unverified")
+        return
+    for path in files:
+        text = path.read_text()
+        for name, site in sorted(wanted.items()):
+            m = re.search(rf"^{re.escape(name)}=(.*)$", text, re.M)
+            if m is None:
+                bad(
+                    f"{path.name} does not set {name}, which {site} reads. Traefik's file "
+                    f"provider renders `{{{{ env \"{name}\" }}}}` to the EMPTY STRING for an "
+                    f"unset variable, so that router either matches nothing or is dropped by its "
+                    f"own conditional — and neither failure logs anything"
+                )
+            elif not m.group(1).strip():
+                bad(
+                    f"{path.name} sets {name} to an empty value, which {site} reads. An empty "
+                    f"value is INDISTINGUISHABLE FROM UNSET to the file provider, so this is the "
+                    f"same failure as omitting the line and is reported the same way. An "
+                    f"environment that genuinely should not carry that router changes the ROUTER, "
+                    f"where the reason can be written down — not this file, where its absence "
+                    f"looks like an oversight"
+                )
+
+
 CORS_ENTRY_RE = re.compile(
     r'^\s*-\s*https://(?:([a-z0-9-]+)\.)?\{\{\s*env\s+"CF_WEB_APEX"\s*\}\}\s*$'
 )
@@ -530,6 +607,9 @@ def main():
 
     # ── 5: the CORS allowlist and the registry agree ──────────────────────────
     cors_drift(surfaces)
+
+    # ── 6: every template variable the gateway reads is set in every env file ─
+    env_vars_are_set()
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:
