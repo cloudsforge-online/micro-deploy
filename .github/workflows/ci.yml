@@ -259,6 +259,15 @@ jobs:
                 printf '%s=%s\n' "$alias" "$outbox"
               done
             } > "compose/secrets/outbox.${network}.env"
+            # AND STUDIO'S, for the same `required: true` reason. This one was
+            # missing and nothing noticed, because the two guards above this loop
+            # were failing first and the render steps never ran — a check hidden
+            # behind another check's failure is a check nobody knows is broken.
+            # The endpoint is a URL rather than a secret; the key is minted.
+            {
+              printf 'AZURE_FOUNDRY_ENDPOINT=%s\n' 'https://example.invalid/'
+              printf 'AZURE_FOUNDRY_API_KEY=%s\n' "$(openssl rand -hex 32)"
+            } > "compose/secrets/studio.${network}.env"
           done
           echo "ok: two throwaway keyrings and two throwaway bus keys minted for the render steps"
 
