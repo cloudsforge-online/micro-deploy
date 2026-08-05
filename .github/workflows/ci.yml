@@ -143,7 +143,10 @@ jobs:
           # `|| true` is load-bearing: `git grep` exits 1 on no match and the step
           # runs under `bash -e`, so a clean repository would abort here instead of
           # reaching the verdict. Same rule as micro-org/secret-hygiene.yml.
-          hits=$(git grep -nIE 'CUSTODY_MASTER_SECRET_V[0-9]+ *[:=] *[^ $"'"'"'#]' || true)
+          # `$` excuses an interpolation, `%` a printf placeholder (the mint below
+          # is itself a match otherwise), quotes and `#` an empty or commented one.
+          # Everything else is a literal value and is the defect.
+          hits=$(git grep -nIE 'CUSTODY_MASTER_SECRET_V[0-9]+ *[:=] *[^ $%"'"'"'#]' || true)
           if [ -n "$hits" ]; then
             echo "::error::a custody master secret is given a value in a tracked file"
             echo "$hits" | sed -E 's/(SECRET_V[0-9]+ *[:=] *).*/\1<redacted>/'
@@ -180,6 +183,24 @@ jobs:
           assert tn['name'] == 'cf-testnet', f"testnet project name wrong: {tn['name']}"
           overlap = sorted(mp & tp)
           assert not overlap, f"the two projects would both bind: {overlap}"
+
+          # THE TWO ENVIRONMENTS MUST NOT SHARE A KEYRING. The env_file path is
+          # interpolated on CF_EMBER_NETWORK, and if that interpolation ever broke
+          # both estates would silently fall back to one file — one compromise
+          # taking both. Compared, never printed: an assertion that echoes the
+          # value it is protecting has published it into the build log.
+          def keyring(d, service):
+              env = d['services'][service]['environment']
+              got = {k: v for k, v in env.items() if k.startswith('CUSTODY_MASTER_SECRET_V')}
+              assert got, f"{service} has no master secret at all — env_file did not resolve"
+              return got
+          for service in ('custody', 'custody-migrate'):
+              m, t = keyring(mn, service), keyring(tn, service)
+              assert m != t, f"{service}: both environments resolved the SAME keyring file"
+              for name, value in m.items():
+                  assert len(value) >= 43, f"{service}: {name} is too short to be a generated secret"
+          print("ok — mainnet and testnet custody hold separate keyrings, service and migrator alike")
+
           print(f"ok — {len(mp)} mainnet ports, {len(tp)} testnet ports, no overlap; "
                 f"projects {mn['name']} / {tn['name']}")
           PY
