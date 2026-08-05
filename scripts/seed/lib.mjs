@@ -252,6 +252,46 @@ function readMinerData() {
 }
 
 export const COMPOSE = process.env.COMPOSE || 'compose/docker-compose.estate.yml'
+
+/**
+ * The `--env-file` set every `docker compose` call in this seeder must carry.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * **WITHOUT THIS, EVERY COMPOSE CALL RESOLVED TO MAINNET, ON BOTH ESTATES.**
+ *
+ * `docker-compose.estate.yml:64` is `name: ${CF_PROJECT:-cloudsforge-estate}`, and
+ * `CF_PROJECT=cf-testnet` lives in `compose/testnet.env`. A compose call that does
+ * not pass that file gets the DEFAULT — so it addressed the mainnet project no
+ * matter which estate the run was aimed at.
+ *
+ * Measured on 2026-08-05: `--counts` pointed at testnet reported
+ * `foresight.markets=9, market.listings=5` while `cf-testnet-postgres-1` actually
+ * held 0 and 0. Those are mainnet's numbers. micro-org#194.
+ *
+ * Two call sites, and they failed differently:
+ *
+ *   * `psqlRead` passed NO env file, so every row count on a testnet run was a
+ *     mainnet row count. That is also the seeder's own idempotency proof — the
+ *     before/after counts this file's header says the claim rests on — measured
+ *     against a database the run was not writing to, so it could not have failed.
+ *   * `recreateService` passed the tokens file alone, which does not carry
+ *     `CF_PROJECT` either. That one runs `up -d --wait`, so a testnet run that
+ *     re-minted a service token RECREATED THE MAINNET CONTAINER.
+ *
+ * This is the hazard `WEB_SUFFIX` above already argues about — a testnet run that
+ * "would write its content into production and report success". The hostnames
+ * were fixed then. The compose project was not, and it is the same defect one
+ * layer down.
+ * ══════════════════════════════════════════════════════════════════════════════
+ *
+ * Same two files, same order, same reason as `release-deploy.sh`: repeated
+ * `--env-file` flags merge and the last one wins, so tokens last means a
+ * credential in the tokens file beats a placeholder in the estate file.
+ */
+export const ESTATE_ENV = process.env.ESTATE_ENV || 'compose/mainnet.env'
+export const TOKENS_FILE = process.env.TOKENS_FILE || 'compose/estate/tokens.env'
+export const ENV_FILES = ['--env-file', ESTATE_ENV, '--env-file', TOKENS_FILE]
+
 export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test'
 export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correct-horse-battery-staple-42'
 
@@ -428,8 +468,10 @@ export async function refreshServiceToken(userToken, service, varName, scopes) {
     'docker',
     [
       'compose',
-      '--env-file',
-      process.env.TOKENS_FILE || 'compose/estate/tokens.env',
+      // BOTH files. The tokens file alone does not carry `CF_PROJECT`, so this
+      // recreated the MAINNET container on a testnet run — a write, not just a
+      // misreported count. micro-org#194.
+      ...ENV_FILES,
       '-f',
       COMPOSE,
       'up',
@@ -478,7 +520,9 @@ export function holdsPlaceholderToken(container, varName) {
 export function psqlRead(db, sql) {
   const r = spawnSync(
     'docker',
-    ['compose', '-f', COMPOSE, 'exec', '-T', 'postgres', 'psql', '-qtA', '-U', 'cloudsforge', '-d', db, '-c', sql],
+    // ENV_FILES, or this reads the mainnet project's postgres on a testnet run
+    // and reports its rows as testnet's. micro-org#194.
+    ['compose', ...ENV_FILES, '-f', COMPOSE, 'exec', '-T', 'postgres', 'psql', '-qtA', '-U', 'cloudsforge', '-d', db, '-c', sql],
     { cwd: ROOT, encoding: 'utf8' },
   )
   if (r.status !== 0) return null
