@@ -1,0 +1,71 @@
+# THE ERASURE REGISTER — one row per service that holds a reference to a person.
+#
+# ── WHY THIS FILE EXISTS ───────────────────────────────────────────────────────
+#
+# Rule 6 of `org/README.md` says every service storing `user_id` subscribes to
+# `identity.user.deleted` and erases. The rule was true of two services out of
+# sixteen: `activity` and `notify` were seeded at deploy, and six more had handler
+# code no event could ever reach. A deletion request reported success and left
+# personal data across the estate.
+#
+# The rule failed the way rules fail here — it lived in prose, and nothing read
+# the prose. So it lives here instead, in a file that TWO mechanisms read:
+#
+#   * `scripts/estate-bootstrap.sh` seeds a subscription from every row, so a
+#     service in this register cannot be deployed unsubscribed.
+#   * `scripts/erasure-drill.sh` deletes a real user and asserts every row's
+#     RESIDUAL query reaches zero, so a subscription that exists but erases
+#     nothing is a failure rather than a green tick.
+#
+# One list, two consumers, no way for them to disagree. Adding a service here
+# without an erasure handler makes the drill fail; writing a handler without a
+# row here means it is never delivered to and the drill never covers it. Both
+# halves are needed and neither is documentation.
+#
+# ── THE PROPERTY BEING ASSERTED ────────────────────────────────────────────────
+#
+# **After erasure, no row in any estate database still names the person.**
+#
+# That is one property, uniform across sixteen services with sixteen different
+# ideas of what erasure means. It holds whether the service deleted the row or
+# de-identified it, which is why RESIDUAL counts "rows that still name this
+# subject" rather than "rows". A service that lawfully retains a de-identified
+# financial record passes; a service that keeps the subject on it does not.
+#
+# ── COLUMNS ────────────────────────────────────────────────────────────────────
+#
+#   service    the compose service name
+#   database   the Postgres database it owns (rule 1: one database, no other)
+#   url        where identity's relay POSTs the event. IN-CLUSTER, port 4000 —
+#              this is what goes in `event_subscriptions.url`
+#   action     delete | anonymise | mixed — what erasure MEANS here. The reasoning
+#              lives in the service's own handler, table by table, next to the
+#              code that does it, because a rationale in a deploy file is a
+#              rationale that drifts from the behaviour it describes
+#   seed       SQL giving the drill user something to lose, `{{uid}}` substituted.
+#              `-` means the user acquires data through a real flow instead
+#   residual   SQL counting rows that STILL name the subject. MUST be > 0 before
+#              the deletion and 0 after. The before-check is not ceremony: an
+#              assertion over an empty table passes for the wrong reason, and
+#              that is this estate's most-repeated defect
+#
+# Pipe-separated because the SQL contains commas, spaces and quotes. Bash 3.2 on
+# macOS has no associative arrays — an associative-array port map silently broke
+# five suites here once — so this is read with `while IFS='|' read`.
+#
+# ── SEEDING THE DRILL'S DATA WITH SQL IS NOT MOCKING ───────────────────────────
+#
+# The house rule is "test the seam, not the mock". The seam under test is
+# identity's outbox → the signed HTTP relay → the consumer's inbox → its erasure
+# handler, and every one of those runs for real in this drill. How the row being
+# erased was created is upstream of the seam, and standing up a funded chain
+# withdrawal to prove settlement forgets a user would test a payment path, not an
+# erasure path. Nothing on the path under test is stubbed or intercepted.
+#
+# service|database|url|action|seed|residual
+#
+# ── SEEDED SINCE BEFORE THIS FILE ─────────────────────────────────────────────
+# Both erase for real, and both were already proven end to end by estate-verify.
+# They are here so the register is the whole truth rather than the new part of it.
+activity|activity|http://activity:4000/ingest|delete|-|select count(*) from activity_records where user_id = '{{uid}}'
+notify|notify|http://notify:4000/ingest|delete|-|select count(*) from preferences where user_id = '{{uid}}'

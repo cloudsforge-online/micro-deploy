@@ -620,11 +620,37 @@ subscribe() {
 # that is now a named gap in another repository rather than a silence here.
 subscribe identity identity.user.registered http://activity:4000/ingest
 
-# The two estate-verify already relied on, moved to where a deploy belongs. They
-# stay idempotent, so the copies still in the verifier are no-ops.
+# The one estate-verify already relied on, moved to where a deploy belongs. It
+# stays idempotent, so the copy still in the verifier is a no-op.
 subscribe identity identity.session.created http://activity:4000/ingest
-subscribe identity identity.user.deleted   http://activity:4000/ingest
-subscribe identity identity.user.deleted   http://notify:4000/ingest
+
+# ── ERASURE IS SEEDED FROM A LIST, NOT WRITTEN OUT HERE ───────────────────────
+#
+# `identity.user.deleted` used to be two hand-written lines below this one —
+# activity and notify — and that was the whole of the estate's GDPR erasure path.
+# Six more services had handler code no event could ever reach, and fourteen more
+# stored a reference to a person with no handler at all. A deletion request
+# reported success and left personal data scattered across the estate.
+#
+# The reason it stayed broken is that rule 6 lived in prose in `org/README.md`
+# and nothing read the prose. So the subscriber list moved into
+# `erasure/register.psv`, which two mechanisms read: this loop seeds a row for
+# every service in it, and `scripts/erasure-drill.sh` deletes a real user and
+# asserts every one of those services stops naming them. A service in the
+# register cannot be deployed unsubscribed, and a subscription that erases
+# nothing fails the drill instead of passing quietly.
+#
+# Read with `IFS='|' read` from a here-string, not a pipe: a `while` on the right
+# of a pipe runs in a subshell, and `bad`'s increment to `fails` would be thrown
+# away at the closing `done` — a bootstrap that reported success no matter what.
+erasure_rows=$(grep -v '^[[:space:]]*#' erasure/register.psv | grep -v '^[[:space:]]*$')
+erasure_seeded=0
+while IFS='|' read -r e_service e_database e_url e_action e_seed e_residual; do
+  [ -n "$e_url" ] || continue
+  subscribe identity identity.user.deleted "$e_url"
+  erasure_seeded=$((erasure_seeded + 1))
+done <<<"$erasure_rows"
+ok "erasure: $erasure_seeded subscriber(s) seeded from erasure/register.psv"
 
 # ── NOTIFY KNEW EVERY USER'S NAME AND NOT ONE ADDRESS ────────────────────────
 #
