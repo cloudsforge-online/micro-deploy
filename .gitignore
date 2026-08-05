@@ -3,8 +3,21 @@ dist/
 *.tsbuildinfo
 .DS_Store
 
-# Bootstrap-minted service tokens. Real credentials, 10-minute TTL, never committed.
-compose/estate/tokens.env
+# Bootstrap-minted service tokens and the long-lived service CREDENTIALS beside
+# them. Real secrets for every service in the estate, never committed.
+#
+# A GLOB, AND IT IS THE THIRD TIME THIS EXACT NEAR-MISS HAS BEEN CAUGHT HERE.
+# The two rules below — `compose/secrets/` and `compose/docker-compose.release*`
+# — each record being written for ONE filename and then meeting a second
+# environment that appended `.testnet` to it. This line was still the one
+# filename, and it stayed safe only because testnet had never been bootstrapped:
+# the moment it was, `estate-bootstrap.sh` wrote `tokens.testnet.env` beside this
+# path, ignored by nothing, one `git add -A` from a public repository.
+#
+# Testnet's credentials are not "less real" than mainnet's. They authenticate
+# against testnet's identity, which fronts a live chain and real custodied keys
+# for that network.
+compose/estate/tokens*.env
 
 # THE CUSTODY KEYRING. `CUSTODY_MASTER_SECRET_V<n>`, one file per environment, read
 # by the `custody` and `custody-migrate` blocks through an `env_file:` whose path is
