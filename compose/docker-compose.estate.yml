@@ -3169,6 +3169,13 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api
+      # WHICH ESTATE AM I? Required by admin-api 1.1.0 with no default, deliberately:
+      # its own env.ts records that "a default answer to 'which estate am I?' is how a
+      # testnet backup gets restored over mainnet balances". So it is answered here, per
+      # network, from the same variable the custody and outbox secret files key on --
+      # `CF_EMBER_NETWORK` is set to `testnet` by compose/testnet.env and unset for
+      # mainnet, so the two environments cannot both claim to be the same one.
+      ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
       IDENTITY_URL: http://identity:4000
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
@@ -3188,6 +3195,13 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api
+      # WHICH ESTATE AM I? Required by admin-api 1.1.0 with no default, deliberately:
+      # its own env.ts records that "a default answer to 'which estate am I?' is how a
+      # testnet backup gets restored over mainnet balances". So it is answered here, per
+      # network, from the same variable the custody and outbox secret files key on --
+      # `CF_EMBER_NETWORK` is set to `testnet` by compose/testnet.env and unset for
+      # mainnet, so the two environments cannot both claim to be the same one.
+      ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
       IDENTITY_URL: http://identity:4000
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
