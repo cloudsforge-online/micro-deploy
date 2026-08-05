@@ -461,12 +461,20 @@ echo "── 5. mint one service token per credential ────────�
 # alias is a workaround for a deploy gap, not the design: micro-org#191 carries
 # the compose change that passes `SETTLEMENT_IDENTITY_CREDENTIAL` through, and
 # the alias in 5b should be deleted in the same commit that lands it.
+# THREE ENTRIES REMOVED, because the services that read them no longer do.
+#
+# `COMMUNITY_SERVICE_CREDENTIAL`, `ADMIN_API_SERVICE_TOKEN` and `TESSERA_SERVICE_CREDENTIAL` minted
+# a ten-minute JWT into a variable that was read ONCE at boot — dead ten minutes after the restart
+# that read it, with /livez still green because it makes no outbound call (micro-org#197, #222).
+# community 1.2.0, tessera 1.2.0 and admin-api 1.3.0 all now EXCHANGE their long-lived
+# `*_IDENTITY_CREDENTIAL` for short-lived tokens and re-mint before expiry, and the compose blocks
+# stopped passing the JWTs in the same commits. Minting them here would put a value nothing reads
+# back into both tokens files — and it is refused by `assertServiceCredential` if anything did.
+#
+# This is the same deletion `settlement` and `ledger` already got, for the same reason.
 CREDENTIALS="
 MARKET_SERVICE_TOKEN|market|
 TRADE_SERVICE_TOKEN|trade|
-COMMUNITY_SERVICE_CREDENTIAL|community|
-ADMIN_API_SERVICE_TOKEN|admin-api|
-TESSERA_SERVICE_CREDENTIAL|tessera|
 EMBERKIN_SERVICE_TOKEN|emberkin|
 FAUCET_CUSTODY_TOKEN|faucet|
 FORESIGHT_SERVICE_TOKEN|foresight|

@@ -3206,7 +3206,26 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
-      ADMIN_API_SERVICE_TOKEN: ${ADMIN_API_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
+      # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
+      # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
+      # billing and identity clients, so the operator console authenticated for the ten minutes
+      # after a restart and 401'd every privileged action thereafter — while /livez stayed green,
+      # because it makes no outbound call (micro-org#197).
+      #
+      # `estate-bootstrap.sh` has minted this variable into both tokens files all along and NO
+      # compose block referenced it, which is why the JWT stayed in use.
+      #
+      # ADMIN_API_SERVICE_TOKEN is NOT passed through: 1.3.0 holds it to the same assertion as the
+      # credential, and what the tokens files hold for it is a 701-byte JWT that
+      # `assertServiceCredential` refuses BY NAME (#222). Its default here was
+      # `estate-placeholder-token-0000000000000000` — 40 characters, on no deny-list, over every
+      # length floor, so every guard in the estate passed it. That is #142 exactly.
+      #
+      # This block and admin-api-migrate MUST NOT DRIFT: a market-only change of this shape caused
+      # a testnet-wide outage once, and admin-api depends on its migrator with
+      # service_completed_successfully.
+      ADMIN_API_IDENTITY_CREDENTIAL: ${ADMIN_API_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: admin-api-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -3232,7 +3251,26 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
-      ADMIN_API_SERVICE_TOKEN: ${ADMIN_API_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
+      # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
+      # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
+      # billing and identity clients, so the operator console authenticated for the ten minutes
+      # after a restart and 401'd every privileged action thereafter — while /livez stayed green,
+      # because it makes no outbound call (micro-org#197).
+      #
+      # `estate-bootstrap.sh` has minted this variable into both tokens files all along and NO
+      # compose block referenced it, which is why the JWT stayed in use.
+      #
+      # ADMIN_API_SERVICE_TOKEN is NOT passed through: 1.3.0 holds it to the same assertion as the
+      # credential, and what the tokens files hold for it is a 701-byte JWT that
+      # `assertServiceCredential` refuses BY NAME (#222). Its default here was
+      # `estate-placeholder-token-0000000000000000` — 40 characters, on no deny-list, over every
+      # length floor, so every guard in the estate passed it. That is #142 exactly.
+      #
+      # This block and admin-api-migrate MUST NOT DRIFT: a market-only change of this shape caused
+      # a testnet-wide outage once, and admin-api depends on its migrator with
+      # service_completed_successfully.
+      ADMIN_API_IDENTITY_CREDENTIAL: ${ADMIN_API_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: admin-api-estate
     env_file: *outbox-secrets
     ports:
