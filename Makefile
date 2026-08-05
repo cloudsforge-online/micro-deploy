@@ -119,7 +119,7 @@ GW_TESTNET := --env-file compose/testnet.env -p cftestnet \
               -f compose/docker-compose.gateway.yml \
               -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway estate-gateway-testnet estate-gateway-testnet-down check-restart check-restart-live
+.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway estate-gateway-testnet estate-gateway-testnet-down check-restart check-restart-live check-client-ip check-client-ip-live
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
@@ -149,6 +149,25 @@ estate-down: ## Stop the environment. Add VOLUMES=1 to delete its databases too
 
 check-gateway: ## Compare the public route map against what the services serve
 	@python3 scripts/gateway-check.py
+
+check-client-ip: ## The gateway CANNOT log a client IP address, as a rule rather than an accident
+	@# micro-org#163 records that Traefik logs no client IP here — and then says
+	@# the part that matters: it is true "by accident of topology, not by an
+	@# explicit rule, and nothing tests it". Headers are dropped because Traefik
+	@# DEFAULTS to dropping them, and `ClientHost` is loopback because cloudflared
+	@# is the peer. One `--accesslog.fields.headers.names.Cf-Connecting-Ip=keep`
+	@# added while debugging a rate limit, or one port published on 0.0.0.0, ends
+	@# either — with nothing in the diff named "log client IPs". This is what
+	@# notices. An IP address is personal data; it prints none.
+	@python3 scripts/check-client-ip-logging.py
+
+check-client-ip-live: ## The same question asked of what a RUNNING gateway actually wrote
+	@# A config check reads intent. This reads the access log a live gateway has
+	@# already produced and asserts no ClientHost in it is a public address — so a
+	@# topology change nobody wrote into a compose file (a port opened by hand, a
+	@# second proxy in front, an entrypoint reconfigured on the container) is
+	@# caught by its OUTPUT. No address is printed, only counts.
+	@python3 scripts/check-client-ip-logging.py --live $(or $(PROJECT),cfmicro)
 
 check-surfaces: ## Every registry surface has a gateway route, and every route a surface
 	@# The drift this ends was live three times in one night: `worlds-api` (a

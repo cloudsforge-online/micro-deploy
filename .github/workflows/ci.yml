@@ -110,6 +110,32 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-apex-prefix.py
 
+      # ── THE GATEWAY CANNOT LOG A CLIENT IP, AND NOW SOMETHING SAYS SO ───────
+      #
+      # micro-org#163 found that Traefik logs no client address here, and then
+      # named the real defect: it is true "by accident of topology, not by an
+      # explicit rule, and nothing tests it". Both accidents are one line from
+      # ending. Headers are absent from the access log because Traefik DEFAULTS
+      # `accesslog.fields.headers.defaultMode` to drop — nothing in
+      # `docker-compose.gateway.yml` asks for that. And `ClientHost`, a core
+      # field kept by default and present in every line today, is loopback only
+      # because cloudflared is the peer and every gateway port is bound to
+      # 127.0.0.1.
+      #
+      # So one `--accesslog.fields.headers.names.Cf-Connecting-Ip=keep` added
+      # while debugging a rate limit, one entrypoint given
+      # `forwardedHeaders.trustedIPs`, or one port published on 0.0.0.0 puts the
+      # true client address of every request in this estate into a JSON log that
+      # ships to Loki — with no flag in the diff named "log client IPs", no
+      # error, and nothing to notice it. An IP address is personal data.
+      #
+      # This is the rule. It scans every compose file rather than the gateway's
+      # alone, because an overlay that turns header logging on is the same defect
+      # in a different file. It prints no address, only field names and counts.
+      - name: The gateway cannot log a client IP address
+        working-directory: deploy
+        run: python3 scripts/check-client-ip-logging.py
+
       # ── The two projects stay renderable, and mainnet stays unchanged ────────
       #
       # `compose/testnet.env` is six variables that turn these files into a second
