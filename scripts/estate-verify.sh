@@ -2131,23 +2131,70 @@ echo "── CROSS-SURFACE SSO: the hand-off, driven end to end ─────�
 # Driven through the gateway rather than the loopback port, because the origins
 # on the allowlist are gateway origins and a check against 127.0.0.1:4100 would
 # prove something the browser cannot do.
+# ── REGISTRATION NO LONGER RETURNS A SESSION, AND THIS DRILL BLAMED THE WRONG
+#    THING FOR IT ───────────────────────────────────────────────────────────────
+#
+# This read `accessToken` straight out of the register response. `micro-identity`
+# 1.1.0 removed that session on purpose — `server.ts:805-815`, "NO SESSION. THIS
+# IS THE POINT OF THE ROUTE'S 202" — so registration now answers 202 with no
+# token and an account that cannot sign in until its email is verified.
+#
+# The drill then presented an EMPTY bearer, identity answered 401
+# unauthenticated, and this section reported:
+#
+#   FAIL identity refused to mint a hand-off code — IDENTITY_HANDOFF_ORIGINS
+#        does not name market…, and cross-surface SSO is dead
+#
+# which was false in every part. The allowlist was correct and SSO was working;
+# the drill simply had no session. THAT IS THE EXPENSIVE KIND OF WRONG: it names
+# a specific, plausible, already-fixed cause, so the next person spends their
+# time on a variable that was never the problem. A check that cannot tell "the
+# thing is broken" from "I could not test the thing" is worse than no check.
+#
+# So the session is obtained the way a real user gets one — the account is
+# verified, then signed in — and the drill FAILS EARLY AND SAYS SO if it cannot
+# get one, rather than carrying an empty token into an assertion about SSO.
 so_email="sso-$$@example.test"
 so_reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$so_email\",\"handle\":\"sso$$\",\"password\":\"$PASS\"}")
 so_tok=$(printf '%s' "$so_reg" | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
-[ -n "$so_tok" ] && ok "a second account for the hand-off drill" || bad "could not register the hand-off drill user"
+
+if [ -z "$so_tok" ]; then
+  # The verification link is delivered by mail, which this script cannot read, so
+  # the flag is set directly. This is FIXTURE SETUP for the hand-off drill and is
+  # deliberately not dressed up as a test of verification: whether registration
+  # mail is actually delivered is its own assertion elsewhere, and doing it here
+  # would hide a broken mail path behind a passing SSO check.
+  docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d identity -c \
+    "update users set email_verified_at = now() where email = lower(btrim('$so_email'))" >/dev/null 2>&1
+  so_tok=$(curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
+    -d "{\"identifier\":\"$so_email\",\"password\":\"$PASS\"}" \
+    | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
+fi
+
+if [ -n "$so_tok" ]; then
+  ok "a second account for the hand-off drill"
+else
+  bad "could not obtain a session for the hand-off drill user — the SSO checks below are NOT a verdict on the allowlist"
+fi
 
 # Hub mints a code for Market — one real surface handing a session to another.
-so_code=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+# The STATUS is captured alongside the body, because 401 and 403 mean completely
+# different things here and reporting them as one line is what made this section
+# accuse the allowlist of a fault that was a missing session.
+so_mint=$(curl -sk -o /tmp/estate-sso-mint.json -w '%{http_code}' \
+  -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -H "origin: https://hub$WEB_SUFFIX" \
-  -d "{\"redirectOrigin\":\"https://market$WEB_SUFFIX\"}" \
-  | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
+  -d "{\"redirectOrigin\":\"https://market$WEB_SUFFIX\"}")
+so_code=$(python3 -c "import json;print(json.load(open('/tmp/estate-sso-mint.json')).get('code',''))" 2>/dev/null)
 if [ -n "$so_code" ]; then
   ok "identity minted a hand-off code for https://market$WEB_SUFFIX"
+elif [ "$so_mint" = "401" ]; then
+  bad "the hand-off drill has no session (401) — this says NOTHING about the allowlist; fix the sign-in above first"
 else
-  bad "identity refused to mint a hand-off code — IDENTITY_HANDOFF_ORIGINS does not name market$WEB_SUFFIX, and cross-surface SSO is dead"
+  bad "identity refused to mint a hand-off code ($so_mint) — IDENTITY_HANDOFF_ORIGINS does not name market$WEB_SUFFIX, and cross-surface SSO is dead"
 fi
 
 # Market redeems it, presenting the Origin a browser would send. This is the
