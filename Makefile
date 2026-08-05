@@ -72,6 +72,16 @@ check-runbooks: ## THE RUNBOOK RULE — every alert carries a link, and it resol
 	@# that makes that a property rather than an intention.
 	@python3 scripts/check-runbooks.py
 
+check-secrets: ## No secret is a placeholder, too short, or already in a transcript
+	@# CI guards a secret that is COMMITTED. Neither failure this catches is a
+	@# commit, so neither was ever visible to it: a placeholder-shaped signing key
+	@# live in an accept list (40 chars, so every length gate passed; not one of
+	@# the eight known strings, so every placeholder gate passed), and a secret
+	@# printed into an agent transcript by `docker inspect`. See
+	@# runbooks/runbook-secret-leaked-to-transcript.md. Prints NO secret values.
+	@python3 scripts/check-secret-hygiene.py \
+		--files compose/secrets/*.env compose/estate/tokens.env compose/.env
+
 estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort
 
