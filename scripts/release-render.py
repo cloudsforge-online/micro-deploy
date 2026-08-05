@@ -58,7 +58,39 @@ parser.add_argument("--base", default="compose/docker-compose.estate.yml", help=
 # the release deploy silently builds faucet from whatever is in the working tree
 # — which is the single failure mode this whole script exists to eliminate, and
 # it would have been introduced by the script itself.
-parser.add_argument("--env-file", help="passed to `docker compose` so the base service list is the one THIS environment defines")
+#
+# ── REPEATABLE, BECAUSE ONE ENV FILE STOPPED BEING ENOUGH TO RENDER AT ALL ────
+#
+# This took a single value, and `--env-file` REPLACES compose's default `.env`
+# rather than adding to it — so whichever one file was passed became the whole
+# environment. That was survivable only while every value the base file
+# interpolates lived in the estate env file.
+#
+# It stopped being survivable the moment the Postgres password became a variable
+# (micro-deploy@16cdbf2, micro-org#190). That password lives in the gitignored
+# `compose/estate/tokens*.env`, which is the file this argument could not also
+# accept, so `docker compose config --services` below failed outright:
+#
+#   error while interpolating services.postgres.environment.POSTGRES_PASSWORD:
+#   required variable CF_POSTGRES_PASSWORD is missing a value
+#
+# and no release could be rendered on either network — with the variable set
+# correctly in both tokens files the whole time.
+#
+# `release-deploy.sh`'s DEPLOY step had always passed two files for exactly this
+# reason and says so in its own header (#158). Only the render was left with
+# one. So this is `append`, the flag is repeated on the caller, and repeated
+# flags merge with the last winning — the same order, and the same rule, as the
+# deploy it has to agree with.
+parser.add_argument(
+    "--env-file",
+    action="append",
+    default=[],
+    dest="env_file",
+    metavar="PATH",
+    help="passed to `docker compose` so the base service list is the one THIS environment "
+    "defines. Repeatable; later files win on a shared key, matching release-deploy.sh.",
+)
 parser.add_argument("--out", help="write here instead of stdout")
 args = parser.parse_args()
 
@@ -136,8 +168,8 @@ base = pathlib.Path(args.base)
 if not base.exists():
     sys.exit(f"FAIL: no base compose file at {base}")
 config_cmd = ["docker", "compose"]
-if args.env_file:
-    config_cmd += ["--env-file", args.env_file]
+for env_file in args.env_file:
+    config_cmd += ["--env-file", env_file]
 config_cmd += ["-f", str(base), "config", "--services"]
 try:
     proc = subprocess.run(config_cmd, capture_output=True, text=True, check=True)

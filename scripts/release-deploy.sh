@@ -179,7 +179,7 @@ echo "── rendering $manifest ───────────────�
 # untouched, which is the right direction to fail in, but it dies on every
 # attempt until this flag is passed.
 #
-# `release-render.py:51-61` added the flag FOR THIS CASE and names faucet in its
+# `release-render.py:49-93` added the flag FOR THIS CASE and names faucet in its
 # own comment. Nothing ever passed it. That is the whole defect: a fix that
 # reached the tool and not the caller, which is the same shape as the four
 # frontend fixes this release is carrying.
@@ -187,7 +187,22 @@ echo "── rendering $manifest ───────────────�
 # Mainnet is unaffected and that was checked rather than assumed: `mainnet.env`
 # sets no `COMPOSE_PROFILES`, so the rendered service list is byte-identical
 # with the flag and without it.
-if ! python3 scripts/release-render.py "$manifest" --base "$BASE" --env-file "$ESTATE_ENV" --out "$OVERLAY"; then
+# BOTH env files, via the same `ENVSET` the deploy below uses. The render used to
+# be passed `$ESTATE_ENV` alone, and because `--env-file` REPLACES the default
+# rather than adding to it, that one file WAS the renderer's whole environment.
+#
+# It broke the moment the Postgres password became `${CF_POSTGRES_PASSWORD:?}`
+# (16cdbf2, micro-org#190): that variable lives in the tokens file, the render
+# could not see it, and `docker compose config --services` failed outright. No
+# release could be rendered on either network — the render is the FIRST step, so
+# this failed every deploy and every rollback, with the variable set correctly in
+# both tokens files throughout.
+#
+# The header 130 lines up already argues that this script must pass both files
+# "always, in this order… so tokens last means tokens win on any shared key". It
+# was reasoning about the deploy. It is just as true of the render, and the render
+# is what decides which services get pinned at all.
+if ! python3 scripts/release-render.py "$manifest" --base "$BASE" "${ENVSET[@]}" --out "$OVERLAY"; then
   echo "render failed; nothing was deployed" >&2
   exit 1
 fi
