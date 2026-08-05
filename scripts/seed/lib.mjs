@@ -164,6 +164,16 @@ export const SERVICES = {
   market: { base: `https://${API_HOST}`, gateway: true },
   mint: { base: `https://${API_HOST}`, gateway: true },
   // Not published by the gateway; loopback host ports from the compose file.
+  //
+  // `studio` is the newest entry and the one whose `gateway: false` is currently
+  // load-bearing rather than incidental: it has NO Host() rule anywhere in
+  // `gateway/dynamic/estate-web.yml`, so no browser can reach it. That matters
+  // more than it does for the other three, because studio is the only service in
+  // this list whose output a BROWSER has to fetch directly — a cover image is an
+  // `<img src>` pointing at it. Seeded covers will therefore be stored correctly
+  // and will not render until studio is routed. Port 4000 inside the container,
+  // published on 4111 by `docker-compose.estate.yml`.
+  studio: { base: 'http://127.0.0.1:4111', gateway: false },
   ledger: { base: 'http://127.0.0.1:4102', gateway: false },
   billing: { base: 'http://127.0.0.1:4106', gateway: false },
   nda: { base: 'http://127.0.0.1:4116', gateway: false },

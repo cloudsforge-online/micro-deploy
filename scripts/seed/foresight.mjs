@@ -76,6 +76,7 @@ import {
   TEST_ARTEFACT_VOID_REASON,
   isTestArtefact,
 } from './foresight-questions.mjs'
+import { generateCover, reportImageBackend, studioReachable } from './images.mjs'
 
 const require = createRequire(import.meta.url)
 
@@ -551,6 +552,65 @@ function reportHouseSeed() {
 
 /* ── the domain ───────────────────────────────────────────────────────────── */
 
+/**
+ * A header image for each seeded question.
+ *
+ * ── WHY THESE ARE GENERATED AND MARKET'S ARE ADOPTED ────────────────────────
+ *
+ * A Foresight question has no artwork anywhere in this estate — there is no
+ * "will BTC close above X" picture in `brand/` to adopt — so this is the path
+ * that asks studio to make one. `market.mjs` is the other case: it lists the
+ * estate's own FLUX 2 Pro asset sets, and the right cover for a listing OF those
+ * assets is one of those assets, read and uploaded rather than reinvented.
+ *
+ * ── WHAT THIS ACTUALLY PRODUCES TODAY ───────────────────────────────────────
+ *
+ * A PLACEHOLDER, not FLUX art, and the run says so on every line. The estate's
+ * studio has no `AZURE_FOUNDRY_ENDPOINT` and no API key, which `studio/src/env.ts`
+ * treats as a supported mode: it boots, reports `degraded` through a soft probe,
+ * and serves the deterministic placeholder backend. Every one of the forty
+ * assets studio has ever produced on this estate was made that way — checked, not
+ * assumed. The moment a model is deployed and those two variables are set, the
+ * same call returns FLUX 2 Pro art with no change here.
+ *
+ * A failure to make a cover is NOT a failure of the seeding run. A question
+ * without a picture is still a question; a bootstrap that aborted because an
+ * image did not render would be a worse trade than a plain page.
+ */
+async function coverImages(markets, userToken) {
+  if (markets.length === 0) return
+  await reportImageBackend()
+  if (!(await studioReachable())) return
+
+  for (const m of markets) {
+    // Idempotent by asking first. A re-run must not generate a second image, and
+    // must never replace one that is already there.
+    const current = await api('foresight', `/markets/${m.id}`, { expect: 200 })
+    if (current.body.market?.image?.assetId) continue
+
+    const asset = await generateCover(userToken, {
+      slug: `foresight-${m.id.slice(0, 8)}`,
+      // The question itself is the brief. A market's picture should be about the
+      // thing being predicted, not a generic banner — and `stylePrompt` is what
+      // studio's prompt builder reads for anything that is not a brand artefact.
+      stylePrompt: m.question,
+      kind: 'banner',
+    })
+    if (!asset) continue
+
+    const res = await api('foresight', `/markets/${m.id}/image`, {
+      method: 'PUT',
+      token: userToken,
+      body: { assetId: asset.id, checksum: asset.checksum },
+    })
+    if (res.status === 200) {
+      ok(`cover set on ${m.id.slice(0, 8)} — ${asset.checksum.slice(0, 14)}…`)
+    } else {
+      bad(`cover on ${m.id.slice(0, 8)} → ${res.status}: ${JSON.stringify(res.body).slice(0, 160)}`)
+    }
+  }
+}
+
 export async function seedForesight(userToken) {
   head('foresight — real questions, and a decision about the test artefacts')
 
@@ -564,6 +624,8 @@ export async function seedForesight(userToken) {
 
   const chain = chainOrNull()
   await deployAndOpen(seeded, userToken, chain)
+
+  await coverImages(seeded, userToken)
 
   reportHouseSeed()
 
