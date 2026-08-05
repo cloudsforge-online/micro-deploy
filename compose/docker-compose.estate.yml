@@ -192,6 +192,41 @@ x-outbox-secret-file: &outbox-secret-file
 x-outbox-secrets: &outbox-secrets
   - *outbox-secret-file
 
+# ── THE IMAGE MODEL'S CREDENTIALS ─────────────────────────────────────────────
+#
+# `AZURE_FOUNDRY_ENDPOINT` and `AZURE_FOUNDRY_API_KEY` for FLUX 2 Pro. Same
+# mechanics and the same reasons as the two blocks above: interpolated on
+# `CF_EMBER_NETWORK` rather than hardcoded, so the second environment is covered
+# by the rule instead of by somebody remembering to add a file — which is the
+# near-miss `.gitignore` records for `docker-compose.release.testnet.yml`.
+#
+# ONE RESOURCE PER ENVIRONMENT, NOT ONE SHARED. The two files are separate even
+# though a single Foundry resource could serve both, because generation is
+# METERED and billed: a shared key makes testnet's spend indistinguishable from
+# mainnet's on the invoice, and a leaked testnet key would have to be rotated on
+# mainnet too.
+#
+# WHAT THIS CHANGES, WHICH IS EVERYTHING ABOUT THIS SERVICE. Until now studio
+# had NEVER generated an image: `env.ts:302` returns `flux: null` when the
+# endpoint is unset and the placeholder backend answers instead. All 40 assets
+# in the live database came from it, each with an empty model. So this is not a
+# configuration tidy-up — it is the difference between a service that draws and
+# one that has only ever pretended to.
+#
+# `STUDIO_IMAGE_MODEL` is deliberately NOT set here: `env.ts:279` already
+# defaults it to `FLUX.2-pro` whenever the endpoint is present, and
+# `AZURE_FOUNDRY_IMAGE_PATH` likewise defaults to the flux-2-pro provider path.
+# Restating either would be a second source of truth for a value the service
+# already knows.
+#
+# Both halves or neither — `env.ts:273-278` refuses to boot on one without the
+# other, because "an endpoint with no key looks exactly like a key that has been
+# revoked". `required: true` below is the other half of that: a missing file is
+# a container that stops, not one that quietly draws placeholders again.
+x-studio-secret-file: &studio-secret-file
+  path: secrets/studio.${CF_EMBER_NETWORK:-mainnet}.env
+  required: true
+
 # ══════════════════════════════════════════════════════════════════════════════
 # THE TWO VARIABLES WITHOUT WHICH NOTHING IN THIS ESTATE CAN BE WITHDRAWN.
 #
@@ -1166,7 +1201,12 @@ services:
       #   docker compose -f compose/docker-compose.estate.yml run --rm \
       #     -v studio-assets:/a busybox:1.37 find /a -type f
       INSTANCE_ID: studio-estate
-    env_file: *outbox-secrets
+    # Spelled out rather than `*outbox-secrets`, because this service needs TWO
+    # secret files and a YAML anchor cannot merge two sequences — which is the
+    # exact case `x-outbox-secret-file`'s header says the ITEM anchor exists for.
+    env_file:
+      - *outbox-secret-file
+      - *studio-secret-file
     volumes:
       - studio-assets:/var/lib/studio/assets
     ports:
@@ -1768,6 +1808,11 @@ services:
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
+      # Kept identical to the `market` block below, per the note directly under
+      # this line. It is OPTIONAL in env.ts, so its absence would not have failed
+      # the migrator — which is exactly the kind of difference that starts a
+      # drift, and the drift is what that note forbids. See there for what it is.
+      STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # The migrator loads the SAME env module as the service, so it fails at the
       # same line for the same missing variable — and it fails FIRST, taking
       # eleven services with it through `service_completed_successfully`. Keep
@@ -1792,6 +1837,35 @@ services:
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
+      # ── WHERE A BROWSER REACHES STUDIO, WHICH IS NOT WHERE MARKET DOES ───
+      #
+      # Market stores a studio ASSET REFERENCE now rather than image bytes, so a
+      # listing's picture is a URL this service composes at read time. An
+      # in-cluster `http://studio:4000` is useless for that: it is a docker
+      # network name, and the thing that must fetch it is somebody's browser.
+      # Hence a second, PUBLIC, variable naming the same service.
+      #
+      # UNSET IS A SUPPORTED MODE AND IT IS SILENT. `env.ts:350` defaults it to
+      # '' and `server.ts:966` then answers `uploadUrl: null` — which that file
+      # calls "the honest answer", and it is, but the cost is that every gallery
+      # image fails to render with no error anywhere. Market's own metric help
+      # text names this exact case: "a `detached` that climbs far above
+      # `attached` is sellers finding their images are not rendering, which is
+      # what an unset STUDIO_PUBLIC_URL looks like from the outside"
+      # (server.ts:224).
+      #
+      # Interpolated rather than literal, for the reason the hand-off allowlist
+      # above is: a literal would serve testnet's listings from mainnet's studio.
+      # That is a WORKING url to the wrong estate's asset, which is worse than a
+      # broken one because nothing about it looks wrong.
+      #
+      # NOT REACHABLE YET, AND THAT IS KNOWN RATHER THAN OVERLOOKED. `studio`
+      # has no gateway router as this lands, so the hostname does not resolve
+      # and no image renders anywhere in the estate. The router and its DNS
+      # record are the other half; this variable is necessary and not
+      # sufficient. It is set now rather than afterwards because the alternative
+      # is a router going live against services still holding ''.
+      STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # ── WHY A STATIC SERVICE TOKEN CANNOT BE THE ANSWER HERE ─────────────
       #
       # A service token's TTL is 10 MINUTES, hard-coded, and identity refuses to
@@ -2515,6 +2589,19 @@ services:
       LEDGER_URL: http://ledger:4000
       POLICY_URL: http://policy:4000
       ADMIN_API_URL: http://admin-api:4000
+      # The browser-facing half of studio, exactly as in `market` above — see the
+      # long note there. Foresight holds an asset reference and builds `bytesUrl`
+      # from this at read time, deliberately NOT storing a URL in the durable
+      # event (`foresight/src/images.test.ts:487` asserts that), so the value is
+      # read on every render and a wrong one is wrong everywhere at once.
+      #
+      # `env.test.ts:236-260` requires an ORIGIN and rejects a path — a trailing
+      # slash is accepted and normalised, anything more throws at boot. The
+      # interpolation below produces a bare origin on both estates.
+      #
+      # Gated on studio's gateway router and its DNS record, which do not exist
+      # yet. Set now for the reason given in market's block.
+      STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # A TOKEN, NOT A CREDENTIAL. See the long note above; it is presented
       # verbatim by `index.ts:101` and a `cfsc_…` secret here 401s all five
       # upstreams.
@@ -2721,7 +2808,13 @@ services:
       # Compose-network names, not gateway hostnames, exactly like the six beside them.
       # These are SERVICE targets — the browser tier is the only one that must use a real
       # public hostname, because a page derives its API hosts from the one it was loaded from.
-      BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000,wallet=http://wallet:4000,custody=http://custody:4000
+      # `studio` joins the list because market and foresight now hold ASSET
+      # REFERENCES that only studio can resolve, so it sits on the read path of
+      # two surfaces that were already smoke-tested and it was not smoke-tested
+      # at all. This is the in-cluster address — the browser-facing one is
+      # `STUDIO_PUBLIC_URL` on those two services, and the two are different
+      # things that happen to name one container.
+      BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000,wallet=http://wallet:4000,custody=http://custody:4000,studio=http://studio:4000
       BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
       # The SSO origin the handoff journey hands off TO. Unset, `identity.handoff`
       # SKIPS rather than guesses an origin — correctly, since a guessed origin would
