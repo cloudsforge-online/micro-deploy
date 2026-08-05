@@ -165,15 +165,51 @@ http:
       middlewares: [cf-api-headers]
       service: cf-api-devplatform
 
+    # ── THERE IS DELIBERATELY NO CATCH-ALL ON THE API HOST ───────────────────
+    #
     # Anything else on the API host is a 404 from the gateway rather than a
-    # request that reaches a service by accident. Lower priority than every
-    # route above and far below the /internal refusal in policy.yml.
-    cf-api-catchall:
-      rule: 'Host(`{{ env "CF_API_HOST" }}`)'
-      priority: 1
-      entryPoints: [websecure, tunnel]
-      middlewares: [cf-api-headers]
-      service: cf-api-unrouted
+    # request that reaches a service by accident. That sentence stood here for
+    # months above a router that delivered 502, which is the one thing it was
+    # written to prevent.
+    #
+    # `cf-api-catchall` matched bare `Host(CF_API_HOST)` at `priority: 1` and
+    # pointed at `cf-api-unrouted`, `servers: [{ url: "http://127.0.0.1:1" }]` —
+    # a blackhole Traefik cannot connect to, so it answered 502. Both are gone.
+    #
+    # WHY DELETING THE ROUTER IS THE FIX AND A "404 SERVICE" IS NOT. Traefik has
+    # no static-response middleware, so there is nothing to swap the blackhole
+    # for; every URL in a loadBalancer is a real upstream someone must run. But
+    # Traefik's own default, when NO router matches, is already the answer —
+    # `404 page not found`, from the entrypoint, with no upstream involved.
+    # Measured on the mainnet tunnel entrypoint rather than assumed:
+    #
+    #   Host: api.cloudsforge.online              /          -> 502  Bad Gateway
+    #   Host: api.cloudsforge.online              /livez     -> 502  Bad Gateway
+    #   Host: api.cloudsforge.online              /v1/rates  -> 200
+    #   Host: no-such-host-xyz.cloudsforge.online /          -> 404  page not found
+    #
+    # The third line is what makes this safe: every real route is a
+    # `PathPrefix(/v1/…)` at `priority: 1000` and matches on its own. The
+    # catch-all was load-bearing for nothing.
+    #
+    # AND THE 502 WAS NOT COSMETIC. `/livez` is the path a monitor probes, and
+    # on this host it answered 502 on BOTH networks — api and api-testnet alike,
+    # so this was never a leftover from folding `worlds-api` into the API host.
+    # A 502 there says "the API is up and its backend has fallen over"; the API
+    # was fine and every route worked. `scripts/estate-verify.sh:2818` argues
+    # this at length under "WHY A ROUTE THAT 502s IS THE WORST OF THE THREE
+    # ANSWERS", and this router was the estate's own counter-example.
+    #
+    # NOT TO BE CONFUSED WITH `cf-refuse` IN policy.yml, which is the same
+    # blackhole and STAYS one. That router hides `/internal`, where the path
+    # does exist and a 404 would be a lie told to a prober. Here nothing exists,
+    # so 404 is simply true. Same mechanism, opposite intent — which is why the
+    # fix was not "reuse cf-refuse".
+    #
+    # Losing `cf-api-headers` on the miss costs nothing: the tunnel entrypoint
+    # applies `cf-request-id`, `cf-security-headers` and `cf-cors` to every
+    # request before routing (`compose/docker-compose.gateway.yml:266`), so a
+    # 404 here is still CORS-clean for a browser.
 
   services:
     # The upstream port is each image's own EXPOSE, read from its Dockerfile — not a number
@@ -210,9 +246,7 @@ http:
       loadBalancer:
         servers: [{ url: "http://devplatform:4000" }]
 
-    # An unrouted path on the API host. Same reasoning as policy.yml's
-    # cf-refuse: an unreachable upstream is what "there is nothing here" looks
-    # like from outside, and it tells a prober nothing about what does exist.
-    cf-api-unrouted:
-      loadBalancer:
-        servers: [{ url: "http://127.0.0.1:1" }]
+    # `cf-api-unrouted` was here — the `http://127.0.0.1:1` blackhole the
+    # deleted catch-all pointed at. See the note where that router used to be:
+    # its 502 was the misdiagnosis this file's own comment promised to avoid,
+    # and Traefik's default 404 replaces it with no upstream at all.

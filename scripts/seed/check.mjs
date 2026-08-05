@@ -39,7 +39,8 @@
  *
  * Not the FOUR SURFACES WITH NO GATEWAY ROUTE, from the front door — `community`,
  * `nda` and `billing` are published nowhere (`gateway/dynamic/public-api.yml`
- * sends everything unmatched to `cf-api-catchall`), so they are read on the same
+ * routes only the nine services it names, so anything unmatched on the API host
+ * is Traefik's default 404), so they are read on the same
  * loopback ports `estate-verify.sh` uses and are marked `loopback` in the report.
  * Calling that "what a visitor sees" would be a lie; leaving them out entirely
  * would let three services go empty unnoticed. They are checked, and labelled.

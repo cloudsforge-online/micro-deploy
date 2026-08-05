@@ -20,8 +20,10 @@
  * Three of the services being seeded — `community`, `nda` and `billing` — have
  * NO gateway route at all. `deploy/gateway/dynamic/public-api.yml` publishes
  * pricing, activity, foresight, identity, wallet, market, mint, worlds and
- * devplatform on the API host and sends everything else to `cf-api-catchall`,
- * which points at `http://127.0.0.1:1`. `micro-ledger` is deliberately not
+ * devplatform on the API host and routes nothing else, so anything unmatched is
+ * Traefik's own `404 page not found`. (It used to be a `cf-api-catchall` router
+ * pointing at `http://127.0.0.1:1`, which answered 502 — an unrouted resource
+ * that claimed to be a broken one.) `micro-ledger` is deliberately not
  * publishable at all — it has no third-party-reachable surface by design. Those
  * four are reached on the loopback host ports the compose file binds, exactly as
  * `estate-verify.sh` reaches them, and `viaGateway` records which is which so
