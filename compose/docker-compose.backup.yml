@@ -1,0 +1,137 @@
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE BACKUP RUNNER — the DATA PLANE of estate backup and restore.
+#
+#   mainnet   docker compose -p cloudsforge-estate \
+#               -f compose/docker-compose.estate.yml \
+#               -f compose/docker-compose.backup.yml up -d backup-runner
+#   testnet   docker compose -p cf-testnet ... (same, with the testnet env file)
+#
+# It leases `backup.*` jobs out of admin_api's `jobs` table. admin-api owns the catalogue, the
+# authority to start a run and the approval a live restore needs; this owns the bytes and nothing
+# else. `JobRunner.claim()` filters by REGISTERED kind, so neither can take the other's work.
+#
+# ── WHY THIS FILE IS AN OVERLAY AND NOT A BLOCK IN docker-compose.estate.yml ──────────────────
+#
+# The estate file is 46 services of application. This is the one container in the estate that holds
+# a superuser DSN for the whole cluster and read access to the custody vault. Keeping it in its own
+# file makes that grant reviewable in isolation rather than on line 3300 of a 4000-line file.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+services:
+  backup-runner:
+    restart: unless-stopped
+    build:
+      context: ../backup
+      additional_contexts:
+        runtimepkgs: ../../runtime
+    environment:
+      # ── IDENTITY. Baked in at container creation, never taken from a job payload, a route or a
+      #    manifest. It is one half of the cross-environment restore refusal (src/manifest.ts); the
+      #    other half is written inside the artefact. Neither is a parameter, because on 2026-08-05
+      #    the thing that failed — twice — was a parameter that was ignored.
+      BACKUP_ENVIRONMENT: ${CF_BACKUP_ENVIRONMENT:?set it to mainnet or testnet; it is one half of the cross-environment restore refusal and must never be guessed}
+      BACKUP_COMPOSE_PROJECT: ${COMPOSE_PROJECT_NAME:-cloudsforge-estate}
+
+      # ── TWO DSNs, WHICH IS WHY THIS IS NOT PART OF admin-api.
+      #    Rule 1 gives a service one database and CI greps admin-api/src for a second. A process
+      #    that dumps 29 OTHER databases cannot satisfy that and should not: reading every database
+      #    in the cluster is a different trust domain from composing an operator's console.
+      BACKUP_ADMIN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api
+      BACKUP_CLUSTER_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/postgres
+
+      BACKUP_ROOT: /backups
+      BACKUP_CUSTODY_VAULT_DIR: /vault/custody-keys/keys
+      BACKUP_STUDIO_ASSETS_DIR: /volumes/studio-assets
+      BACKUP_WORLD_ASSETS_DIR: /world-assets
+      BACKUP_MINER_KEYS_DIR: /miner-keys
+
+      # ── A PUBLIC KEY. Safe here, safe in git, safe in a log line — that is the whole reason `age`
+      #    with a recipient was chosen over a symmetric key in this container's environment. The
+      #    private identity must NEVER exist on this host; it lives with the paper and the encrypted
+      #    USB from docs/custody-backup-restore.md §4.1.
+      #
+      #    Unset means the miner coinbase key is simply NOT backed up, and the manifest says so.
+      #    There is deliberately no path that writes a private key unencrypted: that fallback would
+      #    fire exactly when configuration is broken, which is exactly when nobody is watching.
+      BACKUP_AGE_RECIPIENT: ${CF_BACKUP_AGE_RECIPIENT:-}
+
+      INSTANCE_ID: backup-runner-${CF_BACKUP_ENVIRONMENT:-estate}
+      LOG_LEVEL: ${CF_LOG_LEVEL:-info}
+
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      # NOTE THE ABSENCE. There is NO env_file here and NO CUSTODY_MASTER_SECRET_V* of any kind.
+      #
+      # This container archives the custody VAULT — ciphertext. Adding the keyring to it would put
+      # artefacts B and C of docs/custody-backup-restore.md §1.5 in one process and, from there,
+      # into one backup set: "not a backup with a key, it is a plaintext key store with extra
+      # steps — anyone who finds that medium has the coins."
+      #
+      # src/keyring.ts REFUSES TO START if any CUSTODY_MASTER_SECRET_V<n> is present in this
+      # process's environment, matched by pattern so a rotation to V4 cannot slip past. If somebody
+      # adds an env_file here to let the runner "check the keys work", the container will not boot.
+      # That is the intended outcome. Do not weaken it.
+      # ══════════════════════════════════════════════════════════════════════════════════════
+
+    volumes:
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      # **THE DESTINATION IS /home/malf/cloudsforge-backups, NOT /data/cloudsforge-backups.**
+      #
+      # The bytes are the same bytes: /home/malf/cloudsforge-backups is a bind mount of
+      # /data/cloudsforge-backups, made permanent in /etc/fstab with `nofail`, and `findmnt` shows
+      # `/dev/sdb1[/cloudsforge-backups]` with the full 1.4 TB behind it.
+      #
+      # The reason for the indirection is that Docker here is the CANONICAL SNAP (29.3.1, rev 3505).
+      # Snap confinement grants `docker:home` but not `removable-media`, so the daemon cannot see
+      # /data at all — and a bind of a path it cannot see does not fail. The container gets an empty
+      # directory in its own ephemeral layer, every write "succeeds", and the artefacts are
+      # destroyed with the container. Verified on the host 2026-08-05: a canary written through a
+      # /data bind was absent afterwards; the same write through /home/malf was present.
+      #
+      # Nothing in the runner would notice: pg_dump exits 0, the checksums are correct, the manifest
+      # is written and backup_runs says `succeeded`. That is why src/disk.ts writes a canary and
+      # checks the filesystem size at boot and REFUSES to run if the destination is implausible. If
+      # this line is ever edited back to /data, the container will not start.
+      # ══════════════════════════════════════════════════════════════════════════════════════
+      - ${CF_BACKUP_DESTINATION:-/home/malf/cloudsforge-backups}:/backups
+
+      # READ-ONLY, all four sources. This process copies; it has no business writing to any of them,
+      # and a `:ro` mount is the difference between a bug that fails and a bug that eats the vault.
+      - custody-keys:/vault/custody-keys:ro
+      - studio-assets:/volumes/studio-assets:ro
+      - ${CF_WORLD_ASSETS:-./estate/world-assets}:/world-assets:ro
+
+      # The miner coinbase keys: 240-byte plaintext private keys, mode 0600, holding real mined
+      # coin at 0x980d…5b45 on mainnet. They are read, encrypted to BACKUP_AGE_RECIPIENT, and only
+      # the ciphertext is written. If no recipient is configured they are not read at all.
+      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}:/miner-keys:ro
+
+    # ── NO DOCKER SOCKET, AND THAT IS A DESIGN DECISION RATHER THAN AN OMISSION.
+    #
+    # A backup tool that mounts /var/run/docker.sock is a backup tool with root on the host: the
+    # socket is an unauthenticated API that can start a privileged container with / bind-mounted.
+    # Nothing here needs it. The databases are reached over the network as any other client, and the
+    # volumes are reached as volume mounts. `docker exec` is convenient for a human at a terminal
+    # (which is what the §2 runbook uses) and is a privilege escalation when it is left in a daemon.
+    ports:
+      - "127.0.0.1:${CF_PORT_BASE:-4}130:4130"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4130/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+    # This process holds a superuser DSN and reads a key vault. It should not also be able to gain
+    # privileges it was not started with.
+    security_opt:
+      - no-new-privileges:true
+
+# Declared so the overlay can mount them by their project-scoped names
+# (`<project>_custody-keys`). `external: false` is the default: these are the estate file's own
+# volumes and compose resolves them within the same project.
+volumes:
+  custody-keys:
+  studio-assets:

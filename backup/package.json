@@ -1,0 +1,44 @@
+{
+  "name": "@cloudsforge/backup-runner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "The DATA PLANE of estate backup and restore. Leases backup.* jobs out of admin_api's queue, dumps twenty-nine databases and the volumes worth keeping, and never — by construction — touches the custody keyring. admin-api owns the catalogue and the authority; this owns the bytes.",
+  "license": "MIT",
+  "type": "module",
+  "packageManager": "pnpm@11.9.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test --test-concurrency=1 src/*.test.ts",
+    "build": "tsc -p tsconfig.build.json",
+    "check": "pnpm typecheck && pnpm test"
+  },
+  "_localDependencies": [
+    "Every sibling takes 'link:', not 'file:', for the reason admin-api/package.json spells out: a",
+    "'file:' path PACKS the dependency, and each of these packages declares files: ['dist'] with a",
+    "publishConfig pointing main/types at a dist/ that has not been built.",
+    "",
+    "The paths are '../../runtime' rather than admin-api's '../runtime' because this deployable lives",
+    "one directory deeper — deploy/backup, not a repository root beside runtime/."
+  ],
+  "_whyTwoDsns": [
+    "BACKUP_ADMIN_DATABASE_URL and BACKUP_CLUSTER_URL are two connection strings in one process, and",
+    "that is the entire reason this is a separate deployable rather than four more handlers inside",
+    "admin-api. Rule 1 gives a service one database and CI greps admin-api/src for a second DSN.",
+    "A process that must read all twenty-nine databases in the cluster cannot satisfy that rule and",
+    "should not: reading every database is a different trust domain from composing an operator's",
+    "console, and keeping them in one process would give an admin-api RCE the whole estate."
+  ],
+  "dependencies": {
+    "@cloudsforge/jobs": "link:../../runtime/packages/jobs",
+    "@cloudsforge/lifecycle": "link:../../runtime/packages/lifecycle",
+    "@cloudsforge/telemetry": "link:../../runtime/packages/telemetry",
+    "postgres": "^3.4.5",
+    "tsx": "^4.19.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  }
+}

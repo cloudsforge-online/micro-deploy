@@ -1,0 +1,202 @@
+/**
+ * The composition root.
+ *
+ * The order below is not arbitrary and each step carries the reason it must precede the next.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **STEP 0 IS THE KEYRING REFUSAL, AND IT IS FIRST FOR A REASON.**
+ *
+ * Before a logger exists, before a pool is opened, before a job could possibly be claimed: if a
+ * `CUSTODY_MASTER_SECRET_V<n>` is anywhere in this process's environment, this process exits. It
+ * writes the custody VAULT, and §1.5 of `docs/custody-backup-restore.md` is unambiguous that the
+ * vault and the keyring on one medium is "a plaintext key store with extra steps". The only way
+ * that happens is a compose-file edit, and a compose-file edit is not something source review
+ * catches — so the check is here, in the process that would be holding both halves.
+ *
+ * It exits before the logger exists on purpose. A logger would be a thing that could be asked to
+ * log what it found, and what it found is a keyring.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * This process runs NO migrations. `admin_api`'s schema is admin-api's, and a data-plane process
+ * that could create the tables it reads is a data-plane process that could start against a schema
+ * nobody agreed to.
+ */
+
+import { createServer } from 'node:http'
+import postgres from 'postgres'
+import { JobQueue, JobRunner, type Sql as JobsSql } from '@cloudsforge/jobs'
+import { Lifecycle, installSignalHandlers, postgresProbe } from '@cloudsforge/lifecycle'
+import { Logger, Metrics, registerJobMetrics } from '@cloudsforge/telemetry'
+
+// ── 0. THE KEYRING REFUSAL. Nothing above this line but imports.
+import { assertNoKeyring, KeyringPresentError } from './keyring.ts'
+
+try {
+  assertNoKeyring(process.env)
+} catch (err) {
+  if (err instanceof KeyringPresentError) {
+    // `err.message` names VARIABLES, never values — see `keyring.ts`. Written straight to stderr
+    // rather than through a logger, because at this point there deliberately is not one.
+    process.stderr.write(`${err.message}\n`)
+    process.exit(1)
+  }
+  throw err
+}
+
+// Dynamic imports, and not for style. A static `import` is hoisted and evaluated BEFORE the block
+// above runs, so `env.ts` — which reads `process.env` at module scope — would execute while the
+// keyring may still be present. The guard has to be the first thing that happens, so everything
+// that reads the environment has to be loaded after it.
+const { env, SERVICE } = await import('./env.ts')
+const { registerHandlers, RecurringSchedule, rescheduleRecurring, seedRecurring, leaseKeyFor } = await import('./jobs.ts')
+const { assertClientMatchesServer, parseDsn, readClusterFacts } = await import('./pg.ts')
+const { assertDestinationIsReal, freeBytesAt } = await import('./disk.ts')
+
+// ── 1. Telemetry, before anything that can fail, so the pool's failure is a structured line.
+const logger = new Logger({ service: SERVICE, level: env.logLevel, version: env.version, env: env.env })
+const metrics = registerJobMetrics(new Metrics())
+  .register({ name: 'backup_artefacts_written_total', help: 'Artefacts written', kind: 'counter', labels: ['kind'] })
+  .register({ name: 'backup_runs_failed_total', help: 'Backup runs that failed', kind: 'counter' })
+  .register({ name: 'backup_runs_pruned_total', help: 'Backup sets removed by retention', kind: 'counter' })
+  .register({ name: 'backup_restores_failed_total', help: 'Restores that failed', kind: 'counter', labels: ['mode'] })
+  .register({
+    name: 'backup_restores_refused_total',
+    help: 'Restores refused by a gate rather than failed',
+    kind: 'counter',
+    labels: ['reason'],
+  })
+  .register({ name: 'backup_verifications_failed_total', help: 'Periodic verifications that found a bad set', kind: 'counter' })
+  .register({ name: 'backup_last_success_bytes', help: 'Size of the last successful set', kind: 'gauge' })
+  .register({ name: 'backup_last_verified_unixtime', help: 'When a restore last proved a set', kind: 'gauge' })
+  .register({ name: 'backup_retained_bytes', help: 'Bytes retained after the last prune', kind: 'gauge' })
+  .register({ name: 'backup_destination_free_bytes', help: 'Free space at the destination', kind: 'gauge' })
+
+logger.info('starting', {
+  version: env.version,
+  environment: env.env,
+  composeProject: env.composeProject,
+  backupRoot: env.backupRoot,
+  // A PUBLIC key, and safe to log — that is the property that makes `age` the right choice here.
+  // Logged so an operator can confirm which recipient a set was encrypted to without decrypting it.
+  ageRecipient: env.ageRecipient ?? '(unset — the miner coinbase key will NOT be backed up)',
+  custodyKeyringInProcess: false,
+})
+
+// ── 2. Two pools, two trust domains. See the header of `env.ts` for why they are in one process.
+const admin = postgres(env.adminDatabaseUrl, { max: env.databasePoolMax, onnotice: () => {} })
+const cluster = postgres(env.clusterUrl, { max: 2, onnotice: () => {} })
+const connection = parseDsn(env.clusterUrl)
+
+// ── 3. Prove the destination is real and the tools match the server BEFORE claiming any work.
+//
+//       Both failures are silent and both produce green rows: a version-skewed client does not
+//       produce worse backups, it produces files that look like backups and cannot be restored; and
+//       a destination snap-packaged Docker cannot see becomes an ephemeral directory in which every
+//       write appears to succeed and nothing survives the container. See `disk.ts`.
+try {
+  await assertDestinationIsReal(env.backupRoot)
+  const facts = await readClusterFacts(cluster)
+  await assertClientMatchesServer(facts.serverVersion)
+  logger.info('cluster', {
+    serverVersion: facts.serverVersion,
+    systemIdentifier: facts.systemIdentifier,
+    databases: facts.databases.length,
+  })
+} catch (err) {
+  logger.fatal('refusing to start', { err })
+  await Promise.all([admin.end({ timeout: 5 }).catch(() => {}), cluster.end({ timeout: 5 }).catch(() => {})])
+  process.exit(1)
+}
+
+// ── 4. Lifecycle and probes, before the routes, because `/readyz` needs something to report.
+const lifecycle = new Lifecycle({
+  drainDelayMs: 5_000,
+  // Long, deliberately. A drain must not cut a `pg_restore` between `drop database` and the restore
+  // landing — that gap is the only moment in this system where a database exists and is empty.
+  drainTimeoutMs: 120_000,
+  onStateChange: (state) => logger.info('lifecycle state', { state }),
+})
+
+lifecycle
+  .addProbe(postgresProbe('admin', () => admin`select 1`))
+  .addProbe(postgresProbe('cluster', () => cluster`select 1`))
+
+// ── 5. The queue and the runner. ONLY `backup.*` kinds are registered, which is what stops this
+//       process and admin-api ever claiming each other's work. See `jobs.ts`.
+const queue = new JobQueue(admin as unknown as JobsSql, {
+  owner: `${SERVICE}@${env.instanceId}`,
+  leaseMs: env.jobLeaseMs,
+})
+const schedule = new RecurringSchedule()
+const runner = new JobRunner({
+  queue,
+  concurrency: env.jobConcurrency,
+  pollMs: env.jobPollMs,
+  shouldClaim: () => lifecycle.claimingJobs,
+  onEvent: (event) => {
+    if (event.type === 'failed' || event.type === 'dead' || event.type === 'error') {
+      logger.error('job event', { ...event })
+    }
+    rescheduleRecurring(queue, schedule, logger)(event)
+  },
+})
+
+registerHandlers(runner, { admin, cluster, connection, env, logger, metrics }, schedule)
+
+await seedRecurring(admin, queue, env.env, logger).catch((err: unknown) =>
+  logger.error('could not seed the recurring jobs', { err }),
+)
+
+runner.start()
+
+// ── 6. A probe surface. Small on purpose: this deployable answers no domain request, and the only
+//       questions worth asking it are "are you alive", "are you ready" and "what have you done".
+const server = createServer((request, response) => {
+  const url = request.url ?? '/'
+  if (url === '/livez') {
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(lifecycle.livez()))
+    return
+  }
+  if (url === '/metrics') {
+    void freeBytesAt(env.backupRoot)
+      .then((free) => metrics.set('backup_destination_free_bytes', Number(free)))
+      .catch(() => {})
+      .finally(() => response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }).end(metrics.render()))
+    return
+  }
+  if (url === '/readyz') {
+    void lifecycle.readyz().then((report) => {
+      response
+        .writeHead(report.ready ? 200 : 503, { 'content-type': 'application/json' })
+        .end(JSON.stringify(report))
+    })
+    return
+  }
+  response.writeHead(404, { 'content-type': 'application/json' }).end('{"error":"not found"}')
+})
+
+server.listen(env.port, () => {
+  lifecycle.markReady()
+  logger.info('listening', { port: env.port })
+})
+
+// Hooks run in REVERSE registration order, so registering pools first and the runner last means the
+// runner stops before the pools it needs are closed.
+lifecycle
+  .onShutdown(async () => {
+    await Promise.all([admin.end({ timeout: 10 }).catch(() => {}), cluster.end({ timeout: 10 }).catch(() => {})])
+  })
+  .onShutdown(async () => {
+    await new Promise<void>((resolve) => server.close(() => resolve()))
+  })
+  .onShutdown(async () => {
+    // Stop claiming, then wait for what is in flight. A `pg_dump` killed mid-stream leaves a
+    // truncated file, and a truncated file is exactly the artefact this system must never produce
+    // silently. Two minutes is generous because the alternative is a half-written set.
+    const drained = await runner.stop(120_000)
+    if (!drained) logger.error('a backup job was still running at the end of the drain window')
+  })
+
+// 45 s is not enough for a dump that is mid-flight, and the drain above is what should end the
+// process. This is the backstop for a drain that itself wedges.
+installSignalHandlers(lifecycle, { forceExitAfterMs: 180_000 })
