@@ -117,9 +117,51 @@ services:
     # used it are the two services this file exists to keep down.
     restart: unless-stopped
     healthcheck:
-      # /info is the REST port's cheapest truthful answer (`evmnode.js:434`).
+      # ── IT PROBES 8545 TOO, BECAUSE THAT IS THE PORT THE ESTATE ACTUALLY USES ──
+      #
+      # This was `GET :8645/info` alone. `/info` is still the REST port's cheapest
+      # truthful answer (`evmnode.js:434`), but 8645 is not the port anything in
+      # this estate talks to: `CF_RPC_UPSTREAM`, the indexer, foresight and the
+      # gateway all speak Ethereum JSON-RPC on 8545, and only `/mining/*` uses REST.
+      #
+      # The two are SEPARATE `http.createServer` listeners in one process —
+      # `evmnode.js:411` (`listenRest`) and `:214` (`listenJsonRpc`) — and a bind
+      # failure on either is reported with `this.error(...)` at `:414` and `:217`
+      # and is NOT fatal. So a node whose JSON-RPC never came up keeps running,
+      # keeps answering `/info` 200, and reports HEALTHY while every consumer 502s.
+      # A green light on a component nobody can reach is the failure this estate has
+      # already been bitten by twice; one probe cannot cover two independent servers.
+      #
+      # ── AND IT PINS THE CHAIN ID, WHICH IS THE ONE THING /info CANNOT SELF-CHECK ─
+      #
+      # 7411 is `0x1cf3`, the id `HEARTH_NETWORK: "hearth"` above selects through
+      # `params.js:37-38`. Pinning it here catches exactly the defect fixed in
+      # `fix(chain): mainnet and testnet were two chains sharing one identity`: this
+      # seed answered `"network":"hearth-testnet","chainId":7412` for weeks while
+      # serving happily, so EIP-155 made every mainnet signature replayable on
+      # testnet. Nothing at runtime would have said a word. Cross-checking the two
+      # ports against each other would not have caught it either — both were 7412
+      # together. Only a literal states which chain THIS file means, and this file is
+      # mainnet-only, so the literal is honest rather than a shared-script guess (the
+      # mistake `estate-verify.sh` made with a hardcoded `0x1cf4`).
+      #
       # No curl in node:22-alpine; node itself is the one dependency guaranteed.
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8645/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          const h=require('http'),EXPECT=7411;
+          const call=(o,b)=>new Promise((ok,no)=>{const q=h.request(o,r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>ok({c:r.statusCode,d}))});q.on('error',no);q.setTimeout(4000,()=>q.destroy(new Error('timeout')));q.end(b)});
+          (async()=>{
+            const i=await call({host:'127.0.0.1',port:8645,path:'/info'});
+            if(i.c!==200) throw new Error('rest /info '+i.c);
+            const p=await call({host:'127.0.0.1',port:8545,path:'/',method:'POST',headers:{'content-type':'application/json'}},'{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}');
+            if(p.c!==200) throw new Error('json-rpc '+p.c);
+            const rpc=parseInt(JSON.parse(p.d).result,16), rest=JSON.parse(i.d).chainId;
+            if(rpc!==EXPECT) throw new Error('json-rpc chain '+rpc+' != '+EXPECT);
+            if(rest!==EXPECT) throw new Error('rest chain '+rest+' != '+EXPECT);
+          })().then(()=>process.exit(0),e=>{console.error(String(e&&e.message||e));process.exit(1)});
       interval: 15s
       timeout: 5s
       retries: 5

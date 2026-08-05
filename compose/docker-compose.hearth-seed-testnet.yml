@@ -49,7 +49,34 @@ services:
       - "172.17.0.1:8848:8648"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:8645/info',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      # The mainnet overlay carries the full argument; it applies here unchanged
+      # except for the id. In short: 8645 (REST) and 8545 (Ethereum JSON-RPC) are
+      # SEPARATE listeners in one process (`evmnode.js:411` and `:214`), a bind
+      # failure on either is logged and not fatal (`:414`, `:217`), and 8545 is the
+      # port the estate actually consumes — so probing only `/info` reports HEALTHY
+      # on a node no consumer can reach.
+      #
+      # 7412 is `0x1cf4`. This seed is `hearth-testnet` and always was; the id is
+      # pinned so that a seed which came up on the OTHER chain — the defect fixed in
+      # `fix(chain): mainnet and testnet were two chains sharing one identity`, when
+      # both seeds answered 7412 and EIP-155 made signatures replayable across them —
+      # is caught by the healthcheck rather than by a replayed transaction.
+      test:
+        - CMD
+        - node
+        - -e
+        - |
+          const h=require('http'),EXPECT=7412;
+          const call=(o,b)=>new Promise((ok,no)=>{const q=h.request(o,r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>ok({c:r.statusCode,d}))});q.on('error',no);q.setTimeout(4000,()=>q.destroy(new Error('timeout')));q.end(b)});
+          (async()=>{
+            const i=await call({host:'127.0.0.1',port:8645,path:'/info'});
+            if(i.c!==200) throw new Error('rest /info '+i.c);
+            const p=await call({host:'127.0.0.1',port:8545,path:'/',method:'POST',headers:{'content-type':'application/json'}},'{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}');
+            if(p.c!==200) throw new Error('json-rpc '+p.c);
+            const rpc=parseInt(JSON.parse(p.d).result,16), rest=JSON.parse(i.d).chainId;
+            if(rpc!==EXPECT) throw new Error('json-rpc chain '+rpc+' != '+EXPECT);
+            if(rest!==EXPECT) throw new Error('rest chain '+rest+' != '+EXPECT);
+          })().then(()=>process.exit(0),e=>{console.error(String(e&&e.message||e));process.exit(1)});
       interval: 30s
       timeout: 5s
       retries: 5
