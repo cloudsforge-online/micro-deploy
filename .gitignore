@@ -17,7 +17,21 @@ dist/
 # Testnet's credentials are not "less real" than mainnet's. They authenticate
 # against testnet's identity, which fronts a live chain and real custodied keys
 # for that network.
-compose/estate/tokens*.env
+#
+# A FOURTH TIME, 2026-08-05, AND THE GLOB WAS ANCHORED AT THE WRONG END. This
+# rule was `compose/estate/tokens*.env` — globbed on the MIDDLE, fixed on the
+# suffix — and the SMTP_PASS rotation left `tokens.env.bak-1785933479` beside the
+# live file. That name does not end in `.env`, so it matched nothing and was one
+# `git add -A` from a public repository.
+#
+# It was not a stale file either: 37 of its 39 values were byte-identical to the
+# live `tokens.env`, so it was a second, unignored copy of the estate's entire
+# credential set. Only SMTP_PASS had actually moved.
+#
+# So the glob now covers the whole tail. `tokens.env`, `tokens.testnet.env`,
+# `tokens.env.bak-<epoch>`, `tokens.env.20260805` and whatever the next script
+# appends are all covered by the rule rather than by somebody remembering.
+compose/estate/tokens*
 
 # THE CUSTODY KEYRING. `CUSTODY_MASTER_SECRET_V<n>`, one file per environment, read
 # by the `custody` and `custody-migrate` blocks through an `env_file:` whose path is
