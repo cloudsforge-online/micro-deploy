@@ -68,4 +68,24 @@
 # Both erase for real, and both were already proven end to end by estate-verify.
 # They are here so the register is the whole truth rather than the new part of it.
 activity|activity|http://activity:4000/ingest|delete|-|select count(*) from activity_records where user_id = '{{uid}}'
-notify|notify|http://notify:4000/ingest|delete|-|select count(*) from preferences where user_id = '{{uid}}'
+notify|notify|http://notify:4000/ingest|delete|-|select (select count(*) from notifications where user_id = '{{uid}}') + (select count(*) from channel_targets where user_id = '{{uid}}') + (select count(*) from preferences where user_id = '{{uid}}') + (select count(*) from digests where user_id = '{{uid}}')
+#
+# ── HAD A HANDLER, HAD NO SUBSCRIPTION ───────────────────────────────────────
+# `trade` deletes bots and backtests and has done since it was written. Nothing
+# ever delivered the event to it, so the code was correct and unreachable — which
+# is indistinguishable from absent, and is why the register seeds rather than
+# documents.
+trade|trade|http://trade:4000/v1/events|delete|insert into series (id, symbol, asset_code, timeframe, source) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'DRILL', 'EMBER', '1h', 'drill') on conflict do nothing; insert into backtests (user_id, series_id, strategy_id, seed, start_cash, fee_bps, slippage_bps) values ('{{uid}}', '00000000-0000-4000-8000-0000000d5111', 'sma-cross', 1, 100, 10, 10)|select (select count(*) from bots where user_id = '{{uid}}') + (select count(*) from backtests where user_id = '{{uid}}')
+#
+# ── REGISTERED BECAUSE IT IS BROKEN, NOT BECAUSE IT WORKS ────────────────────
+# `market`'s handler runs and erases NOTHING: it sets `expires_at` on the
+# seller's listings (`market/src/server.ts:636-641`) and returns success. The
+# seller's subject stays on every row, so the residual below does not reach zero
+# and the drill FAILS on this line.
+#
+# That is deliberate. `micro-market` is held by another agent and this repository
+# will not edit it, and the alternative — leaving market out of the register —
+# would make the drill green by choosing not to look. A red line naming the
+# service and the reason is the honest form of "not done", and it turns green the
+# day market erases rather than the day somebody remembers to add it back.
+market|market|http://market:4000/v1/events|NOT ERASING — expires listings only|insert into listings (seller_subject, asset_kind, item_urn, quantity, item_asset_code, pricing_mode, price, asset_code, settlement_mode, status) values ('user:{{uid}}', 'token', 'cf:mint:token:drill', 1, 'DRILL', 'fixed', 100, 'EMBER', 'custodial', 'draft')|select count(*) from listings where seller_subject = 'user:{{uid}}'
