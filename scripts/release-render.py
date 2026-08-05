@@ -46,6 +46,19 @@ import sys
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("manifest", help="path to a release manifest (org/releases/<version>.yaml)")
 parser.add_argument("--base", default="compose/docker-compose.estate.yml", help="the compose file the overlay applies to")
+# ── WHICH ENVIRONMENT'S SERVICE LIST, WHICH IS NOT A DETAIL ──────────────────
+#
+# The base file renders a DIFFERENT SET OF SERVICES per environment: `faucet` is
+# defined on testnet and not on mainnet (faucet/src/env.ts:63 fixes NETWORK to
+# 'testnet' at compile time — mainnet EMBER is mined money and has no faucet).
+#
+# Without this, `config --services` below was always asked the MAINNET question,
+# so a testnet render decided `faucet` "is not in this environment" and dropped
+# its pin. A dropped pin does not fail: the base file's `build:` survives, and
+# the release deploy silently builds faucet from whatever is in the working tree
+# — which is the single failure mode this whole script exists to eliminate, and
+# it would have been introduced by the script itself.
+parser.add_argument("--env-file", help="passed to `docker compose` so the base service list is the one THIS environment defines")
 parser.add_argument("--out", help="write here instead of stdout")
 args = parser.parse_args()
 
@@ -122,11 +135,12 @@ if not services:
 base = pathlib.Path(args.base)
 if not base.exists():
     sys.exit(f"FAIL: no base compose file at {base}")
+config_cmd = ["docker", "compose"]
+if args.env_file:
+    config_cmd += ["--env-file", args.env_file]
+config_cmd += ["-f", str(base), "config", "--services"]
 try:
-    proc = subprocess.run(
-        ["docker", "compose", "-f", str(base), "config", "--services"],
-        capture_output=True, text=True, check=True,
-    )
+    proc = subprocess.run(config_cmd, capture_output=True, text=True, check=True)
 except FileNotFoundError:
     sys.exit("FAIL: docker is not available, so the base service list cannot be read. Refusing to guess it.")
 except subprocess.CalledProcessError as exc:

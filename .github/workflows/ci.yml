@@ -197,6 +197,26 @@ jobs:
           done
           echo "ok: two throwaway keyrings and two throwaway bus keys minted for the render steps"
 
+      # ── EVERY LONG-RUNNING SERVICE COMES BACK BY ITSELF ──────────────────────
+      #
+      # The estate is one HP ProLiant. Compose has no default restart policy, so a
+      # service with no `restart:` key gets Docker's default of `no` — it stays
+      # down after a power cut, a `systemctl restart docker` or an OOM kill, and
+      # nothing starts it again. That was true of all 29 APIs and of `postgres`.
+      #
+      # The fix put `restart: unless-stopped` on a shared anchor. An anchor is
+      # OPT-IN, so a service that forgets `<<: *service-defaults` silently
+      # inherits `no`, and until this step NOTHING CHECKED — the regression would
+      # have been discovered by an outage. Filed as a `vacuous-check` for exactly
+      # that reason: there was no check at all, not a weak one.
+      #
+      # Run before the render step below because it is the cheaper failure: a
+      # missing restart policy is a one-line diff, and finding it after a
+      # port-collision assertion has already failed buries it.
+      - name: Every long-running service will come back after a reboot
+        working-directory: deploy
+        run: make check-restart
+
       - name: The two compose projects do not collide
         working-directory: deploy
         run: |

@@ -1649,6 +1649,21 @@ services:
       INDEXER_URL: http://indexer:4000
       # The long-lived credential. See wallet's block for what it replaces.
       MINT_IDENTITY_CREDENTIAL: ${MINT_IDENTITY_CREDENTIAL:-}
+      # ── WHICH NETWORK MINT SAYS IT IS ON ─────────────────────────────────
+      #
+      # Unset, mint's own code defaults to `testnet`, so `/v1/catalogue` on the
+      # MAINNET estate answered `"network":"testnet"` — measured on the running
+      # container, not inferred. The service that mints assets was telling every
+      # mainnet user they were on a test network, which is the kind of thing that
+      # makes somebody treat real holdings as disposable.
+      #
+      # INTERPOLATED, NEVER A LITERAL, and that is the whole point. The testnet
+      # estate is equally unset and currently answers "testnet" BY COINCIDENCE —
+      # a hardcoded `mainnet` here would fix this estate by silently breaking the
+      # one whose entire purpose is to be identifiable as a test network. Same
+      # variable and same spelling as LEDGER_RECONCILE_NETWORK above, so the two
+      # cannot drift apart.
+      MINT_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
       INSTANCE_ID: mint-estate
     env_file: *outbox-secrets
     ports:
@@ -1679,7 +1694,9 @@ services:
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
-      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # Empty, never a placeholder — see the `market` block below for why.
+      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-}
+      MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: market-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1697,7 +1714,36 @@ services:
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
-      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # ── THE PLACEHOLDER IS GONE, AND EMPTY IS NOT THE SAME THING ─────────
+      #
+      # This defaulted to `estate-placeholder-token-0000000000000000`. A plain
+      # `docker compose up` resolved it, market presented it to policy, policy
+      # answered 401, and the policy client rendered our own missing credential
+      # to a seller as a MODERATION DECISION — they were told they were banned.
+      #
+      # `:-` to EMPTY rather than to a string that looks like a credential. The
+      # difference is what the service can tell about itself: a placeholder is
+      # indistinguishable from a real token until a peer rejects it, whereas
+      # empty means "nobody configured this" and market can say so at boot.
+      #
+      # ── AND WHY A STATIC TOKEN CANNOT BE THE ANSWER AT ALL ───────────────
+      #
+      # A service token's TTL is 10 minutes, hard-coded, and identity refuses to
+      # lengthen it (identity/src/tokens.ts:32-33). estate-bootstrap.sh bakes one
+      # into this environment and the container then runs for days. Measured on
+      # this estate: market's token had been expired for 17.5 HOURS, policy was
+      # answering 401 to every decision, and every listing was being created
+      # unmoderated behind a `degraded` verdict that nothing paged on.
+      #
+      # So the token below is the LEGACY path, kept only so an estate that has
+      # not bootstrapped a credential still boots. The credential is the real
+      # one: long-lived, exchanged for short-lived scoped tokens by
+      # `ServiceTokenProvider`, and it survives a restart. estate-bootstrap.sh
+      # already mints MARKET_IDENTITY_CREDENTIAL; until now nothing read it.
+      # IDENTITY_URL is not set here because market falls back to
+      # IDENTITY_ISSUER, which `*identity-trust` above already provides.
+      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-}
+      MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: market-estate
     env_file: *outbox-secrets
     ports:

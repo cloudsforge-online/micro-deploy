@@ -84,7 +84,7 @@ GW_ESTATE := -f compose/docker-compose.telemetry.yml \
              -f compose/docker-compose.gateway.yml \
              -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway
+.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway check-restart check-restart-live
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
@@ -135,6 +135,27 @@ check-cert: ## Mint the gateway's local CA and leaf, and verify the chain
 	@# The estate was only ever verified with `curl -k` and `ignoreHTTPSErrors`,
 	@# so its transport had never been exercised the way a person exercises it.
 	@./scripts/gateway-cert.sh
+
+check-restart: ## Every long-running service comes back by itself after a reboot
+	@# The estate is one HP ProLiant. Whatever does not restart after a power cut
+	@# is simply gone, and nobody would know which — so the policy was put on a
+	@# shared anchor, `x-service-defaults`. An anchor is OPT-IN: a service that
+	@# forgets `<<: *service-defaults` inherits Docker's default of `no`, and
+	@# nothing noticed. This is what notices, in both environments.
+	@python3 scripts/check-restart-policy.py \
+		-f compose/docker-compose.estate.yml --project mainnet
+	@python3 scripts/check-restart-policy.py --env-file compose/testnet.env \
+		-f compose/docker-compose.estate.yml --project testnet
+
+check-restart-live: ## The same question asked of what is ACTUALLY RUNNING
+	@# A render cannot see an ORPHAN — a container whose service was deleted from
+	@# the compose file and which keeps running under the old definition — nor a
+	@# release OVERLAY, which is generated and gitignored so CI never reads it.
+	@# Both were live when this was written: a stale testnet overlay still pinned
+	@# `foresight-admin-web`, a service the P13 fold had removed, so compose
+	@# CREATED it with an image and no restart policy at all.
+	@python3 scripts/check-restart-policy.py --live --project cloudsforge-estate
+	@python3 scripts/check-restart-policy.py --live --project cf-testnet
 
 check-web: ## Recompute every host port from micro-org's registry and compare
 	@# The ports here are POSITIONAL — `4100 + index in deployableRepos()` — so a
