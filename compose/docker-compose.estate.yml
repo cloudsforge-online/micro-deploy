@@ -282,6 +282,48 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000"}'
 x-settlement-rpc-urls: &settlement-rpc-urls
   '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}}'
 
+# ══════════════════════════════════════════════════════════════════════════════
+# WHICH NETWORK THE MONEY TIER THINKS IT IS ON — AND IT WAS NOT THIS ONE.
+#
+# `WALLET_NETWORK` and `SETTLEMENT_NETWORK` both default to `testnet`
+# (`wallet/src/env.ts:348`, `settlement/src/env.ts:324`) and NEITHER was set here.
+# `INDEXER_CHAINS` and `LEDGER_RECONCILE_NETWORK` were set, to `mainnet`. So on
+# the mainnet estate the money tier was split down the middle, and every symptom
+# of it looked like something else:
+#
+#   1. **Every EMBER withdrawal was refused 409 `asset_frozen`.** wallet
+#      registers each deposit address with the indexer under ITS network, so the
+#      watch rows landed on `ember:testnet` (measured: indexer logs
+#      `address watched … network:"testnet" by:"wallet"`). ledger then asked for
+#      `ember:mainnet` and the indexer answered, correctly and loudly,
+#      `no_custody_addresses` — "no watched address on ember:mainnet carries a
+#      custody label, which is not the same as holding nothing". Reconciliation
+#      failed, and a chain-backing that cannot be observed freezes the asset.
+#      The freeze was RIGHT. What it was reporting was this line's absence.
+#   2. **The mainnet estate minted testnet deposit addresses.** `tb1q…` for BTC
+#      and `tltc1…` for LTC, on the estate serving `cloudsforge.online`. Custody
+#      derives from the network wallet asks for, so the address is exactly as
+#      wrong as the request that produced it — and it is well-formed, so nothing
+#      throws.
+#
+# Derived from `CF_EMBER_NETWORK`, the same variable that selects
+# `env/chain.${CF_EMBER_NETWORK}.env` and the custody and outbox secret files, so
+# there is ONE answer to "which network is this" and no way to set half of it.
+# The default matches those: `mainnet`.
+#
+# ── WHAT THIS DOES NOT DO ─────────────────────────────────────────────────────
+#
+# It does not migrate the `deposit_address_assignments` rows already written on
+# `testnet`. They stay, inert: the partial unique index is on
+# `(user_id, asset_code, network)` (`wallet/src/migrations.ts:318`), so an
+# existing user's next request mints a fresh MAINNET address rather than
+# colliding. Anyone holding one of the old testnet addresses would be holding an
+# address this estate no longer watches. That exposure is bounded and was checked
+# before changing this: the ledger's EMBER custody total is 3 EMBER, all of it
+# the estate's own faucet and treasury, and the three assets whose addresses this
+# most affects (BTC, ETH, SOL) could not be issued at all until 2026.08.4.
+x-money-network: &money-network ${CF_EMBER_NETWORK:-mainnet}
+
 # The JWKS seam. Every service that verifies a token fetches identity's keys over
 # a real network here, which is the thing no unit suite could reach.
 x-identity-trust: &identity-trust
@@ -1455,6 +1497,8 @@ services:
       # the service does. Setting it on one and not the other means a malformed
       # table migrates the schema and then refuses to serve it.
       WALLET_FEE_QUOTES: *wallet-fee-quotes
+      # See the anchor: unset, this defaults to testnet on a mainnet estate.
+      WALLET_NETWORK: *money-network
       INSTANCE_ID: wallet-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1493,6 +1537,9 @@ services:
       # See the anchor. This one line is the difference between an estate that
       # can be withdrawn from and one that answers 503 to every asset.
       WALLET_FEE_QUOTES: *wallet-fee-quotes
+      # See the anchor. This is the line whose absence froze EMBER withdrawals
+      # and had the mainnet estate minting tb1q… and tltc1… deposit addresses.
+      WALLET_NETWORK: *money-network
       INSTANCE_ID: wallet-estate
     env_file: *outbox-secrets
     ports:
@@ -1529,6 +1576,7 @@ services:
       # On the migrator for the reason wallet's block gives: `src/migrator.ts:25`
       # imports the eager `env.ts` and parses this at boot.
       SETTLEMENT_RPC_URLS: *settlement-rpc-urls
+      SETTLEMENT_NETWORK: *money-network
       INSTANCE_ID: settlement-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1550,6 +1598,10 @@ services:
       # See the anchor. Without this the service boots reporting `endpoint:false`
       # for all five chains and can neither build nor broadcast anything.
       SETTLEMENT_RPC_URLS: *settlement-rpc-urls
+      # Same anchor, same reason: settlement booted reporting network:"testnet"
+      # on the mainnet estate, so its treasury pins and sweeps were addressed to
+      # the wrong half of custody.
+      SETTLEMENT_NETWORK: *money-network
       INSTANCE_ID: settlement-estate
     env_file: *outbox-secrets
     ports:
