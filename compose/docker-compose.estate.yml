@@ -2686,6 +2686,11 @@ services:
       FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
       FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
       FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
+      # The published house-seed address (21 §5). Absent means no seed: foresight refuses a
+      # houseSeedPerOutcomeWei plainly rather than staking nothing and reporting success. It was
+      # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
+      # silently — a control that reports success while doing nothing.
+      FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: foresight-migrate
@@ -2759,6 +2764,11 @@ services:
       # constructor reverts on either.
       FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
       FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
+      # The published house-seed address (21 §5). Absent means no seed: foresight refuses a
+      # houseSeedPerOutcomeWei plainly rather than staking nothing and reporting success. It was
+      # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
+      # silently — a control that reports success while doing nothing.
+      FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: foresight-estate
