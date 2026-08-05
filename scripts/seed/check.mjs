@@ -45,7 +45,7 @@
  * would let three services go empty unnoticed. They are checked, and labelled.
  */
 
-import { APEX, SERVICES, api, bad, head, note, ok } from './lib.mjs'
+import { WEB_SUFFIX, SERVICES, api, bad, head, note, ok } from './lib.mjs'
 
 /**
  * One surface, the read that populates it, and what an empty answer means.
@@ -85,7 +85,7 @@ export const SURFACES = [
     path: '/markets?status=open&limit=200',
     anon: true,
     pick: (b) => b.markets,
-    page: (apex) => `https://foresight.${apex}/`,
+    page: (suffix) => `https://foresight${suffix}/`,
     empty:
       'the Foresight browse page renders no questions at all — the surface the owner named first. ' +
       'Markets that exist but are not `open` do not appear on it: check `select status, count(*) ' +
@@ -98,7 +98,7 @@ export const SURFACES = [
     path: '/v1/listings',
     anon: true,
     pick: (b) => b.listings,
-    page: (apex) => `https://market.${apex}/`,
+    page: (suffix) => `https://market${suffix}/`,
     // ── THIS ONE IS RED TODAY, AND IT IS NOT RED FOR WANT OF SEEDING ─────────
     //
     // `seed/market.mjs` creates four listings and every one of them stays
@@ -129,7 +129,7 @@ export const SURFACES = [
     path: '/v1/collections',
     anon: true,
     pick: (b) => b.collections,
-    page: (apex) => `https://market.${apex}/`,
+    page: (suffix) => `https://market${suffix}/`,
     empty: 'the marketplace has no collections to browse by',
   },
   {
@@ -139,7 +139,7 @@ export const SURFACES = [
     path: '/v1/tokens',
     anon: false,
     pick: (b) => b.tokens,
-    page: (apex) => `https://create.${apex}/`,
+    page: (suffix) => `https://create${suffix}/`,
     empty: 'Create shows a catalogue and no token anybody has ever minted from it',
   },
   {
@@ -185,14 +185,14 @@ export const SURFACES = [
  * 200, valid JSON, and an empty product.
  *
  * It is not in the table above because it is not in the seeder's `SERVICES` map
- * and must not be: `status.<apex>` is a BUNDLE's hostname, and the projection is
- * beacon's work surfaced by somebody else's nginx. Read here with `fetch`
- * against the trust bundle, exactly as a browser would.
+ * and must not be: `status${WEB_SUFFIX}` is a BUNDLE's hostname, and the
+ * projection is beacon's work surfaced by somebody else's nginx. Read here with
+ * `fetch` against the trust bundle, exactly as a browser would.
  */
 const STATUS_PATH = '/api/status/public'
 
 async function checkStatusPage() {
-  const url = `https://status.${APEX}${STATUS_PATH}`
+  const url = `https://status${WEB_SUFFIX}${STATUS_PATH}`
   let res
   try {
     res = await fetch(url, {
@@ -222,7 +222,7 @@ async function checkStatusPage() {
   if (groups.length === 0) {
     bad(
       `status page is EMPTY: ${url} answered 200 {"groups":[]}. beacon has no probes, so ` +
-        `status.${APEX} renders a heading and nothing under it. This is a 200 with an empty ` +
+        `status${WEB_SUFFIX} renders a heading and nothing under it. This is a 200 with an empty ` +
         `product, which is why a status code could never have caught it`,
     )
     return
@@ -283,7 +283,7 @@ export async function checkSurfaces(token) {
       continue
     }
     if (rows.length === 0) {
-      const page = surface.page(APEX)
+      const page = surface.page(WEB_SUFFIX)
       bad(
         `${surface.key} is EMPTY: ${where} answered 200 with an empty list (${via}). ` +
           `${surface.empty}${page ? ` — ${page}` : ''}. Run ./scripts/estate-seed.mjs`,

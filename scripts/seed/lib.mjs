@@ -103,15 +103,50 @@ export const APEX =
   process.env.CF_WEB_APEX || fromTraefikEnv('CF_WEB_APEX') || 'cloudsforge.localtest.me'
 
 /**
+ * Everything after a surface's own name. `nimbus` + this is identity's hostname.
+ *
+ * ── AN ENVIRONMENT IS A SUFFIX NOW, NOT A PREFIX ON THE APEX ─────────────────
+ *
+ * Changed 2026-08-05. Testnet used to be `hub.testnet.cloudsforge.online`, and
+ * every hostname of that shape was configured and unreachable: Cloudflare's
+ * Universal SSL is `*.cloudsforge.online`, a wildcard matches exactly ONE label,
+ * so the TLS handshake failed at Cloudflare's edge before a request reached the
+ * box. It is `hub-testnet.cloudsforge.online` now, and BOTH environments share
+ * the zone `cloudsforge.online`.
+ *
+ * READ from the gateway's own env file, exactly as `APEX` above is, and NOT
+ * derived as `.${APEX}`. That derivation is why this variable exists rather than
+ * being a one-line expression: with a shared apex it yields a real MAINNET
+ * hostname that really answers, so a testnet seeding run would write its content
+ * into production and report success. The `.${APEX}` fallback is reached only
+ * when there is no gateway env file at all, which is a laptop under
+ * `cloudsforge.localtest.me` where there is no second environment to confuse.
+ */
+export const WEB_SUFFIX =
+  process.env.CF_WEB_SUFFIX || fromTraefikEnv('CF_WEB_SUFFIX') || `.${APEX}`
+
+/**
+ * The apex surface — the marketing site — whose registry subdomain is the EMPTY
+ * STRING.
+ *
+ * It needs a variable of its own because `'' + WEB_SUFFIX` is
+ * `-testnet.cloudsforge.online`, which is not a legal DNS label. The environment
+ * label stands alone instead: `testnet.cloudsforge.online`, and on mainnet this is
+ * the bare apex.
+ */
+export const SITE_HOST =
+  process.env.CF_SITE_HOST || fromTraefikEnv('CF_SITE_HOST') || APEX
+
+/**
  * The API host, read from the file the GATEWAY reads rather than guessed.
  *
  * `estate-up.sh:117` reads it from exactly here and refuses to start without it,
  * because an unset `CF_API_HOST` makes every public API route answer 502 with
- * nothing in Traefik's log. Guessing `api.${APEX}` would be right today and
+ * nothing in Traefik's log. Guessing `api${WEB_SUFFIX}` would be right today and
  * wrong the first time somebody deploys under a real apex.
  */
 export const API_HOST =
-  process.env.CF_API_HOST || fromTraefikEnv('CF_API_HOST') || `api.${APEX}`
+  process.env.CF_API_HOST || fromTraefikEnv('CF_API_HOST') || `api${WEB_SUFFIX}`
 
 /**
  * Where each service is, and whether the request crosses the gateway.
@@ -121,9 +156,9 @@ export const API_HOST =
  * this seeder created without a browser ever being able to reach them.
  */
 export const SERVICES = {
-  identity: { base: `https://nimbus.${APEX}`, gateway: true },
-  custody: { base: `https://vault.${APEX}`, gateway: true },
-  foresight: { base: `https://foresight.${APEX}`, gateway: true },
+  identity: { base: `https://nimbus${WEB_SUFFIX}`, gateway: true },
+  custody: { base: `https://vault${WEB_SUFFIX}`, gateway: true },
+  foresight: { base: `https://foresight${WEB_SUFFIX}`, gateway: true },
   market: { base: `https://${API_HOST}`, gateway: true },
   mint: { base: `https://${API_HOST}`, gateway: true },
   // Not published by the gateway; loopback host ports from the compose file.

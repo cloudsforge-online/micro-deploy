@@ -52,15 +52,15 @@
  * did.
  */
 
-import { ok, bad, skip, note, head, APEX } from './lib.mjs'
+import { ok, bad, skip, note, head, WEB_SUFFIX, SITE_HOST } from './lib.mjs'
 
 /**
  * Beacon is not in the shared SERVICES map because it is the only consumer, and
  * because its host is API-only: `estate-web.yml:432` says in its own words that
- * "no bundle is served at `beacon.<apex>`" and routes the whole host to the
+ * "no bundle is served at `beacon<suffix>`" and routes the whole host to the
  * service. So this is the front door, not a loopback shortcut.
  */
-const BEACON_BASE = process.env.BEACON_URL || `https://beacon.${APEX}`
+const BEACON_BASE = process.env.BEACON_URL || `https://beacon${WEB_SUFFIX}`
 
 /** Ten seconds between probes, two-second deadline. Frequent enough to notice, cheap enough to run. */
 const INTERVAL_MS = 10_000
@@ -101,9 +101,18 @@ async function loadSurfaces() {
   }
 }
 
-/** `https://<subdomain>.<apex><basePath>`, or the apex itself when subdomain is empty. */
+/**
+ * `https://<subdomain><suffix><basePath>`, or the APEX SURFACE when the subdomain
+ * is empty.
+ *
+ * The empty case is not a convenience — it is the one hostname that cannot be
+ * formed by concatenation. `'' + WEB_SUFFIX` is `-testnet.cloudsforge.online`,
+ * which is not a legal DNS label, so the apex surface carries its own variable
+ * (`SITE_HOST`) and this branch reads it. Getting it wrong would point every
+ * beacon probe of the marketing site at a hostname that does not resolve.
+ */
 function urlFor(surface) {
-  const host = surface.subdomain === '' ? APEX : `${surface.subdomain}.${APEX}`
+  const host = surface.subdomain === '' ? SITE_HOST : `${surface.subdomain}${WEB_SUFFIX}`
   return `https://${host}${surface.basePath ?? '/'}`
 }
 

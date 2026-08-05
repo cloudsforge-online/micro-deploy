@@ -154,24 +154,38 @@ services:
       # container from the file as it stood would therefore have stopped testnet
       # mining outright, while the file said the opposite in the paragraph above.
       #
-      # ── AND WHAT IS ACTUALLY RUNNING TODAY IS NEITHER ─────────────────────
+      # ── AND THE PUBLIC FORM IS NOT REACHABLE YET, SO THIS IS THE LOOPBACK ──
       #
-      # Recorded because it is the gap this comment block was written to close.
-      # As of 2026-08-05 the LIVE `cf-miner-testnet` was created from an older
-      # revision of this file: `--url https://rpc.testnet.cloudsforge.online:10443`
-      # with `extra_hosts: rpc.testnet.cloudsforge.online:127.0.0.1` and
-      # `NODE_EXTRA_CA_CERTS=/trust.crt`. So the loopback shortcut this file says
-      # "is now gone" is exactly what both miners are still using, and the claim
-      # that "mining now depends on the tunnel" is true of the file and false of
-      # the estate. `cf-miner-mainnet` is in the same state.
+      # `--url https://rpc-testnet.cloudsforge.online` — no port, no pin, out
+      # through Cloudflare like the mainnet miner above claims to be — is the
+      # TARGET, and it cannot be used until `rpc-testnet.cloudsforge.online` is a
+      # hostname in the Cloudflare tunnel. Adding it is a manual dashboard step
+      # that only the owner can take, so until they have, this reaches the testnet
+      # gateway across loopback on its own port (10443, `compose/testnet.env`).
       #
-      # That is why both miners keep producing blocks while every two-label
-      # testnet hostname is unreachable from outside. The dependency this file
-      # describes begins the moment either container is recreated — which is the
-      # step that must wait until the owner has added the hostnames below to the
-      # Cloudflare tunnel.
+      # ── WHY THIS BLOCK NOW MATCHES WHAT IS RUNNING, AND DID NOT BEFORE ─────
+      #
+      # Measured on 2026-08-05: the live `cf-miner-testnet` had been created from
+      # an older revision of this file and was on
+      # `https://rpc.testnet.cloudsforge.online:10443` with an `extra_hosts` pin
+      # and `NODE_EXTRA_CA_CERTS=/trust.crt`. The live `cf-miner-mainnet` is the
+      # same shape on its own name. So the paragraph above — "the loopback
+      # shortcut is now gone", "mining now depends on the tunnel" — was true of
+      # this file and false of the estate, and had been for as long as neither
+      # container was recreated. That divergence is what made the rename
+      # dangerous: retiring `rpc.testnet.cloudsforge.online` at the gateway
+      # stopped the testnet miner within a minute, and nothing in this file
+      # predicted it because this file did not describe the miner that was
+      # running.
+      #
+      # So the committed form is the running form again. THE LAST STEP OF THE
+      # RENAME IS TO DELETE THE PORT AND THE `extra_hosts` BELOW, once the owner
+      # has added the tunnel hostnames — at which point the argument in the
+      # mainnet block above becomes true of both miners for the first time, and
+      # that block should be corrected in the same commit rather than left as an
+      # aspiration for a third time.
       - "--url"
-      - "https://rpc-testnet.cloudsforge.online"
+      - "https://rpc-testnet.cloudsforge.online:10443"
       - "--data"
       - "/minerdata"
       - "--network"
@@ -181,10 +195,17 @@ services:
       - "--status-ms"
       - "60000"
     network_mode: host
-    # Public resolution, Cloudflare's certificate, no loopback pin and no mounted
-    # trust store — see the block on the mainnet miner above for the whole reason.
+    # The two lines the loopback path needs, and neither survives the move to the
+    # tunnel: the pin, because 10443 is bound to 127.0.0.1 only and no DNS answer
+    # points there; and the estate CA, because the certificate on that port is
+    # `estate.crt` rather than Cloudflare's. `gateway/certs/trust.crt` is the CA
+    # bundle `scripts/gateway-cert.sh` writes for exactly this kind of consumer.
+    extra_hosts:
+      - "rpc-testnet.cloudsforge.online:127.0.0.1"
     environment:
       HEARTH_NO_TTY: "1"
+      NODE_EXTRA_CA_CERTS: /trust.crt
     volumes:
+      - ${CF_CERT_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/trust.crt:/trust.crt:ro
       - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/testnet:/minerdata
     restart: unless-stopped

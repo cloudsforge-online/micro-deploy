@@ -1703,7 +1703,21 @@ echo "── THE GATEWAY: the surfaces on the hostnames a browser will use ─�
 WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
 WEB_SUFFIX=${CF_WEB_SUFFIX:-.$WEB_APEX}
 SITE_HOST=${CF_SITE_HOST:-$WEB_APEX}
-GW_PORT=${CF_GATEWAY_HTTPS_PORT:-443}
+# ── AND THE PORT, WHOSE VARIABLE NAME NOTHING IN THIS REPOSITORY SET ─────────
+#
+# This read `${CF_GATEWAY_HTTPS_PORT:-443}`, and `CF_GATEWAY_HTTPS_PORT` is
+# assigned in no compose file, no env file and no script — grep the tree. So it
+# always took the 443 default. The name the gateway is actually published under is
+# `CF_GATEWAY_PORT` (`compose/docker-compose.gateway.yml:311` and
+# `compose/docker-compose.estate-gateway.yml:55`), and `compose/testnet.env:101`
+# sets it to 10443. Every gateway assertion below therefore addressed port 443 in
+# a testnet project, where nothing is bound — 000 across the board, reported as a
+# dead gateway rather than as a suite looking at the wrong port.
+#
+# The dead name is kept as a first choice rather than deleted, so an operator who
+# has it exported keeps the behaviour they had; it simply no longer shadows the
+# real one.
+GW_PORT=${CF_GATEWAY_HTTPS_PORT:-${CF_GATEWAY_PORT:-443}}
 
 gw() {
   gw_host=$1; gw_path=$2; shift 2
@@ -1934,7 +1948,7 @@ echo "── the two OPERATOR consoles: the bundle and the API must not shadow �
 # would report one fault 183 times — but it does not reach this far: there are a
 # dozen requests here, and these two hostnames are new, so nothing has ever established
 # that the estate's certificate covers them. A SAN that does not cover
-# `lantern.<apex>` would leave every one of these green under `-k` and every real
+# `lantern<suffix>` would leave every one of these green under `-k` and every real
 # browser refusing the page. `%{content_type}` is empty on a rejected handshake,
 # so the `case` arms below fall to their own `bad` rather than passing silently.
 gwv() {
@@ -2026,8 +2040,8 @@ case "$redeem" in
   *) ok "POST nimbus$WEB_SUFFIX/auth/handoff/redeem reaches identity and refuses a forged code ($redeem)" ;;
 esac
 
-# THE CORS PREFLIGHT. The sign-in page is on `hub.<apex>` and identity is on
-# `nimbus.<apex>`: every call it makes is cross-origin, and identity sends no CORS
+# THE CORS PREFLIGHT. The sign-in page is on `hub<suffix>` and identity is on
+# `nimbus<suffix>`: every call it makes is cross-origin, and identity sends no CORS
 # headers of its own — it has no CORS setting at all. The gateway is the only
 # thing that can permit this, and a missing allowlist entry fails CLOSED and in
 # silence: the browser discards the response and nothing server-side records that
@@ -2662,8 +2676,14 @@ echo "── the browser telemetry sink, driven to the ROW ───────
 # whole section exists to catch, and asserting on the status code would step
 # straight into it. So the positive check reads the row back out of Postgres.
 lansql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d lantern "$@" 2>/dev/null; }
-APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
-ORIGIN="https://hub.${APEX}"
+# `$WEB_SUFFIX` from the gateway section above, not a second reading of
+# `CF_WEB_APEX`. This line used to re-derive its own `APEX` and compose
+# `hub.${APEX}`, which is a duplicate of a value already in scope — and after the
+# 2026-08-05 hostname migration it was the SILENT kind of duplicate: on testnet
+# `hub.cloudsforge.online` is a real mainnet hostname that really answers, so the
+# origin this posts under would have been accepted by nothing and refused by
+# LANTERN_RUM_ORIGINS with a 400 that reads as a broken sink.
+ORIGIN="https://hub${WEB_SUFFIX}"
 
 [ "$(code "$LANTERN/livez")"  = 200 ] && ok "lantern /livez"  || bad "lantern /livez — the sink is not deployed"
 [ "$(code "$LANTERN/readyz")" = 200 ] && ok "lantern /readyz" || bad "lantern /readyz"
@@ -2857,7 +2877,7 @@ case "$EMBER_NETWORK:$FAUCET_RUNNING" in
 esac
 
 # 3. And the gateway agrees with 2, which is the half that was wrong.
-#    `network.<apex>/v1/faucet` is the faucet's terms — the first call the drip
+#    `network<suffix>/v1/faucet` is the faucet's terms — the first call the drip
 #    form makes (`network-site/src/pages/faucet.tsx`). Its CONTENT TYPE is the
 #    invariant, for the reason the operator-console block above gives: a 200
 #    carrying the SPA's index.html would pass a status-code check and fail in the
