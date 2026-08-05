@@ -163,7 +163,31 @@ if [ ! -f "$manifest" ]; then
 fi
 
 echo "── rendering $manifest ──────────────────────────────────────────────────"
-if ! python3 scripts/release-render.py "$manifest" --base "$BASE" --out "$OVERLAY"; then
+# ── `--env-file`, WITHOUT WHICH A TESTNET RELEASE CANNOT DEPLOY AT ALL ────────
+#
+# The renderer asks `docker compose config --services` what this environment
+# defines, and compose OMITS a profile-gated service unless the profile is
+# active. `faucet` carries `profiles: [ember-testnet]` and `COMPOSE_PROFILES`
+# lives in `compose/testnet.env` — so a render that did not pass that file was
+# told faucet does not exist here, recorded it under "in the manifest but NOT in
+# this environment", and emitted no `image:`/`build: !reset` pair for it.
+#
+# The failure is not the missing pin. It is what compose does with an unpinned
+# service: `faucet` keeps its `build:` from the base file, so `up -d` tried to
+# BUILD it — `unable to prepare context: path "…/faucet" not found`, because a
+# deploy host has images and no source. The deploy died with the estate
+# untouched, which is the right direction to fail in, but it dies on every
+# attempt until this flag is passed.
+#
+# `release-render.py:51-61` added the flag FOR THIS CASE and names faucet in its
+# own comment. Nothing ever passed it. That is the whole defect: a fix that
+# reached the tool and not the caller, which is the same shape as the four
+# frontend fixes this release is carrying.
+#
+# Mainnet is unaffected and that was checked rather than assumed: `mainnet.env`
+# sets no `COMPOSE_PROFILES`, so the rendered service list is byte-identical
+# with the flag and without it.
+if ! python3 scripts/release-render.py "$manifest" --base "$BASE" --env-file "$ESTATE_ENV" --out "$OVERLAY"; then
   echo "render failed; nothing was deployed" >&2
   exit 1
 fi
