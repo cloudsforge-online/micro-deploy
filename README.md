@@ -105,6 +105,38 @@ resolves to `127.0.0.1`, so no `/etc/hosts` entry and no `sudo` are needed. TLS
 is Traefik's self-signed default: right for loopback, wrong to ship. `curl -k`,
 and `playwright-core`'s `ignoreHTTPSErrors`.
 
+**`cloudsforge.localtest.me` is the LOCAL apex and never a public endpoint.**
+The deployed apexes are these, and the testnet hostname shape is the part that
+is easy to get wrong:
+
+| | Mainnet | Testnet |
+| --- | --- | --- |
+| Surface host | `<surface>.cloudsforge.online` | **`<surface>-testnet.cloudsforge.online`** |
+| Site apex | `cloudsforge.online` | `testnet.cloudsforge.online` |
+| JSON-RPC | `https://rpc.cloudsforge.online` | `https://rpc-testnet.cloudsforge.online` |
+| Chain id | **7411** (`0x1cf3`) | **7412** (`0x1cf4`) |
+| P2P | — | `wss://p2p-testnet.cloudsforge.online/p2p` (only `/p2p` is routed) |
+| Tunnel origin | `http://127.0.0.1:9081` (`cloudflared/config.mainnet.operator.yml:76`) | `http://127.0.0.1:9181` (`cloudflared/config.testnet.public.yml:69`) |
+
+**Testnet hostnames are SINGLE-LABEL.** `<surface>.testnet.cloudsforge.online`
+is dead and cannot be revived without Advanced Certificate Manager: Cloudflare's
+Universal SSL is `*.cloudsforge.online` plus the apex, a wildcard matches exactly
+one label, so a two-label name fails the handshake at the edge before a request
+reaches this estate (`gateway/dynamic/tls.yml:76`). `testnet.cloudsforge.online`
+survives because it is itself one label. `envLabel()` and `splitEnvLabel()` in
+`ui/packages/ui/src/surfaces.ts:1059-1078` are the composer and its inverse, and
+`scripts/check-apex-prefix.py` reads `ENV_LABELS` from that module so there is
+one list rather than two that drift.
+
+Six hosts serve **no HTML by design** and correctly answer `404` at `/` —
+`nimbus`, `account`, `api`, `worlds-api`, `pay` and `vault` (`servesUi: false`).
+Never link a person to them. `worlds-api.<apex>` is additionally **retired** on
+the public estate: it was folded into `api.<apex>`, which serves `/v1/titles`
+today, and `worlds-api.cloudsforge.online` has no public DNS record. On
+`api.<apex>` only `/v1/…` is routed; an unmatched path such as `/` or `/livez`
+answers `502` rather than `404`, which is a known defect and not the API being
+down.
+
 **A surface and its own API share an origin, and the gateway is what makes that
 true.** Every frontend compares origins to decide its API base
 (`resolveApiBase`), so served from its registry host it sends every request
