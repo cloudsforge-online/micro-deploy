@@ -94,13 +94,45 @@ GW_ESTATE := -f compose/docker-compose.telemetry.yml \
              -f compose/docker-compose.gateway.yml \
              -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway check-restart check-restart-live
+# ── the TESTNET gateway, which had never been started ────────────────────────
+#
+# Found 2026-08-05: nothing was listening on 127.0.0.1:9181, so EVERY testnet
+# public hostname answered 502 — hub, worlds, market, explorer, status, api and
+# account alike. The tunnel's ingress points every `*-testnet` name at that port
+# and cloudflared reports an unreachable origin as 502, which reads as "the
+# service fell over" when the truth was "the gateway for this environment has
+# never run". It is the same misdiagnosis the deleted `cf-api-catchall`
+# blackhole caused on `api.`, one layer further out.
+#
+# Every prerequisite already existed — `compose/env/traefik.testnet.env` is
+# populated, `CF_GW_PORT_BASE=91`, `CF_GATEWAY_PORT=10443`, and the three
+# `cf-testnet-*` networks are up — so this was a command nobody had run rather
+# than work nobody had done. THAT IS WHY IT IS A TARGET NOW. This repository has
+# already been bitten three times by gateway state that lived only on a running
+# container (the 443 binding, the estate network, the credentials); a fourth
+# instance that lives only in an operator's shell history is the same defect.
+#
+# NO TELEMETRY OVERLAY, unlike GW_ESTATE above: the `cf-testnet-*` networks are
+# declared `external` and already exist, and the telemetry plane is a single
+# mainnet-project concern that must not be duplicated per environment.
+GW_TESTNET := --env-file compose/testnet.env -p cftestnet \
+              -f compose/docker-compose.gateway.yml \
+              -f compose/docker-compose.estate-gateway.yml
+
+.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway estate-gateway-testnet estate-gateway-testnet-down check-restart check-restart-live
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
 
 estate-gateway: ## Just the gateway half, against an estate that is already up
 	@docker compose -p $(COMPOSE_PROJECT_NAME) $(GW_ESTATE) up -d
+
+estate-gateway-testnet: ## The TESTNET gateway on 9181 — without it every *-testnet host is 502
+	@docker compose $(GW_TESTNET) up -d gateway
+	@echo "ok: cftestnet-gateway-1 on 127.0.0.1:9181 (tunnel) and 127.0.0.1:10443 (TLS)"
+
+estate-gateway-testnet-down: ## Stop the testnet gateway. Every *-testnet hostname goes 502
+	@docker compose $(GW_TESTNET) down
 
 estate-verify: ## Drive the running environment through every real flow
 	@./scripts/estate-verify.sh
