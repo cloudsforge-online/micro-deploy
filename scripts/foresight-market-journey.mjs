@@ -98,10 +98,25 @@ if (process.env.NODE_EXTRA_CA_CERTS !== CA) {
 const require = createRequire(import.meta.url)
 
 // ── configuration ────────────────────────────────────────────────────────────
+// ── A SURFACE'S HOSTNAME IS `<sub>${WEB_SUFFIX}`, NOT `<sub>.${APEX}` ────────
+//
+// Changed 2026-08-05. Testnet used to be a PREFIX ON THE APEX
+// (`foresight.testnet.cloudsforge.online`) and every hostname of that shape was
+// configured and unreachable — Cloudflare's Universal SSL is
+// `*.cloudsforge.online` and a wildcard matches exactly ONE label, so the
+// handshake failed at the edge. It is `foresight-testnet.cloudsforge.online` now,
+// and both environments share the zone `cloudsforge.online`.
+//
+// WEB_SUFFIX falls back to `.${APEX}` only for a laptop that sets neither, which
+// is `cloudsforge.localtest.me` and has one environment. When CF_WEB_APEX IS set
+// the fallback is the dangerous one — on a shared apex it composes a real MAINNET
+// hostname that really answers — so a testnet run is expected to carry
+// CF_WEB_SUFFIX, which `scripts/estate-up.sh` exports.
 const APEX = process.env.CF_WEB_APEX || 'cloudsforge.localtest.me'
-const FORESIGHT = process.env.FORESIGHT_URL || `https://foresight.${APEX}`
-const IDENTITY = process.env.IDENTITY_URL || `https://nimbus.${APEX}`
-const CUSTODY = process.env.CUSTODY_URL || `https://vault.${APEX}`
+const WEB_SUFFIX = process.env.CF_WEB_SUFFIX || `.${APEX}`
+const FORESIGHT = process.env.FORESIGHT_URL || `https://foresight${WEB_SUFFIX}`
+const IDENTITY = process.env.IDENTITY_URL || `https://nimbus${WEB_SUFFIX}`
+const CUSTODY = process.env.CUSTODY_URL || `https://vault${WEB_SUFFIX}`
 const RPC = process.env.EMBER_HOST_RPC || 'http://127.0.0.1:8545'
 const HEARTH = process.env.HEARTH_REPO || path.resolve(ROOT, '../hearth')
 const EMBER_HOME = process.env.EMBER_HOME || path.join(process.env.HOME, '.cloudsforge/ember-testnet')
@@ -297,7 +312,12 @@ async function rebootstrap(why) {
   const r = spawnSync('./scripts/estate-bootstrap.sh', [], {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
-    env: { ...process.env, CF_WEB_APEX: APEX },
+    // BOTH, never CF_WEB_APEX alone. Handing the child the zone without the
+    // suffix is worse than handing it nothing: it would derive `.cloudsforge.online`
+    // and address MAINNET from a testnet run, against hostnames that resolve and
+    // answer. A partial contract fails silently; an absent one falls back to the
+    // laptop default and is obvious.
+    env: { ...process.env, CF_WEB_APEX: APEX, CF_WEB_SUFFIX: WEB_SUFFIX },
   })
   if (r.status !== 0) throw new Error(`estate-bootstrap.sh failed:\n${r.stdout}\n${r.stderr}`)
   // The recreate at section 6 returns when the containers are healthy, but foresight's job runner
