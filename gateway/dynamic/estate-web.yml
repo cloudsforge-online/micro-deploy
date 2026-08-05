@@ -684,10 +684,20 @@ http:
     # at priority 600 would therefore answer a person's pasted link with JSON, which is the
     # emberkin defect exactly inverted and no better.
     #
-    # `/ideas` and `/categories` have no such collision: neither is in `ROUTES`, so nginx already
-    # 404s them "on purpose, so that a wrong address answers 404 rather than 200" — and THAT 404
-    # is the one the operator panel used to get, because it calls this host's API cross-origin and
-    # nothing here answered. Those two are routed unconditionally.
+    # `/ideas`, `/categories` and `/image-config` have no such collision: none is in `ROUTES`, so
+    # nginx already 404s them "on purpose, so that a wrong address answers 404 rather than 200" —
+    # and THAT 404 is the one the operator panel used to get, because it calls this host's API
+    # cross-origin and nothing here answered. Those three are routed unconditionally.
+    #
+    # **`/image-config` WAS THE THIRD ONE AND WAS MISSING (#195).** It matched neither router, so it
+    # fell through to `cf-web-foresight` and every caller was served the SPA shell with a 200 — the
+    # worst answer available, because a client asking for JSON cannot tell a bundle from an outage.
+    # `foresight-web/src/lib/studio.ts:74` fetches it with `auth: false` to learn studio's address,
+    # and its header is explicit that the address must be ASKED FOR rather than guessed, naming the
+    # two shipped defects that came of inventing a URL. With no route the operator's "Header image"
+    # panel rendered its failure sentence instead of a file picker. Rendering was never affected:
+    # `<img src>` comes from `image.bytesUrl`, which micro-foresight composes server-side from
+    # `STUDIO_PUBLIC_URL` (`foresight/src/images.ts:168`), not from this endpoint.
     #
     # **THE CROSS-ORIGIN CALLER MOVED AT P13 AND DID NOT GO AWAY.** It was
     # `foresight-admin.<apex>`; it is now `admin.<apex>/foresight`, a section inside the operator
@@ -717,7 +727,7 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-foresight
     cf-api-foresight-resources:
-      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`))'
+      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`) || PathPrefix(`/image-config`))'
       priority: 600
       entryPoints: [websecure, tunnel]
       service: cf-svc-foresight
