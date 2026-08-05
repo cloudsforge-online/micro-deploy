@@ -66,6 +66,65 @@ IDENTITY=${IDENTITY:-http://127.0.0.1:4100}
 CUSTODY=${CUSTODY:-http://127.0.0.1:4107}
 TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 
+# ── WHICH ESTATE AM I BOOTSTRAPPING? THE QUESTION THIS SCRIPT COULD NOT ASK ────
+#
+# Everything above was overridable and it was still not enough to bootstrap the
+# second environment, because the two things that actually SELECT an estate were
+# not variables at all:
+#
+#   1. THE PROJECT NAME, which is not passed here and never was. It comes from
+#      `compose/docker-compose.estate.yml:64` — `name: ${CF_PROJECT:-cloudsforge-estate}`
+#      — and `CF_PROJECT=cf-testnet` lives ONLY in `compose/testnet.env`, which
+#      this script did not load. So `IDENTITY=http://127.0.0.1:5100` pointed the
+#      HTTP calls at testnet while every `docker compose exec postgres` below
+#      still landed in MAINNET's container. A half-retargeted bootstrap does not
+#      fail; it writes one estate's admin row and credentials into the other's
+#      database. That is why this is a variable now and not a comment.
+#
+#   2. THE RELEASE OVERLAY. `-f docker-compose.estate.yml` alone is the source
+#      tree, not the deployed release. The final `up -d --wait` at the foot of
+#      this file would therefore RECREATE every container off the base file and
+#      silently roll the estate back off its pinned images.
+#
+# ENV_FILE is the estate's own env file — `compose/testnet.env` for testnet,
+# `compose/mainnet.env` for mainnet. It is listed BEFORE the tokens file so that
+# the tokens file wins on any key they share; nothing shares a key today and the
+# order is stated so it stays that way by decision rather than by luck.
+#
+# ── AND THE TRAP THAT MADE THIS NECESSARY IN THE FIRST PLACE ──────────────────
+#
+# `--env-file` REPLACES the default `.env`, it does not add to it. `compose/.env`
+# is a symlink to the tokens file, so mainnet picked the credentials up for free
+# and testnet — brought up with `--env-file compose/testnet.env` — received NOT
+# ONE of them. Six testnet services ran with an empty `*_IDENTITY_CREDENTIAL`
+# and sat `unhealthy` indefinitely. The flag is REPEATABLE and repeated flags
+# MERGE in order, which is the whole fix: pass both files, never one.
+ENV_FILE=${ENV_FILE:-}
+OVERLAY=${OVERLAY:-}
+
+# One definition of "talk to this estate", used by every invocation below.
+# Previously each site spelled out `docker compose -f "$COMPOSE"` and each was a
+# separate opportunity to forget a flag — which is exactly how the project name
+# went missing from all six of them at once.
+dc() {
+  docker compose \
+    ${ENV_FILE:+--env-file "$ENV_FILE"} \
+    --env-file "$TOKENS_FILE" \
+    -f "$COMPOSE" \
+    ${OVERLAY:+-f "$OVERLAY"} \
+    "$@"
+}
+
+# The tokens file is read by `dc` on EVERY call, including the ones that run
+# before it is written. Compose fails hard on a missing --env-file, so a first
+# ever bootstrap of a new estate would die at step 1 with a message about a file
+# it is this script's job to create. Create it empty instead.
+if [ ! -f "$TOKENS_FILE" ]; then
+  mkdir -p "$(dirname "$TOKENS_FILE")"
+  : > "$TOKENS_FILE"
+  chmod 600 "$TOKENS_FILE"
+fi
+
 # A throwaway operator for a throwaway environment. Overridable so a developer
 # can bootstrap an account they will actually sign in as.
 ADMIN_EMAIL=${ADMIN_EMAIL:-estate-admin@example.test}
@@ -145,7 +204,7 @@ echo "── 3. THE BOOTSTRAP — ONE TRANSACTION, ONCE PER DATABASE ───�
 # block". It has, and this IS that bootstrap — the step is permanent, so the note
 # is gone rather than left pointing at work that is finished.
 psql_identity() {
-  docker compose -f "$COMPOSE" exec -T postgres \
+  dc exec -T postgres \
     psql -qtA -v ON_ERROR_STOP=1 -U cloudsforge -d identity "$@" 2>&1
 }
 
@@ -209,7 +268,7 @@ holds=$(psql_identity -c "select 'admin' = any(roles) from users where email = l
 # an error, so a naive check for "did this fail" would have passed for entirely
 # the wrong reason. Caught by running it; the assertion now reads the SQLSTATE it
 # claims to read.
-second=$(docker compose -f "$COMPOSE" exec -T postgres \
+second=$(dc exec -T postgres \
   psql -qtA -U cloudsforge -d identity 2>&1 <<SQL
 \set VERBOSITY verbose
 begin;
@@ -544,7 +603,7 @@ echo "── 5c. event subscriptions — WHO RECEIVES WHAT IS DEPLOY CONFIGURATI
 # outbox and micro-analytics. Recorded rather than half-configured.
 subscribe() {
   db=$1; topic=$2; url=$3
-  docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d "$db" -c \
+  dc exec -T postgres psql -q -U cloudsforge -d "$db" -c \
     "insert into event_subscriptions (topic, url) values ('$topic', '$url') on conflict do nothing" \
     >/dev/null 2>&1 \
     && ok "$db → $topic → $url" \
@@ -566,6 +625,35 @@ subscribe identity identity.user.registered http://activity:4000/ingest
 subscribe identity identity.session.created http://activity:4000/ingest
 subscribe identity identity.user.deleted   http://activity:4000/ingest
 subscribe identity identity.user.deleted   http://notify:4000/ingest
+
+# ── NOTIFY KNEW EVERY USER'S NAME AND NOT ONE ADDRESS ────────────────────────
+#
+# `notify` had exactly ONE row above — `identity.user.deleted` — so the only
+# thing identity ever told it was that somebody had left. `channel_targets` was
+# EMPTY on the mainnet estate, which meant every email the estate has ever
+# composed routed to in-app only. That is not a transport fault: notify's
+# at-least-one-channel guarantee (notify/src/channels.ts:88-91) delivers
+# in-app and reports success, so a configured SMTP transport changes nothing
+# while notify holds no address to send to. #42 read as "SMTP is unconfigured"
+# for exactly this reason.
+#
+# THE ADDRESS IS LEARNED, NOT LOOKED UP. notify never queries identity for an
+# email — there is no such call, deliberately, because a notifier that can read
+# the user directory is a notifier worth stealing. It learns the address from
+# the event that already carries one: `notify/src/catalogue.ts:659-682` declares
+# `learns: { channel: 'email', read: emailOf(event.payload) }` on
+# `identity.email.verification_requested`, and `pipeline.ts:423-461` writes the
+# `channel_targets` row. So this row is what puts an address on file at all.
+subscribe identity identity.email.verification_requested http://notify:4000/ingest
+
+# And this is the one that makes registration itself produce a notification.
+# `identity.user.registered` deliberately carries NO address
+# (catalogue.ts:623-625 has no `learns`), so it is useless on its own — it can
+# only be delivered to a user notify already knows. The two rows are therefore a
+# PAIR and the order they arrive in matters: verification_requested teaches the
+# address, registered is the thing worth sending to it. Seeding one without the
+# other is how this path looked wired while delivering nothing.
+subscribe identity identity.user.registered http://notify:4000/ingest
 
 # ── WALLET'S INBOX WAS FED BY NOBODY ──────────────────────────────────────────
 #
@@ -679,10 +767,10 @@ subscribe_all() {
   missing=""
   for topic in "$@"; do
     db=$(printf '%s' "$topic" | cut -d. -f1)
-    if docker compose -f "$COMPOSE" exec -T postgres \
+    if dc exec -T postgres \
          psql -qtA -U cloudsforge -d postgres \
          -c "select 1 from pg_database where datname = '$db'" 2>/dev/null | grep -q 1; then
-      docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d "$db" -c \
+      dc exec -T postgres psql -q -U cloudsforge -d "$db" -c \
         "insert into event_subscriptions (topic, url) values ('$topic', '$url') on conflict do nothing" \
         >/dev/null 2>&1 && count=$((count+1)) \
         || bad "could not subscribe $consumer to $topic in $db"
@@ -915,7 +1003,7 @@ echo "── 6. hand the tokens to the services that need them ─────�
 # once for exactly that reason, on a container that was healthy forty seconds
 # later. A start-order race that reads as a flaky estate is the most expensive
 # kind of green-then-red there is.
-if docker compose --env-file "$TOKENS_FILE" -f "$COMPOSE" up -d --wait >/tmp/estate-bootstrap-up.log 2>&1; then
+if dc up -d --wait >/tmp/estate-bootstrap-up.log 2>&1; then
   ok "services recreated with real credentials"
 else
   bad "recreate failed; see /tmp/estate-bootstrap-up.log"

@@ -37,6 +37,28 @@ BASE=${BASE:-compose/docker-compose.estate.yml}
 RELEASES=${RELEASES:-../org/releases}
 OVERLAY=${OVERLAY:-compose/docker-compose.release.yml}
 
+# ── THE ENV-FILE SET, WHICH USED TO BE A SINGLE IMPLICIT FILE ─────────────────
+#
+# This script called `docker compose -f … up -d` with no `--env-file` at all and
+# relied on the default `.env` — a symlink to `estate/tokens.env`. That worked
+# for mainnet by accident and could never have worked for testnet, because
+# `--env-file` REPLACES the default rather than adding to it, so the moment a
+# second environment needed its own env file it lost every credential (#158).
+#
+# Both files, always, in this order. The flag is repeatable and repeated flags
+# merge, so tokens last means tokens win on any shared key.
+ESTATE_ENV=${ESTATE_ENV:-compose/mainnet.env}
+TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
+for f in "$ESTATE_ENV" "$TOKENS_FILE"; do
+  if [ ! -f "$f" ]; then
+    echo "FATAL: $f does not exist." >&2
+    echo "       Deploying without it would interpolate its variables to empty — the estate's" >&2
+    echo "       hostnames, or every service credential in it. Both fail silently." >&2
+    exit 1
+  fi
+done
+ENVSET=(--env-file "$ESTATE_ENV" --env-file "$TOKENS_FILE")
+
 
 version=""
 dry_run=0
@@ -181,6 +203,82 @@ if [ "$missing" -gt 0 ]; then
 fi
 echo "  all $checked image(s) exist"
 
+# ── THE HAND-OFF ALLOWLIST, MEASURED RATHER THAN INFERRED ─────────────────────
+#
+# THE CHECK ABOVE COULD NOT FAIL, AND IT GUARDED THIS EXACTLY. Its header — 60
+# lines up — says it exists because "the surfaces would be served on one apex and
+# identity's hand-off allowlist would name another… every surface 200, SSO dead".
+# It then compares CF_WEB_APEX, CF_WEB_SUFFIX and CF_SITE_HOST between a file and
+# the shell. Every one of those comparisons is satisfied by an allowlist that is
+# EMPTY, and satisfied again by one built for `.cloudsforge.localtest.me`,
+# because the allowlist is not one of the things it looks at. It checks the
+# INPUTS and asserts nothing about the OUTPUT.
+#
+# On 2026-08-05 the output was wrong for eleven hours. `IDENTITY_HANDOFF_ORIGINS`
+# on the live mainnet container named `hub.cloudsforge.localtest.me` while the
+# gateway served `hub.cloudsforge.online`; `POST /auth/handoff` answered 403 to
+# every real origin and cross-surface SSO was dead. The three variables agreed
+# with each other perfectly throughout.
+#
+# So this reads the RENDERED value — what compose will actually put in the
+# container, after interpolation, from the same files and the same env-file set
+# the deploy below uses — and asserts three things about it:
+#
+#   1. it is not empty. An empty allowlist refuses every origin by design
+#      (identity/src/handoff.ts:32 is `allowlist.includes(origin)` over a frozen
+#      empty array), and that design is correct — "empty means allow everything"
+#      is how an allowlist becomes an open redirector. It is the DEPLOYMENT's
+#      value that must not be empty, and nothing checked that until now.
+#   2. it names this estate's Hub. That is the origin every surface hands off
+#      FROM, so a list that omits it is a list under which nothing works.
+#   3. it names this estate's apex surface, `CF_SITE_HOST`.
+#
+# Checked here rather than after `up -d` because a deploy that has already
+# replaced the containers has already broken sign-in. --dry-run runs it too:
+# a guard only exercised on the real path is a guard nobody rehearses.
+echo "── checking the rendered hand-off allowlist ─────────────────────────────"
+# `--format json` rather than the default YAML on purpose: parsing it needs only
+# the standard library, so this guard has no third-party dependency it could be
+# silently skipped for. PyYAML is absent from plenty of machines that can deploy.
+rendered=$(docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" config --format json 2>/dev/null \
+  | python3 -c '
+import sys, json
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+env = ((doc.get("services") or {}).get("identity") or {}).get("environment") or {}
+if isinstance(env, list):
+    env = dict(e.split("=", 1) for e in env if "=" in e)
+print((env.get("IDENTITY_HANDOFF_ORIGINS") or "").strip())
+' 2>/dev/null)
+
+if [ -z "$rendered" ]; then
+  echo "FATAL: the rendered IDENTITY_HANDOFF_ORIGINS is EMPTY." >&2
+  echo "       identity refuses every origin when this list is empty, by design, so" >&2
+  echo "       POST /auth/handoff would answer 403 to every surface — while every surface" >&2
+  echo "       returned 200 and nothing anywhere reported an error. Cross-surface SSO" >&2
+  echo "       would be dead on arrival and this deploy would look completely successful." >&2
+  echo "       (A config render that fails for any reason also lands here, on purpose:" >&2
+  echo "        a check that silently skips is the defect this block exists to end.)" >&2
+  exit 1
+fi
+
+for required in "https://hub$CF_WEB_SUFFIX" "https://$CF_SITE_HOST"; do
+  case ",${rendered// /}," in
+    *",$required,"*) ;;
+    *)
+      echo "FATAL: the rendered hand-off allowlist does not name $required." >&2
+      echo "       The gateway will serve that hostname and identity will refuse to mint a" >&2
+      echo "       hand-off code for it, so a user signs in at one surface and is signed out" >&2
+      echo "       at every other. This is the failure the apex check above was written for" >&2
+      echo "       and could not see, because it compares its inputs and never its output." >&2
+      echo "       rendered: $rendered" >&2
+      exit 1 ;;
+  esac
+done
+echo "  allowlist names hub$CF_WEB_SUFFIX and $CF_SITE_HOST ($(printf '%s' "$rendered" | tr ',' '\n' | grep -c .) origins)"
+
 if [ "$dry_run" -eq 1 ]; then
   echo
   echo "--dry-run: rendered $OVERLAY and verified $checked image(s). Nothing was changed."
@@ -190,7 +288,7 @@ fi
 echo "── deploying ────────────────────────────────────────────────────────────"
 # The overlay is second so it wins. The base keeps owning environment, ordering,
 # health checks and ports; the release owns only which image runs.
-if docker compose -f "$BASE" -f "$OVERLAY" up -d; then
+if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d; then
   echo
   echo "release $version is up."
   echo "verify it:   ./scripts/estate-verify.sh"

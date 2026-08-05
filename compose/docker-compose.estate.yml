@@ -652,6 +652,28 @@ services:
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
 
+      # ── THE ACCOUNT LINK, WITHOUT WHICH A VERIFICATION MAIL CARRIES NOTHING ───
+      #
+      # `IDENTITY_ACCOUNT_URL` was unset, and unset is not a failure here: it is
+      # optional, defaults to '' and becomes `accountUrl: null`
+      # (identity/src/env.ts:276,291). `emailVerification.ts:183-184` then emits
+      # the event with `linkable: false` and NO `verifyUrl` — so the mail is sent,
+      # and it contains no way to verify. Silent, like every other defect in this
+      # header: nothing errors, the user simply cannot finish signing up.
+      #
+      # It is HUB, not the apex. `emailVerification.ts:118-122` builds
+      # `${accountUrl}/account/verify#token=…` and hub-web is what serves that
+      # route (hub-web/src/app.tsx:156). The apex would 404.
+      #
+      # THE TOKEN IS AFTER `#`, NOT `?`, AND THAT IS LOAD-BEARING — a fragment is
+      # never sent to a server, so the token cannot land in an access log. Do not
+      # "tidy" this into a query string.
+      #
+      # Interpolated for the same reason the allowlist above is: a literal would
+      # point testnet's verification mail at mainnet's Hub, which is a working
+      # link to the wrong estate — the worst kind, because it succeeds.
+      IDENTITY_ACCOUNT_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+
       # ══════════════════════════════════════════════════════════════════════════
       # GENERATED — `node scripts/derive-grants.mjs --write`. Do not hand-edit.
       #
