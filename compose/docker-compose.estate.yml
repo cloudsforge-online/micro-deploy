@@ -192,6 +192,56 @@ x-outbox-secret-file: &outbox-secret-file
 x-outbox-secrets: &outbox-secrets
   - *outbox-secret-file
 
+# ── IDENTITY'S KEY-ENCRYPTION KEYRING, AND ANALYTICS'S PEPPER ─────────────────
+#
+# Both were hardcoded literals in this PUBLIC file — `IDENTITY_KEY_SECRET`
+# (fingerprint 6ab33c683a65) and `ANALYTICS_PSEUDONYM_KEY` (bcd734b7c127), the
+# SAME value on both networks, so testnet derived mainnet's pseudonyms. #188 and
+# #189. Neither could be rotated as a compose edit, and the reasons differ:
+#
+#   identity  `IDENTITY_KEY_SECRET` is not a token-signing key — tokens are RS256
+#             under per-kid keys with real JWKS rotation. It is the KEK that WRAPS
+#             those keys and every TOTP seed. One value with no accept-list meant
+#             replacing it made every blob undecryptable at once. A signing key
+#             re-bootstraps; a TOTP seed does not — it exists in that blob and in
+#             the user's authenticator app and nowhere else, so a naive rotation
+#             does not invalidate MFA, it DESTROYS it.
+#
+#   analytics `ANALYTICS_PSEUDONYM_KEY` derives STORED pseudonyms. Replacing it
+#             re-derives every returning subject to a new lookup key, so one
+#             person becomes two, their history is orphaned, and erasure stops
+#             reaching pre-rotation rows — a GDPR problem, not a tidiness one.
+#
+# Both now hold a VERSIONED RING (`_V<n>` plus a `*_VERSION` naming the writer),
+# so old data keeps opening while new data is written under the new value. The
+# asymmetry that matters operationally is how the old value is retired:
+#
+#   identity  DRAINS. `pnpm rewrap` re-seals every blob under the new version;
+#             when nothing remains below it, delete the old line. Runbook:
+#             runbooks/runbook-identity-key-secret.md
+#   analytics CANNOT DRAIN, ever. `lookup_key` is HMAC(pepper, subject) and the
+#             raw subject is never stored, so a mapping cannot be recomputed
+#             under a new pepper. The old pepper stays until retention prunes
+#             every pre-rotation row. Runbook:
+#             runbooks/runbook-analytics-pseudonym-key.md
+#
+# Same file mechanics and the same measured reasons as the two blocks above:
+# `tokens.env` is rewritten wholesale by estate-bootstrap.sh and does not reach
+# the testnet render, and an `env_file:` PATH is interpolated relative to THIS
+# file, so `CF_EMBER_NETWORK` gives the two environments genuinely separate
+# values — which is what closes the cross-network derivability in #189.
+#
+# `environment:` WINS over `env_file:` in Compose, so the literals these replace
+# are DELETED above rather than left commented out: a reinstated line would
+# silently override the file and put the published value back.
+x-identity-key-file: &identity-key-file
+  path: secrets/identity-key.${CF_EMBER_NETWORK:-mainnet}.env
+  required: true
+
+x-analytics-pepper-file: &analytics-pepper-file
+  path: secrets/analytics-pepper.${CF_EMBER_NETWORK:-mainnet}.env
+  required: true
+
 # ── THE IMAGE MODEL'S CREDENTIALS ─────────────────────────────────────────────
 #
 # `AZURE_FOUNDRY_ENDPOINT` and `AZURE_FOUNDRY_API_KEY` for FLUX 2 Pro. Same
@@ -619,10 +669,11 @@ services:
       IDENTITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/identity
       IDENTITY_ISSUER: http://identity:4000
       IDENTITY_PUBLIC_URL: http://identity:4000
-      IDENTITY_KEY_SECRET: estate-only-key-secret-not-a-real-one-000
       IDENTITY_DELETION_GRACE_DAYS: "0"
       INSTANCE_ID: identity-migrate
-    env_file: *outbox-secrets
+    env_file:
+      - *outbox-secret-file
+      - *identity-key-file
     depends_on:
       postgres:
         condition: service_healthy
@@ -637,7 +688,6 @@ services:
       IDENTITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/identity
       IDENTITY_ISSUER: http://identity:4000
       IDENTITY_PUBLIC_URL: http://identity:4000
-      IDENTITY_KEY_SECRET: estate-only-key-secret-not-a-real-one-000
       # Zero, in this environment only: the erasure drill cannot wait seven days,
       # and 0 is a value env.ts explicitly allows (integer floor 0). Production
       # keeps the default 7.
@@ -820,7 +870,9 @@ services:
          "wallet":["custody:address:create","indexer:read","indexer:write","ledger:post","ledger:read","ledger:reserve","pricing:read","settlement:read"],
          "worlds":["aetherholm:provision","billing:read","ledger:post","tessera:provision"]}
       INSTANCE_ID: identity-estate
-    env_file: *outbox-secrets
+    env_file:
+      - *outbox-secret-file
+      - *identity-key-file
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}100:4000"
     depends_on:
@@ -1429,10 +1481,11 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics
-      ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: analytics-migrate
-    env_file: *outbox-secrets
+    env_file:
+      - *outbox-secret-file
+      - *analytics-pepper-file
     depends_on:
       postgres:
         condition: service_healthy
@@ -1445,10 +1498,11 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics
-      ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: analytics-estate
-    env_file: *outbox-secrets
+    env_file:
+      - *outbox-secret-file
+      - *analytics-pepper-file
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}121:4000"
     depends_on:
