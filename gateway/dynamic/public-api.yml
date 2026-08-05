@@ -210,6 +210,37 @@ http:
     # applies `cf-request-id`, `cf-security-headers` and `cf-cors` to every
     # request before routing (`compose/docker-compose.gateway.yml:266`), so a
     # 404 here is still CORS-clean for a browser.
+    #
+    # ── AND `/livez` AND `/readyz` ARE DELIBERATELY NOT SERVED HERE ──────────
+    #
+    # They now 404 with everything else unmatched, and that was a decision, not
+    # a side effect. Rule 4 of `org/README.md` does require all three of
+    # `/livez`, `/readyz` and `/metrics` — but it is enforced by
+    # `org/.github/workflows/service-ci.yml:997`, which greps a SERVICE REPO's
+    # `source-dir`. It is a rule about services. `api.<apex>` is not a service:
+    # it is a gateway-composed SURFACE multiplexing the nine independent
+    # services named above, each of which already satisfies rule 4 in its own
+    # repo and is probed there. Nothing is exempted and no gap is opened.
+    #
+    # There is no honest answer for this host to give. A `/livez` here would
+    # have to name ONE of the nine as the answerer, and it would then be wrong
+    # in both directions: green while eight of the nine are down, red while the
+    # one chosen is down and the API is fine. That is the same misdiagnosis as
+    # the 502 this router just stopped producing, rebuilt with a different
+    # mechanism — a health endpoint that does not measure the thing its
+    # hostname names.
+    #
+    # `nimbus`, `pay` and `vault` answering 200 on `/livez` is not a precedent
+    # against this; it is the reason for it. Each is a WHOLE-HOST route to a
+    # single service (`estate-web.yml:899` nimbus -> cf-svc-identity, `:968`
+    # pay -> cf-svc-billing, `:978` vault -> cf-svc-custody), so their `/livez`
+    # is that one service's own and means exactly what it says. `api` has no
+    # such single service to speak for it.
+    #
+    # And `/readyz` enumerates Postgres, JWKS and every declared upstream. On an
+    # unauthenticated public host that is a dependency map handed to whoever
+    # asks. The nine are reachable on their loopback ports, which is where
+    # `estate-verify.sh` already reads them and where that detail belongs.
 
   services:
     # The upstream port is each image's own EXPOSE, read from its Dockerfile — not a number
