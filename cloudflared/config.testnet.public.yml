@@ -8,7 +8,7 @@
 #   apex        : cloudsforge.online
 #   env label   : testnet
 #   tunnel      : cf-testnet-public
-#   hostnames   : 20
+#   hostnames   : 21
 #
 # Fill in `tunnel:` and `credentials-file:` from `cloudflared tunnel create`.
 # They are the only two values in this file that are not derived, because they
@@ -94,6 +94,8 @@ ingress:
   - hostname: rpc-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
   - hostname: status-testnet.cloudsforge.online
+    service: http://127.0.0.1:9181
+  - hostname: studio-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
   - hostname: tessera-testnet.cloudsforge.online
     service: http://127.0.0.1:9181

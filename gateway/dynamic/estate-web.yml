@@ -939,6 +939,49 @@ http:
       entryPoints: [websecure, tunnel]
       service: cf-svc-custody
 
+    # ─────────────────────────────────────────── studio — the image bytes, and nothing else ──
+    #
+    # NO IMAGE COULD RENDER ANYWHERE IN THE ESTATE BEFORE THIS ROUTER. micro-studio was up and
+    # healthy on both networks and had no gateway route at all, so Market's and Foresight's image
+    # support — which is written and merged — was blocked on one missing pair here.
+    #
+    # THE WHOLE HOST, not `PathPrefix(/v1)`: nothing serves a bundle at `studio.<apex>`, so there
+    # is no second router for a path to lose a priority tie against. Same shape and same reason as
+    # `cf-web-nimbus` and `cf-web-vault` above.
+    #
+    # ── `cf-web-headers` ON AN API HOST, WHICH IS THE EXCEPTION AND NOT AN OVERSIGHT ───────────
+    #
+    # That middleware's own comment says "applied to every SURFACE route below — never to the API
+    # routes". Studio is the one host in this file that is neither: a browser never NAVIGATES to
+    # it, and a browser does RENDER what it returns, because Market and Foresight put these bytes
+    # in `<img src>` cross-origin. It is an origin for UNTRUSTED USER UPLOADS.
+    #
+    # `X-Content-Type-Options: nosniff` is the header that matters and it does NOT depend on this
+    # line — `cf-security-headers` is in the entrypoint chain for both `websecure` and `tunnel`
+    # (docker-compose.gateway.yml:197 and :266), so it is on every response this gateway makes.
+    # This middleware adds `X-Frame-Options: SAMEORIGIN`, which costs nothing here: it constrains
+    # `<iframe>`/`<embed>`/`<object>` and has no effect on `<img>`, so no consumer loses anything
+    # and a stored upload cannot be framed onto a foreign page. Studio's own defences — magic-byte
+    # validation, SVG rejected outright, EXIF stripped — are upstream of all of it; this is the
+    # last line, not the only one.
+    #
+    # ── DNS DOES NOT EXIST FOR THIS HOSTNAME YET, AND THAT IS WRITTEN HERE ON PURPOSE ──────────
+    #
+    # Verified at the moment of this commit: `studio.cloudsforge.online` and
+    # `studio-testnet.cloudsforge.online` have NO DNS RECORD. This file has just finished paying
+    # for the other shape of that gap — `cf-api-worlds-api` routed a hostname that resolved
+    # nowhere, and its presence here is what made every re-check conclude the host was fine. The
+    # difference is the direction: that router outlived its hostname, this one precedes its
+    # hostname, the backend is live and healthy on both networks, and the record is requested.
+    # If you are reading this and the names still do not resolve, THAT is the defect — the router
+    # is correct and is not the thing to delete.
+    cf-web-studio:
+      rule: 'Host(`studio{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-svc-studio
+
     # ──────────────────────────────── lantern — where the browsers report to ──
     #
     # THE ADDRESS SIXTEEN BUNDLES HAVE BEEN POSTING TO WITH NOTHING BEHIND IT.
@@ -1342,6 +1385,14 @@ http:
     cf-svc-custody:
       loadBalancer:
         servers: [{ url: "http://custody:4000" }]
+    # studio, on the hostname Market and Foresight fetch image bytes from. 4000 like almost
+    # everything else here — the estate sets `PORT: "4000"` for every service — and NOT the 4015
+    # the registry row carries, which is studio's own `pnpm dev` default (studio/src/env.ts:290).
+    # Confirmed against both running gateways rather than assumed: `http://studio:4000/livez`
+    # answers `{"ok":true,...}` from inside cfmicro-gateway-1 and cftestnet-gateway-1 alike.
+    cf-svc-studio:
+      loadBalancer:
+        servers: [{ url: "http://studio:4000" }]
     # The second half of `pay.<apex>`. See the block beside `cf-api-pay-billing` for why one
     # hostname has two backends and why splitting it by resource is the registry's own model.
     cf-svc-billing:
