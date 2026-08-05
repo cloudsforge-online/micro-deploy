@@ -3,6 +3,11 @@
 **Triggered by** `Rotation; a suspected compromise; the quarterly restore rehearsal; loss of the estate host`
 **Severity** SEV1 if lost or exposed · **Owner** platform
 
+> **The full procedure — routine backup, disaster restore, rotation, and the
+> recovery path when a drain was skipped — is `../docs/custody-backup-restore.md`.
+> It has been rehearsed end to end against a throwaway custody and used to perform
+> a live rotation; this runbook is the incident-time summary of it.**
+
 ## Read this first
 
 **The estate is one home server. Nothing on it is backed up, and no restore has

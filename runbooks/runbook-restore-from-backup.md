@@ -33,6 +33,13 @@ Where the keyring actually is, how to copy it and how to rehearse getting it
 back is `runbook-custody-master-secret.md`. It is a separate runbook because it
 is the half that is doable today with no infrastructure at all.
 
+**The custody restore itself — the backup commands, the restore commands, the
+verification that proves a restored keyring actually decrypts, and the rehearsal
+transcript — is `../docs/custody-backup-restore.md`.** Unlike the rest of this
+runbook, that procedure has been executed: a throwaway custody was destroyed and
+recovered from cold artefacts alone, and the same document was then used to
+perform a live key rotation.
+
 ## RPO and RTO — the target, not the state
 
 | Service | RPO | RTO | Method |
