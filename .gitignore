@@ -60,7 +60,14 @@ compose/secrets/
 # exactly the `git add` this comment argues against. One `.testnet` suffix should
 # not be the difference between a generated artefact being ignored and being
 # committed.
-compose/docker-compose.release*.yml
+#
+# AND THE TAIL, NOT JUST THE MIDDLE, 2026-08-05. This was still `...release*.yml`
+# — fixed on the suffix — so a hand-made `docker-compose.release.yml.pre-rotation`
+# taken before a deploy matched nothing and showed up as untracked. The identical
+# defect was found the same hour in the `compose/estate/tokens*` rule above, where
+# what escaped was a `.bak-<epoch>` copy of the whole credential set. A rule that
+# globs the middle and pins the end is half a rule.
+compose/docker-compose.release*
 
 # The operator's own environment for the estate's default project, read by compose
 # from the repository root the way `compose/.env` is read from `compose/`.
