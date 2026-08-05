@@ -252,7 +252,17 @@ export async function generateCover(token, options) {
   // Published explicitly, for the same reason the upload path passes
   // `visibility=public`: private is studio's default and a private cover is a
   // broken image to every visitor.
-  await api('studio', `/v1/assets/${asset.id}/visibility`, {
+  //
+  // ── THE RESPONSE IS RETURNED, NOT THE ASSET THAT WAS LISTED ────────────────
+  //
+  // This read as a pointless reassignment and is not one. `asset` came from the
+  // LIST above, which ran BEFORE this call, so its `visibility` still says
+  // `private` — the publish succeeded and the object describing it is stale. A
+  // caller that trusted `asset.visibility` would conclude the cover was not
+  // published while the bytes were, in fact, already serving to anonymous
+  // callers. Caught by driving this, not by reading it: the bytes fetched 200
+  // without a token while the returned object claimed private.
+  const published = await api('studio', `/v1/assets/${asset.id}/visibility`, {
     method: 'POST',
     token,
     body: { visibility: 'public' },
@@ -263,7 +273,7 @@ export async function generateCover(token, options) {
     `cover generated for ${slug} on the ${job.backend} backend` +
       `${job.backend === 'placeholder' ? ' — NOT flux; no image model is configured' : ''}`,
   )
-  return asset
+  return published.body.asset ?? asset
 }
 
 /** Announce the backend once, so a run's output cannot be mistaken for FLUX art. */

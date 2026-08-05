@@ -173,7 +173,15 @@ export const SERVICES = {
   // `<img src>` pointing at it. Seeded covers will therefore be stored correctly
   // and will not render until studio is routed. Port 4000 inside the container,
   // published on 4111 by `docker-compose.estate.yml`.
-  studio: { base: 'http://127.0.0.1:4111', gateway: false },
+  //
+  // The address is overridable because it is the one in this list that is going
+  // to move: the day studio gains a Host() rule, its base becomes an https
+  // surface and this loopback port stops being the right answer. `CF_STUDIO_URL`
+  // means that is a deploy variable rather than an edit here — and it is what
+  // lets this seeder be driven against a studio built from a working tree, which
+  // is how the upload path was exercised before the estate's container was
+  // rebuilt.
+  studio: { base: process.env.CF_STUDIO_URL || 'http://127.0.0.1:4111', gateway: false },
   ledger: { base: 'http://127.0.0.1:4102', gateway: false },
   billing: { base: 'http://127.0.0.1:4106', gateway: false },
   nda: { base: 'http://127.0.0.1:4116', gateway: false },
