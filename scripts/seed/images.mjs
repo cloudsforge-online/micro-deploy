@@ -135,6 +135,20 @@ async function uploadBytes(token, bytes, contentType) {
  * the path being resolved and then checked to be inside the tree — a seeded
  * entry naming `../../etc/passwd` would otherwise be read and uploaded.
  */
+/**
+ * ── ADOPTING A FLUX ASSET STRIPS ITS C2PA MANIFEST, AND THAT IS THE RIGHT TRADE ──
+ *
+ * studio's uploader drops PNG chunks by allowlist, and the C2PA manifest is not on it — about 19KB
+ * per FLUX image. That is deliberate: the same allowlist is what removes `eXIf` and `iTXt` from a
+ * stranger's phone photograph, and a C2PA manifest can itself carry capture location and device
+ * identifiers. Keeping it for our own art would mean keeping it for everyone's.
+ *
+ * What is lost is the *readable* manifest. FLUX also embeds an invisible watermark in the PIXELS,
+ * which survives metadata stripping untouched, so the AI-generated fact remains detectable in the
+ * bytes. The visible disclosure lives on the asset row and its licence string rather than inside
+ * the file. Recorded here because "we stripped the provenance off our own provenance-bearing art"
+ * is exactly the sort of thing that should not be discovered later by someone else.
+ */
 export async function adoptExisting(token, relativePath) {
   if (!(await studioReachable())) return null
 

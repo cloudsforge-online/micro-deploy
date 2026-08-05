@@ -76,7 +76,7 @@ import {
   TEST_ARTEFACT_VOID_REASON,
   isTestArtefact,
 } from './foresight-questions.mjs'
-import { generateCover, reportImageBackend, studioReachable } from './images.mjs'
+import { adoptExisting, generateCover, reportImageBackend, studioReachable } from './images.mjs'
 
 const require = createRequire(import.meta.url)
 
@@ -563,20 +563,42 @@ function reportHouseSeed() {
  * estate's own FLUX 2 Pro asset sets, and the right cover for a listing OF those
  * assets is one of those assets, read and uploaded rather than reinvented.
  *
- * ── WHAT THIS ACTUALLY PRODUCES TODAY ───────────────────────────────────────
+ * ── THE COVERS ARE COMMITTED FLUX 2 PRO ART, ADOPTED RATHER THAN GENERATED ──
  *
- * A PLACEHOLDER, not FLUX art, and the run says so on every line. The estate's
- * studio has no `AZURE_FOUNDRY_ENDPOINT` and no API key, which `studio/src/env.ts`
- * treats as a supported mode: it boots, reports `degraded` through a soft probe,
- * and serves the deterministic placeholder backend. Every one of the forty
- * assets studio has ever produced on this estate was made that way — checked, not
- * assumed. The moment a model is deployed and those two variables are set, the
- * same call returns FLUX 2 Pro art with no change here.
+ * Each seeded question has a real FLUX 2 Pro cover in `assets/seed/foresight/`,
+ * generated once against the live Azure resource and committed. This adopts them
+ * the way `market.mjs` adopts the estate's existing asset sets: read-only, and
+ * deduplicated by studio on the content address.
  *
- * A failure to make a cover is NOT a failure of the seeding run. A question
+ * Committing them rather than generating at seed time buys three things. Bootstrap
+ * runs several times an hour and each generation is real money, so generating here
+ * would bill the owner on every run. The art is reviewable in a diff instead of
+ * appearing differently on each bootstrap. And the covers no longer depend on
+ * studio having a working image model at seed time — which it did not, for this
+ * service's entire history.
+ *
+ * `generateCover` remains the fallback for a question with no committed cover, so
+ * adding a tenth question still produces something rather than nothing.
+ *
+ * A failure to attach a cover is NOT a failure of the seeding run. A question
  * without a picture is still a question; a bootstrap that aborted because an
  * image did not render would be a worse trade than a plain page.
  */
+/**
+ * The filename a question's committed cover is stored under.
+ *
+ * Derived from the question rather than recorded beside it, so a cover cannot drift away from the
+ * market it belongs to: rewording a question changes the slug, the adopt misses, and the fallback
+ * generates a new one rather than silently attaching the old picture to a different question.
+ */
+function coverSlug(question) {
+  return question
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60)
+}
+
 async function coverImages(markets, userToken) {
   if (markets.length === 0) return
   await reportImageBackend()
@@ -588,14 +610,20 @@ async function coverImages(markets, userToken) {
     const current = await api('foresight', `/markets/${m.id}`, { expect: 200 })
     if (current.body.market?.image?.assetId) continue
 
-    const asset = await generateCover(userToken, {
-      slug: `foresight-${m.id.slice(0, 8)}`,
-      // The question itself is the brief. A market's picture should be about the
-      // thing being predicted, not a generic banner — and `stylePrompt` is what
-      // studio's prompt builder reads for anything that is not a brand artefact.
-      stylePrompt: m.question,
-      kind: 'banner',
-    })
+    // The committed FLUX cover for this question, if there is one.
+    const spec = FORESIGHT_QUESTIONS.find((q) => q.question === m.question)
+    const file = spec ? `deploy/assets/seed/foresight/${coverSlug(spec.question)}.png` : ''
+
+    const asset = file
+      ? await adoptExisting(userToken, file)
+      : // No committed cover — a question added since the art was generated. Ask studio, which
+        // reaches FLUX when a model is configured. The `cover` KIND matters: `banner` is a brand
+        // kind and would return a logo with the kit slug lettered across it.
+        await generateCover(userToken, {
+          slug: `foresight-${m.id.slice(0, 8)}`,
+          stylePrompt: spec?.cover ?? m.question,
+          kind: 'cover',
+        })
     if (!asset) continue
 
     const res = await api('foresight', `/markets/${m.id}/image`, {

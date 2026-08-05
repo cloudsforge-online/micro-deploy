@@ -66,6 +66,19 @@
 
 /** @typedef {{
  *   question: string,
+ *   // The COVER BRIEF: what a header illustration for this market should DRAW.
+ *   //
+ *   // Deliberately NOT the question. The first batch of covers was generated with the question
+ *   // itself as the subject, and FLUX typeset it into the picture — badly. One read "Will Arsenal
+ *   // win tho27 English Premier League tible?"; the US House cover rendered "at least 218 … 435
+ *   // votiing seats in the 2026 general". Garbled prose is embarrassing; the fabricated NUMERALS
+ *   // are the defect, because an invented "218" beside a real market on a platform that custodies
+ *   // money reads as a figure somebody could act on.
+ *   //
+ *   // So each is a short noun phrase describing objects, carrying no sentence, no numeral, no
+ *   // date, no proper noun and no team or party mark. The failed batch is kept under
+ *   // assets/seed/foresight/candidates/ rather than deleted.
+ *   cover: string,
  *   resolutionCriteria: string,
  *   category: 'protocol_network' | 'market_prices' | 'scheduled_public_events',
  *   resolutionSourceKind: string,
@@ -93,6 +106,8 @@ export const FORESIGHT_QUESTIONS = [
   {
     question:
       'Will the Bitcoin mainnet block height be strictly greater than 969,200 at 2026-09-30T00:00:00Z?',
+    cover:
+      'a chain of solid rectangular blocks linked end to end, extending away to one side',
     resolutionCriteria:
       'YES if the integer returned by the source endpoint, read once at or after the close time, ' +
       'is strictly greater than 969200. NO if it is 969200 or lower. The reading is taken from the ' +
@@ -115,6 +130,8 @@ export const FORESIGHT_QUESTIONS = [
     question:
       'Will the Ethereum mainnet upgrade named Amsterdam/Gloas ("Glamsterdam") have activated on ' +
       'Ethereum mainnet before 2027-01-01T00:00:00Z?',
+    cover:
+      'modular interlocking components on a grid, one of them being lifted out and replaced by a new one',
     resolutionCriteria:
       'YES if, at the close time, the Ethereum Foundation\'s network-upgrades history page lists ' +
       'Amsterdam/Gloas ("Glamsterdam") with an activation date on Ethereum mainnet earlier than ' +
@@ -137,6 +154,8 @@ export const FORESIGHT_QUESTIONS = [
     question:
       'Will the Bitcoin difficulty retarget taking effect at block height 961,632 be an INCREASE ' +
       'on the epoch before it?',
+    cover:
+      'a balance beam with weights sliding along it as it settles level, mechanical and precise',
     resolutionCriteria:
       'YES if, once the Bitcoin mainnet tip is at or above height 961,632, the retarget applied at ' +
       'that height was a positive change — equivalently, the difficulty of the epoch beginning at ' +
@@ -165,6 +184,8 @@ export const FORESIGHT_QUESTIONS = [
   {
     question:
       'Will the Coinbase BTC-USD spot price be at or above 70,000 USD at 2026-10-01T00:00:00Z?',
+    cover:
+      'a single heavy coin resting on a raised horizontal ledge, with empty space above it',
     resolutionCriteria:
       'YES if the `data.amount` field returned by the source endpoint, on the first successful read ' +
       'at or after the close time, parses to a number greater than or equal to 70000. NO if it is ' +
@@ -185,6 +206,8 @@ export const FORESIGHT_QUESTIONS = [
   {
     question:
       'Will the Coinbase ETH-USD spot price be at or above 2,500 USD at 2026-12-01T00:00:00Z?',
+    cover:
+      'a faceted angular gemstone resting on a raised horizontal ledge, with empty space above it',
     resolutionCriteria:
       'YES if the `data.amount` field returned by the source endpoint, on the first successful read ' +
       'at or after the close time, parses to a number greater than or equal to 2500. NO if it is ' +
@@ -204,6 +227,8 @@ export const FORESIGHT_QUESTIONS = [
     question:
       'Will the Federal Open Market Committee LOWER the target range for the federal funds rate at ' +
       'the meeting concluding on 16 September 2026?',
+    cover:
+      'a large mechanical dial with a lever beside it, set against a plain institutional facade',
     resolutionCriteria:
       'YES if the upper limit of the target range for the federal funds rate stated in the FOMC ' +
       'statement issued at the conclusion of the 15-16 September 2026 meeting is strictly lower ' +
@@ -236,6 +261,8 @@ export const FORESIGHT_QUESTIONS = [
     question:
       'Will the Republican Party win at least 218 of the 435 voting seats in the United States ' +
       'House of Representatives at the general election held on 3 November 2026?',
+    cover:
+      'rows of empty seats arranged in a wide semicircle inside a domed chamber',
     resolutionCriteria:
       'YES if the Office of the Clerk of the U.S. House of Representatives, in its official ' +
       '"Statistics of the Congressional Election" for the 3 November 2026 election, records 218 or ' +
@@ -259,6 +286,9 @@ export const FORESIGHT_QUESTIONS = [
   },
   {
     question: 'Will Arsenal win the 2026-27 English Premier League title?',
+    cover:
+      'a plain unmarked association football — a round soccer ball with hexagonal panels — beside ' +
+      'an empty two-handled trophy cup',
     resolutionCriteria:
       'YES if Arsenal are placed first in the final league table of the 2026-27 Premier League ' +
       'season as published by the Premier League after the last match of the season. NO for any ' +
@@ -293,6 +323,8 @@ export const FORESIGHT_QUESTIONS = [
     // The constructors' title asks the same question of the same season from the
     // same document, and its subject is an entity.
     question: 'Will Mercedes win the 2026 Formula One World Constructors\' Championship?',
+    cover:
+      'the silhouette of an open-wheel racing car beside an empty two-handled trophy cup',
     resolutionCriteria:
       'YES if Mercedes is classified first in the FIA\'s final Formula One World Constructors\' ' +
       'Championship classification for the 2026 season. NO for any other classified position. The ' +
