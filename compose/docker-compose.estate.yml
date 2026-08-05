@@ -1502,7 +1502,7 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics
-      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
       INSTANCE_ID: analytics-migrate
     env_file:
       - *outbox-secret-file
@@ -1519,7 +1519,7 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics
-      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
       INSTANCE_ID: analytics-estate
     env_file:
       - *outbox-secret-file
@@ -1927,7 +1927,6 @@ services:
       # eleven services with it through `service_completed_successfully`. Keep
       # this identical to the `market` block below; the two drifting apart is
       # what turned a market-only change into a testnet-wide outage once already.
-      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: market-migrate
     env_file: *outbox-secrets
@@ -2017,7 +2016,6 @@ services:
       # causes is contained on the client side instead: market/src/policyclient.ts
       # :183-188 maps a peer 401/403 to a DEGRADED verdict rather than a denial,
       # so a seller is no longer told they are banned when the fault is ours.
-      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: market-estate
     env_file: *outbox-secrets
@@ -2665,7 +2663,6 @@ services:
       INDEXER_URL: http://indexer:4000
       LEDGER_URL: http://ledger:4000
       POLICY_URL: http://policy:4000
-      FORESIGHT_SERVICE_TOKEN: ${FORESIGHT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
       FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
       FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
@@ -2714,7 +2711,6 @@ services:
       # A TOKEN, NOT A CREDENTIAL. See the long note above; it is presented
       # verbatim by `index.ts:101` and a `cfsc_…` secret here 401s all five
       # upstreams.
-      FORESIGHT_SERVICE_TOKEN: ${FORESIGHT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
       # `FORESIGHT_NETWORK` AND `FORESIGHT_MAINNET_ENABLED` ARE IN THE SAME
       # `env_file` AS THE INDEXER'S, AND THAT IS THE POINT.
@@ -2855,7 +2851,7 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       BEACON_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/beacon
-      BEACON_TOKEN: estate-only-beacon-breakglass-000000000
+      BEACON_TOKEN: ${BEACON_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound break-glass, see runbooks/runbook-beacon-token.md}
       INSTANCE_ID: beacon-migrate
     depends_on:
       postgres:
@@ -2902,7 +2898,7 @@ services:
       # the cost this repository keeps paying for elsewhere.
       NODE_EXTRA_CA_CERTS: /etc/ssl/estate/trust.crt
       BEACON_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/beacon
-      BEACON_TOKEN: estate-only-beacon-breakglass-000000000
+      BEACON_TOKEN: ${BEACON_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound break-glass, see runbooks/runbook-beacon-token.md}
       # ── `wallet` AND `custody` ADDED 2026-08-04, AND THE ABSENCE WAS NOT NEUTRAL ────
       #
       # `estate.reachable` has named `wallet` in its service list since it was written and
@@ -3091,7 +3087,12 @@ services:
       # The migrator imports the same `env.ts`, which builds the WHOLE config
       # before it opens a connection — so every required value is supplied here
       # too. It dials none of them and signs nothing.
-      FAUCET_TOKEN: estate-only-faucet-operator-token-00000
+      FAUCET_TOKEN: ${FAUCET_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); PIN FAUCET_REQUESTER_SALT BEFORE ROTATING or every rate-limit bucket re-keys (faucet/src/env.ts:425)}
+      # PINNED, AND THE PINNING IS THE POINT: unset, faucet DERIVES this salt from
+      # FAUCET_TOKEN (faucet/src/env.ts:425 -> requester.ts:206), so rotating the token
+      # would silently re-key every requester pseudonym and rate-limit bucket. Pinned
+      # to the value derived from the PRE-ROTATION token, continuity survives rotation.
+      FAUCET_REQUESTER_SALT: ${FAUCET_REQUESTER_SALT:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
       FAUCET_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
       CUSTODY_URL: http://custody:4000
       CUSTODY_TOKEN: ${FAUCET_CUSTODY_TOKEN:-estate-placeholder-token-0000000000000000}
@@ -3119,7 +3120,12 @@ services:
       # BUDGET and is gated for exactly that reason. Never identity-minted —
       # asking identity for it would produce a token that opens nothing, which
       # is the mistake `analytics` was removed from the CREDENTIALS list for.
-      FAUCET_TOKEN: estate-only-faucet-operator-token-00000
+      FAUCET_TOKEN: ${FAUCET_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); PIN FAUCET_REQUESTER_SALT BEFORE ROTATING or every rate-limit bucket re-keys (faucet/src/env.ts:425)}
+      # PINNED, AND THE PINNING IS THE POINT: unset, faucet DERIVES this salt from
+      # FAUCET_TOKEN (faucet/src/env.ts:425 -> requester.ts:206), so rotating the token
+      # would silently re-key every requester pseudonym and rate-limit bucket. Pinned
+      # to the value derived from the PRE-ROTATION token, continuity survives rotation.
+      FAUCET_REQUESTER_SALT: ${FAUCET_REQUESTER_SALT:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
       FAUCET_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
       CUSTODY_URL: http://custody:4000
       CUSTODY_TOKEN: ${FAUCET_CUSTODY_TOKEN:-estate-placeholder-token-0000000000000000}
@@ -3690,7 +3696,7 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern
-      LANTERN_TOKEN: estate-only-lantern-token-000000000000
+      LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
       INSTANCE_ID: lantern-migrate
     depends_on:
       postgres:
@@ -3707,7 +3713,7 @@ services:
       # Thirty-six characters. `requiredSecret` refuses anything under 24 AND
       # refuses a known placeholder by name (`changeme`, `secret`, `token`, …),
       # so this cannot be shortened or made "obvious" without a dead container.
-      LANTERN_TOKEN: estate-only-lantern-token-000000000000
+      LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
       # ══════════════════════════════════════════════════════════════════════════
       # WITHOUT THIS THE SINK IS OFF, AND OFF MEANS 404 ON EVERYTHING.
       #
