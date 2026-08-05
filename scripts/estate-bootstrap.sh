@@ -428,8 +428,40 @@ echo "── 5. mint one service token per credential ────────�
 # timer. A market approved eleven minutes after a bootstrap sits unfinished until
 # the next one. Recorded rather than papered over; micro-foresight owns the fix
 # and `index.ts:101` is already the seam for it.
+#
+# ── SETTLEMENT IS GONE FROM THIS LIST, AND LEAVING IT WOULD HAVE RE-BROKEN A ──
+# ── HEALTHY ESTATE ON THE NEXT RUN ────────────────────────────────────────────
+#
+# Same deletion as `ledger`'s above, and for the same reason: since
+# `micro-settlement@8573da7` settlement holds a long-lived credential and
+# exchanges it through `ServiceTokenProvider` (`settlement/src/upstreams.ts`).
+# `settlement/src/env.ts:409-414` reads `SETTLEMENT_IDENTITY_CREDENTIAL` first
+# and then `SETTLEMENT_SERVICE_TOKEN` when THAT value carries the `cfsc_`
+# prefix — and a value that is a genuine JWT is now reported at boot and
+# IGNORED, because using it is the defect.
+#
+# So this line no longer merely wasted a secret, as the eleven above did. It
+# actively disabled the service. Measured on the estate on 2026-08-05
+# (micro-org#197): `cf-testnet-settlement-1` was the only unhealthy container in
+# either estate, on a 797-character JWT this list had minted, with every
+# treasury tick logging `CustodyUnavailableError: no identity credential is
+# configured` — the new code correctly refusing the ten-minute token. Mainnet
+# was healthy on the SAME image only because somebody had hand-edited
+# `SETTLEMENT_SERVICE_TOKEN` in `tokens.env` to the credential's value, and the
+# very next run of this script would have overwritten that hand-edit with a
+# fresh JWT and taken mainnet down the same way.
+#
+# ── WHY 5b WRITES THE ALIAS, AND WHEN TO DELETE IT ────────────────────────────
+#
+# `SETTLEMENT_IDENTITY_CREDENTIAL` is minted by 5b like every other service's
+# and has been all along, but **no compose block references it** — the
+# `settlement` and `settlement-migrate` blocks pass only
+# `SETTLEMENT_SERVICE_TOKEN`. So 5b writes the credential under BOTH names,
+# which is exactly the case `settlement/src/env.ts` documents accepting. That
+# alias is a workaround for a deploy gap, not the design: micro-org#191 carries
+# the compose change that passes `SETTLEMENT_IDENTITY_CREDENTIAL` through, and
+# the alias in 5b should be deleted in the same commit that lands it.
 CREDENTIALS="
-SETTLEMENT_SERVICE_TOKEN|settlement|
 MARKET_SERVICE_TOKEN|market|
 TRADE_SERVICE_TOKEN|trade|
 COMMUNITY_SERVICE_CREDENTIAL|community|
@@ -557,6 +589,23 @@ for service in $SERVICES; do
   if [ -n "$secret" ]; then
     echo "$var=$secret" >> "$tmp"
     credentialled=$((credentialled+1))
+    # ── ONE ALIAS, BECAUSE ONE COMPOSE BLOCK NEVER LEARNED THE NEW NAME ───────
+    #
+    # settlement's compose block passes only `SETTLEMENT_SERVICE_TOKEN`, so the
+    # credential written on the line above reaches no container under its own
+    # name. `settlement/src/env.ts:409-414` accepts the credential under the
+    # OLD name precisely so this repair does not have to wait on a deploy edit
+    # — the prefix disambiguates it (credentials are `cfsc_…`, tokens are JWTs
+    # beginning `eyJ`), and a JWT under that name is now ignored rather than
+    # presented.
+    #
+    # This is a workaround with a named owner: micro-org#191 lands the compose
+    # passthrough, and these three lines are deleted in that same commit. Until
+    # then, removing them re-breaks settlement on the next bootstrap — which is
+    # what micro-org#197 was.
+    if [ "$service" = settlement ]; then
+      echo "SETTLEMENT_SERVICE_TOKEN=$secret" >> "$tmp"
+    fi
   else
     bad "$var ($service): $(printf '%s' "$response" | head -c 160)"
   fi
