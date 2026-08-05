@@ -1746,8 +1746,12 @@ services:
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
-      # Empty, never a placeholder — see the `market` block below for why.
-      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-}
+      # The migrator loads the SAME env module as the service, so it fails at the
+      # same line for the same missing variable — and it fails FIRST, taking
+      # eleven services with it through `service_completed_successfully`. Keep
+      # this identical to the `market` block below; the two drifting apart is
+      # what turned a market-only change into a testnet-wide outage once already.
+      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: market-migrate
     env_file: *outbox-secrets
