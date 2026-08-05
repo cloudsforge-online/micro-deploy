@@ -50,6 +50,41 @@
  * An empty `slos` table is an honest statement that no availability target has
  * been agreed. A seeded one is a target nobody set, presented as one somebody
  * did.
+ *
+ * ── ONE PROBE IS HAND-WRITTEN, AND THAT IS THE POINT OF IT ───────────────────
+ *
+ * Every probe above asks a bundle host for its shell. That proves nginx is
+ * serving and the gateway is routing. It proves nothing about whether the
+ * service behind the API answers, because none of those requests reaches one.
+ *
+ * micro-org#181: Forge Worlds showed no registry on testnet for roughly an hour
+ * (#150) and nothing in the estate noticed. The outage surfaced only as a
+ * `t.diagnostic` in micro-worlds-web's `api-host-resolves.test.ts`, which
+ * deliberately does not fail on a 5xx — a 5xx proves the hostname resolved,
+ * connected and routed, which is all that test owns. That is correct behaviour
+ * for that test. A diagnostic is not an alert, and no other tier asserted on it.
+ *
+ * So `API_READ_PROBES` below is a hand-written list, and the header's argument
+ * against hand-written lists does not apply to it. The registry answers "which
+ * hostnames serve a page"; it does not, and should not, answer "which reads are
+ * public, unauthenticated, and cheap enough to run every ten seconds". That is
+ * a fact about a ROUTE, and the registry holds no routes.
+ *
+ * The bar for adding an entry, and it is deliberately high:
+ *
+ *   1. **Unauthenticated.** Verified at the handler, not assumed from a 200 —
+ *      a probe carrying a credential measures the credential too, and expires.
+ *   2. **A real read.** It must touch the database, or it is a liveness probe
+ *      wearing a costume and would have gone green through #150.
+ *   3. **Measured through the gateway on both estates before it is added here**,
+ *      for the same reason `servesUi` is a measured field: an unverified probe
+ *      is a permanently red row, and a permanently red row is how a status page
+ *      teaches people to ignore it.
+ *
+ * `servesUi: false` is why these hosts are absent from the loop above and it
+ * remains right — those six hosts serve no page and probing them for one would
+ * manufacture red rows. This does not relax that filter. It adds a different
+ * question, asked of a path rather than of a host.
  */
 
 import { ok, bad, skip, note, head, WEB_SUFFIX, SITE_HOST } from './lib.mjs'
@@ -116,15 +151,89 @@ function urlFor(surface) {
   return `https://${host}${surface.basePath ?? '/'}`
 }
 
+/**
+ * Public unauthenticated reads worth probing. See this file's header for the bar.
+ *
+ * `worlds.titles` is the read micro-org#181 names, and it clears all three tests:
+ *
+ *   1. `worlds/src/server.ts:531` — `define('GET', '/v1/titles', …)` makes NO
+ *      `authenticate` call. Its sibling `POST` at `:548` does, immediately, so
+ *      the omission is a decision rather than an oversight.
+ *   2. It calls `listTitles(deps.sql, …)`. One table, one query — the exact read
+ *      that was failing during #150 while every bundle probe stayed green.
+ *   3. Measured through both gateways before being written here, not after:
+ *      `api.cloudsforge.online/v1/titles` → 200 and
+ *      `api-testnet.cloudsforge.online/v1/titles` → 200.
+ *
+ * `productGroup` is `Forge Worlds` — the name a reader recognises on the status
+ * page, for the reason spelled out at the `surface.name` decision below. It
+ * deliberately matches no surface probe's group: this probe reports on the
+ * registry API, and folding it into the bundle's row would let a working shell
+ * mask a dead API, which is precisely how #150 stayed invisible.
+ *
+ * `critical: true`. The `api` surface is `kind: 'service'`, and the loop above
+ * would therefore have marked it non-critical — but that rule is about operator
+ * tools not paging like products, and this is not an operator tool. It is the
+ * read every Forge Worlds client makes before it can show anything.
+ */
+const API_READ_PROBES = [
+  {
+    key: 'worlds.titles',
+    productGroup: 'Forge Worlds',
+    path: '/v1/titles',
+    subdomain: 'api',
+    critical: true,
+  },
+]
+
+/**
+ * Seed the reads. Separate from the surface loop rather than folded into it,
+ * because a shared loop would need a branch on every field that differs — url,
+ * group, criticality — and the two answer different questions.
+ */
+async function seedApiReadProbes(token) {
+  let written = 0
+  for (const probe of API_READ_PROBES) {
+    const url = `https://${probe.subdomain}${WEB_SUFFIX}${probe.path}`
+    const res = await beaconApi(`/v1/probes/${encodeURIComponent(probe.key)}`, {
+      method: 'PUT',
+      token,
+      body: {
+        target: probe.key,
+        productGroup: probe.productGroup,
+        url,
+        method: 'GET',
+        expectStatus: 200,
+        intervalMs: INTERVAL_MS,
+        deadlineMs: DEADLINE_MS,
+        critical: probe.critical,
+        enabled: true,
+      },
+    })
+    if (res.status === 200 || res.status === 201) {
+      written++
+      note(`api read probe ${probe.key} → ${url}`)
+    } else {
+      bad(`probe ${probe.key} → ${res.status}: ${JSON.stringify(res.body).slice(0, 160)}`)
+    }
+  }
+  return written
+}
+
 export async function seedBeacon(token) {
   head('beacon — probes from the surface registry, and no SLO nobody agreed')
+
+  // The API read probes do not come from the registry, so they are seeded whether or not it can be
+  // read. That is not a convenience: the registry failing to load is exactly the kind of estate
+  // trouble during which you most want the one probe that asks a service a real question.
+  const apiReads = await seedApiReadProbes(token)
 
   const surfaces = await loadSurfaces()
   if (!surfaces) {
     skip(
-      'no probes seeded: the surface registry at ui/packages/ui/src/surfaces.ts could not be read. ' +
-        'A hand-written list here would be a ninth copy of a list the registry exists to stop ' +
-        'anybody keeping, so none is written.',
+      'no SURFACE probes seeded: the surface registry at ui/packages/ui/src/surfaces.ts could not ' +
+        'be read. A hand-written list here would be a ninth copy of a list the registry exists to ' +
+        `stop anybody keeping, so none is written. The ${apiReads} API read probe(s) were seeded.`,
     )
     return
   }
@@ -181,11 +290,24 @@ export async function seedBeacon(token) {
       bad(`probe ${surface.key} → ${res.status}: ${JSON.stringify(res.body).slice(0, 160)}`)
     }
   }
+  // `written > 0` used to gate the ONLY line this function printed about its own result, so a run
+  // that upserted nothing said nothing and read as a success. That is the estate's standing
+  // vacuous-check shape (#38): a check must fail when it measures nothing. It now reports either
+  // way, and zero is `bad`.
   if (written > 0) {
     ok(
-      `${written} probe(s) upserted from the registry — ` +
+      `${written} surface probe(s) + ${apiReads} API read probe(s) upserted — ` +
         `${probeable.filter((s) => s.kind === 'product').length} critical (the products), the rest not`,
     )
+  } else {
+    bad(
+      `0 surface probes upserted from ${probeable.length} probeable surface(s). A beacon with no ` +
+        'probes folds `worst([])` to `operational` and publishes a green status page having ' +
+        'measured nothing — the defect in #14.',
+    )
+  }
+  if (apiReads !== API_READ_PROBES.length) {
+    bad(`${apiReads} of ${API_READ_PROBES.length} API read probe(s) upserted; the rest failed above`)
   }
 
   const excluded = surfaces.filter((s) => !s.servesUi).map((s) => s.key)
