@@ -295,6 +295,19 @@ ciphertext.
    be rotated without abandoning the balance at the address, so the paper copy is
    the only recovery path there will ever be. Same procedure, same discipline.
 
+   They are also **bind-mounted read-write into the miner containers** at `/minerdata`,
+   readable and writable by uid 1000 inside them — so container compromise reaches
+   these keys without needing container escape. Tracked as **#206**.
+
+7. **A `FORESIGHT_HOUSE_ADDRESS` key, if one is ever created, belongs on this list
+   from the moment it exists.** It signs `stake(uint8)` calls, which custody has no
+   shape for (`custody/src/signing.ts:210-260`), so it is a hot key outside custody
+   with exactly the miner keys' properties — plaintext on disk, unrotatable without
+   abandoning the address the public disclosure names. Back it up by §4.2 **before**
+   funding it, and cap the exposure by leaving only a working balance there. The full
+   argument and the operator procedure are in
+   [`house-seed.md`](./house-seed.md) §2.
+
 ---
 
 ## 5. Key rotation
