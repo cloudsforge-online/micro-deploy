@@ -2313,25 +2313,29 @@ services:
       STUDIO_URL: http://studio:4000
       LEDGER_URL: http://ledger:4000
       MARKET_URL: http://market:4000
-      # ── A TOKEN, NOT A CREDENTIAL, AND THE NAME IS NOT THE REASON ──────────
+      # ── NOW A CREDENTIAL, BECAUSE THE FIX THIS COMMENT ASKED FOR HAS LANDED ──
       #
-      # `estate-bootstrap.sh` writes both kinds and they are NOT interchangeable:
-      # `*_IDENTITY_CREDENTIAL` is long-lived and is EXCHANGED at
-      # POST /service-tokens/exchange, `*_SERVICE_TOKEN` is a ten-minute JWT that
-      # is PRESENTED as a bearer. tessera presents this value directly —
-      # `token: async () => env.serviceCredential ?? ''` (tessera/src/index.ts:127),
-      # under a header saying "until this service is granted a credential in the
-      # deploy, the credential IS the token". So it must be a token. Handing it a
-      # long-lived credential secret would produce a Bearer that is not a JWT,
-      # and studio would answer 401 to every firing with nothing in either log
-      # naming the cause.
+      # This block used to explain why tessera had to be handed a ten-minute JWT:
+      # it presented the value directly as a bearer, so a long-lived credential
+      # would have produced a Bearer that is not a JWT and studio would have
+      # answered 401 to every firing. It ended by naming the fix — micro-tessera
+      # adopting `ServiceTokenProvider`. That is what 1.2.0 does, so the token is
+      # gone and the credential it exchanges takes its place.
       #
-      # It is therefore bootstrapped as a TOKEN (`TESSERA_SERVICE_CREDENTIAL` in
-      # the CREDENTIALS list), and the ten-minute expiry is real: a firing
-      # attempted more than ten minutes after a bootstrap will 401 until the next
-      # run. Recorded, not hidden — the fix is micro-tessera adopting
-      # `ServiceTokenProvider`, which its own comment already names.
-      TESSERA_SERVICE_CREDENTIAL: ${TESSERA_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
+      # `TESSERA_SERVICE_CREDENTIAL` is NOT passed through. It is vestigial in
+      # 1.2.0 and the value the tokens files still hold for it is a 718-byte JWT,
+      # which `assertServiceCredential` refuses BY NAME (micro-org#222) — so
+      # forwarding it would refuse the boot rather than degrade. The identity
+      # credential below always wins when both are set, which makes the variable
+      # pure downside here.
+      #
+      # The default this replaces was `estate-placeholder-token-0000000000000000`:
+      # 40 characters, on no deny-list, over every length floor, and therefore
+      # passed by every guard in the estate. That is micro-org #142 exactly, and
+      # it is why the guard now asserts SHAPE instead of keeping a list.
+      #
+      # No IDENTITY_URL: it derives from IDENTITY_ISSUER via *identity-trust.
+      TESSERA_IDENTITY_CREDENTIAL: ${TESSERA_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: tessera-estate
     env_file: *outbox-secrets
     ports:
