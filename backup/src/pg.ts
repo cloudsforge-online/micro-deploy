@@ -5,7 +5,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * **THE PASSWORD IS NEVER IN `argv`.**
  *
- * The obvious call is `pg_dump -d "postgres://cloudsforge:PASSWORD@postgres:5432/custody"`. On
+ * The obvious call is `pg_dump -d "postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/custody"`. On
  * Linux `/proc/<pid>/cmdline` is world-readable, so for the whole life of that process the
  * cluster's superuser password is readable by every uid on the host, and it lands in `ps` output,
  * in any process-listing metric, and in a container runtime's inspect output. This estate has

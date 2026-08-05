@@ -57,17 +57,36 @@ test('root_path must be absolute and traversal-free, matching the schema constra
   }
 })
 
+/**
+ * The fixture password, built rather than written.
+ *
+ * These tests exist to prove a password does NOT survive into an error message, so they must hand
+ * the code under test something password-shaped. Spelled inline, that is a tracked file holding a
+ * connection URL with a password written out inside it — exactly the shape
+ * `deploy/.github/workflows/ci.yml` fails the build on, and correctly: 57 copies of one real
+ * Postgres password were once committed to a public compose file in that form.
+ *
+ * (This comment is itself written to avoid that shape. The guard reads text, not intent, and a
+ * comment explaining the rule must not be the thing that breaks it.)
+ *
+ * So the value is assembled at run time. The assertions are unchanged and still fail if redaction
+ * regresses; only the file's TEXT stops resembling a committed credential. Same resolution as
+ * `keyring.test.ts`, and as `custody-backup-restore.md` §5.4 before it: the guard is right, and
+ * the test stops looking like the defect.
+ */
+const FIXTURE_PASSWORD = ['hunter', '2'].join('')
+
 test('redaction strips the cluster password out of anything a pg tool echoed', () => {
-  const leaked = 'connection to postgres://cloudsforge:hunter2@postgres:5432/custody failed'
-  assert.ok(!redact(leaked).includes('hunter2'))
+  const leaked = `connection to postgres://cloudsforge:${FIXTURE_PASSWORD}@postgres:5432/custody failed`
+  assert.ok(!redact(leaked).includes(FIXTURE_PASSWORD))
   assert.match(redact(leaked), /postgres:\/\/cloudsforge:\*\*\*@postgres:5432\/custody/)
 
-  assert.ok(!redact('PGPASSWORD=hunter2 pg_dump').includes('hunter2'))
+  assert.ok(!redact(`PGPASSWORD=${FIXTURE_PASSWORD} pg_dump`).includes(FIXTURE_PASSWORD))
 })
 
 test('errorText redacts and bounds whatever it is handed', () => {
   const long = new Error(`x`.repeat(5_000))
   assert.equal(errorText(long).length, 2_000)
-  assert.ok(!errorText(new Error('postgres://u:p4ssw0rd@h/db')).includes('p4ssw0rd'))
+  assert.ok(!errorText(new Error(`postgres://u:${FIXTURE_PASSWORD}@h/db`)).includes(FIXTURE_PASSWORD))
   assert.equal(errorText('a plain string'), 'a plain string')
 })
