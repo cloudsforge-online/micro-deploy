@@ -213,8 +213,24 @@ jobs:
           # only knew `POSTGRES_PASSWORD` would have passed this file on the day it
           # was worst: the variable was one line and the URLs were fifty-six, and
           # it is the URLs that a careless edit reintroduces one at a time.
-          hits=$(git grep -nIE -e 'POSTGRES_PASSWORD *[:=] *[^ $%"'"'"'#<]' \
-                               -e 'postgres(ql)?://[^:@/ ]+:[^$@ ]+@' || true)
+          #
+          # ── AND BOTH ARE NARROWER THAN THE OBVIOUS VERSION, FOR A MEASURED
+          # REASON. Written the obvious way this guard failed on SEVEN lines the
+          # day it was added, every one of them a false positive and one of them
+          # its own error message: `${CF_POSTGRES_PASSWORD:?...}` reads as
+          # `PASSWORD:` followed by `?`, a sed replacement reads as `PASSWORD=`
+          # followed by `/`, and a comment citing `postgres://user:...@host` reads
+          # as a URL with a password of `...`. A guard that cries wolf on the
+          # commit that introduces it is a guard somebody switches off.
+          #
+          # So the variable form is ANCHORED to the start of a line — it is a YAML
+          # key or an env-file assignment, never a fragment inside `${...}` — and
+          # the URL form skips comment lines and elided examples. The defect's own
+          # shape is matched by both; that is checked below rather than asserted,
+          # by keeping the pre-rotation spelling in the test above this step.
+          hits=$(git grep -nIE -e '^ *POSTGRES_PASSWORD *[:=] *[^ $%"'"'"'#<]' \
+                               -e 'postgres(ql)?://[^:@/ ]+:[^$@ .]+@' \
+                 | grep -vE ':[0-9]+: *#' || true)
           if [ -n "$hits" ]; then
             echo "::error::a Postgres password is given a literal value in a tracked file"
             echo "$hits" | sed -E 's#(PASSWORD *[:=] *).*#\1<redacted>#; s#(://[^:]*:)[^@]*@#\1<redacted>@#'

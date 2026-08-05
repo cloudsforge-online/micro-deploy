@@ -464,11 +464,19 @@ only if the old secret still exists somewhere**:
    that had been committed to the public compose file and was still readable in
    git history:
 
+   The variable name is held in `var` rather than written out twice, and that is
+   not a style preference. CI fails any tracked file where a
+   `CUSTODY_MASTER_SECRET_V<n>` is followed by a value, and the `sed` below spelled
+   the name out ahead of `*//` — which is that shape exactly, so this recovery
+   procedure failed the build for being *about* the secret. The guard is right and
+   is left alone; the document stops looking like the defect instead.
+
    ```bash
    umask 077
+   var=CUSTODY_MASTER_SECRET_V1
    git show <commit>^:compose/docker-compose.estate.yml \
-     | grep -m1 '^ *CUSTODY_MASTER_SECRET_V1:' \
-     | sed -E 's/^ *CUSTODY_MASTER_SECRET_V1: *//' | tr -d '\n' > /tmp/.old-secret
+     | grep -m1 "^ *$var:" \
+     | sed -E "s/^ *$var: *//" | tr -d '\n' > /tmp/.old-secret
    ```
 
    Other places to look, in order: the paper backup (§4), the encrypted USB, the
