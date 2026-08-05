@@ -303,14 +303,32 @@ uid=$(curl -s "$IDENTITY/auth/me" -H "authorization: Bearer $utok" \
 idem="estate-verify-$$-deposit"
 # deposit_credited: custody gains an asset, the user gains a liability claim on
 # it. Σ debits = Σ credits, which is the only thing the constraint cares about.
+#
+# ── EMBER, AND NOT SHARD, SINCE 2026-08-05 ───────────────────────────────────
+#
+# This probe posted SHARD until ledger migration 13 (`retired_asset_guard`)
+# reached the estate. SHARD was retired on 2026-08-04, and that migration
+# refuses a retired asset as the CONSIDERATION for an acquisition —
+# `deposit_credited` is exactly such a kind — so the posting below started
+# answering 400 `retired_asset`, and three checks in this section went red
+# describing a ledger that was working correctly.
+#
+# The guard is deliberately narrower than "no posting may name a retired asset":
+# 121 SHARD accounts still hold real liability and withdrawals and transfers of
+# it must keep working, so it is only ACQUISITION that is refused. That is why
+# the fix is to change the probe's asset rather than to relax the rule.
+#
+# EMBER is the estate's settled asset and is not retired, so this section is
+# once again asserting what it is named for — balance, idempotency and that the
+# money lands on the subject — rather than re-discovering the guard.
 balanced=$(cat <<JSON
 {"kind":"deposit_credited","originatingService":"wallet","actor":"service:wallet",
  "idempotencyKey":"$idem","description":"estate-verify deposit",
  "postings":[
-  {"direction":"debit","amount":"1000","assetCode":"SHARD","sequence":0,
-   "account":{"subject":"custody","assetCode":"SHARD","purpose":"available","type":"asset"}},
-  {"direction":"credit","amount":"1000","assetCode":"SHARD","sequence":1,
-   "account":{"subject":"user:$uid","assetCode":"SHARD","purpose":"available","type":"liability"}}]}
+  {"direction":"debit","amount":"1000","assetCode":"EMBER","sequence":0,
+   "account":{"subject":"custody","assetCode":"EMBER","purpose":"available","type":"asset"}},
+  {"direction":"credit","amount":"1000","assetCode":"EMBER","sequence":1,
+   "account":{"subject":"user:$uid","assetCode":"EMBER","purpose":"available","type":"liability"}}]}
 JSON
 )
 post=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
@@ -327,14 +345,21 @@ replay=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
 
 # THE REFUSAL. 1000 debited, 1 credited. If this is ever accepted, money has
 # been created, and every downstream reconciliation is reporting on a lie.
+#
+# EMBER here for a sharper reason than above. This check asserts only that the
+# entry was REFUSED, so with SHARD it would have gone green whether the ledger
+# caught the imbalance or migration 13 caught the retired asset first — a check
+# passing for a reason it does not name, which is worse than one that fails.
+# EMBER cannot trip the retired guard, so a green line here means the balance
+# constraint held, and nothing else.
 unbalanced=$(cat <<JSON
 {"kind":"adjustment","originatingService":"wallet","actor":"service:wallet",
  "idempotencyKey":"estate-verify-$$-unbalanced","description":"must be refused",
  "postings":[
-  {"direction":"debit","amount":"1000","assetCode":"SHARD","sequence":0,
-   "account":{"subject":"custody","assetCode":"SHARD","purpose":"available","type":"asset"}},
-  {"direction":"credit","amount":"1","assetCode":"SHARD","sequence":1,
-   "account":{"subject":"user:$uid","assetCode":"SHARD","purpose":"available","type":"liability"}}]}
+  {"direction":"debit","amount":"1000","assetCode":"EMBER","sequence":0,
+   "account":{"subject":"custody","assetCode":"EMBER","purpose":"available","type":"asset"}},
+  {"direction":"credit","amount":"1","assetCode":"EMBER","sequence":1,
+   "account":{"subject":"user:$uid","assetCode":"EMBER","purpose":"available","type":"liability"}}]}
 JSON
 )
 refused=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
@@ -354,7 +379,7 @@ printf '%s' "$tb2" | grep -q '"balanced":true' \
 # The money actually landed on the subject's account, not merely in the journal.
 bal=$(curl -s "$LEDGER/accounts/user:$uid/balances" -H "authorization: Bearer $wtok")
 printf '%s' "$bal" | grep -q '1000' \
-  && ok "the user's SHARD balance reflects the deposit" \
+  && ok "the user's EMBER balance reflects the deposit" \
   || bad "the deposit did not reach the subject's balance: $(printf '%s' "$bal" | head -c 200)"
 
 echo
