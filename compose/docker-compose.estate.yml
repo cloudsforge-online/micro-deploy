@@ -895,6 +895,9 @@ services:
       <<: [*common-env, *identity-trust]
       POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy
       INSTANCE_ID: policy-migrate
+    # The migrator reaches env.ts too, so it needs the same file — see the note on
+    # the service below (#196).
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -908,6 +911,24 @@ services:
       <<: [*common-env, *identity-trust]
       POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy
       INSTANCE_ID: policy-estate
+    # ── THE ONE SERVICE THE BUS-KEY ROTATION MISSED (#196) ────────────────────
+    #
+    # `policy` was the only service in the estate that reads an outbox secret and
+    # was never given one: measured ABSENT on both estates, while the other 25
+    # services that require one all had it. It consumes `identity.user.deleted`
+    # and verifies the producer's HMAC, so with no secret `eventAcceptSecrets` is
+    # an empty list and `POST /v1/events` answers 503 to every delivery.
+    #
+    # That fails in the quietest possible way — `env.ts` returns an empty frozen
+    # array rather than refusing to boot, so `/livez` is green and the service
+    # looks fine while every erasure event bounces. `inbox.ts`'s own header
+    # predicts it: "a relay retrying a 403 nobody would look at until an audit
+    # asked why nothing had been erased."
+    #
+    # Empty is deliberately NOT "accept anything" — the alternative would let an
+    # unauthenticated caller erase any user — so this is a missing credential and
+    # not a missing guard.
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}101:4000"
     depends_on:
