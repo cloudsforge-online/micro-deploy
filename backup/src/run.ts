@@ -100,6 +100,111 @@ function fileSourcesFor(env: Env): readonly FileSource[] {
   ]
 }
 
+/**
+ * The vault tarball must hold one blob per custody row, or the backup fails.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **THIS IS THE GUARD AGAINST A BACKUP THAT SUCCEEDS AND CONTAINS NOTHING.**
+ *
+ * `docs/custody-backup-restore.md` §2 ends its routine backup with exactly this comparison — "blob
+ * count must equal keys + seeds" — and it is the one check that catches the failure mode this
+ * estate has already been bitten by twice:
+ *
+ *   · **An empty mount.** Tessera's sprite directory was believed to be a 392-file mount and was
+ *     found to be a bind holding one README. A vault mount that resolves to a fresh, empty docker
+ *     volume — which is what happens if this overlay is ever run OUTSIDE the estate project, since
+ *     `custody-keys` is declared non-external and compose would then create rather than attach —
+ *     produces a tarball of zero blobs, a valid checksum, and a green backup row.
+ *   · **A silently-dropped snap bind.** Same shape, different cause; see `disk.ts`.
+ *
+ * In both cases every other signal is healthy. The tar succeeds, the SHA-256 is correct, the size
+ * is plausible for an empty archive, and nothing is red until somebody tries to recover a
+ * customer's coins from it and finds ciphertext for zero addresses.
+ *
+ * The database is the independent second opinion, and it is the RIGHT one: `custody_keys` and
+ * `custody_seeds` are the rows that say which blobs must exist. `FileVault` writes one `key.enc`
+ * per slot (`custody/src/vault.ts:70-79`), so the counts are equal by construction and a
+ * disagreement is a real defect rather than a tolerance.
+ *
+ * **It throws rather than warns.** A warning on a backup that cannot restore custody is a warning
+ * in a log nobody reads until the day it matters. `backup_runs_success_is_evidenced` means a failed
+ * run cannot be recorded as succeeded, so failing here is what stops the catalogue offering an
+ * empty set as a restore source.
+ *
+ * Counting MORE blobs than rows is tolerated and logged, not refused: a blob whose row was deleted
+ * is an orphan, which is a custody concern rather than a reason to have no backup tonight.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ */
+async function assertVaultIsComplete(deps: RunnerDeps, blobs: bigint): Promise<void> {
+  let expected: bigint
+  try {
+    // A connection to `custody` specifically — `deps.cluster` is the maintenance database and does
+    // not hold these tables. Same shape as the per-database row count above.
+    const sql = postgres(dsnFor(deps.connection, 'custody'), { max: 1, onnotice: () => {} })
+    try {
+      const rows = await sql<{ keys: string; seeds: string }[]>`
+        select (select count(*) from custody_keys)  as keys,
+               (select count(*) from custody_seeds) as seeds
+      `
+      const row = rows[0]
+      if (!row) return
+      expected = BigInt(row.keys) + BigInt(row.seeds)
+    } finally {
+      await sql.end({ timeout: 5 }).catch(() => {})
+    }
+  } catch (err) {
+    // No custody database, or the tables are not there yet. A development estate that has never
+    // minted an address is a legitimate state, and refusing its backup would be wrong.
+    deps.logger.warn('could not cross-check the custody vault against its rows', {
+      err: err instanceof Error ? err.message : String(err),
+      blobs: blobs.toString(),
+    })
+    return
+  }
+
+  const verdict = vaultCompleteness(blobs, expected)
+  if (verdict.kind === 'incomplete') throw new Error(verdict.detail)
+  if (verdict.kind === 'orphans') {
+    deps.logger.warn('the custody vault holds more blobs than rows — orphaned blobs', {
+      blobs: blobs.toString(),
+      rows: expected.toString(),
+    })
+  }
+  deps.logger.info('custody vault cross-checked against its rows', {
+    blobs: blobs.toString(),
+    rows: expected.toString(),
+  })
+}
+
+export type VaultVerdict =
+  | { readonly kind: 'ok' }
+  | { readonly kind: 'orphans' }
+  | { readonly kind: 'incomplete'; readonly detail: string }
+
+/**
+ * The decision, separated from the connection so it can be tested without a cluster.
+ *
+ * FEWER blobs than rows is fatal: an address whose blob is missing from the backup is an address
+ * that cannot be spent after a recovery, and there is no second copy of a custody blob anywhere.
+ * MORE blobs than rows is a warning: an orphan is a custody concern, and refusing tonight's backup
+ * over one would trade a real, present risk for a theoretical one.
+ */
+export function vaultCompleteness(blobs: bigint, rows: bigint): VaultVerdict {
+  if (blobs < rows) {
+    return {
+      kind: 'incomplete',
+      detail:
+        `the custody vault backup holds ${blobs} blobs but custody has ${rows} rows ` +
+        '(custody_keys + custody_seeds) — the vault mount is incomplete or empty, and a backup ' +
+        'that cannot recover every custodied address must not be recorded as a success. Check that ' +
+        'the runner mounts the ESTATE PROJECT’s <project>_custody-keys volume rather than a ' +
+        'fresh one, and see docs/estate-backup-restore.md §3 for the snap-Docker trap that ' +
+        'produces an empty mount without an error.',
+    }
+  }
+  return blobs > rows ? { kind: 'orphans' } : { kind: 'ok' }
+}
+
 export interface BackupOutcome {
   readonly backupRunId: string
   readonly directory: string
@@ -233,7 +338,10 @@ export async function performBackup(deps: RunnerDeps, options: BackupOptions): P
         sha256: result.sha256,
         entryCount: result.entryCount,
       })
-      if (source.kind === 'vault') includesCustody = true
+      if (source.kind === 'vault') {
+        includesCustody = true
+        await assertVaultIsComplete(deps, result.entryCount)
+      }
       deps.metrics.increment('backup_artefacts_written_total', { kind: source.kind })
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err
