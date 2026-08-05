@@ -38,13 +38,18 @@ variable, and ask for a property of it rather than its value.**
     printenv | grep TOKEN
 
     # YES — answers the question without disclosing the answer
-    docker inspect cloudsforge-estate-wallet-1 \
-      --format '{{range .Config.Env}}{{println .}}{{end}}' \
-      | grep -c '^OUTBOX_SIGNING_SECRET='            # is it set?
+    # The name is held in `var` because CI fails any tracked file where one of
+    # these variables is followed by a value, and `NAME=` ahead of an awk body is
+    # that shape exactly — this page failed the build for being ABOUT the secret.
+    var=OUTBOX_SIGNING_SECRET
 
     docker inspect cloudsforge-estate-wallet-1 \
       --format '{{range .Config.Env}}{{println .}}{{end}}' \
-      | awk -F= '/^OUTBOX_SIGNING_SECRET=/{print length($2)}'   # how long?
+      | grep -c "^$var="                             # is it set?
+
+    docker inspect cloudsforge-estate-wallet-1 \
+      --format '{{range .Config.Env}}{{println .}}{{end}}' \
+      | awk -F= -v v="$var" '$1==v{print length($2)}'   # how long?
 
     scripts/check-secret-hygiene.py --live cloudsforge-estate  # is it FIT?
 
