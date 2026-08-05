@@ -172,6 +172,31 @@ ENVIRONMENTS = {
 # now like every other hostname, so the port that reaches the chain is a gateway
 # concern (`CF_RPC_UPSTREAM`, gateway/dynamic/estate-web.yml) and not a tunnel one.
 # Nothing in this file needs to know what a chain is any more.
+# ── THE ORIGIN IS PLAINTEXT ON THE `tunnel` ENTRYPOINT, AND WAS NOT ──────────
+#
+# This said `GATEWAY_PORT = 443` and emitted `https://127.0.0.1:443` with
+# `noTLSVerify: true`. Measured against the running host on 2026-08-05, that is
+# not the origin this estate uses and has not been since the `tunnel` entrypoint
+# was added: cloudflared is given a PLAIN HTTP url so that hop does no handshake
+# and needs no certificate at all — `compose/env/traefik.env` says so where it
+# deletes `CF_TLS_DEFAULT_CERT`, and `compose/docker-compose.gateway.yml:237`
+# defines `--entrypoints.tunnel.address=:81` for exactly this.
+#
+# The port is NOT 81. That is the CONTAINER port; the published loopback bind is
+# `${CF_GW_PORT_BASE}81` (docker-compose.gateway.yml:302), which is 9081 on
+# mainnet and 9181 on testnet — and `81` was chosen over continuing the 95/96/97
+# run because 9098/9099 are already the otel collector's.
+#
+# Emitting the wrong origin here is not cosmetic. These four files are the
+# SPECIFICATION the owner types into the Cloudflare dashboard — the tunnel on
+# this host runs `cloudflared tunnel run --token-file`, so its ingress lives
+# remotely and nothing reads these files at runtime. A wrong origin in them is a
+# wrong origin in the dashboard, and the symptom is a 502 on every hostname.
+#
+# Verified before changing it, by driving the entrypoint with a Host header:
+#   curl -H 'Host: hub.cloudsforge.online'         http://127.0.0.1:9081/  -> 200
+#   curl -H 'Host: hub-testnet.cloudsforge.online' http://127.0.0.1:9181/  -> 200
+TUNNEL_PORT_BASE = 90   # compose/docker-compose.gateway.yml:302, `CF_GW_PORT_BASE`
 GATEWAY_PORT = 443   # compose/docker-compose.estate-gateway.yml:55, loopback only
 
 # ── hostnames deliberately NOT routed, and the argument for each ─────────────
@@ -250,12 +275,20 @@ TESTNET_ENV = ROOT / "compose" / "testnet.env"
 def gateway_port_agrees():
     """`compose/testnet.env`'s gateway port must equal GATEWAY_PORT + offset.
 
-    Two files hold the same number in different notations. This one writes the
-    tunnel's origin as `https://127.0.0.1:{GATEWAY_PORT + offset}`; testnet.env
-    writes what the gateway BINDS, as a literal, because compose cannot do
-    arithmetic. If they disagree the tunnel terminates TLS at Cloudflare and then
-    connects to a closed port, and every hostname on that environment returns a
-    502 that names nothing.
+    Two files hold the same number in different notations. `GATEWAY_PORT + offset`
+    is what this file says the testnet gateway's TLS bind is; testnet.env writes
+    what it actually BINDS, as a literal, because compose cannot do arithmetic.
+
+    IT IS NO LONGER THE TUNNEL'S ORIGIN, AND THE CHECK IS STILL WORTH ITS LINES.
+    This docstring said "this one writes the tunnel's origin as
+    `https://127.0.0.1:{GATEWAY_PORT + offset}`", and that stopped being true when
+    the `tunnel` entrypoint was added: the origin is plaintext on 9081/9181 now
+    (see TUNNEL_PORT_BASE above), derived from `CF_GW_PORT_BASE` and not from
+    `offset` at all. What 10443 still is, is the port every LOCAL consumer of the
+    testnet gateway reaches it on — `scripts/estate-verify.sh`, `estate-browser.sh`
+    and the testnet miner's loopback pin among them — so a disagreement between
+    the two files is still a set of tools driving a closed port, and still
+    something only text can catch on a machine that runs neither environment.
     """
     if not TESTNET_ENV.exists():
         return [f"{TESTNET_ENV} does not exist — the testnet project's gateway port cannot "
@@ -456,10 +489,14 @@ def render(env, tunnel_name, rules, *, note):
         lines.append(f"  - hostname: {hostname}")
         lines.append(f"    service: {service}")
         if service.startswith("https://"):
+            # UNREACHABLE FOR THESE FOUR FILES, AND KEPT ON PURPOSE. Every origin
+            # is `http://` now — the `tunnel` entrypoint terminates no TLS, so
+            # this hop does no handshake. The branch stays because the day
+            # anything here points at an https origin again, `noTLSVerify` is
+            # what it will need: Traefik serves its self-signed default on
+            # loopback (estate-gateway.yml says so and calls shipping it wrong),
+            # and this leg never leaves the host.
             lines.append("    originRequest:")
-            # Traefik serves its self-signed default on loopback (estate-gateway.yml
-            # says so and calls shipping it wrong). The public certificate is
-            # Cloudflare's; this leg never leaves the host.
             lines.append("      noTLSVerify: true")
     lines.append("""\
   # cloudflared REQUIRES a catch-all and refuses to start without one. 404 rather
@@ -617,7 +654,11 @@ def main():
     for env in ENVIRONMENTS:
         cfg = ENVIRONMENTS[env]
         label, offset = cfg["env"], cfg["offset"]
-        origin = f"https://127.0.0.1:{GATEWAY_PORT + offset}"
+        # `offset` is 10000 for testnet, which is the TLS bind's shift; the
+        # plaintext entrypoint shifts by its own base instead (90 -> 91), so it
+        # is derived from `CF_GW_PORT_BASE` rather than from `offset`.
+        base = TUNNEL_PORT_BASE + (1 if offset else 0)
+        origin = f"http://127.0.0.1:{base}81"
 
         pub_subs = [s["subdomain"] for s in public + api if s["subdomain"] not in NOT_ROUTED]
         op_subs = [s["subdomain"] for s in operator if s["subdomain"] not in NOT_ROUTED]
