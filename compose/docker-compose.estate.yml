@@ -1766,35 +1766,49 @@ services:
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
-      # ── THE PLACEHOLDER IS GONE, AND EMPTY IS NOT THE SAME THING ─────────
+      # ── WHY A STATIC SERVICE TOKEN CANNOT BE THE ANSWER HERE ─────────────
       #
-      # This defaulted to `estate-placeholder-token-0000000000000000`. A plain
-      # `docker compose up` resolved it, market presented it to policy, policy
-      # answered 401, and the policy client rendered our own missing credential
-      # to a seller as a MODERATION DECISION — they were told they were banned.
-      #
-      # `:-` to EMPTY rather than to a string that looks like a credential. The
-      # difference is what the service can tell about itself: a placeholder is
-      # indistinguishable from a real token until a peer rejects it, whereas
-      # empty means "nobody configured this" and market can say so at boot.
-      #
-      # ── AND WHY A STATIC TOKEN CANNOT BE THE ANSWER AT ALL ───────────────
-      #
-      # A service token's TTL is 10 minutes, hard-coded, and identity refuses to
+      # A service token's TTL is 10 MINUTES, hard-coded, and identity refuses to
       # lengthen it (identity/src/tokens.ts:32-33). estate-bootstrap.sh bakes one
       # into this environment and the container then runs for days. Measured on
-      # this estate: market's token had been expired for 17.5 HOURS, policy was
-      # answering 401 to every decision, and every listing was being created
-      # unmoderated behind a `degraded` verdict that nothing paged on.
+      # this estate 2026-08-05: market's token had been expired for 17.5 HOURS.
+      # Calling policy from inside the container with market's own token returned
+      # `401 unauthenticated`, so every listing was being created unmoderated
+      # behind a `{"decision":"review","reasons":["policy_unavailable"],
+      # "degraded":true}` verdict that nothing paged on.
       #
-      # So the token below is the LEGACY path, kept only so an estate that has
-      # not bootstrapped a credential still boots. The credential is the real
-      # one: long-lived, exchanged for short-lived scoped tokens by
-      # `ServiceTokenProvider`, and it survives a restart. estate-bootstrap.sh
-      # already mints MARKET_IDENTITY_CREDENTIAL; until now nothing read it.
-      # IDENTITY_URL is not set here because market falls back to
+      # THE REAL FIX IS THE CREDENTIAL BELOW, not a fresher token. It is
+      # long-lived, `ServiceTokenProvider` exchanges it for short-lived scoped
+      # tokens and refreshes them, and it survives a restart — the pattern
+      # `foresight` (src/upstreams.ts:150-163) and `ledger` already use.
+      # estate-bootstrap.sh has minted MARKET_IDENTITY_CREDENTIAL all along and
+      # nothing read it. IDENTITY_URL is not set because market falls back to
       # IDENTITY_ISSUER, which `*identity-trust` above already provides.
-      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-}
+      #
+      # ── AND WHY THE PLACEHOLDER IS STILL HERE, WHICH IS NOT AN OVERSIGHT ──
+      #
+      # It was removed and PUT BACK, deliberately, after removing it took the
+      # testnet estate down. The reason is worth writing down because it decides
+      # when this line may finally go:
+      #
+      #   * The testnet stack is brought up with `--env-file compose/testnet.env`,
+      #     which REPLACES the default `.env` rather than adding to it (see
+      #     runbooks/runbook-outbox-signing-secret.md). `.env` is a symlink to
+      #     `estate/tokens.env`, so testnet receives NO bootstrap-minted value
+      #     for this variable at all — it has only ever had the placeholder.
+      #   * The market image both estates run reads this with `requiredSecret`
+      #     and exits at `startup failed at: env — MARKET_SERVICE_TOKEN is
+      #     required`. So an empty default is not "fail closed and loudly", it is
+      #     an estate that does not boot, and market-migrate takes eleven other
+      #     services down with it through `service_completed_successfully`.
+      #
+      # DELETE THIS LINE once the market build that makes the token optional and
+      # reads the credential is released to both estates. Until then the honest
+      # statement is that this placeholder is load-bearing, and the defect it
+      # causes is contained on the client side instead: market/src/policyclient.ts
+      # :183-188 maps a peer 401/403 to a DEGRADED verdict rather than a denial,
+      # so a seller is no longer told they are banned when the fault is ours.
+      MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: market-estate
     env_file: *outbox-secrets
