@@ -2176,7 +2176,15 @@ services:
       COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community
       LEDGER_BASE_URL: http://ledger:4000
       POLICY_BASE_URL: http://policy:4000
-      COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
+      # The credential community presents to identity to MINT its own short-lived tokens, replacing
+      # the pre-minted JWT that used to sit in COMMUNITY_SERVICE_CREDENTIAL. That variable is gone
+      # from this file rather than left set: it now faces `assertServiceCredential`, which refuses a
+      # JWT BY NAME (micro-org#222), so leaving the 701-byte token in it would refuse the boot. Its
+      # old default here was `estate-placeholder-token-0000000000000000` — a #142 placeholder that
+      # every guard in the estate passed, which is the whole reason the shape check exists.
+      #
+      # No IDENTITY_URL: it derives from IDENTITY_ISSUER, which *identity-trust already supplies.
+      COMMUNITY_IDENTITY_CREDENTIAL: ${COMMUNITY_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: community-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -2193,7 +2201,15 @@ services:
       COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community
       LEDGER_BASE_URL: http://ledger:4000
       POLICY_BASE_URL: http://policy:4000
-      COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
+      # The credential community presents to identity to MINT its own short-lived tokens, replacing
+      # the pre-minted JWT that used to sit in COMMUNITY_SERVICE_CREDENTIAL. That variable is gone
+      # from this file rather than left set: it now faces `assertServiceCredential`, which refuses a
+      # JWT BY NAME (micro-org#222), so leaving the 701-byte token in it would refuse the boot. Its
+      # old default here was `estate-placeholder-token-0000000000000000` — a #142 placeholder that
+      # every guard in the estate passed, which is the whole reason the shape check exists.
+      #
+      # No IDENTITY_URL: it derives from IDENTITY_ISSUER, which *identity-trust already supplies.
+      COMMUNITY_IDENTITY_CREDENTIAL: ${COMMUNITY_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: community-estate
     env_file: *outbox-secrets
     ports:
