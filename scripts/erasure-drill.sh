@@ -259,7 +259,29 @@ echo "── BEFORE: every service must actually hold the person ─────
 # The baselines are carried to the AFTER phase in a file rather than in memory,
 # so that what the second phase asserts against is the value the first phase
 # actually observed, and the two cannot be re-derived differently.
-BASE=$(mktemp -t erasure-drill)
+# ── THE TEMPLATE IS SPELLED OUT, BECAUSE `-t` MEANS TWO DIFFERENT THINGS ──────
+#
+# This was `mktemp -t erasure-drill`. On BSD/macOS that is a PREFIX and works. On
+# GNU coreutils — which is what the estate host runs — `-t` is the deprecated
+# "treat as a name in TMPDIR" form and the name must still end in at least three
+# X's, so it fails with `too few X's in template`.
+#
+# What that cost, measured on the live mainnet estate on 2026-08-05: `$BASE` was
+# empty, so every `>>"$BASE"` in the BEFORE loop was a redirect to '' that failed,
+# so NOTHING was recorded — and the AFTER loop, which reads `<"$BASE"`, iterated
+# over nothing at all. The drill then printed **ERASURE HONOURED — 16 service(s)**
+# and exited 0, against an estate where fourteen of the sixteen have no
+# subscription and had never received the event (micro-org #203, #220).
+#
+# That is precisely the vacuous check this file exists to refuse, in this file.
+# So: an explicit template that both mktemp implementations accept, and then the
+# two guards below, because a temporary file is a dependency and an unusable one
+# has to stop the run rather than empty it.
+BASE=$(mktemp "${TMPDIR:-/tmp}/erasure-drill.XXXXXX") || BASE=''
+[ -n "$BASE" ] && [ -w "$BASE" ] || {
+  echo "erasure-drill: could not create the baseline file — nothing below could be verified" >&2
+  exit 2
+}
 trap 'rm -f "$BASE"' EXIT
 while IFS='|' read -r service database url action retained seed residual; do
   before=$(psqlq "$database" "$(residual_sql "$residual" "$uid" "$retained")")
@@ -288,6 +310,18 @@ while IFS='|' read -r service database url action retained seed residual; do
     *)          ok "$service holds $before row(s) naming the subject ($action)" ;;
   esac
 done <<<"$rows"
+
+# ── THE AFTER PHASE VERIFIES WHAT THIS FILE HOLDS, SO CHECK IT HOLDS IT ───────
+#
+# The second half of the guard above. `<"$BASE"` over a short file is silent: it
+# checks the services it finds and says nothing whatsoever about the ones it does
+# not, which is how a partial baseline becomes a full pass. One line per register
+# row, counted before a real user is deleted, so a shortfall costs nothing.
+baselined=$(wc -l <"$BASE" | tr -d ' ')
+[ "$baselined" = "$count" ] || {
+  echo "erasure-drill: baselined $baselined of $count service(s) — the AFTER phase would silently skip the rest" >&2
+  exit 2
+}
 
 echo
 echo "── the deletion, through the route a user would use ─────────────────────"

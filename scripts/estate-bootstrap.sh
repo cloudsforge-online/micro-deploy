@@ -720,9 +720,15 @@ echo "── 5c. event subscriptions — WHO RECEIVES WHAT IS DEPLOY CONFIGURATI
 # outbox and micro-analytics. Recorded rather than half-configured.
 subscribe() {
   db=$1; topic=$2; url=$3
+  # `</dev/null` is load-bearing and is the same defect `erasure-drill.sh:65-80`
+  # documents in itself: this is called from inside a `while read` loop fed by a
+  # here-string, and `docker compose exec -T` inherits and DRAINS that stdin. The
+  # first call swallows the rest of the register, the loop ends after one row, and
+  # the run reports success — "seeded 1 subscriber" would at least be visible, but
+  # the count printed below is the loop's own counter, so it would agree.
   dc exec -T postgres psql -q -U cloudsforge -d "$db" -c \
     "insert into event_subscriptions (topic, url) values ('$topic', '$url') on conflict do nothing" \
-    >/dev/null 2>&1 \
+    </dev/null >/dev/null 2>&1 \
     && ok "$db → $topic → $url" \
     || bad "could not seed $topic → $url in $db"
 }
@@ -760,14 +766,28 @@ subscribe identity identity.session.created http://activity:4000/ingest
 # Read with `IFS='|' read` from a here-string, not a pipe: a `while` on the right
 # of a pipe runs in a subshell, and `bad`'s increment to `fails` would be thrown
 # away at the closing `done` — a bootstrap that reported success no matter what.
+#
+# SEVEN fields, named the way the register names them. This read declared six, so
+# `e_seed` was handed `retained` and `e_residual` was handed `seed|residual`
+# unsplit. Only `e_url` is used and it is field 3 either way, so nothing was
+# mis-seeded — but a loop whose variable names disagree with its data is one edit
+# away from seeding a `residual` SQL fragment as a subscriber URL.
 erasure_rows=$(grep -v '^[[:space:]]*#' erasure/register.psv | grep -v '^[[:space:]]*$')
+erasure_expected=$(printf '%s\n' "$erasure_rows" | wc -l | tr -d ' ')
 erasure_seeded=0
-while IFS='|' read -r e_service e_database e_url e_action e_seed e_residual; do
+while IFS='|' read -r e_service e_database e_url e_action e_retained e_seed e_residual; do
   [ -n "$e_url" ] || continue
   subscribe identity identity.user.deleted "$e_url"
   erasure_seeded=$((erasure_seeded + 1))
 done <<<"$erasure_rows"
-ok "erasure: $erasure_seeded subscriber(s) seeded from erasure/register.psv"
+# The count is compared, not just printed. "seeded N" is a number nobody reads;
+# "seeded 1 of 16" has to stop a deploy, because the missing fifteen are fifteen
+# services that keep a person's data after they ask to be forgotten.
+if [ "$erasure_seeded" = "$erasure_expected" ]; then
+  ok "erasure: $erasure_seeded subscriber(s) seeded from erasure/register.psv"
+else
+  bad "erasure: seeded $erasure_seeded of $erasure_expected register rows — the rest are unsubscribed"
+fi
 
 # ── NOTIFY KNEW EVERY USER'S NAME AND NOT ONE ADDRESS ────────────────────────
 #
