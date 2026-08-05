@@ -202,6 +202,38 @@ jobs:
           fi
           echo "ok: no outbox signing secret is given a value anywhere in the tree"
 
+          # THE SAME DEFECT AGAIN, AND THESE TWO ARE THE WORST OF THE SET TO LOSE.
+          # `IDENTITY_KEY_SECRET` (#188) and `ANALYTICS_PSEUDONYM_KEY` (#189) were
+          # literals in this PUBLIC file, the SAME value on both networks, and both
+          # cleared every gate that existed: over the length floor, not one of the
+          # known placeholder strings.
+          #
+          # What makes them worse than a transport credential is that neither is
+          # merely re-issuable. The first WRAPS every RS256 signing key and every
+          # TOTP seed, so a naive replacement does not invalidate MFA, it destroys
+          # it — the seed exists in that blob and in the user's authenticator and
+          # nowhere else. The second DERIVES stored pseudonyms, so a naive
+          # replacement orphans pre-rotation rows from their subject and breaks
+          # erasure for exactly those rows, which is a GDPR failure rather than a
+          # data-quality one.
+          #
+          # The suffixed forms are in the alternation because the fix for both was
+          # a VERSIONED ring: a guard naming only the bare variable would pass while
+          # `IDENTITY_KEY_SECRET_V2` sat in a tracked file, which is the same blind
+          # spot the outbox alias list above exists to close.
+          hits=$(git grep -nIE '(IDENTITY_KEY_SECRET(_V[0-9]+)?|ANALYTICS_PSEUDONYM_KEY(_V[0-9]+)?) *[:=] *[^ $%"'"'"'#<]' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::an identity KEK or an analytics pepper is given a value in a tracked file"
+            echo "$hits" | sed -E 's/(SECRET(_V[0-9]+)?|KEY(_V[0-9]+)?)( *[:=] *).*/\1\4<redacted>/'
+            echo "Both belong in compose/secrets/, which is gitignored, one file per network."
+            echo "If either was ever pushed, rotating it is NOT a restart: identity must drain"
+            echo "with 'pnpm rewrap' before the old key is removed, and an analytics pepper"
+            echo "cannot be drained at all — see runbooks/runbook-identity-key-secret.md and"
+            echo "runbooks/runbook-analytics-pseudonym-key.md."
+            exit 1
+          fi
+          echo "ok: no identity KEK or analytics pepper is given a value anywhere in the tree"
+
           # THE SAME DEFECT, A THIRD TIME, AND THE WIDEST OF THE THREE.
           # `POSTGRES_PASSWORD` was a literal on the `postgres` service AND spelled
           # out inside 56 `postgres://cloudsforge:...@postgres` connection strings
@@ -268,8 +300,26 @@ jobs:
               printf 'AZURE_FOUNDRY_ENDPOINT=%s\n' 'https://example.invalid/'
               printf 'AZURE_FOUNDRY_API_KEY=%s\n' "$(openssl rand -hex 32)"
             } > "compose/secrets/studio.${network}.env"
+            # IDENTITY'S KEY-ENCRYPTION KEYRING AND ANALYTICS'S PEPPER (#188, #189),
+            # for the same `required: true` reason as every file above.
+            #
+            # Minted per network and never written down, which also matches what the
+            # live estate now holds: the whole point of both rotations was that the
+            # two networks stopped sharing one value. A single shared literal here
+            # would let a render pass that production would not.
+            #
+            # ONE VERSION EACH is correct for a render check. The multi-version form
+            # is what a ROTATION needs, and it is exercised where it belongs —
+            # identity/src/rewrap.test.ts and analytics/src/rotation.test.ts, both of
+            # which assert that dropping the old value without draining BREAKS.
+            printf 'IDENTITY_KEY_VERSION=1\nIDENTITY_KEY_SECRET_V1=%s\n' \
+              "$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-48)" \
+              > "compose/secrets/identity-key.${network}.env"
+            printf 'ANALYTICS_PSEUDONYM_VERSION=1\nANALYTICS_PSEUDONYM_KEY_V1=%s\n' \
+              "$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | cut -c1-48)" \
+              > "compose/secrets/analytics-pepper.${network}.env"
           done
-          echo "ok: two throwaway keyrings and two throwaway bus keys minted for the render steps"
+          echo "ok: throwaway keyrings, bus keys, KEKs and peppers minted for the render steps"
 
           # AND THE TOKENS FILES, which is where `CF_POSTGRES_PASSWORD` lives now
           # that it is not a literal. `:?` in the compose file means a missing one
