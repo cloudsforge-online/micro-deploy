@@ -115,10 +115,38 @@ HERE = pathlib.Path(__file__).resolve().parent
 
 # ── the two environments ──────────────────────────────────────────────────────
 #
-# One host, two compose projects, two apexes. `offset` is the single number that
-# separates every published port in the testnet project from its mainnet twin,
-# and it is 10000 because that keeps every shifted port readable as its original
-# with a `1` in front (443 -> 10443, 8545 -> 18545) and every one below 65535.
+# ONE HOST, TWO COMPOSE PROJECTS, ONE APEX. The apex used to differ — testnet was
+# `testnet.cloudsforge.online` and mainnet was `cloudsforge.online` — and that is
+# the thing that changed on 2026-08-05. Cloudflare's Universal SSL certificate is
+# `*.cloudsforge.online` plus the apex, and a wildcard matches exactly ONE label,
+# so `hub.testnet.cloudsforge.online` failed the TLS handshake at Cloudflare's
+# edge before a request ever reached this host. Every hostname in
+# `config.testnet.*.yml` was configured and none of it was reachable. Advanced
+# Certificate Manager covers a two-label wildcard, is paid, and is not bought.
+#
+# So the environment moved from a PREFIX ON THE APEX to a SUFFIX ON THE
+# SUBDOMAIN, where the certificate that already exists covers it:
+#
+#     mainnet   env ''         hub.cloudsforge.online          cloudsforge.online
+#     testnet   env 'testnet'  hub-testnet.cloudsforge.online  testnet.cloudsforge.online
+#
+# The right-hand column is the apex SURFACE — the marketing site, the registry
+# row whose subdomain is the empty string. There is no subdomain to suffix, so
+# the environment label stands alone; `-testnet.cloudsforge.online` is not a
+# legal DNS label and could never have been the answer. `testnet.cloudsforge.online`
+# is one label, is already covered by Universal SSL, and already resolves — it is
+# the one testnet hostname that did not have to move.
+#
+# THIS TABLE IS NOT THE DEFINITION OF THAT RULE. `envLabel()` in
+# `ui/packages/ui/src/surfaces.ts` is, and `hostnames_for()` below reproduces it
+# in seven characters of Python because this generator may not import TypeScript.
+# `scripts/check-apex-prefix.py` is what stops a registry subdomain from making
+# the rule ambiguous.
+#
+# `offset` is the single number that separates every published port in the
+# testnet project from its mainnet twin, and it is 10000 because that keeps every
+# shifted port readable as its original with a `1` in front (443 -> 10443,
+# 8545 -> 18545) and every one below 65535.
 #
 # It is the ONLY thing here that has a twin elsewhere: `compose/testnet.env` sets
 # the same shift for the compose project, expressed as leading digits
@@ -130,9 +158,11 @@ HERE = pathlib.Path(__file__).resolve().parent
 # checklist: neither side can be RUN on the machine this was written on, but both
 # sides are text in this repository and a mismatch between two texts is exactly
 # the class of defect this estate keeps paying for.
+APEX = "cloudsforge.online"
+
 ENVIRONMENTS = {
-    "mainnet": {"apex": "cloudsforge.online", "offset": 0, "project": "cloudsforge-estate"},
-    "testnet": {"apex": "testnet.cloudsforge.online", "offset": 10000, "project": "cf-testnet"},
+    "mainnet": {"env": "", "offset": 0, "project": "cloudsforge-estate"},
+    "testnet": {"env": "testnet", "offset": 10000, "project": "cf-testnet"},
 }
 
 # ── the one origin that is not in any registry, and why its port is what it is ─
@@ -317,16 +347,62 @@ def classify(surfaces):
     return public, operator, api
 
 
-def ingress_rules(subdomains, apex, origin):
-    """`hostname` -> `service`, sorted, with the apex written bare.
+def host_label(subdomain, env):
+    """The first label a surface is served under on `env`. Python's copy of `envLabel()`.
+
+    `ui/packages/ui/src/surfaces.ts` holds the definition, because the browser
+    bundle has to apply it to `window.location.hostname` at runtime and there is
+    no way to give a browser this file. Reproduced rather than imported for the
+    same reason `SURFACES` is read by RUNNING micro-ui's module: this generator
+    cannot import TypeScript. Three lines is small enough to read against the
+    original; the thing that keeps them honest is that a disagreement shows up as
+    a hostname in the tunnel that no bundle ever composes, and `web-check.py`
+    fetches every one of them.
+    """
+    if not env:
+        return subdomain
+    return f"{subdomain}-{env}" if subdomain else env
+
+
+def subdomain_of(hostname, env):
+    """The registry subdomain a generated hostname came from. The inverse of `host_label`.
+
+    Used only by the NOT_ROUTED / utility assertion below, which asks "is the
+    thing this rule publishes one of the five services the security argument in
+    this file says are deliberately unexposed?". It has to answer in REGISTRY
+    terms, because that is the vocabulary `NOT_ROUTED` and `UTILITY_SERVICES` are
+    written in — so `grafana-testnet.cloudsforge.online` must come back as
+    `grafana`, or the check silently stops covering the testnet file.
+
+    The one that got away before this function existed: the old inverse was
+    `hostname[: -(len(apex) + 1)]`, a string slice against a per-environment
+    apex. Under the new naming that returns `grafana-testnet`, which is in
+    neither set, and the assertion would have passed by not recognising anything.
+    """
+    label = hostname[: -(len(APEX) + 1)] if hostname != APEX else ""
+    if not env:
+        return label
+    if label == env:
+        return ""
+    return label[: -(len(env) + 1)] if label.endswith(f"-{env}") else label
+
+
+def ingress_rules(subdomains, env, origin):
+    """`hostname` -> `service`, with the environment's apex surface written first.
+
+    The sort key is the LABEL, not the subdomain, so the apex surface sorts first
+    on mainnet (`""`) and among its siblings on testnet (`testnet` falls between
+    `status-testnet` and `trade-testnet`). That is cosmetic and it is stated only
+    so that a reader diffing the two files does not go looking for a rule that
+    has merely moved.
 
     EVERY RULE ENDS AT THE GATEWAY. There is no second origin and no exception:
     the `rpc=True` flag that appended one hand-written rule pointing at the chain
     is deleted, so this function can no longer produce a rule that skips Traefik
     even if someone asks it to.
     """
-    return [(f"{sub}.{apex}" if sub else apex, origin)
-            for sub in sorted(subdomains, key=lambda s: (s != "", s))]
+    labels = sorted((host_label(sub, env) for sub in subdomains), key=lambda s: (s != "", s))
+    return [(f"{label}.{APEX}" if label else APEX, origin) for label in labels]
 
 
 HEADER = """\
@@ -338,6 +414,7 @@ HEADER = """\
 #
 #   environment : {env}
 #   apex        : {apex}
+#   env label   : {label}
 #   tunnel      : {tunnel}
 #   hostnames   : {count}
 #
@@ -349,7 +426,8 @@ HEADER = """\
 
 def render(env, tunnel_name, rules, *, note):
     cfg = ENVIRONMENTS[env]
-    lines = [HEADER.format(env=env, apex=cfg["apex"], tunnel=tunnel_name, count=len(rules))]
+    lines = [HEADER.format(env=env, apex=APEX, label=cfg["env"] or "(none — the unadorned form)",
+                           tunnel=tunnel_name, count=len(rules))]
     lines.append(note.rstrip() + "\n")
     lines.append(f"tunnel: {tunnel_name}")
     lines.append(f"credentials-file: /etc/cloudflared/{tunnel_name}.json")
@@ -538,7 +616,7 @@ def main():
     all_hostnames = []
     for env in ENVIRONMENTS:
         cfg = ENVIRONMENTS[env]
-        apex, offset = cfg["apex"], cfg["offset"]
+        label, offset = cfg["env"], cfg["offset"]
         origin = f"https://127.0.0.1:{GATEWAY_PORT + offset}"
 
         pub_subs = [s["subdomain"] for s in public + api if s["subdomain"] not in NOT_ROUTED]
@@ -546,9 +624,9 @@ def main():
 
         files = [
             (f"config.{env}.public.yml", f"cf-{env}-public",
-             ingress_rules(pub_subs, apex, origin), PUBLIC_NOTE),
+             ingress_rules(pub_subs, label, origin), PUBLIC_NOTE),
             (f"config.{env}.operator.yml", f"cf-{env}-operator",
-             ingress_rules(op_subs, apex, origin), OPERATOR_NOTE),
+             ingress_rules(op_subs, label, origin), OPERATOR_NOTE),
         ]
         for name, tunnel, rules, note in files:
             # No hostname may appear in two tunnels: two ingresses claiming one
@@ -572,7 +650,7 @@ def main():
         # A utility hostname must not appear in either file, in either direction.
         for name, _, rules, _ in files:
             for hostname, _svc in rules:
-                sub = hostname[: -(len(apex) + 1)] if hostname != apex else ""
+                sub = subdomain_of(hostname, label)
                 if sub in UTILITY_SERVICES or sub in NOT_ROUTED:
                     fails.append(
                         f"{name} routes '{hostname}', which NOT_ROUTED says is deliberately "

@@ -94,13 +94,19 @@ jobs:
           python3 -m pip install --quiet pyyaml
           python3 cloudflared/gen.py --check --strict
 
-      # ── No surface may take an environment's apex prefix ─────────────────────
+      # ── No surface may collide with how an environment names itself ─────────
       #
-      # Guards the one way `testnet.cloudsforge.online` could start resolving its
-      # own links to mainnet: a registry row with `subdomain: 'testnet'` would put
-      # `testnet` in KNOWN_SUBS, and `cloudsforgeHosts()` would then strip it from
-      # the bare apex. Nothing would error; every address would be real and wrong.
-      - name: No registry surface collides with an environment prefix
+      # The environment is a SUFFIX ON THE SUBDOMAIN since 2026-08-05
+      # (`hub-testnet.cloudsforge.online`, not `hub.testnet.cloudsforge.online`),
+      # because Cloudflare's Universal SSL wildcard matches one label and the
+      # two-label form failed the handshake at the edge before reaching us.
+      #
+      # That gives a hostname's first label two halves, and this guards the one
+      # assumption that makes it splittable: no registry subdomain may BE an
+      # environment label, and none may END IN `-<label>`. Either would make a
+      # page on one environment resolve every link, sign-in redirect and API base
+      # into the other. Nothing would error; every address would be real and wrong.
+      - name: No registry surface collides with an environment label
         working-directory: deploy
         run: python3 scripts/check-apex-prefix.py
 

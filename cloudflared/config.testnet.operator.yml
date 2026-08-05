@@ -5,7 +5,8 @@
 # registry (ui/packages/ui/src/surfaces.ts) or gen.py's tables instead.
 #
 #   environment : testnet
-#   apex        : testnet.cloudsforge.online
+#   apex        : cloudsforge.online
+#   env label   : testnet
 #   tunnel      : cf-testnet-operator
 #   hostnames   : 3
 #
@@ -71,15 +72,15 @@ ingress:
   - path: '(?i)^/+internal(/|$)'
     service: http_status:404
 
-  - hostname: admin.testnet.cloudsforge.online
+  - hostname: admin-testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
-  - hostname: beacon.testnet.cloudsforge.online
+  - hostname: beacon-testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
-  - hostname: lantern.testnet.cloudsforge.online
+  - hostname: lantern-testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true

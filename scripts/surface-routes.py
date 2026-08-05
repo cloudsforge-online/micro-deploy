@@ -300,10 +300,25 @@ def registry_surfaces():
     return json.loads(line)
 
 
-# `Host(`sub.{{ env "CF_WEB_APEX" }}`)` and `Host(`{{ env "CF_WEB_APEX" }}`)`.
-# The apex form has no leading label and means the bare apex — the `site` row,
-# whose subdomain is the empty string.
-HOST_RE = re.compile(r'Host\(`(?:([a-z0-9-]+)\.)?\{\{\s*env\s+"CF_WEB_APEX"\s*\}\}`\)')
+# `Host(`sub{{ env "CF_WEB_SUFFIX" }}`)` and `Host(`{{ env "CF_SITE_HOST" }}`)`.
+#
+# TWO VARIABLES, NOT ONE, AND THE SECOND FORM IS NOT AN OMISSION. Changed
+# 2026-08-05, when the environment moved from a PREFIX ON THE APEX
+# (`hub.testnet.cloudsforge.online`) to a SUFFIX ON THE SUBDOMAIN
+# (`hub-testnet.cloudsforge.online`) — the prefix form was two labels deep,
+# Cloudflare's Universal SSL wildcard matches one, and every testnet hostname
+# therefore failed the TLS handshake at the edge before reaching this estate.
+#
+# `CF_WEB_SUFFIX` is everything after a surface's own name, so a router reads
+# `hub` + suffix. The `site` row's subdomain is the EMPTY STRING and cannot take
+# a suffix — `-testnet.cloudsforge.online` is not a legal DNS label — so its host
+# is declared outright as `CF_SITE_HOST`. Matching it here as an alternative
+# rather than as an optional leading label is what keeps check 2 honest: the
+# empty capture means "the apex surface", exactly as it did before.
+HOST_RE = re.compile(
+    r'Host\(`(?:([a-z0-9-]+)\{\{\s*env\s+"CF_WEB_SUFFIX"\s*\}\}'
+    r'|\{\{\s*env\s+"CF_SITE_HOST"\s*\}\})`\)'
+)
 RULE_RE = re.compile(r"^\s*rule:\s*'(?P<rule>.+)'\s*$")
 ROUTER_RE = re.compile(r"^    (?P<name>[a-z0-9-]+):\s*$")
 
@@ -354,29 +369,64 @@ def gateway_routers():
 
 
 def api_host_subdomain():
-    """The subdomain `CF_API_HOST` resolves to under `CF_WEB_APEX`, or None."""
-    if not TRAEFIK_ENV.exists():
-        bad(f"{TRAEFIK_ENV} does not exist — CF_API_HOST cannot be checked")
+    """The registry subdomain `CF_API_HOST` names, in EVERY environment's env file, or None.
+
+    ── IT CHECKED ONE FILE AND ONE APEX, AND BOTH HAVE STOPPED BEING ENOUGH ────
+
+    This read `compose/env/traefik.env` alone and asked whether `CF_API_HOST`
+    ENDED WITH `.$CF_WEB_APEX`. Two things broke that on 2026-08-05:
+
+      * Both environments now share the apex `cloudsforge.online`, so
+        `api.cloudsforge.online` — MAINNET'S API HOST — satisfies "ends with the
+        apex" in testnet's env file. The check would have passed while testnet
+        published its entire v1 API on mainnet's hostname, where Cloudflare hands
+        the request to whichever tunnel registered last.
+      * The suffix form means the API host is `api` + `CF_WEB_SUFFIX`, exactly.
+        There is nothing to slice and nothing to infer: the answer is a string
+        comparison against the same value `cloudsforgeHosts().api` composes in
+        the browser.
+
+    So it is exact, and it is asked of every `traefik*.env` rather than of one.
+    The subdomain it returns is `api` whenever it returns anything at all — the
+    return value is kept because check 1 consumes it, and because the day a
+    deployment genuinely serves its public API under another name, this is the
+    one place that decision is written down.
+    """
+    files = sorted(ENV_DIR.glob("traefik*.env"))
+    if not files:
+        bad(f"no traefik*.env in {ENV_DIR} — CF_API_HOST cannot be checked")
         return None
-    text = TRAEFIK_ENV.read_text()
-    api = re.search(r"^CF_API_HOST=(\S+)", text, re.M)
-    apex = re.search(r"^CF_WEB_APEX=(\S+)", text, re.M)
-    if not api or not apex:
-        bad("traefik.env does not define both CF_API_HOST and CF_WEB_APEX")
+    subs = set()
+    for path in files:
+        text = path.read_text()
+        api = re.search(r"^CF_API_HOST=(\S+)", text, re.M)
+        suffix = re.search(r"^CF_WEB_SUFFIX=(\S+)", text, re.M)
+        if not api or not suffix:
+            bad(f"{path.name} does not define both CF_API_HOST and CF_WEB_SUFFIX")
+            continue
+        api_host, web_suffix = api.group(1), suffix.group(1)
+        if not api_host.endswith(web_suffix):
+            # THE DEFECT THIS FUNCTION EXISTS FOR. `public-api.yml` routes on
+            # CF_API_HOST; the registry composes `api` + this environment's
+            # suffix. When they disagree, every router in that file is live on a
+            # hostname this environment does not own — and now that both
+            # environments share one zone, "does not own" can mean "belongs to
+            # the other one", which is worse than a 404.
+            bad(
+                f"{path.name}: CF_API_HOST is '{api_host}' but CF_WEB_SUFFIX is "
+                f"'{web_suffix}'. The public API is routed on a host outside this "
+                f"environment's own hostnames, so the registry's `api` surface "
+                f"(https://api{web_suffix}) reaches no router at all — and on a shared apex "
+                f"that host may well belong to the OTHER environment"
+            )
+            continue
+        subs.add(api_host[: -len(web_suffix)])
+    if len(subs) > 1:
+        bad(f"the environments disagree about the public API's subdomain: {sorted(subs)}. "
+            f"`api` is a registry row and every bundle composes it from the registry, so it "
+            f"cannot be one name here and another there")
         return None
-    api_host, web_apex = api.group(1), apex.group(1)
-    if not api_host.endswith("." + web_apex):
-        # THE DEFECT THIS FUNCTION EXISTS FOR. `public-api.yml` routes on
-        # CF_API_HOST; the registry composes `api.<CF_WEB_APEX>`. When the two
-        # apexes differ, every router in that file is live on a hostname the
-        # estate does not resolve, and `api.<apex>` — a declared surface — 404s.
-        bad(
-            f"CF_API_HOST is '{api_host}' but CF_WEB_APEX is '{web_apex}': the public API is "
-            f"routed on a host outside this estate's apex, so the registry's `api` surface "
-            f"(https://api.{web_apex}) reaches no router at all"
-        )
-        return None
-    return api_host[: -(len(web_apex) + 1)]
+    return next(iter(subs), None)
 
 
 def estate_services():
@@ -611,18 +661,24 @@ def env_vars_are_set():
 
 
 CORS_ENTRY_RE = re.compile(
-    r'^\s*-\s*https://(?:([a-z0-9-]+)\.)?\{\{\s*env\s+"CF_WEB_APEX"\s*\}\}\s*$'
+    r'^\s*-\s*https://(?:([a-z0-9-]+)\{\{\s*env\s+"CF_WEB_SUFFIX"\s*\}\}'
+    r'|\{\{\s*env\s+"CF_SITE_HOST"\s*\}\})\s*$'
 )
 
 
 def cors_allowlist():
-    """Subdomains in the templated half of `cf-cors`, in policy.yml.
+    """Subdomains in `cf-cors`, in policy.yml. Same two forms as HOST_RE above.
 
-    Only the `{{ if env "CF_WEB_APEX" }}` block is read. The literal
-    `cloudsforge.online` entries above it are a DIFFERENT list about a different
-    deployment and are deliberately not checked here: policy.yml argues that an
-    allowlist entry for a production origin nothing serves is its own defect
-    (`mint.cloudsforge.online`), so the two halves cannot be required to match.
+    THERE IS ONLY ONE LIST NOW, AND THAT IS A CHANGE THIS CHECK GOT FOR FREE.
+    This used to read only the templated block and skip fifteen hard-coded
+    `https://<sub>.cloudsforge.online` entries above it, on the argument that
+    they were "a DIFFERENT list about a different deployment". They had stopped
+    being one: `traefik.env` sets the mainnet values, so both halves rendered the
+    same fifteen origins — and the TESTNET gateway, which mounts this same
+    directory, carried the mainnet fifteen in a list that sets
+    `allowCredentials: true`. On a shared apex that is a live cross-environment
+    read. The literal block is deleted; this reads the whole allowlist now, and
+    what it checks is therefore the whole of it.
     """
     if not POLICY.exists():
         bad(f"{POLICY} does not exist — the CORS allowlist cannot be checked")

@@ -52,58 +52,57 @@ http:
     cf-cors:
       headers:
         accessControlAllowOriginList:
-          - https://cloudsforge.online
-          - https://hub.cloudsforge.online
-          - https://market.cloudsforge.online
-          # `create`, not `mint`: `micro-mint-web` serves Forge Create, and the registry's
-          # subdomain for that surface is `create` (ui/packages/ui/src/surfaces.ts, the `create`
-          # row). `mint.cloudsforge.online` is a host NOTHING SERVES — the same defect, from the
-          # same cause, as the `devportal`/`developers` line below: a CORS entry written from the
-          # repository name rather than from the registry. It fails closed and in silence: the
-          # browser refuses the response and nothing server-side records a refusal.
-          - https://create.cloudsforge.online
-          - https://trade.cloudsforge.online
-          - https://worlds.cloudsforge.online
-          - https://explorer.cloudsforge.online
-          - https://admin.cloudsforge.online
-          # developers, not devportal: that is the registry subdomain for this surface
-          # (ui/packages/ui/src/surfaces.ts:388). The host had been written from the
-          # repository name, micro-devportal-web. A CORS allowlist naming a host nobody
-          # serves fails closed and silently.
-          - https://developers.cloudsforge.online
-          - https://status.cloudsforge.online
-          # network and foresight were missing - the only two registry products absent from this
-          # list, found when micro-network-site's chain panel could fetch nothing. An allowlist
-          # that omits an origin fails closed and silently: the browser refuses the response and
-          # nothing server-side records that anything was refused.
-          - https://network.cloudsforge.online
-          - https://foresight.cloudsforge.online
-          # Three surfaces this estate now SERVES and this list had never named. All three are
-          # bundles under docker-compose.estate.yml with a router in estate-web.yml, and every one
-          # of them calls identity cross-origin on boot — `consumeAuthCallback` posts to
-          # `nimbus.<apex>/auth/handoff/redeem` from whatever origin the page is on
-          # (ui/packages/ui/src/index.tsx). An origin missing here cannot complete a sign-in.
+          # ── THE HARD-CODED MAINNET BLOCK IS GONE, AND ITS DELETION IS A FIX ───
           #
-          # `foresight-admin.cloudsforge.online` was here and is GONE — the P13 fold made the
-          # Foresight operator panel a section inside `admin.<apex>`, which is already allowlisted
-          # eleven lines up. Left behind, it would be the `mint.cloudsforge.online` defect written
-          # fresh: an origin allowlisted for a host nothing serves.
-          - https://emberkin.cloudsforge.online
-          - https://aetherholm.cloudsforge.online
-          # The fourth Forge Worlds title. It needs this entry for the same reason the three
-          # above do — sign-in is cross-origin from every surface — and for one more that is
-          # specific to it: unlike emberkin and aetherholm, its SERVICE runs in this estate, and
-          # `tessera-web` calls it. `resolveApiBase` returns the empty string when the bundle is
-          # served from its own registry host, so those calls are same-origin and need no CORS
-          # entry at all; the ones that DO cross are to nimbus, and they are the ones a missing
-          # entry kills. An allowlist that omits an origin fails closed and silently.
-          - https://tessera.cloudsforge.online
-{{ if env "CF_WEB_APEX" }}
-          # ── THE ESTATE APEX ────────────────────────────────────────────────
+          # Fifteen literal `https://<sub>.cloudsforge.online` origins stood here, above the
+          # templated block, with a comment saying they were what the list rendered to when
+          # `CF_WEB_APEX` was unset "which production does not set". Production HAS set it since
+          # `compose/env/traefik.env` gained `CF_WEB_APEX=cloudsforge.online`, so on mainnet the
+          # two halves had become byte-for-byte the same fifteen origins, written twice.
           #
-          # The same sixteen surfaces, at whatever apex this deployment serves them on. Present
-          # only when `CF_WEB_APEX` is set, which production does not set — with it unset this
-          # block renders to nothing and the list above is byte-for-byte what it always was.
+          # THE SECOND COPY WAS NOT MERELY REDUNDANT. Both compose projects on this host read THIS
+          # FILE — there is one `gateway/dynamic/`, and the testnet gateway mounts it too. So the
+          # testnet gateway carried fifteen MAINNET origins in a list that sets
+          # `allowCredentials: true`, which is a page on `hub.cloudsforge.online` being permitted
+          # to read a credentialed response from `nimbus-testnet.cloudsforge.online`. Two
+          # environments that share an apex make that reachable rather than theoretical, and it is
+          # the same cross-environment leak the whole 2026-08-05 rename exists to close — sitting
+          # in the file that is supposed to be the one place origins are justified.
+          #
+          # With it gone there is ONE list, rendered per environment from the variables that
+          # environment's env file sets. `scripts/surface-routes.py` check 5 already read only the
+          # templated half and is unaffected; what it now checks is the whole of the truth rather
+          # than half of it.
+          #
+          # UNSET IS STILL A SUPPORTED MODE AND STILL MEANS "ALLOW NOTHING". With CF_WEB_SUFFIX
+          # unset this renders an empty list, and estate-web.yml renders no routers at all — so
+          # there is no surface for an origin to belong to. The two agree, which they did not
+          # before: the old literal block granted fifteen production origins on a gateway that was
+          # simultaneously serving none of them.
+{{ if env "CF_WEB_SUFFIX" }}
+          # ── EVERY SURFACE, ON THIS ENVIRONMENT'S OWN HOSTNAMES ─────────────
+          #
+          # Seventeen surfaces, on whatever hostnames this deployment serves them on. Present only
+          # when `CF_WEB_SUFFIX` is set; with it unset this renders to nothing, which is the same
+          # answer estate-web.yml gives to the same question — no routers, therefore no origins.
+          #
+          # ── WHY THE VARIABLE IS A SUFFIX AND NOT AN APEX ───────────────────
+          #
+          # `CF_WEB_SUFFIX` is everything after a surface's own name: `.cloudsforge.online` on
+          # mainnet, `-testnet.cloudsforge.online` on testnet. So `hub` + suffix is
+          # `hub.cloudsforge.online` or `hub-testnet.cloudsforge.online`, and the two environments
+          # share one apex instead of nesting one inside the other.
+          #
+          # They nest no longer because the nested form was unreachable. Cloudflare's Universal
+          # SSL is `*.cloudsforge.online` plus the apex and a wildcard matches ONE label, so
+          # `hub.testnet.cloudsforge.online` failed the TLS handshake at the edge before a request
+          # reached this gateway. A CORS entry for an origin a browser can never load is not a
+          # security control, it is a decoration.
+          #
+          # `CF_SITE_HOST` is the one surface this cannot express: the marketing site's registry
+          # subdomain is the empty string, and `-testnet.cloudsforge.online` is not a legal DNS
+          # label. Its host is `cloudsforge.online` or `testnet.cloudsforge.online`, declared
+          # rather than derived, and `scripts/estate-up.sh` refuses to start if the two disagree.
           #
           # It has to be here rather than in a second middleware: `cf-cors` is applied to every
           # router on `websecure` by the entryPoint chain
@@ -120,21 +119,21 @@ http:
           # comment: the renderer does not know what a comment is, and an unclosed one takes
           # every file in this directory down with it. See the header of estate-web.yml for the
           # incident and for the canary that catches it.
-          - https://{{ env "CF_WEB_APEX" }}
-          - https://hub.{{ env "CF_WEB_APEX" }}
-          - https://market.{{ env "CF_WEB_APEX" }}
-          - https://create.{{ env "CF_WEB_APEX" }}
-          - https://trade.{{ env "CF_WEB_APEX" }}
-          - https://worlds.{{ env "CF_WEB_APEX" }}
-          - https://explorer.{{ env "CF_WEB_APEX" }}
-          - https://network.{{ env "CF_WEB_APEX" }}
-          - https://developers.{{ env "CF_WEB_APEX" }}
-          - https://admin.{{ env "CF_WEB_APEX" }}
-          - https://status.{{ env "CF_WEB_APEX" }}
-          - https://foresight.{{ env "CF_WEB_APEX" }}
-          - https://emberkin.{{ env "CF_WEB_APEX" }}
-          - https://aetherholm.{{ env "CF_WEB_APEX" }}
-          - https://tessera.{{ env "CF_WEB_APEX" }}
+          - https://{{ env "CF_SITE_HOST" }}
+          - https://hub{{ env "CF_WEB_SUFFIX" }}
+          - https://market{{ env "CF_WEB_SUFFIX" }}
+          - https://create{{ env "CF_WEB_SUFFIX" }}
+          - https://trade{{ env "CF_WEB_SUFFIX" }}
+          - https://worlds{{ env "CF_WEB_SUFFIX" }}
+          - https://explorer{{ env "CF_WEB_SUFFIX" }}
+          - https://network{{ env "CF_WEB_SUFFIX" }}
+          - https://developers{{ env "CF_WEB_SUFFIX" }}
+          - https://admin{{ env "CF_WEB_SUFFIX" }}
+          - https://status{{ env "CF_WEB_SUFFIX" }}
+          - https://foresight{{ env "CF_WEB_SUFFIX" }}
+          - https://emberkin{{ env "CF_WEB_SUFFIX" }}
+          - https://aetherholm{{ env "CF_WEB_SUFFIX" }}
+          - https://tessera{{ env "CF_WEB_SUFFIX" }}
           # ── the two operator consoles ──────────────────────────────────────
           #
           # `lantern.` and `beacon.` were API-only hostnames until micro-lantern-web
@@ -155,12 +154,13 @@ http:
           # so same-origin is the only arrangement a browser can use, and no
           # entry in this list could have substituted for it.
           #
-          # Deliberately NOT added to the `cloudsforge.online` block above: these
-          # two bundles are deployed in this estate and nowhere else yet, and an
-          # allowlist entry for a production origin nothing serves is the
-          # `mint.cloudsforge.online` defect two paragraphs up, written fresh.
-          - https://lantern.{{ env "CF_WEB_APEX" }}
-          - https://beacon.{{ env "CF_WEB_APEX" }}
+          # They used to be deliberately absent from a second, hard-coded
+          # `cloudsforge.online` block above this one — "an allowlist entry for a
+          # production origin nothing serves is the `mint.cloudsforge.online`
+          # defect written fresh". That block is deleted and the distinction with
+          # it: there is one list now, and it names what THIS environment serves.
+          - https://lantern{{ env "CF_WEB_SUFFIX" }}
+          - https://beacon{{ env "CF_WEB_SUFFIX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:

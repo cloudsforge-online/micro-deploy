@@ -72,11 +72,19 @@
 #            :443 while the same request with `--cacert gateway/certs/ca.crt`
 #            got 200.
 #
-#   testnet  `estate.crt`, unchanged. The origin certificate does NOT cover
+#   testnet  `estate.crt`, unchanged. The origin certificate did NOT cover
 #            `*.testnet.cloudsforge.online` — Cloudflare's Universal SSL is one
-#            label deep — so pointing testnet at it would trade a 502 for a
+#            label deep — so pointing testnet at it would have traded a 502 for a
 #            certificate whose SAN does not match the host, which is worse: the
 #            estate CA at least verifies for every internal consumer.
+#
+#            THAT ONE-LABEL LIMIT IS WHY TESTNET'S HOSTNAMES MOVED on 2026-08-05.
+#            It did not only stop an ORIGIN leaf from covering them; it stopped
+#            Cloudflare's PUBLIC leaf from covering them too, so every
+#            `<sub>.testnet.cloudsforge.online` failed the handshake at the edge
+#            and the whole environment was configured and unreachable. Testnet is
+#            `<sub>-testnet.cloudsforge.online` now, one label, covered by the
+#            same wildcard mainnet uses.
 #
 # ── WHY A VARIABLE AND NOT AN SNI ENTRY, WHICH LOOKS CLEANER AND IS WRONG ──────
 #
@@ -95,6 +103,20 @@
 # predict from this file. `hub.testnet.…` is two labels deep and would have been
 # unaffected, which is precisely what makes it the kind of fault that is found
 # late.
+#
+# ── THAT HAZARD IS NOW UNIVERSAL RATHER THAN GONE ────────────────────────────
+#
+# Since 2026-08-05 testnet is `<sub>-testnet.cloudsforge.online` and its apex
+# surface is `testnet.cloudsforge.online`. So `*.cloudsforge.online` covers EVERY
+# testnet hostname, not just the bare apex — the split described above would no
+# longer be a split, because the Cloudflare leaf would win for all of them.
+#
+# Which removes the argument above and does not remove the conclusion. The reason
+# an SNI list is still refused is the one in the paragraph before it: the tunnel
+# hop is plaintext, nothing on this box asks for a Cloudflare-issued certificate,
+# and `CF_TLS_DEFAULT_CERT` was deleted along with the second issuer. A
+# `certificates:` list would reintroduce an issuer to serve a hop that no longer
+# handshakes.
 #
 # So the environment says which pair it serves, in the env file it already has
 # one of. `CF_TLS_DEFAULT_CERT` is the BASENAME of a pair in the mounted
@@ -137,9 +159,11 @@
 # it is the trade this estate made 183 times with `curl -k`, on the one leg that
 # faces the public internet.
 #
-# TESTNET IS UNCHANGED AND STILL FAILS ON THE ISSUER, which is correct — it has
-# no Cloudflare-issued certificate to serve, because Universal SSL does not cover
-# `*.testnet.cloudsforge.online`.
+# TESTNET FAILS ON THE ISSUER TOO, and for the same reason mainnet does rather
+# than for one of its own: the tunnel leg is plaintext, so no hop on this box
+# serves a Cloudflare-issued certificate at all. It used to fail for a second,
+# separate reason — Universal SSL did not cover `*.testnet.cloudsforge.online` —
+# and that reason is retired with the two-label hostnames it was about.
 # ── AND `CF_TLS_DEFAULT_CERT` IS GONE, BECAUSE THERE IS ONE ISSUER AGAIN ──────
 #
 # Everything above this line is the record of a problem this deployment no longer

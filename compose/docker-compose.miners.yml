@@ -142,8 +142,36 @@ services:
       # NO PORT. 10443 was the testnet gateway's LOCAL bind (compose/testnet.env),
       # reachable only through the `extra_hosts` pin that is now gone. Publicly
       # this host is behind Cloudflare on 443 like every other name in the estate.
+      #
+      # ── THE NAME CHANGED ON 2026-08-05, AND IT IS THE REASON THIS COULD NOT
+      #    HAVE WORKED BEFORE ────────────────────────────────────────────────
+      #
+      # It was `rpc.testnet.cloudsforge.online`, which is TWO LABELS under the
+      # zone. Cloudflare's Universal SSL is `*.cloudsforge.online` and a wildcard
+      # matches ONE label, so that hostname failed the TLS handshake at
+      # Cloudflare's edge — measured, not predicted: `curl` returns exit 35 and
+      # `ssl_verify_result 1` against it from the public internet. Recreating this
+      # container from the file as it stood would therefore have stopped testnet
+      # mining outright, while the file said the opposite in the paragraph above.
+      #
+      # ── AND WHAT IS ACTUALLY RUNNING TODAY IS NEITHER ─────────────────────
+      #
+      # Recorded because it is the gap this comment block was written to close.
+      # As of 2026-08-05 the LIVE `cf-miner-testnet` was created from an older
+      # revision of this file: `--url https://rpc.testnet.cloudsforge.online:10443`
+      # with `extra_hosts: rpc.testnet.cloudsforge.online:127.0.0.1` and
+      # `NODE_EXTRA_CA_CERTS=/trust.crt`. So the loopback shortcut this file says
+      # "is now gone" is exactly what both miners are still using, and the claim
+      # that "mining now depends on the tunnel" is true of the file and false of
+      # the estate. `cf-miner-mainnet` is in the same state.
+      #
+      # That is why both miners keep producing blocks while every two-label
+      # testnet hostname is unreachable from outside. The dependency this file
+      # describes begins the moment either container is recreated — which is the
+      # step that must wait until the owner has added the hostnames below to the
+      # Cloudflare tunnel.
       - "--url"
-      - "https://rpc.testnet.cloudsforge.online"
+      - "https://rpc-testnet.cloudsforge.online"
       - "--data"
       - "/minerdata"
       - "--network"

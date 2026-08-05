@@ -55,6 +55,11 @@ GATEWAY_ESTATE=compose/docker-compose.estate-gateway.yml
 GW_PROJECT=${COMPOSE_PROJECT_NAME:-cfmicro}
 
 export CF_WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
+# The environment is a SUFFIX ON THE SUBDOMAIN, not a prefix on the apex — see the
+# long note in `compose/env/traefik.env`. An unset suffix means "no environment
+# label", which is the unadorned form and is what a dev estate wants.
+export CF_WEB_SUFFIX=${CF_WEB_SUFFIX:-.$CF_WEB_APEX}
+export CF_SITE_HOST=${CF_SITE_HOST:-$CF_WEB_APEX}
 export CLOUDSFORGE_RELEASE=${CLOUDSFORGE_RELEASE:-estate}
 
 # ── PREFLIGHT: the two copies of CF_WEB_APEX must agree, BEFORE anything starts ─
@@ -82,25 +87,91 @@ export CLOUDSFORGE_RELEASE=${CLOUDSFORGE_RELEASE:-estate}
 # no surfaces. The conditional in estate-web.yml therefore renders NOTHING when
 # the variable is unset — and this check, plus estate-verify's per-surface
 # failure, is what makes that absence loud instead of quiet.
-TRAEFIK_ENV=compose/env/traefik.env
-gateway_apex=$(grep -E '^CF_WEB_APEX=' "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
-if [ -z "$gateway_apex" ]; then
-  echo "FATAL: $TRAEFIK_ENV defines no CF_WEB_APEX." >&2
-  echo "       The gateway would render fifteen routers with an empty Host() and serve nothing," >&2
-  echo "       silently. Add: CF_WEB_APEX=$CF_WEB_APEX" >&2
+# ── WHICH ENV FILE THE GATEWAY WILL ACTUALLY LOAD ─────────────────────────────
+#
+# It was `compose/env/traefik.env`, hard-coded, and that stopped being safe on
+# 2026-08-05. Both environments now set `CF_WEB_APEX=cloudsforge.online` — they
+# share the zone and differ in the SUFFIX — so a preflight that reads mainnet's
+# file and compares apexes would agree with itself while a testnet bring-up was
+# pointed at the wrong env file entirely. It reads the same variable
+# `scripts/gateway-reload.sh:100` reads, so the two agree about which file is in
+# play, and it compares the values that actually differ.
+TRAEFIK_ENV="compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
+if [ ! -f "$TRAEFIK_ENV" ]; then
+  echo "FATAL: $TRAEFIK_ENV does not exist." >&2
+  echo "       CF_TRAEFIK_ENV=${CF_TRAEFIK_ENV:-traefik} names the env file the gateway loads." >&2
   exit 1
 fi
-if [ "$gateway_apex" != "$CF_WEB_APEX" ]; then
-  echo "FATAL: CF_WEB_APEX disagrees between the two files that read it." >&2
-  echo "         shell / compose : $CF_WEB_APEX" >&2
-  echo "         $TRAEFIK_ENV : $gateway_apex" >&2
-  echo "       The surfaces would be served on one apex and identity's hand-off allowlist" >&2
-  echo "       written for another, so sign-in works at Hub and 403s everywhere else." >&2
-  exit 1
-fi
-echo "  apex agrees in both files: $CF_WEB_APEX"
 
-# ── PREFLIGHT 2: CF_API_HOST must live UNDER that apex ────────────────────────
+envval() { grep -E "^$1=" "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2- ; }
+
+for var in CF_WEB_APEX CF_WEB_SUFFIX CF_SITE_HOST; do
+  eval "shell_val=\$$var"
+  file_val=$(envval "$var")
+  if [ -z "$file_val" ]; then
+    echo "FATAL: $TRAEFIK_ENV defines no $var." >&2
+    echo "       estate-web.yml renders NO ROUTERS without CF_WEB_SUFFIX, and policy.yml renders" >&2
+    echo "       an empty CORS allowlist — the estate serves nothing, silently. Add:" >&2
+    echo "         $var=$shell_val" >&2
+    exit 1
+  fi
+  if [ "$file_val" != "$shell_val" ]; then
+    echo "FATAL: $var disagrees between the two files that read it." >&2
+    echo "         shell / compose : $shell_val" >&2
+    echo "         $TRAEFIK_ENV : $file_val" >&2
+    echo "       The surfaces would be served on one set of hostnames and identity's hand-off" >&2
+    echo "       allowlist written for another, so sign-in works at Hub and 403s everywhere else." >&2
+    exit 1
+  fi
+done
+echo "  hostnames agree in both files: <surface>$CF_WEB_SUFFIX, site $CF_SITE_HOST"
+
+# ── PREFLIGHT 1b: the three must describe ONE environment ─────────────────────
+#
+# They overlap on purpose — `CF_WEB_SUFFIX` ends in the apex and `CF_SITE_HOST`
+# begins with the environment label — and overlapping values drift. The
+# alternative was a Go conditional inside `gateway/dynamic/`, where the file
+# provider renders templates before parsing YAML and one unbalanced action takes
+# every file in the directory down at once (estate-web.yml's header records the
+# three minutes that cost this week). Three plain strings and this check is the
+# cheaper trade.
+case "$CF_WEB_SUFFIX" in
+  *".$CF_WEB_APEX") ;;
+  *)
+    echo "FATAL: CF_WEB_SUFFIX does not end in the apex." >&2
+    echo "         CF_WEB_SUFFIX : $CF_WEB_SUFFIX" >&2
+    echo "         CF_WEB_APEX   : $CF_WEB_APEX" >&2
+    echo "       Every surface router would be served on a zone this estate does not hold." >&2
+    exit 1 ;;
+esac
+# What is left when the apex is removed: '' for the unadorned environment, or
+# '-testnet' for a labelled one. Anything else is not a hostname shape this
+# estate's `splitEnvLabel()` can take apart, so a browser on it would resolve
+# every sibling address somewhere that does not exist.
+env_label=${CF_WEB_SUFFIX%".$CF_WEB_APEX"}
+case "$env_label" in
+  "")            expected_site="$CF_WEB_APEX" ;;
+  -*[!-])        expected_site="${env_label#-}.$CF_WEB_APEX" ;;
+  *)
+    echo "FATAL: CF_WEB_SUFFIX is neither the bare apex nor '-<label>.<apex>'." >&2
+    echo "         CF_WEB_SUFFIX : $CF_WEB_SUFFIX" >&2
+    echo "       ui/packages/ui/src/surfaces.ts splits a hostname's first label on its LAST" >&2
+    echo "       hyphen into <subdomain>-<environment>. A suffix of any other shape produces" >&2
+    echo "       hostnames no bundle in this estate can resolve its siblings from." >&2
+    exit 1 ;;
+esac
+if [ "$CF_SITE_HOST" != "$expected_site" ]; then
+  echo "FATAL: CF_SITE_HOST is not this environment's apex surface." >&2
+  echo "         CF_SITE_HOST : $CF_SITE_HOST" >&2
+  echo "         expected     : $expected_site" >&2
+  echo "       The marketing site's registry subdomain is the empty string, so it cannot take" >&2
+  echo "       the suffix — '-testnet.$CF_WEB_APEX' is not a legal DNS label. Its host is the" >&2
+  echo "       environment label alone, or the bare apex where there is no label." >&2
+  exit 1
+fi
+echo "  hostname shape is consistent: label '${env_label:-none}', site $CF_SITE_HOST"
+
+# ── PREFLIGHT 2: CF_API_HOST must be THIS environment's `api` surface ─────────
 #
 # Defect 1 above has a quieter sibling and it was live in this estate. The
 # variable was DEFINED — so no `Host(``)` and no silence to look for — and set to
@@ -111,28 +182,33 @@ echo "  apex agrees in both files: $CF_WEB_APEX"
 # that had "never once loaded" for one reason had stopped loading again for
 # another.
 #
-# Checked rather than overwritten: a real deployment may genuinely serve its
-# public API outside its web apex, and this script has no business rewriting a
+# IT USED TO BE ENOUGH TO CHECK "ends with .$CF_WEB_APEX", AND IT IS NOT ANY
+# MORE. Both environments share the apex now, so `api.cloudsforge.online` passes
+# that test on the TESTNET gateway — and would publish testnet's whole v1 API on
+# mainnet's API hostname, where Cloudflare would hand it to whichever tunnel
+# registered last. The check is exact: `api` plus this environment's suffix,
+# which is the same string `cloudsforgeHosts().api` composes in the browser.
+#
+# Checked rather than overwritten: this script has no business rewriting a
 # committed env file. It refuses to start and says which line to change.
-gateway_api_host=$(grep -E '^CF_API_HOST=' "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
+gateway_api_host=$(envval CF_API_HOST)
+expected_api_host="api$CF_WEB_SUFFIX"
 if [ -z "$gateway_api_host" ]; then
   echo "FATAL: $TRAEFIK_ENV defines no CF_API_HOST." >&2
   echo "       Every router in gateway/dynamic/public-api.yml would render Host(\`\`) and match" >&2
-  echo "       no request ever sent, with nothing in Traefik's log. Add: CF_API_HOST=api.$CF_WEB_APEX" >&2
+  echo "       no request ever sent, with nothing in Traefik's log. Add: CF_API_HOST=$expected_api_host" >&2
   exit 1
 fi
-case "$gateway_api_host" in
-  *".$CF_WEB_APEX")
-    echo "  public API host is under the apex: $gateway_api_host" ;;
-  *)
-    echo "FATAL: CF_API_HOST is not under CF_WEB_APEX." >&2
-    echo "         CF_API_HOST : $gateway_api_host" >&2
-    echo "         CF_WEB_APEX : $CF_WEB_APEX" >&2
-    echo "       The whole public API would be routed on a host this estate does not resolve," >&2
-    echo "       and https://api.$CF_WEB_APEX — which the registry declares and every bundle" >&2
-    echo "       composes — would 404 at the gateway. Set: CF_API_HOST=api.$CF_WEB_APEX" >&2
-    exit 1 ;;
-esac
+if [ "$gateway_api_host" != "$expected_api_host" ]; then
+  echo "FATAL: CF_API_HOST is not this environment's api surface." >&2
+  echo "         CF_API_HOST : $gateway_api_host" >&2
+  echo "         expected    : $expected_api_host" >&2
+  echo "       https://$expected_api_host is what the registry declares and what every bundle," >&2
+  echo "       the SDK and the developer portal compose. Anything else routes the public API" >&2
+  echo "       on a host this environment does not own. Set: CF_API_HOST=$expected_api_host" >&2
+  exit 1
+fi
+echo "  public API host is this environment's own: $gateway_api_host"
 
 # ── PREFLIGHT 3: the registry and the gateway must agree about what exists ────
 #

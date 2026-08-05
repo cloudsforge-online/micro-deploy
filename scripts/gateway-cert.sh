@@ -95,9 +95,30 @@ CERTS=${CF_CERT_DIR:-gateway/certs}
 # reads the same file, started serving a certificate for the wrong apex. A second
 # environment could not be stood up without taking the first one down.
 #
-# A WILDCARD CANNOT ABSORB THIS. `*.cloudsforge.online` matches ONE label, as the
-# SAN comment below says, so it does NOT match `hub.testnet.cloudsforge.online`.
-# The extra names have to be in the certificate however this is arranged.
+# A WILDCARD CAN ABSORB THIS NOW, AND COULD NOT BEFORE 2026-08-05. It used to
+# read "a wildcard cannot absorb this": `*.cloudsforge.online` matches ONE label,
+# so it did not match `hub.testnet.cloudsforge.online`, and the second apex had
+# to be in the certificate however this was arranged.
+#
+# The same one-label rule is why testnet's hostnames MOVED. Cloudflare's
+# Universal SSL is that same wildcard, so every two-label testnet name failed the
+# handshake at Cloudflare's edge and the whole environment was configured and
+# publicly unreachable. Testnet is `hub-testnet.cloudsforge.online` now — one
+# label — so `*.cloudsforge.online` covers both environments and both apexes are
+# the same apex.
+#
+# THE MACHINERY BELOW STAYS ANYWAY, and it is not dead weight. `CF_CERT_APEXES`
+# and the union are what stop a run for one environment from clobbering the
+# other's leaf, which is a property of "two environments, one committed
+# certificate directory" rather than of how they are named. It is also what a
+# genuinely separate apex — a vanity domain, a customer's zone — would need.
+#
+# ONE STALE PAIR WILL PERSIST, DELIBERATELY UNTOUCHED. The leaf on disk still
+# carries `DNS:testnet.cloudsforge.online` and `DNS:*.testnet.cloudsforge.online`
+# from before the rename, because the union only ever ADDS. They name hostnames
+# this estate no longer serves, which costs nothing and breaks nothing;
+# `--force` is the way to retire them, and it is deliberately a decision someone
+# makes rather than something a re-run does behind them.
 #
 # ── WHY ONE LEAF FOR BOTH, RATHER THAN A DIRECTORY PER ENVIRONMENT ────────────
 #

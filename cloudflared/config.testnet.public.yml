@@ -5,7 +5,8 @@
 # registry (ui/packages/ui/src/surfaces.ts) or gen.py's tables instead.
 #
 #   environment : testnet
-#   apex        : testnet.cloudsforge.online
+#   apex        : cloudsforge.online
+#   env label   : testnet
 #   tunnel      : cf-testnet-public
 #   hostnames   : 21
 #
@@ -64,87 +65,87 @@ ingress:
   - path: '(?i)^/+internal(/|$)'
     service: http_status:404
 
+  - hostname: aetherholm-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: api-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: create-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: developers-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: emberkin-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: explorer-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: foresight-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: hub-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: market-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: network-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: nimbus-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: p2p-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: pay-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: rpc-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: status-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
+  - hostname: tessera-testnet.cloudsforge.online
+    service: https://127.0.0.1:10443
+    originRequest:
+      noTLSVerify: true
   - hostname: testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
-  - hostname: aetherholm.testnet.cloudsforge.online
+  - hostname: trade-testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
-  - hostname: api.testnet.cloudsforge.online
+  - hostname: vault-testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
-  - hostname: create.testnet.cloudsforge.online
+  - hostname: worlds-api-testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true
-  - hostname: developers.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: emberkin.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: explorer.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: foresight.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: hub.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: market.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: network.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: nimbus.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: p2p.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: pay.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: rpc.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: status.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: tessera.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: trade.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: vault.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: worlds.testnet.cloudsforge.online
-    service: https://127.0.0.1:10443
-    originRequest:
-      noTLSVerify: true
-  - hostname: worlds-api.testnet.cloudsforge.online
+  - hostname: worlds-testnet.cloudsforge.online
     service: https://127.0.0.1:10443
     originRequest:
       noTLSVerify: true

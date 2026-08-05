@@ -412,23 +412,23 @@ services:
       # the trap estate-web.yml's header records for Go template actions inside
       # YAML comments.
       IDENTITY_HANDOFF_ORIGINS: >-
-        https://${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://hub.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://market.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://create.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://trade.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://worlds.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://explorer.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://network.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://developers.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://status.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://foresight.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://lantern.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://beacon.${CF_WEB_APEX:-cloudsforge.localtest.me},
+        https://${CF_SITE_HOST:-cloudsforge.localtest.me},
+        https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://market${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://create${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://trade${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://developers${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
 
       # ══════════════════════════════════════════════════════════════════════════
@@ -2388,7 +2388,7 @@ services:
       # SKIPS rather than guesses an origin — correctly, since a guessed origin would
       # test nothing and report green. That skip was the last open SEV2 and the last
       # skipped critical journey on the release gate.
-      BEACON_HANDOFF_ORIGIN: https://hub.${CF_WEB_APEX:-cloudsforge.localtest.me}
+      BEACON_HANDOFF_ORIGIN: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # ── A STATUS PAGE BEHIND A LOGIN IS NOT A STATUS PAGE ────────────────────
       #
       # `BEACON_PUBLIC_STATUS` defaults FALSE (`beacon/src/env.ts:330`) and was set nowhere here,
@@ -2592,7 +2592,7 @@ services:
       # else. The allowlist has no wildcard and fails closed, so naming the
       # wrong host here is a faucet that answers every browser with 403 while
       # every server-side probe stays green.
-      FAUCET_CORS_ORIGINS: https://network.${CF_WEB_APEX:-cloudsforge.localtest.me}
+      FAUCET_CORS_ORIGINS: https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # 60 confirmations is `contracts-chain`'s EMBER depth and is NOT
       # configurable from here. On a laptop chain that is minutes per drip; the
       # dispense is `sent` long before it is `confirmed`, and both states are
@@ -3194,23 +3194,23 @@ services:
       # already wrong, which is the worst possible place for one.
       # ══════════════════════════════════════════════════════════════════════════
       LANTERN_RUM_ORIGINS: >-
-        https://${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://hub.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://market.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://create.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://trade.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://worlds.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://explorer.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://network.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://developers.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://admin.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://status.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://foresight.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://emberkin.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://aetherholm.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://tessera.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://lantern.${CF_WEB_APEX:-cloudsforge.localtest.me},
-        https://beacon.${CF_WEB_APEX:-cloudsforge.localtest.me}
+        https://${CF_SITE_HOST:-cloudsforge.localtest.me},
+        https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://market${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://create${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://trade${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://developers${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate
     ports:
       # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.
