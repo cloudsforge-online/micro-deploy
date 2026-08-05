@@ -86,7 +86,25 @@ estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort
 
 # --------------------------------------------------- the estate environment --
-ESTATE  := -f compose/docker-compose.estate.yml
+# ── THE ENV FILES ARE PART OF THE INVOCATION, NOT AN OPTIONAL EXTRA ───────────
+#
+# This used to be `-f compose/docker-compose.estate.yml` alone, and that omission
+# is how #152 recurred on 2026-08-05: mainnet identity was recreated with a plain
+# `docker compose $(ESTATE) up -d identity`, `CF_WEB_SUFFIX` was therefore unset,
+# `IDENTITY_HANDOFF_ORIGINS` resolved to its `:-.cloudsforge.localtest.me` dev
+# default, and cross-surface SSO was dead on production for every surface.
+#
+# It fails SILENTLY on mainnet and CANNOT fail on testnet, which is why it went
+# unnoticed: `compose/.env` is a symlink to `estate/tokens.env` and Compose
+# auto-loads it, so a mainnet render with no `--env-file` still resolves
+# `CF_POSTGRES_PASSWORD` and the stack comes up healthy — only the apex-dependent
+# variables quietly take dev values. Testnet has no `.env` fallback, so the same
+# mistake dies on the first interpolation.
+#
+# So the variable carries both files. Anything using $(ESTATE) is correct by
+# default, and a mainnet deploy no longer depends on remembering.
+ESTATE  := --env-file compose/mainnet.env --env-file compose/estate/tokens.env \
+           -f compose/docker-compose.estate.yml
 # The gateway, wired to the estate's network and bound to 443. Needed by every
 # browser surface: a bundle derives its sibling hosts as `https://<sub>.<apex>`
 # with NO PORT, so 9096 is unreachable to the page that was served on it.
@@ -119,7 +137,7 @@ GW_TESTNET := --env-file compose/testnet.env -p cftestnet \
               -f compose/docker-compose.gateway.yml \
               -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway estate-gateway-testnet estate-gateway-testnet-down check-restart check-restart-live check-client-ip check-client-ip-live
+.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway estate-gateway-testnet estate-gateway-testnet-down check-restart check-restart-live check-client-ip check-client-ip-live check-handoff-live
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
@@ -212,6 +230,14 @@ check-restart: ## Every long-running service comes back by itself after a reboot
 	@python3 scripts/check-restart-policy.py \
 		--env-file compose/testnet.env --env-file compose/estate/tokens.testnet.env \
 		-f compose/docker-compose.estate.yml --project testnet
+
+check-handoff-live: ## Does the RUNNING identity allowlist this estate's real origins? (#152)
+	@# Asked of the CONTAINER, not of a render. #152 recurred because the render
+	@# guard lives inside release-deploy.sh and a bare `docker compose up -d`
+	@# never reaches it — so the check that mattered was never run rather than
+	@# wrongly passed. This one holds however the container got there.
+	@./scripts/check-handoff-live.sh cloudsforge-estate-identity-1 .cloudsforge.online
+	@./scripts/check-handoff-live.sh cf-testnet-identity-1 -testnet.cloudsforge.online
 
 check-restart-live: ## The same question asked of what is ACTUALLY RUNNING
 	@# A render cannot see an ORPHAN — a container whose service was deleted from
