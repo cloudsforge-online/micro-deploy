@@ -117,6 +117,50 @@ jobs:
       # renders IDENTICALLY to before — so that is asserted here rather than
       # trusted, by rendering both and requiring the mainnet ports to be the 41xx
       # set and the testnet ports to be disjoint from them.
+      # ── The custody keyring is not in this repository, and this proves it ────
+      #
+      # `CUSTODY_MASTER_SECRET_V1` was a HARDCODED LITERAL on two blocks of
+      # `compose/docker-compose.estate.yml` — the key-encryption key for every
+      # custodied private key and every HD seed on the estate, in a repository
+      # `gh repo view` reports PUBLIC. It cleared every check that existed: it was
+      # 40 characters against a 32-character floor, and the comment above it said
+      # so approvingly.
+      #
+      # The grep is the half a person cannot forget to run. It fails on any
+      # `CUSTODY_MASTER_SECRET_V<n>` given a value in a tracked file, which is the
+      # exact shape of the defect and is not a shape any correct commit has.
+      #
+      # THE THROWAWAY FILES ARE NOT A CONVENIENCE EITHER. `env_file: required:
+      # true` means a missing keyring stops `docker compose config` — so the two
+      # render steps below would fail on a clean checkout, and minting values here
+      # is what keeps them honest rather than making the requirement optional.
+      # They are generated, never written down: a literal here would be a string
+      # somebody copies into a deployment, which is how this started.
+      - name: No master-secret literal is committed, and CI mints throwaway keyrings
+        working-directory: deploy
+        run: |
+          set -uo pipefail
+          # `|| true` is load-bearing: `git grep` exits 1 on no match and the step
+          # runs under `bash -e`, so a clean repository would abort here instead of
+          # reaching the verdict. Same rule as micro-org/secret-hygiene.yml.
+          hits=$(git grep -nIE 'CUSTODY_MASTER_SECRET_V[0-9]+ *[:=] *[^ $"'"'"'#]' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::a custody master secret is given a value in a tracked file"
+            echo "$hits" | sed -E 's/(SECRET_V[0-9]+ *[:=] *).*/\1<redacted>/'
+            echo "The keyring belongs in compose/secrets/, which is gitignored."
+            echo "If this value was ever pushed, rotate it: runbooks/runbook-custody-master-secret.md"
+            exit 1
+          fi
+          echo "ok: no master secret is given a value anywhere in the tree"
+
+          mkdir -p compose/secrets
+          umask 077
+          for network in mainnet testnet; do
+            printf 'CUSTODY_KEY_VERSION=2\nCUSTODY_MASTER_SECRET_V2=%s\n' \
+              "$(openssl rand -base64 48)" > "compose/secrets/custody.${network}.env"
+          done
+          echo "ok: two throwaway keyrings minted for the render steps"
+
       - name: The two compose projects do not collide
         working-directory: deploy
         run: |

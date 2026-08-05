@@ -1666,9 +1666,9 @@ echo
 echo "── THE GATEWAY: the surfaces on the hostnames a browser will use ────────"
 #
 # Everything above reaches a container on a loopback port. NO BROWSER EVER WILL.
-# `cloudsforgeHosts()` reads `window.location.hostname`, strips a known
-# subdomain to get the apex, and rebuilds every sibling host as
-# `https://<sub>.<apex>` — no port. So a bundle opened on 127.0.0.1:4126 resolves
+# `cloudsforgeHosts()` reads `window.location.hostname`, splits the first label
+# into a surface and an environment, and rebuilds every sibling host as
+# `https://<sub><suffix>` — no port. So a bundle opened on 127.0.0.1:4126 resolves
 # identity to `http://localhost:4001`, which nothing in this estate serves. The
 # hostnames below are the only addresses under which the estate is a working
 # product rather than fifteen isolated static servers.
@@ -1677,7 +1677,32 @@ echo "── THE GATEWAY: the surfaces on the hostnames a browser will use ─�
 # 127.0.0.1, but a suite that needs the internet to answer a question about
 # loopback is a suite that goes red on a train.
 #
+# ── A SURFACE'S HOSTNAME IS `<sub>$WEB_SUFFIX`, NOT `<sub>$WEB_SUFFIX` ─────────
+#
+# Changed 2026-08-05, and this file composed 68 hostnames the old way. An
+# environment used to be a PREFIX ON THE APEX — testnet was
+# `hub.testnet.cloudsforge.online` — and that form was configured and
+# unreachable, because Cloudflare's Universal SSL is `*.cloudsforge.online` and a
+# wildcard matches exactly ONE label. Every two-label testnet hostname failed the
+# TLS handshake at the edge before a request reached this box. The environment is
+# a SUFFIX ON THE SUBDOMAIN now: `hub-testnet.cloudsforge.online`.
+#
+# So the three variables `compose/env/traefik.env` defines are read here rather
+# than one, and NONE of them is derived from another at runtime — deriving the
+# suffix as `.$WEB_APEX` would silently address MAINNET from a testnet run, which
+# on a shared apex is a real hostname that really answers. The `:-` defaults below
+# are only for a laptop with no gateway env file, where every surface is under
+# `cloudsforge.localtest.me` and there is no second environment to confuse.
+#
+#   WEB_APEX    the DNS zone. Used ALONE by nothing here any more; it is the
+#               fallback the two below are built from on a bare laptop.
+#   WEB_SUFFIX  everything after a surface's own name — `hub` + this is Hub.
+#   SITE_HOST   the marketing site, whose registry subdomain is the EMPTY STRING.
+#               It cannot be `""$WEB_SUFFIX`: that is `-testnet.cloudsforge.online`,
+#               which is not a legal DNS label. It gets its own variable.
 WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
+WEB_SUFFIX=${CF_WEB_SUFFIX:-.$WEB_APEX}
+SITE_HOST=${CF_SITE_HOST:-$WEB_APEX}
 GW_PORT=${CF_GATEWAY_HTTPS_PORT:-443}
 
 gw() {
@@ -1730,10 +1755,20 @@ if [ ! -s "$CA_FILE" ]; then
   bad "no CA bundle at $CA_FILE — the gateway is serving Traefik's self-signed default, so every CROSS-ORIGIN call from a real browser fails with ERR_CERT_AUTHORITY_INVALID while every check here passes. Run ./scripts/gateway-cert.sh"
 else
   tls_fails=""
-  # Four hosts, not one, and each is a different SAN case: the bare apex (which a
-  # wildcard does NOT match — its own certificate entry), a surface, an
-  # API-only host, and the identity host every bundle calls cross-origin.
-  for tls_host in "$WEB_APEX" "hub.$WEB_APEX" "nimbus.$WEB_APEX" "worlds-api.$WEB_APEX"; do
+  # Four hosts, not one, and each is a different SAN case: the APEX SURFACE, a
+  # surface, an API-only host, and the identity host every bundle calls
+  # cross-origin.
+  #
+  # `$SITE_HOST` rather than `$WEB_APEX`, and the difference is the whole point of
+  # the 2026-08-05 migration. On mainnet they are the same string and this is the
+  # entry a wildcard does NOT match — `cloudsforge.online` needs its own SAN, which
+  # `scripts/gateway-cert.sh` adds as `DNS:$a` beside `DNS:*.$a`. On TESTNET they
+  # differ: the apex surface is `testnet.cloudsforge.online` (one label, covered by
+  # the wildcard) while `$WEB_APEX` is the shared zone `cloudsforge.online`, which
+  # THIS GATEWAY DOES NOT ROUTE — mainnet does. Probing the zone from a testnet run
+  # would resolve a mainnet hostname to this box's loopback and report a
+  # certificate fault that is really a routing question about another environment.
+  for tls_host in "$SITE_HOST" "hub$WEB_SUFFIX" "nimbus$WEB_SUFFIX" "worlds-api$WEB_SUFFIX"; do
     tls_code=$(curl -s --cacert "$CA_FILE" -o /dev/null -w '%{http_code}' \
       --resolve "$tls_host:$GW_PORT:127.0.0.1" "https://$tls_host:$GW_PORT/livez" 2>/dev/null)
     # 000 is curl's "the transfer never completed", which is what a rejected
@@ -1742,7 +1777,7 @@ else
     [ "$tls_code" = "000" ] && tls_fails="$tls_fails $tls_host"
   done
   if [ -z "$tls_fails" ]; then
-    ok "TLS verifies against $CA_FILE on the apex and three subdomains — no -k, no ignoreHTTPSErrors"
+    ok "TLS verifies against $CA_FILE on $SITE_HOST and three subdomains — no -k, no ignoreHTTPSErrors"
   else
     bad "the gateway's certificate does NOT verify for:$tls_fails — a browser will fail every cross-origin call to them with ERR_CERT_AUTHORITY_INVALID and the page will report 'Cannot reach the server'. Run ./scripts/gateway-cert.sh --force"
   fi
@@ -1751,7 +1786,7 @@ fi
 # The gateway has to be up. NOT skipped when it is not: half the estate's browser
 # surface is the routing, and a suite that quietly stops checking it reports green
 # on an environment no browser can use.
-if [ "$(gw "hub.$WEB_APEX" /healthz)" = 200 ]; then
+if [ "$(gw "hub$WEB_SUFFIX" /healthz)" = 200 ]; then
   ok "the gateway is answering on :$GW_PORT"
 else
   bad "no gateway on https://…:$GW_PORT — run ./scripts/estate-up.sh, or 'docker compose -p cfmicro -f compose/docker-compose.telemetry.yml -f compose/docker-compose.gateway.yml -f compose/docker-compose.estate-gateway.yml up -d'"
@@ -1818,8 +1853,12 @@ for rec in \
   "beacon beacon-web"; do
   set -- $rec
   sub=$1; repo=$2
-  # `site` has an EMPTY subdomain in the registry: it is the bare apex.
-  if [ "$sub" = "." ]; then host="$WEB_APEX"; else host="$sub.$WEB_APEX"; fi
+  # `site` has an EMPTY subdomain in the registry, so it is the one surface whose
+  # hostname is not `<sub>$WEB_SUFFIX`: concatenating would give
+  # `-testnet.cloudsforge.online` on testnet, which is not a legal DNS label. It is
+  # `$SITE_HOST` — `cloudsforge.online` on mainnet, `testnet.cloudsforge.online` on
+  # testnet — which is why that is a variable of its own and not derived here.
+  if [ "$sub" = "." ]; then host="$SITE_HOST"; else host="$sub$WEB_SUFFIX"; fi
   gwc=$(gw "$host" /)
   if [ "$gwc" = 200 ] && grep -q "name=\"cf-release\" content=\"$WEB_RELEASE\"" /tmp/estate-gw.body; then
     ok "https://$host → $repo"
@@ -1853,10 +1892,10 @@ for rec in \
   "beacon /v1/gate beacon"; do
   set -- $rec
   sub=$1; path=$2; svc=$3
-  apic=$(gw "$sub.$WEB_APEX" "$path")
+  apic=$(gw "$sub$WEB_SUFFIX" "$path")
   case "$apic" in
-    404|502|000) bad "https://$sub.$WEB_APEX$path answered $apic — $svc is not routed behind its own surface's hostname" ;;
-    *) ok "https://$sub.$WEB_APEX$path → $svc ($apic)" ;;
+    404|502|000) bad "https://$sub$WEB_SUFFIX$path answered $apic — $svc is not routed behind its own surface's hostname" ;;
+    *) ok "https://$sub$WEB_SUFFIX$path → $svc ($apic)" ;;
   esac
 done
 
@@ -1909,7 +1948,7 @@ for rec in \
   "beacon /v1/gate"; do
   set -- $rec
   sub=$1; path=$2
-  host="$sub.$WEB_APEX"
+  host="$sub$WEB_SUFFIX"
 
   webct=$(gwv "$host" / '%{content_type}')
   webcode=$(gwv "$host" / '%{http_code}')
@@ -1940,10 +1979,10 @@ done
 # micro-lantern answered; the bundle's nginx has no such path and would serve the
 # shell.
 for path in /otlp/v1/logs /ingest/client; do
-  ct=$(gwv "lantern.$WEB_APEX" "$path" '%{content_type}')
+  ct=$(gwv "lantern$WEB_SUFFIX" "$path" '%{content_type}')
   case "$ct" in
-    *json*) ok "https://lantern.$WEB_APEX$path reaches micro-lantern, not the bundle ($ct)" ;;
-    *) bad "https://lantern.$WEB_APEX$path answered $ct — the telemetry sink is behind the bundle, so every log export and every browser error report is being answered by a static file server" ;;
+    *json*) ok "https://lantern$WEB_SUFFIX$path reaches micro-lantern, not the bundle ($ct)" ;;
+    *) bad "https://lantern$WEB_SUFFIX$path answered $ct — the telemetry sink is behind the bundle, so every log export and every browser error report is being answered by a static file server" ;;
   esac
 done
 
@@ -1951,8 +1990,8 @@ done
 # consoles were added to LANTERN_RUM_ORIGINS with their containers; without those
 # entries this answers 400 "origin is not allowed" and Lantern is blind to exactly
 # the pages an operator opens when something is already wrong.
-for origin in "https://lantern.$WEB_APEX" "https://beacon.$WEB_APEX"; do
-  sinkcode=$(gwv "lantern.$WEB_APEX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
+for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX"; do
+  sinkcode=$(gwv "lantern$WEB_SUFFIX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
     -H 'content-type: application/json' -d '{"samples":[]}')
   [ "$sinkcode" = 202 ] \
     && ok "the RUM sink accepts $origin ($sinkcode)" \
@@ -1968,10 +2007,10 @@ echo "── THE SIGN-IN SEAM: the blocker doc 22 §8.1 calls the largest ──
 # refuse to render HTML for. micro-ui added a `signin` registry row riding on Hub
 # at `/account`, and micro-hub-web now serves the page. This is the environment's
 # half: the address has to be REACHABLE, on the hostname the redirect names.
-if [ "$(gw "hub.$WEB_APEX" /account/login)" = 200 ]; then
-  ok "https://hub.$WEB_APEX/account/login is served — the redirect every SPA makes now lands somewhere"
+if [ "$(gw "hub$WEB_SUFFIX" /account/login)" = 200 ]; then
+  ok "https://hub$WEB_SUFFIX/account/login is served — the redirect every SPA makes now lands somewhere"
 else
-  bad "hub.$WEB_APEX/account/login is not served; every 'Sign in' button in the estate leads nowhere"
+  bad "hub$WEB_SUFFIX/account/login is not served; every 'Sign in' button in the estate leads nowhere"
 fi
 
 # identity, on the hostname the shared UI calls it by. `consumeAuthCallback` posts
@@ -1979,12 +2018,12 @@ fi
 # index.tsx) — a route that did not exist under its old name and 404'd everywhere,
 # returning null exactly as it does for a stale code, so it read as an expiry
 # rather than as a wrong address. A 404 here would reproduce that silently.
-redeem=$(gw "nimbus.$WEB_APEX" /auth/handoff/redeem -X POST -H 'content-type: application/json' \
-  -H "origin: https://hub.$WEB_APEX" -d '{"code":"not-a-real-code"}')
+redeem=$(gw "nimbus$WEB_SUFFIX" /auth/handoff/redeem -X POST -H 'content-type: application/json' \
+  -H "origin: https://hub$WEB_SUFFIX" -d '{"code":"not-a-real-code"}')
 case "$redeem" in
-  404) bad "POST nimbus.$WEB_APEX/auth/handoff/redeem is 404 — the route the SSO callback posts to is unreachable" ;;
-  000|502) bad "nimbus.$WEB_APEX is not routed to identity ($redeem)" ;;
-  *) ok "POST nimbus.$WEB_APEX/auth/handoff/redeem reaches identity and refuses a forged code ($redeem)" ;;
+  404) bad "POST nimbus$WEB_SUFFIX/auth/handoff/redeem is 404 — the route the SSO callback posts to is unreachable" ;;
+  000|502) bad "nimbus$WEB_SUFFIX is not routed to identity ($redeem)" ;;
+  *) ok "POST nimbus$WEB_SUFFIX/auth/handoff/redeem reaches identity and refuses a forged code ($redeem)" ;;
 esac
 
 # THE CORS PREFLIGHT. The sign-in page is on `hub.<apex>` and identity is on
@@ -1994,15 +2033,15 @@ esac
 # silence: the browser discards the response and nothing server-side records that
 # anything was refused.
 allow=$(curl -sk -D - -o /dev/null -X OPTIONS \
-  --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  -H "origin: https://hub.$WEB_APEX" \
+  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  -H "origin: https://hub$WEB_SUFFIX" \
   -H 'access-control-request-method: POST' \
   -H 'access-control-request-headers: content-type' \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff/redeem" \
   | tr -d '\r' | grep -i '^access-control-allow-origin:' | head -1)
 case "$allow" in
-  *"https://hub.$WEB_APEX"*) ok "the gateway permits hub.$WEB_APEX to call identity ($allow)" ;;
-  *) bad "no CORS allowance for https://hub.$WEB_APEX on nimbus.$WEB_APEX (got '${allow:-nothing}') — sign-in cannot complete in a browser" ;;
+  *"https://hub$WEB_SUFFIX"*) ok "the gateway permits hub$WEB_SUFFIX to call identity ($allow)" ;;
+  *) bad "no CORS allowance for https://hub$WEB_SUFFIX on nimbus$WEB_SUFFIX (got '${allow:-nothing}') — sign-in cannot complete in a browser" ;;
 esac
 
 # pay. and vault. — the two hostnames micro-hub-web named as missing and could not
@@ -2017,19 +2056,19 @@ esac
 for rec in "pay /v1/deposits wallet" "vault /v1/exports custody"; do
   set -- $rec
   sub=$1; path=$2; svc=$3
-  pc=$(gw "$sub.$WEB_APEX" "$path")
+  pc=$(gw "$sub$WEB_SUFFIX" "$path")
   case "$pc" in
-    404|000|502) bad "https://$sub.$WEB_APEX$path answered $pc — $svc is not reachable on the hostname Hub calls it by" ;;
-    *) ok "https://$sub.$WEB_APEX → $svc ($pc)" ;;
+    404|000|502) bad "https://$sub$WEB_SUFFIX$path answered $pc — $svc is not reachable on the hostname Hub calls it by" ;;
+    *) ok "https://$sub$WEB_SUFFIX → $svc ($pc)" ;;
   esac
-  pa=$(curl -sk -D - -o /dev/null -X OPTIONS --resolve "$sub.$WEB_APEX:$GW_PORT:127.0.0.1" \
-    -H "origin: https://hub.$WEB_APEX" -H 'access-control-request-method: POST' \
+  pa=$(curl -sk -D - -o /dev/null -X OPTIONS --resolve "$sub$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+    -H "origin: https://hub$WEB_SUFFIX" -H 'access-control-request-method: POST' \
     -H 'access-control-request-headers: content-type,authorization' \
-    "https://$sub.$WEB_APEX:$GW_PORT$path" | tr -d '\r' \
+    "https://$sub$WEB_SUFFIX:$GW_PORT$path" | tr -d '\r' \
     | grep -i '^access-control-allow-origin:' | head -1)
   case "$pa" in
-    *"https://hub.$WEB_APEX"*) ok "  …and Hub's origin is allowed to call it" ;;
-    *) bad "  …but hub.$WEB_APEX may not call $sub.$WEB_APEX (got '${pa:-nothing}')" ;;
+    *"https://hub$WEB_SUFFIX"*) ok "  …and Hub's origin is allowed to call it" ;;
+    *) bad "  …but hub$WEB_SUFFIX may not call $sub$WEB_SUFFIX (got '${pa:-nothing}')" ;;
   esac
 done
 
@@ -2058,43 +2097,43 @@ so_tok=$(printf '%s' "$so_reg" | python3 -c "import sys,json;print(json.load(sys
 [ -n "$so_tok" ] && ok "a second account for the hand-off drill" || bad "could not register the hand-off drill user"
 
 # Hub mints a code for Market — one real surface handing a session to another.
-so_code=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+so_code=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
-  -H "origin: https://hub.$WEB_APEX" \
-  -d "{\"redirectOrigin\":\"https://market.$WEB_APEX\"}" \
+  -H "origin: https://hub$WEB_SUFFIX" \
+  -d "{\"redirectOrigin\":\"https://market$WEB_SUFFIX\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
 if [ -n "$so_code" ]; then
-  ok "identity minted a hand-off code for https://market.$WEB_APEX"
+  ok "identity minted a hand-off code for https://market$WEB_SUFFIX"
 else
-  bad "identity refused to mint a hand-off code — IDENTITY_HANDOFF_ORIGINS does not name market.$WEB_APEX, and cross-surface SSO is dead"
+  bad "identity refused to mint a hand-off code — IDENTITY_HANDOFF_ORIGINS does not name market$WEB_SUFFIX, and cross-surface SSO is dead"
 fi
 
 # Market redeems it, presenting the Origin a browser would send. This is the
 # assertion that proves the whole path: the code is bound to the origin it was
 # minted for and matched against the browser's own header
 # (identity/src/handoff.ts:73-86).
-so_new=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
-  -H 'content-type: application/json' -H "origin: https://market.$WEB_APEX" \
+so_new=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff/redeem" \
+  -H 'content-type: application/json' -H "origin: https://market$WEB_SUFFIX" \
   -d "{\"code\":\"${so_code:-nothing-was-minted}\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
 if [ -n "$so_new" ]; then
-  ok "market.$WEB_APEX redeemed it and holds a session — A USER CAN CROSS SURFACES"
+  ok "market$WEB_SUFFIX redeemed it and holds a session — A USER CAN CROSS SURFACES"
 else
-  bad "the hand-off code could not be redeemed from https://market.$WEB_APEX"
+  bad "the hand-off code could not be redeemed from https://market$WEB_SUFFIX"
 fi
 
 # THE BINDING ITSELF. A code minted for Market must be worthless from anywhere
 # else, or the allowlist is decoration. Minted fresh: the one above is spent.
-so_code2=$(curl -sk -X POST --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+so_code2=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
-  -d "{\"redirectOrigin\":\"https://market.$WEB_APEX\"}" \
+  -d "{\"redirectOrigin\":\"https://market$WEB_SUFFIX\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
 so_theft=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
-  --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff/redeem" \
+  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff/redeem" \
   -H 'content-type: application/json' -H 'origin: https://not-a-cloudsforge-surface.example' \
   -d "{\"code\":\"${so_code2:-nothing-was-minted}\"}")
 case "$so_theft" in
@@ -2104,8 +2143,8 @@ esac
 
 # And an origin that is not a surface must not get a code at all.
 so_bad=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
-  --resolve "nimbus.$WEB_APEX:$GW_PORT:127.0.0.1" \
-  "https://nimbus.$WEB_APEX:$GW_PORT/auth/handoff" \
+  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -d '{"redirectOrigin":"https://not-a-cloudsforge-surface.example"}')
 [ "$so_bad" = 403 ] && ok "an origin off the allowlist is refused a code (403)" \
@@ -2115,9 +2154,9 @@ so_bad=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
 # router at priority 100000 pointed at an unreachable service, so 502 is the pass.
 # Asserted on a SURFACE host, because the routers added for the fifteen bundles
 # are the ones that could have shadowed it.
-[ "$(gw "hub.$WEB_APEX" /internal/anything)" = 502 ] \
+[ "$(gw "hub$WEB_SUFFIX" /internal/anything)" = 502 ] \
   && ok "/internal is still refused on a surface host — nothing added here outranks it" \
-  || bad "/internal on hub.$WEB_APEX was not refused; the priority-100000 rule has been shadowed"
+  || bad "/internal on hub$WEB_SUFFIX was not refused; the priority-100000 rule has been shadowed"
 
 echo
 echo "── the chain-backing loop: solvency, or a refusal ───────────────────────"
@@ -2823,18 +2862,18 @@ esac
 #    invariant, for the reason the operator-console block above gives: a 200
 #    carrying the SPA's index.html would pass a status-code check and fail in the
 #    client as a parse error naming the wrong file.
-fct=$(gwv "network.$WEB_APEX" /v1/faucet '%{content_type}')
-fcode=$(gwv "network.$WEB_APEX" /v1/faucet '%{http_code}')
+fct=$(gwv "network$WEB_SUFFIX" /v1/faucet '%{content_type}')
+fcode=$(gwv "network$WEB_SUFFIX" /v1/faucet '%{http_code}')
 if [ "$FAUCET_RUNNING" -gt 0 ]; then
   case "$fct:$fcode" in
-    *json*:200) ok "https://network.$WEB_APEX/v1/faucet → the faucet's terms ($fcode $fct)" ;;
-    *json*)     bad "https://network.$WEB_APEX/v1/faucet answered $fcode — a faucet is running but its terms cannot be read, so the drip form renders disabled and says the faucet did not answer" ;;
-    *)          bad "https://network.$WEB_APEX/v1/faucet answered $fcode $fct — a faucet is running and the gateway is not putting it on the hostname the form posts to" ;;
+    *json*:200) ok "https://network$WEB_SUFFIX/v1/faucet → the faucet's terms ($fcode $fct)" ;;
+    *json*)     bad "https://network$WEB_SUFFIX/v1/faucet answered $fcode — a faucet is running but its terms cannot be read, so the drip form renders disabled and says the faucet did not answer" ;;
+    *)          bad "https://network$WEB_SUFFIX/v1/faucet answered $fcode $fct — a faucet is running and the gateway is not putting it on the hostname the form posts to" ;;
   esac
 else
   case "$fcode" in
     502|503)
-      bad "https://network.$WEB_APEX/v1/faucet answered $fcode — THERE IS NO FAUCET IN THIS ESTATE AND THE GATEWAY IS ADVERTISING ONE. A 5xx reads as 'the faucet fell over'; the true answer is that a $EMBER_NETWORK estate has no faucet by design. Gate cf-api-network on CF_EMBER_NETWORK in gateway/dynamic/estate-web.yml" ;;
+      bad "https://network$WEB_SUFFIX/v1/faucet answered $fcode — THERE IS NO FAUCET IN THIS ESTATE AND THE GATEWAY IS ADVERTISING ONE. A 5xx reads as 'the faucet fell over'; the true answer is that a $EMBER_NETWORK estate has no faucet by design. Gate cf-api-network on CF_EMBER_NETWORK in gateway/dynamic/estate-web.yml" ;;
     404)
       # The CONTENT TYPE is deliberately not pinned here, where the operator-console
       # block above does pin it, and the difference is worth stating. There the
@@ -2849,11 +2888,11 @@ else
       # repositories' nginx configurations, and failing here on it would make this
       # section permanently red for something it cannot fix and that is not the
       # defect. It is reported instead.
-      ok "https://network.$WEB_APEX/v1/faucet → 404 $fct, which honestly means there is no faucet on a $EMBER_NETWORK estate" ;;
+      ok "https://network$WEB_SUFFIX/v1/faucet → 404 $fct, which honestly means there is no faucet on a $EMBER_NETWORK estate" ;;
     200)
-      bad "https://network.$WEB_APEX/v1/faucet answered 200 $fct with no faucet in this estate — either the SPA is shadowing the path (a 200 of index.html where JSON was expected) or something else has taken the route" ;;
+      bad "https://network$WEB_SUFFIX/v1/faucet answered 200 $fct with no faucet in this estate — either the SPA is shadowing the path (a 200 of index.html where JSON was expected) or something else has taken the route" ;;
     *)
-      bad "https://network.$WEB_APEX/v1/faucet answered $fcode $fct — no faucet runs here, so this should be the bundle's 404 and it is not" ;;
+      bad "https://network$WEB_SUFFIX/v1/faucet answered $fcode $fct — no faucet runs here, so this should be the bundle's 404 and it is not" ;;
   esac
 fi
 

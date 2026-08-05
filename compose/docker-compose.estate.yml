@@ -103,6 +103,57 @@ x-common-env: &common-env
   CLOUDSFORGE_TAG: estate
   PORT: "4000"
 
+# ── THE ONE SECRET THIS FILE MAY NOT CONTAIN ──────────────────────────────────
+#
+# `CUSTODY_MASTER_SECRET_V<n>` — the keyring that decrypts every custodied private
+# key and every HD seed on this host — was TWO HARDCODED LITERALS in this file,
+# on the `custody` and `custody-migrate` blocks, in a repository `gh repo view`
+# reports PUBLIC. Not an interpolation: the value itself, under a comment reading
+# "Minimum 32 characters", which it was. `custody/src/crypto.ts` derives a
+# per-address AES key from it with scrypt, so anybody who read this file and ever
+# obtained the `custody-keys` volume — a backup, a disk, a stray `docker cp` —
+# held the plaintext of all 387 blobs on it. It is not the address derivation
+# (that is a per-user BIP-39 mnemonic, `custody/src/hd.ts:390`), so no address was
+# forgeable from this file alone. It is every key at rest, and that is enough.
+#
+# WHY A FILE AND NOT `${...}` FROM `compose/estate/tokens.env`, which is the
+# estate's existing gitignored mechanism and the obvious first answer. Two
+# measured reasons, either of which is fatal on its own:
+#
+#   1. `tokens.env` IS REGENERATED. `scripts/estate-bootstrap.sh:506` does
+#      `mv "$tmp" "$TOKENS_FILE"` — the file is replaced wholesale on every run.
+#      A master secret living there would be silently replaced by a bootstrap,
+#      and a replaced master secret is not a rotation: it is 387 blobs nothing
+#      can decrypt, with no way back. This file is written once and never by a
+#      script.
+#   2. `tokens.env` DOES NOT REACH THE SECOND ENVIRONMENT. The testnet estate is
+#      brought up with `--env-file compose/testnet.env`, which REPLACES the
+#      default `.env` rather than adding to it. Measured on this host, not
+#      assumed: `SMTP_USER` — set only in `tokens.env` — renders as `""` under
+#      the testnet render and non-empty under the mainnet one. An interpolation
+#      from `tokens.env` would therefore reach exactly one of the two live
+#      stacks, and the other's custody would refuse to boot.
+#
+# An `env_file:` PATH is interpolated and is read relative to this file, so it is
+# independent of whichever `--env-file` the operator passed — the same property
+# the indexer's `env/chain.${CF_EMBER_NETWORK}.env` relies on, measured there on
+# this host with Compose v5.1.1. `CF_EMBER_NETWORK` is set by `compose/testnet.env`
+# and unset for the estate, so the two environments hold SEPARATE keyrings, which
+# is what they should have held all along.
+#
+# `required: true` is the fail-closed half: a missing file stops `up` with the
+# path in the message, rather than rendering an empty variable and leaving custody
+# to exit on it after every dependent has already started waiting.
+#
+# NEITHER FILE IS IN GIT — `compose/secrets/` is ignored whole, a directory rule
+# rather than a filename, because the filename here carries an environment suffix
+# and the next environment's would not have been covered. The runbook for what is
+# in them, how they are backed up and what a restore looks like is
+# `runbooks/runbook-custody-master-secret.md`.
+x-custody-secrets: &custody-secrets
+  - path: secrets/custody.${CF_EMBER_NETWORK:-mainnet}.env
+    required: true
+
 # The JWKS seam. Every service that verifies a token fetches identity's keys over
 # a real network here, which is the thing no unit suite could reach.
 x-identity-trust: &identity-trust
@@ -1172,13 +1223,14 @@ services:
       <<: [*common-env, *identity-trust]
       CUSTODY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/custody
       POLICY_BASE_URL: http://policy:4000
-      # Enumerated from the environment rather than named in a list, so it does
-      # not appear in any `required(...)` line and was missed when this file was
-      # derived from the env schemas. custody refused to boot and named the
-      # variable, which is the fail-closed design working. Minimum 32 characters.
-      CUSTODY_MASTER_SECRET_V1: estate-only-custody-master-secret-v1-0000
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: custody-migrate
+    # THE MIGRATOR NEEDS THE KEYRING TOO. `migrator.ts` imports `env.ts`, which
+    # validates at import, so a migrator without the file does not run a
+    # migration and fail — it exits before it starts, and `custody` waits on
+    # `service_completed_successfully` for ever. Same file as the service below;
+    # the argument for it is there.
+    env_file: *custody-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1192,13 +1244,24 @@ services:
       <<: [*common-env, *identity-trust]
       CUSTODY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/custody
       POLICY_BASE_URL: http://policy:4000
-      # Enumerated from the environment rather than named in a list, so it does
-      # not appear in any `required(...)` line and was missed when this file was
-      # derived from the env schemas. custody refused to boot and named the
-      # variable, which is the fail-closed design working. Minimum 32 characters.
-      CUSTODY_MASTER_SECRET_V1: estate-only-custody-master-secret-v1-0000
+      # OUTBOX_SIGNING_SECRET IS STILL A PLACEHOLDER IN A PUBLIC FILE AND IS A
+      # LIVE DEFECT — it is left here rather than fixed alongside the master
+      # secret because it is ONE SHARED HMAC KEY across fifteen services
+      # (`custody`, `ledger`, `mint`, `identity`, `studio`, `worlds`, … each
+      # `requiredSecret(source, 'OUTBOX_SIGNING_SECRET')`). Moving custody's copy
+      # alone would leave custody signing with a value its verifiers do not hold,
+      # which is a silent estate-wide event-delivery failure rather than a fix.
+      # It needs one coordinated rotation of every service at once. Recorded, not
+      # forgotten: `custody/src/env.ts` says the same thing where the guard that
+      # deliberately does not cover it is defined.
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: custody-estate
+    # THE KEYRING. Not in `environment:` above and it never may be — see
+    # `x-custody-secrets` at the head of this file for the whole argument.
+    # `environment:` WINS over `env_file:` in compose, so a line reinstated above
+    # would silently override this one and the file would look correct while the
+    # placeholder was live again.
+    env_file: *custody-secrets
     # THE VAULT. Without it `POST /v1/addresses` fails with EACCES on the first
     # write and this estate cannot mint a key at all — which was true until the
     # faucet asked for one. See the `custody-keys` block at the foot of this file

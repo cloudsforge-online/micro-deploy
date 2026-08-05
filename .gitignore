@@ -6,6 +6,23 @@ dist/
 # Bootstrap-minted service tokens. Real credentials, 10-minute TTL, never committed.
 compose/estate/tokens.env
 
+# THE CUSTODY KEYRING. `CUSTODY_MASTER_SECRET_V<n>`, one file per environment, read
+# by the `custody` and `custody-migrate` blocks through an `env_file:` whose path is
+# interpolated on CF_EMBER_NETWORK.
+#
+# A DIRECTORY RULE, NOT A FILENAME, and that is the lesson from the line above it:
+# `docker-compose.release.yml` was ignored by name and the day a second environment
+# appeared, `docker-compose.release.testnet.yml` was not covered. These filenames
+# carry an environment suffix too, so the same near-miss was one `up` away.
+#
+# WHAT IS IN THEM. The key-encryption key for every custodied private key and every
+# HD seed on the host — the value that was, until this commit, a literal in
+# `compose/docker-compose.estate.yml` in this PUBLIC repository. If one is ever
+# committed, `git rm --cached` is not the remedy; the remedy is the rotation in
+# `runbooks/runbook-custody-master-secret.md`, because a pushed secret is
+# compromised the moment it lands.
+compose/secrets/
+
 # Rendered from a release manifest by scripts/release-render.py. Generated, never
 # authored: committing it would let a stale overlay outlive the manifest it came from.
 #
