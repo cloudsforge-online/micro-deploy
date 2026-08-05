@@ -826,6 +826,31 @@ subscribe identity identity.email.verification_requested http://notify:4000/inge
 # other is how this path looked wired while delivering nothing.
 subscribe identity identity.user.registered http://notify:4000/ingest
 
+# ── AND THE ONE THAT LETS SOMEBODY BACK IN ────────────────────────────────────
+#
+# `identity.password.reset_requested` — micro-org #154. identity emits it in the
+# same transaction as the token row and notify has carried the rule and the
+# `security.password_reset` template since 1.3.0, so both halves were in place
+# and the row that joins them was not. The relay's behaviour when a topic has NO
+# active subscription is the reason this is silent rather than loud: the outbox
+# row is stamped `published_at` on the first pass precisely BECAUSE nothing is
+# outstanding (identity/src/outbox.ts, the `outstanding` count), so the event is
+# marked delivered, no `outbox_deliveries` row is ever written, and nothing
+# anywhere reports a failure. Measured on testnet at identity 1.4.0: the event
+# was emitted with a correct Hub link and reached zero subscribers.
+#
+# It is ALSO the reason a subscription added later does not repair the backlog —
+# the same comment in outbox.ts records that the "a subscriber added afterwards
+# still receives it" guarantee is false. Every reset requested before this row
+# exists is a mail that will never be sent, so this belongs in bootstrap rather
+# than in a runbook step somebody performs after the first user complains.
+#
+# `learns` applies here as it does to verification, and matters more: an account
+# that predates verification has no `channel_targets` row at all, and a password
+# reset is exactly the message such an account needs. The event carries the
+# address for that reason.
+subscribe identity identity.password.reset_requested http://notify:4000/ingest
+
 # ── WALLET'S INBOX WAS FED BY NOBODY ──────────────────────────────────────────
 #
 # `wallet/src/server.ts:441` serves `POST /events` and branches on exactly three
