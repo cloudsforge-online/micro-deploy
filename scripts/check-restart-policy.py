@@ -169,8 +169,15 @@ def check(observed, what):
 
 def from_config(files, env_file, project):
     cmd = ["docker", "compose"]
-    if env_file:
-        cmd += ["--env-file", env_file]
+    # REPEATABLE, because one file is never the whole environment. `--env-file`
+    # REPLACES the default `.env` rather than adding to it, so a single file was
+    # this renderer's entire environment — and the moment the Postgres password
+    # became `${CF_POSTGRES_PASSWORD:?}` (16cdbf2), which lives in the tokens
+    # file, the render failed outright on both networks. Same defect as
+    # micro-org#190 in release-deploy.sh, one script along. Repeated flags merge
+    # in order, so the caller passes the network file and then the tokens file.
+    for f in env_file or []:
+        cmd += ["--env-file", f]
     for f in files:
         cmd += ["-f", f]
     cmd += ["config", "--format", "json"]
@@ -211,7 +218,8 @@ def from_live(project):
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
 parser.add_argument("-f", "--file", action="append", default=[], help="a compose file; repeat for overlays")
-parser.add_argument("--env-file", help="passed through to docker compose")
+parser.add_argument("--env-file", action="append", default=[],
+                    help="passed through to docker compose; REPEAT for the tokens file")
 parser.add_argument("--project", help="name for the report, or the project to inspect with --live")
 parser.add_argument("--live", action="store_true", help="inspect a RUNNING compose project instead of rendering files")
 args = parser.parse_args()

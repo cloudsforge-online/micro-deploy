@@ -204,9 +204,13 @@ check-restart: ## Every long-running service comes back by itself after a reboot
 	@# shared anchor, `x-service-defaults`. An anchor is OPT-IN: a service that
 	@# forgets `<<: *service-defaults` inherits Docker's default of `no`, and
 	@# nothing noticed. This is what notices, in both environments.
+	@# BOTH env files per network. The tokens file carries CF_POSTGRES_PASSWORD,
+	@# which is `:?` in the compose file, so a render without it does not render.
 	@python3 scripts/check-restart-policy.py \
+		--env-file compose/mainnet.env --env-file compose/estate/tokens.env \
 		-f compose/docker-compose.estate.yml --project mainnet
-	@python3 scripts/check-restart-policy.py --env-file compose/testnet.env \
+	@python3 scripts/check-restart-policy.py \
+		--env-file compose/testnet.env --env-file compose/estate/tokens.testnet.env \
 		-f compose/docker-compose.estate.yml --project testnet
 
 check-restart-live: ## The same question asked of what is ACTUALLY RUNNING
