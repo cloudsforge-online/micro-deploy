@@ -332,9 +332,33 @@ jobs:
           # render step below can only detect a regression to a shared value if
           # what CI hands the two renders is itself different.
           mkdir -p compose/estate
-          openssl rand -hex 24 | sed 's/^/CF_POSTGRES_PASSWORD=/' > compose/estate/tokens.env
-          openssl rand -hex 24 | sed 's/^/CF_POSTGRES_PASSWORD=/' > compose/estate/tokens.testnet.env
-          echo "ok: two throwaway, and deliberately different, Postgres passwords minted"
+          # EVERY `:?` VARIABLE, NOT JUST THE POSTGRES PASSWORD. `fix(estate): the
+          # three tokens no deploy could reach, and two that outlived their use`
+          # promoted five more to `${VAR:?...}` — ANALYTICS_TOKEN, BEACON_TOKEN,
+          # LANTERN_TOKEN, FAUCET_TOKEN and FAUCET_REQUESTER_SALT — which is the
+          # right call for the estate and made `docker compose config` stop at the
+          # first one on a clean checkout. Every run since has been red at
+          # `check-restart`, on FAUCET_TOKEN, for a reason that had nothing to do
+          # with restart policies.
+          #
+          # So this list is derived rather than typed, and that is the point: it
+          # reads the `:?` requirements straight out of the compose file, so the
+          # NEXT variable promoted to required is minted here on the day it is
+          # promoted and nobody has to remember this step exists. A hand-written
+          # list is what just cost four commits their CI.
+          #
+          # Throwaway, per network, and deliberately different between the two —
+          # a shared literal would let a render pass that production would not.
+          required_vars=$(grep -oE '\$\{[A-Z0-9_]+:\?' compose/docker-compose.estate.yml \
+            | sed 's/\${//; s/:?//' | sort -u)
+          echo "required by the compose file: $(echo "$required_vars" | tr '\n' ' ')"
+          for f in compose/estate/tokens.env compose/estate/tokens.testnet.env; do
+            : > "$f"
+            for v in $required_vars; do
+              printf '%s=%s\n' "$v" "$(openssl rand -hex 24)" >> "$f"
+            done
+          done
+          echo "ok: $(echo "$required_vars" | wc -l) throwaway secrets minted per network, all different"
 
       # ── EVERY LONG-RUNNING SERVICE COMES BACK BY ITSELF ──────────────────────
       #
