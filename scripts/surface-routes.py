@@ -17,7 +17,9 @@ They drifted, and the estate was opened in a browser for the first time:
     (`worlds-web/src/lib/hosts.ts:80`). NO ROUTER. Every request the Forge Worlds
     bundle made 404'd, while `worlds.<apex>/v1/titles` answered 200 beside it.
     micro-worlds-web had written the diagnosis in its own header and could not fix
-    it from its own repository.
+    it from its own repository. (That surface is GONE now — the hostname was folded
+    into `api.` and the row and its router were both deleted on 2026-08-05. It is
+    left in this history because it is what the check was written for.)
   * `api.<apex>` — routed by `public-api.yml`, but against `CF_API_HOST`, which
     was pinned to `api.cloudsforge.online` while the estate ran on
     `cloudsforge.localtest.me`. A router on a host nothing resolves.
@@ -116,8 +118,8 @@ Check 7 was added the same way check 4 was: after this script passed clean over
 the defect it should have been the thing to catch.
 
 `cf-api-worlds` was a router in `public-api.yml` — `api.<apex>` with the four
-worlds prefixes — and, since `worlds-api.<apex>` was routed, a DIFFERENT router
-of the same name in `estate-web.yml`. The file provider iterates the directory
+worlds prefixes — and, while `worlds-api.<apex>` was still routed, a DIFFERENT
+router of the same name in `estate-web.yml`. The file provider iterates the directory
 in sorted filename order and skips a name it has already seen, so `estate-web`
 won on the `e`, `public-api`'s router never loaded, and the estate's public API
 lost `/v1/titles`, `/v1/players`, `/v1/provisions` and `/v1/seasons`. All four
@@ -336,7 +338,7 @@ def gateway_routers():
       * `Host(x) && PathPrefix(/v1)` -> cf-svc-*   the surface-plus-API shape, where a
         bundle and a service share one hostname and the prefix is what separates them.
       * `Host(x)` -> cf-svc-*                      the WHOLE-HOST shape, used where no
-        bundle is served at all — nimbus, lantern, pay, vault, worlds-api. estate-web.yml
+        bundle is served at all — nimbus, lantern, pay, vault. estate-web.yml
         argues for it explicitly: identity "serves 34 unversioned routes at the root … and
         picking prefixes here would be a second, drifting copy of that list".
 
@@ -455,9 +457,30 @@ def estate_services():
 CF_NAME_RE = re.compile(r"\b(cf-(?:api|web|svc)-[a-z0-9-]+)\b")
 DEFINITION_RE = re.compile(r"^    ([a-z0-9-]+):\s*$")
 
+# ── the one way to mention a router that is gone ─────────────────────────────
+#
+# Check 6 below refuses any `cf-…` name in a comment that is not defined in this
+# directory, because a router described in prose answers "is it routed?" with a
+# yes. That is right for a router someone MEANT to add and never did, and wrong
+# for one that was deliberately deleted — three of those landed in one day
+# (`cf-api-catchall`, `cf-api-unrouted`, `cf-api-worlds-api`) and every one of
+# them left behind a tombstone that is worth more than the silence would be.
+# `cf-api-worlds-api` is the case that proves it: it routed `worlds-api.<apex>`,
+# a hostname with NO DNS RECORD, and its presence in this file is what made a
+# re-check conclude the dead host was fine. The note saying so must survive.
+#
+# So a name is exempt only when the directory ALSO carries an explicit burial:
+#
+#     # REMOVED: cf-api-worlds-api — folded into api.; worlds-api. has no DNS record
+#
+# That is a deliberate line someone has to write. Prose about a router the author
+# believes exists never contains it, which is the whole distinction — the check
+# keeps its teeth and stops punishing the one comment that tells the truth.
+REMOVED_RE = re.compile(r"^\s*#\s*REMOVED:\s+(cf-(?:api|web|svc)-[a-z0-9-]+)\b")
+
 
 def described_but_undefined():
-    """Every cf-api/web/svc name in a COMMENT must be defined somewhere in this directory.
+    """Every cf-api/web/svc name in a COMMENT must be defined here, or explicitly buried.
 
     THE POINT. A router that exists only as prose answers "is it routed?" with a
     yes, in the file that would know, and nothing else in this script looks at
@@ -469,28 +492,48 @@ def described_but_undefined():
     stop running for an environmental reason. It reads YAML by line rather than
     by parser because the file provider renders Go template actions BEFORE the
     YAML is parsed, so on disk this is a template and not YAML at all.
+
+    THE ONE EXEMPTION is a `# REMOVED: <name> — <why>` line, which records a
+    router that was deleted on purpose. See `REMOVED_RE` for why that is not a
+    hole: a deletion note is the opposite of the claim this check exists to
+    catch, and refusing it was pushing people to delete the note instead.
     """
     directory = WEB_MAP.parent
     if not directory.is_dir():
         bad(f"{directory} is not a directory — the described-but-undefined check cannot run")
         return
-    defined, mentioned = set(), {}
+    defined, mentioned, buried = set(), {}, {}
     for path in sorted(directory.glob("*.yml")):
         for lineno, line in enumerate(path.read_text().splitlines(), 1):
             if line.lstrip().startswith("#"):
+                m = REMOVED_RE.match(line)
+                if m:
+                    buried.setdefault(m.group(1), []).append(f"{path.name}:{lineno}")
                 for name in CF_NAME_RE.findall(line):
                     mentioned.setdefault(name, []).append(f"{path.name}:{lineno}")
                 continue
             m = DEFINITION_RE.match(line)
             if m:
                 defined.add(m.group(1))
-    for name, sites in sorted(mentioned.items()):
+
+    # A burial for a router that IS defined is the more dangerous direction of the
+    # same lie: the tombstone says "gone" while the router is live above it, and a
+    # reader who trusts the comment stops looking for the thing that is routing.
+    for name, sites in sorted(buried.items()):
         if name in defined:
+            bad(
+                f"'{name}' is buried by a REMOVED: line at {', '.join(sites)} and is DEFINED in "
+                f"{directory.name}/ anyway. The tombstone contradicts the router — delete one"
+            )
+
+    for name, sites in sorted(mentioned.items()):
+        if name in defined or name in buried:
             continue
         bad(
             f"'{name}' is written in a comment at {', '.join(sites)} and is DEFINED NOWHERE in "
             f"{directory.name}/. A router or service that exists only in prose reads like one "
-            f"that exists — delete the sentence or define the thing it describes"
+            f"that exists — define the thing it describes, delete the sentence, or, if it was "
+            f"deliberately deleted, bury it with a '# REMOVED: {name} — <why>' line"
         )
 
 

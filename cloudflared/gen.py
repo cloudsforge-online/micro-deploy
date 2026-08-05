@@ -46,14 +46,15 @@ was prefixed — and a hand-typed cloudflared ingress would be the fifth.
           operator  =  adminOnly is true          -> admin, lantern,
                                                      beacon               (3)
           api       =  servesUi is false          -> nimbus, account, api,
-                                                     worlds-api, pay, vault,
-                                                     rpc, p2p               (8)
+                                                     pay, vault,
+                                                     rpc, p2p               (7)
           public    =  everything else            -> the apex + 13         (14)
 
-      14 / 3 / 8. Those are the counts the deployment brief arrived at by
-      hand — 14 / 4 / 6 then, and the operator column was 4 until the P13 fold
-      took `foresight-admin` out of the registry — reproduced here without a
-      list, from fields that
+      14 / 3 / 7. Those are the counts the deployment brief arrived at by
+      hand — 14 / 4 / 6 then; the operator column was 4 until the P13 fold took
+      `foresight-admin` out of the registry, and the api column was 8 until
+      `worlds-api` was folded into `api` and its row deleted — reproduced here
+      without a list, from fields that
       already existed for another purpose entirely (`adminOnly` hides a surface
       from the product switcher unless the viewer holds the `admin` role —
       index.tsx:368). A seventh product, or a fifth console, is a registry row

@@ -120,7 +120,8 @@ check-gateway: ## Compare the public route map against what the services serve
 
 check-surfaces: ## Every registry surface has a gateway route, and every route a surface
 	@# The drift this ends was live three times in one night: `worlds-api` (a
-	@# surface worlds-web resolves its whole API against, with no router),
+	@# surface worlds-web resolved its whole API against, with no router; that
+	@# hostname has since been folded into `api.` and its row deleted),
 	@# `beacon` (service deployed, router never written), and both title APIs.
 	@# Each was introduced by an edit to a DIFFERENT file from the one that was
 	@# wrong, which is exactly why a comment could never have caught it.

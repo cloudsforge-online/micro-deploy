@@ -128,14 +128,18 @@ survives because it is itself one label. `envLabel()` and `splitEnvLabel()` in
 `scripts/check-apex-prefix.py` reads `ENV_LABELS` from that module so there is
 one list rather than two that drift.
 
-Six hosts serve **no HTML by design** and correctly answer `404` at `/` —
-`nimbus`, `account`, `api`, `worlds-api`, `pay` and `vault` (`servesUi: false`).
-Never link a person to them. `worlds-api.<apex>` is additionally **retired** on
-the public estate: it was folded into `api.<apex>`, which serves `/v1/titles`
-today, and `worlds-api.cloudsforge.online` has no public DNS record. On
-`api.<apex>` only `/v1/…` is routed; an unmatched path such as `/` or `/livez`
-answers `502` rather than `404`, which is a known defect and not the API being
-down.
+Five hosts serve **no HTML by design** and correctly answer `404` at `/` —
+`nimbus`, `account`, `api`, `pay` and `vault` (`servesUi: false`). Never link a
+person to them. On `api.<apex>` only `/v1/…` is routed; an unmatched path such
+as `/` or `/livez` answers `404` from Traefik's default, with no upstream
+involved.
+
+`worlds-api.<apex>` used to be a sixth. **It is gone** — the game API was folded
+INTO `api.`, not out of it, and the hostname never had a DNS record on either
+network. Its gateway router, its registry row, its tunnel ingress entries and
+its TLS probe were all removed on 2026-08-05. Several earlier comments in this
+repository described the fold in the opposite direction; if you find another
+one, it is wrong.
 
 **A surface and its own API share an origin, and the gateway is what makes that
 true.** Every frontend compares origins to decide its API base

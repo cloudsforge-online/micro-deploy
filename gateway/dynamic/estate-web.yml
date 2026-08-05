@@ -328,68 +328,26 @@ http:
       entryPoints: [websecure, tunnel]
       service: cf-svc-worlds
 
-    # ──────────────────────────────────────────────── worlds-api — THE MISSING DOOR ──
+    # ──────────────────────────────────── worlds-api — REMOVED, AND IT STAYS REMOVED ──
     #
-    # **`worlds-web` DOES NOT CALL `worlds.<apex>`, AND THIS FILE ASSUMED IT DID.**
+    # REMOVED: cf-api-worlds-api — worlds-api. was folded into api. and has no DNS record
     #
-    # `worlds-web/src/lib/hosts.ts:80` is `export const API_SURFACE: SurfaceKey = 'worlds-api'`,
-    # and `PRODUCT` is `worlds` — two DIFFERENT registry keys on purpose, so `resolveApiBase`
-    # never collapses to `''` and every request the bundle makes is absolute, cross-origin, to
-    # `https://worlds-api.<apex>/v1/...`. The router above matches `Host(worlds.<apex>)`, a
-    # different hostname, so it caught nothing the app ever sent. Measured against the running
-    # gateway before this was written:
+    # That router stood here, `Host(worlds-api{CF_WEB_SUFFIX})` -> `cf-svc-worlds`.
+    # It is deleted, and this note exists so nobody restores it from the comment that used to be
+    # here — that comment argued at length for the fold going `api.` -> `worlds-api.`, and THE
+    # FOLD WENT THE OTHER WAY: `worlds-api` was consolidated INTO `api`. `api.` is the name a
+    # third party is given, so `api.` is the name that survived; see the `api` row in
+    # `ui/packages/ui/src/surfaces.ts`.
     #
-    #     https://worlds.<apex>/v1/titles      -> 401   (routed; the API is fine)
-    #     https://worlds-api.<apex>/v1/titles  -> 404   (no router; what the app asks for)
+    # **`worlds-api.<apex>` HAS NO DNS RECORD ON EITHER NETWORK AND IS NOT GETTING ONE.**
+    # A router for a host that does not resolve is worse than no router: it makes a re-check of
+    # this file conclude "worlds-api is configured, so it is fine". It was not fine, and that
+    # reading is how the Forge Worlds outage survived review.
     #
-    # The frontend named this gap in its own header and could not close it — "There is no gateway
-    # router for `worlds-api.` yet … No router matches `worlds-api.<apex>`" (hosts.ts:47-50) —
-    # and deliberately did not shim it by pointing at `worlds` instead, because the registry is
-    # the thing that decides and a local override is a second copy of it.
-    #
-    # `api.` is the same service under a different promise: the registry says `api.<apex>` is "The
-    # public, versioned surface … today `api.` still points at the game API, which is renamed to
-    # `worlds-api.` first" (`ui/packages/ui/src/surfaces.ts`, the `api` row). `public-api.yml`
-    # owns `api.` and routes it per path prefix across seven services; this router owns the game
-    # platform's own hostname and points at one.
-    #
-    # THE WHOLE HOST, not `PathPrefix(/v1)`. Nothing serves a bundle at `worlds-api.<apex>` — it
-    # is an API hostname with no surface on it — so there is no second router for a path to lose a
-    # priority tie against, and enumerating prefixes would be a copy of worlds' route table.
-    #
-    # ── AND THE NAME IS `cf-api-worlds-api`, NOT `cf-api-worlds`, WHICH IS NOT COSMETIC ──
-    #
-    # It was `cf-api-worlds` when this router was written, and `public-api.yml:154` has been a
-    # DIFFERENT router of that same name since the public API existed. Traefik's file provider
-    # merges a directory into ONE router map and does not merge two entries into one name: the
-    # first file wins by sorted filename and the rest are dropped. `estate-web.yml` sorts before
-    # `public-api.yml`, so THIS router silently deleted the public API's worlds router, and
-    # `api.<apex>/v1/titles`, `/v1/players`, `/v1/provisions` and `/v1/seasons` fell through to
-    # `cf-api-catchall` and answered 502 from the unrouted upstream. Measured, not deduced:
-    #
-    #     WRN HTTP router already configured, skipping
-    #         filename=public-api.yml providerName=file routerName=cf-api-worlds
-    #
-    # One WARN line, at startup, in a container whose logs are ninety-nine percent access log.
-    # Nothing failed, nothing 404'd in a way that looked like configuration, and four public
-    # resources were simply gone. Counted in a throwaway Traefik over this directory: 55 routers
-    # before the rename, 56 after, and the one that appears is the public API's.
-    #
-    # The name follows the rule the rest of this section already uses and only this router broke:
-    # a router here is named for the SUBDOMAIN it serves, and the subdomain is `worlds-api`.
-    # That is also why `cf-api-market-host`, `cf-api-trade-host` and `cf-api-worlds-host` carry a
-    # suffix — they are `market.<apex>/v1`, not `api.<apex>/v1/listings`, and the bare names
-    # belong to `public-api.yml`. Renaming is the whole fix; both routers are correct and both
-    # are wanted.
-    #
-    # `scripts/surface-routes.py` check 7 now fails on any name defined twice in this directory,
-    # so this cannot recur quietly — it was invisible to checks 1-6 because every one of them
-    # reads the FILE, and the file contained both routers exactly as intended.
-    cf-api-worlds-api:
-      rule: 'Host(`worlds-api{{ env "CF_WEB_SUFFIX" }}`)'
-      priority: 500
-      entryPoints: [websecure, tunnel]
-      service: cf-svc-worlds
+    # The game API is reachable, unchanged, at two live addresses:
+    #   `worlds{CF_WEB_SUFFIX}/v1` via `cf-api-worlds-host` above, and
+    #   `api{CF_WEB_SUFFIX}/v1/titles|players|provisions|seasons` via `public-api.yml`.
+    # `micro-worlds-web` calls the second — `API_SURFACE` is `'api'` (`worlds-web/src/lib/hosts.ts`).
 
     # ────────────────────────────────────────────────────────────── explorer ──
     # THE CHAIN INDEX IS ROUTED NOW, AND THE COMMENT THAT SAID IT WAS NOT IS THE DEFECT.

@@ -403,8 +403,8 @@ services:
         # sentence and a named defect instead of a check that does not exist.
         #
         # `rpc` and `p2p` are deliberately absent, and correctly so: this list is the
-        # surfaces a BROWSER opens, which is why the six API hostnames — nimbus, api,
-        # worlds-api, pay, vault and account — are absent from it too.
+        # surfaces a BROWSER opens, which is why the five API hostnames — nimbus, api,
+        # pay, vault and account — are absent from it too.
         aliases:
           # The bare apex first, because it has no subdomain and a prefixed list
           # silently omits it — which is exactly what happened: 18 of 19 groups

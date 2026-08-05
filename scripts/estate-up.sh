@@ -217,8 +217,9 @@ echo "  public API host is this environment's own: $gateway_api_host"
 # the failure it catches is invisible from every server-side probe: a surface
 # with no router serves its bundle perfectly and answers no API call, which is a
 # green estate and a broken product. Three such gaps were live at once the first
-# time the estate was opened in a browser — `worlds-api`, `beacon`, and both
-# title APIs — and each had been introduced by an edit to a DIFFERENT file.
+# time the estate was opened in a browser — `worlds-api` (since folded into
+# `api.` and removed), `beacon`, and both title APIs — and each had been
+# introduced by an edit to a DIFFERENT file.
 #
 # Not fatal. It reads sibling checkouts, and a missing one must not stop an
 # estate from starting; it is loud, and `make check-surfaces` is the gate.

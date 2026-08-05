@@ -8,7 +8,7 @@
 #   apex        : cloudsforge.online
 #   env label   : testnet
 #   tunnel      : cf-testnet-public
-#   hostnames   : 21
+#   hostnames   : 20
 #
 # Fill in `tunnel:` and `credentials-file:` from `cloudflared tunnel create`.
 # They are the only two values in this file that are not derived, because they
@@ -102,8 +102,6 @@ ingress:
   - hostname: trade-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
   - hostname: vault-testnet.cloudsforge.online
-    service: http://127.0.0.1:9181
-  - hostname: worlds-api-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
   - hostname: worlds-testnet.cloudsforge.online
     service: http://127.0.0.1:9181

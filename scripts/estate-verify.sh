@@ -1801,7 +1801,15 @@ else
   # THIS GATEWAY DOES NOT ROUTE — mainnet does. Probing the zone from a testnet run
   # would resolve a mainnet hostname to this box's loopback and report a
   # certificate fault that is really a routing question about another environment.
-  for tls_host in "$SITE_HOST" "hub$WEB_SUFFIX" "nimbus$WEB_SUFFIX" "worlds-api$WEB_SUFFIX"; do
+  #
+  # `worlds-api$WEB_SUFFIX` was the fourth entry here until 2026-08-05 and is
+  # deliberately not replaced by another hyphenated name: that hostname was
+  # folded into `api.`, its router and its registry row are deleted, and a TLS
+  # probe against a host the gateway no longer routes proves nothing about the
+  # certificate — it 000s for a routing reason and reads as a certificate fault.
+  # `api$WEB_SUFFIX` takes its place because it is the surviving name, it IS
+  # routed, and it is the one a third party is handed.
+  for tls_host in "$SITE_HOST" "hub$WEB_SUFFIX" "nimbus$WEB_SUFFIX" "api$WEB_SUFFIX"; do
     tls_code=$(curl -s --cacert "$CA_FILE" -o /dev/null -w '%{http_code}' \
       --resolve "$tls_host:$GW_PORT:127.0.0.1" "https://$tls_host:$GW_PORT/livez" 2>/dev/null)
     # 000 is curl's "the transfer never completed", which is what a rejected

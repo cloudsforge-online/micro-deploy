@@ -8,7 +8,7 @@
 #   apex        : cloudsforge.online
 #   env label   : (none — the unadorned form)
 #   tunnel      : cf-mainnet-public
-#   hostnames   : 21
+#   hostnames   : 20
 #
 # Fill in `tunnel:` and `credentials-file:` from `cloudflared tunnel create`.
 # They are the only two values in this file that are not derived, because they
@@ -104,8 +104,6 @@ ingress:
   - hostname: vault.cloudsforge.online
     service: http://127.0.0.1:9081
   - hostname: worlds.cloudsforge.online
-    service: http://127.0.0.1:9081
-  - hostname: worlds-api.cloudsforge.online
     service: http://127.0.0.1:9081
   # cloudflared REQUIRES a catch-all and refuses to start without one. 404 rather
   # than a redirect: a hostname that is not in this file is not one this estate
