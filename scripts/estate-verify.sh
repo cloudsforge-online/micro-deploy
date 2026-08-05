@@ -449,16 +449,35 @@ echo "── WALLET'S MONEY INTAKE: one scheme accepted, the other refused ─�
 # appears — had a producer, a consumer, a signature scheme they now agree on, and
 # no row joining them. estate-bootstrap.sh seeds those rows now; this drives one
 # through and asserts it landed.
-# READ FROM THE COMPOSE FILE, never copied here. The estate secret is a throwaway
-# and writing it out would still be a second copy of a value that already exists,
-# which is the class of artefact this repository keeps finding rotted — the
-# gateway route map, the hand-written grant list, the MAP.md files. It is also the
-# one shape a verifier must not have: a hardcoded expectation still passes after
-# the deploy changes underneath it.
-wi_secret=$(grep -m1 'OUTBOX_SIGNING_SECRET:' "$COMPOSE" | sed 's/.*OUTBOX_SIGNING_SECRET: *//')
+# READ OUT OF THE RUNNING SIGNER, never copied here and no longer read from the
+# compose file either. Writing it out would be a second copy of a value that
+# already exists, which is the class of artefact this repository keeps finding
+# rotted — the gateway route map, the hand-written grant list, the MAP.md files.
+# It is also the one shape a verifier must not have: a hardcoded expectation
+# still passes after the deploy changes underneath it.
+#
+# WHY THE CONTAINER AND NOT THE FILE. It used to grep the signing variable
+# out of $COMPOSE, which worked only while the key was a literal in a PUBLIC
+# file. The key now arrives by `env_file:` from gitignored `compose/secrets/`,
+# so the compose file no longer contains it and that grep would return empty —
+# and an empty secret makes both signature checks below pass vacuously, which is
+# the failure mode the check on the next line exists to catch.
+#
+# `indexer` is deliberately the container asked: it is the PRODUCER whose relay
+# signs the delivery this section drives. Reading the key from the actual signer
+# means a rotation that reached the verifier but not the producer — exactly the
+# partition a staged rotation exists to prevent — shows up here as a mismatch
+# rather than as a green run.
+wi_secret=$(docker compose -f "$COMPOSE" exec -T indexer printenv OUTBOX_SIGNING_SECRET 2>/dev/null | tr -d '\r\n')
 [ -n "$wi_secret" ] \
-  && ok "read the estate outbox secret out of $COMPOSE" \
-  || bad "no OUTBOX_SIGNING_SECRET in $COMPOSE — the two signature checks below would pass vacuously"
+  && ok "read the estate outbox secret out of the running indexer container" \
+  || bad "indexer holds no OUTBOX_SIGNING_SECRET — the two signature checks below would pass vacuously"
+# The defect this file was rotated to close: the key must not be back in the
+# public compose file under any name. A regression here is a disclosure, not a
+# style problem, so it is asserted every run rather than reviewed.
+grep -qE '^ +[A-Z_]*(SIGNING_SECRET|_SECRETS): +[^$]' "$COMPOSE" \
+  && bad "a signing secret is a LITERAL in $COMPOSE again — it is a public file; see runbooks/runbook-outbox-signing-secret.md" \
+  || ok "no signing secret is a literal in $COMPOSE — the key comes from gitignored compose/secrets/"
 wi_event=$(python3 -c 'import uuid;print(uuid.uuid4())')
 
 # Seeded here as well as in the bootstrap, so this section is true against an

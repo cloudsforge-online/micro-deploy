@@ -150,9 +150,47 @@ x-common-env: &common-env
 # and the next environment's would not have been covered. The runbook for what is
 # in them, how they are backed up and what a restore looks like is
 # `runbooks/runbook-custody-master-secret.md`.
+# The ITEM is anchored as well as the list, because two services need this file
+# ALONGSIDE another one and a YAML anchor cannot merge two sequences. Without the
+# item anchor the path would have to be retyped in those blocks, and a retyped
+# path is one that drifts.
+x-custody-secret-file: &custody-secret-file
+  path: secrets/custody.${CF_EMBER_NETWORK:-mainnet}.env
+  required: true
+
 x-custody-secrets: &custody-secrets
-  - path: secrets/custody.${CF_EMBER_NETWORK:-mainnet}.env
-    required: true
+  - *custody-secret-file
+
+# ── THE EVENT-BUS KEY, AND WHY IT IS ONE FILE UNDER SEVERAL NAMES ─────────────
+#
+# The SAME HMAC key signs and verifies every outbox->inbox hop in the estate. It
+# was a hardcoded placeholder in this PUBLIC file, on 54 lines across 24 services
+# and 7 variable names — the services read it under different names, but there is
+# and only ever was ONE key.
+#
+# So one file carries every alias. That is not a fan-out of unrelated secrets
+# into containers that should not hold them: every one of these 24 services
+# already holds this exact key, because it is the key they use to talk to each
+# other. There is no separation here to lose.
+#
+# Same mechanics as `x-custody-secrets` above, for the same measured reasons:
+# an `env_file:` PATH is interpolated and read relative to THIS file, so it is
+# independent of whichever `--env-file` the operator passed, and `tokens.env` is
+# not usable (estate-bootstrap.sh:506 rewrites it wholesale, and the testnet
+# `--env-file compose/testnet.env` drops it entirely). `required: true` is the
+# fail-closed half. `compose/secrets/` is gitignored whole.
+#
+# Rotation is STAGED, never swapped — a sender on the new key talking to a
+# receiver on the old one is a silent partition, not an error anyone would see.
+# `OUTBOX_ACCEPT_SECRETS` (and the *_INGEST_SECRETS lists) hold BOTH keys for the
+# cutover window while `OUTBOX_SIGNING_SECRET` holds the one being signed with.
+# Runbook: runbooks/runbook-outbox-signing-secret.md
+x-outbox-secret-file: &outbox-secret-file
+  path: secrets/outbox.${CF_EMBER_NETWORK:-mainnet}.env
+  required: true
+
+x-outbox-secrets: &outbox-secrets
+  - *outbox-secret-file
 
 # The JWKS seam. Every service that verifies a token fetches identity's keys over
 # a real network here, which is the thing no unit suite could reach.
@@ -382,8 +420,8 @@ services:
       IDENTITY_PUBLIC_URL: http://identity:4000
       IDENTITY_KEY_SECRET: estate-only-key-secret-not-a-real-one-000
       IDENTITY_DELETION_GRACE_DAYS: "0"
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: identity-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -558,8 +596,8 @@ services:
          "trade":["ledger:post","ledger:read","ledger:reserve","pricing:read"],
          "wallet":["custody:address:create","indexer:read","indexer:write","ledger:post","ledger:read","ledger:reserve","pricing:read","settlement:read"],
          "worlds":["aetherholm:provision","billing:read","ledger:post","tessera:provision"]}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: identity-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}100:4000"
     depends_on:
@@ -613,8 +651,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       LEDGER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/ledger
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: ledger-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -627,7 +665,6 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       LEDGER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/ledger
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # ══════════════════════════════════════════════════════════════════════
       # THE ASSETS RECONCILIATION SWEEPS — WRITTEN OUT RATHER THAN INHERITED
       # FROM THE DEFAULT, BECAUSE THIS IS A DECISION AND EMBER WILL FREEZE.
@@ -734,6 +771,7 @@ services:
       LEDGER_IDENTITY_CREDENTIAL: ${LEDGER_IDENTITY_CREDENTIAL:-}
       # ══════════════════════════════════════════════════════════════════════
       INSTANCE_ID: ledger-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}102:4000"
     depends_on:
@@ -752,8 +790,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       PRICING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/pricing
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: pricing-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -766,13 +804,13 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       PRICING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/pricing
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # One source, because this environment has no outbound network to four
       # exchanges. env.ts permits 1 explicitly and says why: at this setting the
       # divergence check is inert because there is nothing to diverge from. It
       # is NOT a production value.
       PRICING_MIN_SOURCES: "1"
       INSTANCE_ID: pricing-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}105:4000"
     depends_on:
@@ -797,8 +835,8 @@ services:
       <<: [*common-env, *identity-trust]
       ACTIVITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/activity
       # The same secret identity signs its outbox with: the MAC is the seam.
-      ACTIVITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: activity-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -811,8 +849,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ACTIVITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/activity
-      ACTIVITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: activity-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}109:4000"
     depends_on:
@@ -834,9 +872,9 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       NOTIFY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/notify
-      NOTIFY_INGEST_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       NOTIFY_PUBLIC_URL: http://localhost:4110
       INSTANCE_ID: notify-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -849,7 +887,6 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       NOTIFY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/notify
-      NOTIFY_INGEST_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       NOTIFY_PUBLIC_URL: http://localhost:4110
       # ── SMTP: PASSED THROUGH, NEVER WRITTEN HERE ─────────────────────────────
       #
@@ -877,6 +914,7 @@ services:
       SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
       MAIL_DOMAIN: ${MAIL_DOMAIN:-}
       INSTANCE_ID: notify-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}110:4000"
     depends_on:
@@ -950,8 +988,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       STUDIO_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/studio
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: studio-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -964,7 +1002,6 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       STUDIO_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/studio
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The variable this whole block exists for. See the header above.
       STUDIO_ASSET_ROOT: /var/lib/studio/assets
       # STUDIO_ASSET_BASE_URL is deliberately left unset: no HTTP server in this
@@ -975,6 +1012,7 @@ services:
       #   docker compose -f compose/docker-compose.estate.yml run --rm \
       #     -v studio-assets:/a busybox:1.37 find /a -type f
       INSTANCE_ID: studio-estate
+    env_file: *outbox-secrets
     volumes:
       - studio-assets:/var/lib/studio/assets
     ports:
@@ -997,9 +1035,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/devplatform
-      DEVPLATFORM_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: devplatform-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1012,9 +1049,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/devplatform
-      DEVPLATFORM_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: devplatform-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}118:4000"
     depends_on:
@@ -1066,8 +1102,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       INDEXER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/indexer
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: indexer-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1080,7 +1116,6 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       INDEXER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/indexer
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # ══════════════════════════════════════════════════════════════════════
       # THE CUSTODY SET, which is what `GET /v1/custody/:chain/:network/total`
       # sums and what micro-ledger reconciles its custody accounts against.
@@ -1141,6 +1176,7 @@ services:
       INSTANCE_ID: indexer-estate
     env_file:
       - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
+      - *outbox-secret-file
     # Docker Desktop resolves `host.docker.internal` for free; the Linux daemon
     # does not, and there the indexer would report a healthy follower that can
     # reach no provider — the exact failure env.ts's mirror check exists to stop.
@@ -1165,10 +1201,10 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ANALYTICS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/analytics
-      ANALYTICS_DELIVERY_SECRETS: estate-only-outbox-secret-00000000000000
       ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: analytics-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1181,10 +1217,10 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       ANALYTICS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/analytics
-      ANALYTICS_DELIVERY_SECRETS: estate-only-outbox-secret-00000000000000
       ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: analytics-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}121:4000"
     depends_on:
@@ -1223,14 +1259,15 @@ services:
       <<: [*common-env, *identity-trust]
       CUSTODY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/custody
       POLICY_BASE_URL: http://policy:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: custody-migrate
     # THE MIGRATOR NEEDS THE KEYRING TOO. `migrator.ts` imports `env.ts`, which
     # validates at import, so a migrator without the file does not run a
     # migration and fail — it exits before it starts, and `custody` waits on
     # `service_completed_successfully` for ever. Same file as the service below;
     # the argument for it is there.
-    env_file: *custody-secrets
+    env_file:
+      - *custody-secret-file
+      - *outbox-secret-file
     depends_on:
       postgres:
         condition: service_healthy
@@ -1254,14 +1291,15 @@ services:
       # It needs one coordinated rotation of every service at once. Recorded, not
       # forgotten: `custody/src/env.ts` says the same thing where the guard that
       # deliberately does not cover it is defined.
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: custody-estate
     # THE KEYRING. Not in `environment:` above and it never may be — see
     # `x-custody-secrets` at the head of this file for the whole argument.
     # `environment:` WINS over `env_file:` in compose, so a line reinstated above
     # would silently override this one and the file would look correct while the
     # placeholder was live again.
-    env_file: *custody-secrets
+    env_file:
+      - *custody-secret-file
+      - *outbox-secret-file
     # THE VAULT. Without it `POST /v1/addresses` fails with EACCES on the first
     # write and this estate cannot mint a key at all — which was true until the
     # faucet asked for one. See the `custody-keys` block at the foot of this file
@@ -1322,8 +1360,8 @@ services:
       PRICING_URL: http://pricing:4000
       WALLET_CHALLENGE_DOMAIN: localhost
       WALLET_CHALLENGE_URI: http://localhost:4103
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: wallet-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1342,7 +1380,6 @@ services:
       PRICING_URL: http://pricing:4000
       WALLET_CHALLENGE_DOMAIN: localhost
       WALLET_CHALLENGE_URI: http://localhost:4103
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # ── THE LONG-LIVED CREDENTIAL, WHICH THIS FILE NEVER HANDED OVER ──────
       # estate-bootstrap.sh has been minting these into compose/estate/tokens.env
       # and NOT ONE SERVICE WAS GIVEN ONE: no `*_IDENTITY_CREDENTIAL` appeared
@@ -1359,6 +1396,7 @@ services:
       # the service logs that it IGNORES the token when it holds a credential.
       WALLET_IDENTITY_CREDENTIAL: ${WALLET_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: wallet-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}103:4000"
     depends_on:
@@ -1390,8 +1428,8 @@ services:
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
       SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: settlement-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1408,8 +1446,8 @@ services:
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
       SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: settlement-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}104:4000"
     depends_on:
@@ -1437,8 +1475,8 @@ services:
       BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
       BILLING_PRICING_URL: http://pricing:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: billing-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1453,10 +1491,10 @@ services:
       BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
       BILLING_PRICING_URL: http://pricing:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       BILLING_IDENTITY_CREDENTIAL: ${BILLING_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: billing-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}106:4000"
     depends_on:
@@ -1483,8 +1521,8 @@ services:
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: mint-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1505,10 +1543,10 @@ services:
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       MINT_IDENTITY_CREDENTIAL: ${MINT_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: mint-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}112:4000"
     depends_on:
@@ -1538,8 +1576,8 @@ services:
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
       MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: market-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1556,8 +1594,8 @@ services:
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
       MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: market-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}113:4000"
     depends_on:
@@ -1587,8 +1625,8 @@ services:
       PRICING_URL: http://pricing:4000
       BILLING_URL: http://billing:4000
       TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: trade-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1605,8 +1643,8 @@ services:
       PRICING_URL: http://pricing:4000
       BILLING_URL: http://billing:4000
       TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: trade-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}114:4000"
     depends_on:
@@ -1631,8 +1669,8 @@ services:
       WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: worlds-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1647,10 +1685,10 @@ services:
       WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       WORLDS_IDENTITY_CREDENTIAL: ${WORLDS_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: worlds-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}115:4000"
     depends_on:
@@ -1673,8 +1711,8 @@ services:
       NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
       WORLDS_URL: http://worlds:4000
       BILLING_URL: http://billing:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: nda-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1689,10 +1727,10 @@ services:
       NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
       WORLDS_URL: http://worlds:4000
       BILLING_URL: http://billing:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The long-lived credential. See wallet's block for what it replaces.
       NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: nda-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}116:4000"
     depends_on:
@@ -1715,10 +1753,9 @@ services:
       COMMUNITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/community
       LEDGER_BASE_URL: http://ledger:4000
       POLICY_BASE_URL: http://policy:4000
-      COMMUNITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
       COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: community-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1733,10 +1770,9 @@ services:
       COMMUNITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/community
       LEDGER_BASE_URL: http://ledger:4000
       POLICY_BASE_URL: http://policy:4000
-      COMMUNITY_INGEST_SECRETS: estate-only-outbox-secret-00000000000000
       COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: community-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}117:4000"
     depends_on:
@@ -1816,13 +1852,12 @@ services:
       # port would be one more copy of a fact to drift.
       PORT: "4022"
       TESSERA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/tessera
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # A SECOND variable holding the same value, on purpose. `tessera/src/env.ts:150-160`
       # explains it: outbound signatures and inbound verification are one secret
       # today and stop being one the day the estate moves to per-producer signing
       # keys. A service that read one variable for both would have to be found.
-      INBOUND_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: tessera-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1836,8 +1871,6 @@ services:
       <<: [*common-env, *identity-trust]
       PORT: "4022"
       TESSERA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/tessera
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
-      INBOUND_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       STUDIO_URL: http://studio:4000
       LEDGER_URL: http://ledger:4000
       MARKET_URL: http://market:4000
@@ -1861,6 +1894,7 @@ services:
       # `ServiceTokenProvider`, which its own comment already names.
       TESSERA_SERVICE_CREDENTIAL: ${TESSERA_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: tessera-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}125:4022"
     depends_on:
@@ -1922,8 +1956,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       AETHERHOLM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/aetherholm
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: aetherholm-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -1936,8 +1970,8 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       AETHERHOLM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/aetherholm
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: aetherholm-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}124:4000"
     depends_on:
@@ -1987,7 +2021,6 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       EMBERKIN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/emberkin
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       # The migrator loads the same `env.ts`, which demands these three URLs and
       # the token before it will construct a config — so they are supplied here
       # too. It dials none of them.
@@ -1996,6 +2029,7 @@ services:
       WORLDS_URL: http://worlds:4000
       EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: emberkin-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -2008,12 +2042,12 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       EMBERKIN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/emberkin
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       WORLDS_URL: http://worlds:4000
       EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: emberkin-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}122:4000"
     depends_on:
@@ -2202,7 +2236,6 @@ services:
       # The migrator imports the same `env.ts`, which builds the WHOLE config
       # before it opens a connection — so every required value is supplied here
       # too. It dials none of them and signs nothing.
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
       LEDGER_URL: http://ledger:4000
@@ -2214,6 +2247,7 @@ services:
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: foresight-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -2234,7 +2268,6 @@ services:
       # inert. Third service this week to need this line — billing and mint were the
       # others, both found only when something failed.
       PRICING_URL: http://pricing:4000
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
       LEDGER_URL: http://ledger:4000
@@ -2277,6 +2310,7 @@ services:
       INSTANCE_ID: foresight-estate
     env_file:
       - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
+      - *outbox-secret-file
     # Docker Desktop resolves `host.docker.internal`; the Linux daemon does not.
     # Same reason as the `faucet` and `indexer` blocks.
     extra_hosts:
@@ -2696,8 +2730,8 @@ services:
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
       ADMIN_API_SERVICE_TOKEN: ${ADMIN_API_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: admin-api-migrate
+    env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
@@ -2715,8 +2749,8 @@ services:
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
       ADMIN_API_SERVICE_TOKEN: ${ADMIN_API_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       INSTANCE_ID: admin-api-estate
+    env_file: *outbox-secrets
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}120:4000"
     depends_on:

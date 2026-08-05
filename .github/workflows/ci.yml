@@ -156,13 +156,46 @@ jobs:
           fi
           echo "ok: no master secret is given a value anywhere in the tree"
 
+          # THE SAME DEFECT, THE SAME SHAPE, A SECOND KEY. `OUTBOX_SIGNING_SECRET`
+          # was a hardcoded placeholder on 54 lines of the same PUBLIC file, across
+          # 24 services and 7 variable names — one shared HMAC key signing every
+          # outbox->inbox hop in the estate. It cleared every check that existed
+          # for the same reason the custody one did: 40 characters against a
+          # 24-character floor, and a comment saying to change it in production.
+          #
+          # The alternation is the alias list, not a guess: the services read ONE
+          # key under seven names, so a guard naming only `OUTBOX_SIGNING_SECRET`
+          # would pass while the same value sat in `INBOUND_SIGNING_SECRET`.
+          hits=$(git grep -nIE '(OUTBOX_SIGNING_SECRET|OUTBOX_ACCEPT_SECRETS|INBOUND_SIGNING_SECRET|NOTIFY_INGEST_SIGNING_SECRET|ACTIVITY_INGEST_SECRETS|ANALYTICS_DELIVERY_SECRETS|COMMUNITY_INGEST_SECRETS|DEVPLATFORM_INGEST_SECRETS) *[:=] *[^ $%"'"'"'#<]' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::an outbox signing secret is given a value in a tracked file"
+            echo "$hits" | sed -E 's/(SECRETS? *[:=] *).*/\1<redacted>/'
+            echo "The key belongs in compose/secrets/, which is gitignored."
+            echo "If this value was ever pushed, rotate it: runbooks/runbook-outbox-signing-secret.md"
+            exit 1
+          fi
+          echo "ok: no outbox signing secret is given a value anywhere in the tree"
+
           mkdir -p compose/secrets
           umask 077
           for network in mainnet testnet; do
             printf 'CUSTODY_KEY_VERSION=2\nCUSTODY_MASTER_SECRET_V2=%s\n' \
               "$(openssl rand -base64 48)" > "compose/secrets/custody.${network}.env"
+            # Same argument as the keyring above: `required: true` means a missing
+            # file stops `docker compose config`, so the render steps below would
+            # fail on a clean checkout. Minted, never written down.
+            outbox="$(openssl rand -base64 48)"
+            {
+              printf 'OUTBOX_SIGNING_SECRET=%s\n' "$outbox"
+              printf 'OUTBOX_ACCEPT_SECRETS=%s\n' "$outbox"
+              for alias in ACTIVITY_INGEST_SECRETS ANALYTICS_DELIVERY_SECRETS \
+                           COMMUNITY_INGEST_SECRETS DEVPLATFORM_INGEST_SECRETS \
+                           NOTIFY_INGEST_SIGNING_SECRET INBOUND_SIGNING_SECRET; do
+                printf '%s=%s\n' "$alias" "$outbox"
+              done
+            } > "compose/secrets/outbox.${network}.env"
           done
-          echo "ok: two throwaway keyrings minted for the render steps"
+          echo "ok: two throwaway keyrings and two throwaway bus keys minted for the render steps"
 
       - name: The two compose projects do not collide
         working-directory: deploy
