@@ -2129,6 +2129,13 @@ services:
       # with its service about the port would be one more copy of a fact to drift.
       PORT: "4021"
       FORESIGHT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/foresight
+      # Foresight quotes a stake brought in BTC or ETH against EMBER, so it needs
+      # pricing. Left OPTIONAL in the service rather than required, deliberately: a
+      # missing quote makes non-EMBER staking inert, where a required variable would
+      # refuse to boot and take EMBER staking down with it. Wired here so it is not
+      # inert. Third service this week to need this line — billing and mint were the
+      # others, both found only when something failed.
+      PRICING_URL: http://pricing:4000
       # The migrator imports the same `env.ts`, which builds the WHOLE config
       # before it opens a connection — so every required value is supplied here
       # too. It dials none of them and signs nothing.
@@ -2157,6 +2164,13 @@ services:
       <<: [*common-env, *identity-trust]
       PORT: "4021"
       FORESIGHT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/foresight
+      # Foresight quotes a stake brought in BTC or ETH against EMBER, so it needs
+      # pricing. Left OPTIONAL in the service rather than required, deliberately: a
+      # missing quote makes non-EMBER staking inert, where a required variable would
+      # refuse to boot and take EMBER staking down with it. Wired here so it is not
+      # inert. Third service this week to need this line — billing and mint were the
+      # others, both found only when something failed.
+      PRICING_URL: http://pricing:4000
       OUTBOX_SIGNING_SECRET: estate-only-outbox-secret-00000000000000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
