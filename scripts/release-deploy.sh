@@ -76,23 +76,39 @@ done
 # explicit shell value still wins if it AGREES, and is fatal if it does not —
 # that disagreement is a real mistake worth stopping for.
 TRAEFIK_ENV="compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
-gateway_apex=$(grep -E '^CF_WEB_APEX=' "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
-if [ -z "$gateway_apex" ]; then
-  echo "FATAL: $TRAEFIK_ENV defines no CF_WEB_APEX." >&2
-  echo "       The gateway would render its routers with an empty Host() and serve nothing," >&2
-  echo "       silently, while every container reported healthy." >&2
-  exit 1
-fi
-if [ -n "${CF_WEB_APEX:-}" ] && [ "$CF_WEB_APEX" != "$gateway_apex" ]; then
-  echo "FATAL: CF_WEB_APEX disagrees between the shell and the gateway." >&2
-  echo "         shell          : $CF_WEB_APEX" >&2
-  echo "         $TRAEFIK_ENV : $gateway_apex" >&2
-  echo "       Deploying this would serve the surfaces on one apex while identity's" >&2
-  echo "       hand-off allowlist named another — every surface 200, SSO dead." >&2
-  exit 1
-fi
-export CF_WEB_APEX="$gateway_apex"
-echo "apex: $CF_WEB_APEX  (from $TRAEFIK_ENV)"
+
+# ── THREE VARIABLES, BECAUSE THE APEX ALONE STOPPED IDENTIFYING AN ENVIRONMENT ─
+#
+# This read `CF_WEB_APEX` and nothing else, and on 2026-08-05 that became a check
+# that cannot fail. Both environments now serve on the zone `cloudsforge.online`
+# — the environment lives inside the FIRST LABEL, as a suffix on the subdomain
+# (`hub-testnet.cloudsforge.online`) — so comparing apexes agrees with itself
+# whichever env file is in play, including the wrong one.
+#
+# `CF_WEB_SUFFIX` and `CF_SITE_HOST` are what actually differ, and both are
+# interpolated by COMPOSE into identity's hand-off allowlist. A release deployed
+# with the wrong one of them is the failure this block's header describes,
+# undiminished: every surface 200, SSO dead.
+for var in CF_WEB_APEX CF_WEB_SUFFIX CF_SITE_HOST; do
+  file_val=$(grep -E "^$var=" "$TRAEFIK_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
+  if [ -z "$file_val" ]; then
+    echo "FATAL: $TRAEFIK_ENV defines no $var." >&2
+    echo "       The gateway would render its routers with an empty Host() and serve nothing," >&2
+    echo "       silently, while every container reported healthy." >&2
+    exit 1
+  fi
+  eval "shell_val=\${$var:-}"
+  if [ -n "$shell_val" ] && [ "$shell_val" != "$file_val" ]; then
+    echo "FATAL: $var disagrees between the shell and the gateway." >&2
+    echo "         shell          : $shell_val" >&2
+    echo "         $TRAEFIK_ENV : $file_val" >&2
+    echo "       Deploying this would serve the surfaces on one set of hostnames while" >&2
+    echo "       identity's hand-off allowlist named another — every surface 200, SSO dead." >&2
+    exit 1
+  fi
+  eval "export $var=\"\$file_val\""
+done
+echo "hostnames: <surface>$CF_WEB_SUFFIX, site $CF_SITE_HOST  (from $TRAEFIK_ENV)"
 
 # ── which manifest ─────────────────────────────────────────────────────────────
 if [ "$rollback" -eq 1 ]; then
