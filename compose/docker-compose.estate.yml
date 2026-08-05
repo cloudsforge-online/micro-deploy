@@ -552,7 +552,41 @@ services:
     image: postgres:17-alpine
     environment:
       POSTGRES_USER: cloudsforge
-      POSTGRES_PASSWORD: estate-only-not-a-real-password
+      # ── THE PASSWORD IS NO LONGER A LITERAL, AND MUST NEVER BE ONE AGAIN ──────
+      #
+      # It was spelled out here and in the 56 connection strings below: ONE
+      # value, byte-identical, in a repository that is PUBLIC, on BOTH networks.
+      # So testnet access was mainnet access at the database layer, and the git
+      # history had already published both. micro-org#157.
+      #
+      # `:?` RATHER THAN A DEFAULT, and that is the entire safety property here.
+      # A default would let an estate brought up without its tokens file render a
+      # password the server does not accept — 22 services would boot, fail every
+      # query, and sit `unhealthy` with no clue as to why. That is not a
+      # hypothetical: removing a placeholder is what took testnet down for an
+      # hour on 2026-08-05. With `:?` compose REFUSES TO RENDER and names the
+      # missing variable, which is the only form of this that fails closed.
+      #
+      # AN INTERPOLATION VARIABLE, NOT `env_file:`, because the 56 connection
+      # strings below need it substituted into the middle of a URL, and
+      # `env_file:` only ever reaches a container's own environment. It is
+      # therefore supplied with `--env-file`, from a file that is gitignored,
+      # mode 0600, and DIFFERENT PER NETWORK:
+      #
+      #   mainnet  compose/estate/tokens.env          (also `compose/.env`)
+      #   testnet  compose/estate/tokens.testnet.env
+      #
+      # Two files is precisely what makes the two networks' passwords genuinely
+      # different rather than merely nominally so, and CI asserts they differ.
+      #
+      # ROTATING IT IS NOT A RESTART. Postgres reads POSTGRES_PASSWORD only when
+      # it initialises an empty data directory; on a volume that already exists
+      # the server keeps the old password no matter what this file says, until an
+      # `ALTER ROLE` changes it. Change this variable alone and every service
+      # authenticates with a password the server has never heard of. The ordered
+      # operation, and its rollback, are in
+      # runbooks/runbook-postgres-password.md.
+      POSTGRES_PASSWORD: ${CF_POSTGRES_PASSWORD:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); see runbooks/runbook-postgres-password.md}
       POSTGRES_DB: postgres
     volumes:
       - ./estate/initdb.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
@@ -582,7 +616,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: *common-env
-      IDENTITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/identity
+      IDENTITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/identity
       IDENTITY_ISSUER: http://identity:4000
       IDENTITY_PUBLIC_URL: http://identity:4000
       IDENTITY_KEY_SECRET: estate-only-key-secret-not-a-real-one-000
@@ -600,7 +634,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: *common-env
-      IDENTITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/identity
+      IDENTITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/identity
       IDENTITY_ISSUER: http://identity:4000
       IDENTITY_PUBLIC_URL: http://identity:4000
       IDENTITY_KEY_SECRET: estate-only-key-secret-not-a-real-one-000
@@ -807,7 +841,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      POLICY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/policy
+      POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy
       INSTANCE_ID: policy-migrate
     depends_on:
       postgres:
@@ -820,7 +854,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      POLICY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/policy
+      POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy
       INSTANCE_ID: policy-estate
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}101:4000"
@@ -839,7 +873,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      LEDGER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/ledger
+      LEDGER_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/ledger
       INSTANCE_ID: ledger-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -853,7 +887,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      LEDGER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/ledger
+      LEDGER_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/ledger
       # ══════════════════════════════════════════════════════════════════════
       # THE ASSETS RECONCILIATION SWEEPS — WRITTEN OUT RATHER THAN INHERITED
       # FROM THE DEFAULT, BECAUSE THIS IS A DECISION AND EMBER WILL FREEZE.
@@ -978,7 +1012,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      PRICING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/pricing
+      PRICING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pricing
       INSTANCE_ID: pricing-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -992,7 +1026,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      PRICING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/pricing
+      PRICING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pricing
       # One source, because this environment has no outbound network to four
       # exchanges. env.ts permits 1 explicitly and says why: at this setting the
       # divergence check is inert because there is nothing to diverge from. It
@@ -1022,7 +1056,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      ACTIVITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/activity
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity
       # The same secret identity signs its outbox with: the MAC is the seam.
       INSTANCE_ID: activity-migrate
     env_file: *outbox-secrets
@@ -1037,7 +1071,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      ACTIVITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/activity
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity
       INSTANCE_ID: activity-estate
     env_file: *outbox-secrets
     ports:
@@ -1060,7 +1094,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      NOTIFY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/notify
+      NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify
       NOTIFY_PUBLIC_URL: http://localhost:4110
       INSTANCE_ID: notify-migrate
     env_file: *outbox-secrets
@@ -1075,7 +1109,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      NOTIFY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/notify
+      NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify
       NOTIFY_PUBLIC_URL: http://localhost:4110
       # ── SMTP: PASSED THROUGH, NEVER WRITTEN HERE ─────────────────────────────
       #
@@ -1176,7 +1210,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      STUDIO_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/studio
+      STUDIO_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/studio
       INSTANCE_ID: studio-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1190,7 +1224,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      STUDIO_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/studio
+      STUDIO_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/studio
       # The variable this whole block exists for. See the header above.
       STUDIO_ASSET_ROOT: /var/lib/studio/assets
       # STUDIO_ASSET_BASE_URL is deliberately left unset: no HTTP server in this
@@ -1228,7 +1262,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/devplatform
+      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/devplatform
       INSTANCE_ID: devplatform-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1242,7 +1276,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/devplatform
+      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/devplatform
       INSTANCE_ID: devplatform-estate
     env_file: *outbox-secrets
     ports:
@@ -1295,7 +1329,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      INDEXER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/indexer
+      INDEXER_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/indexer
       INSTANCE_ID: indexer-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1309,7 +1343,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      INDEXER_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/indexer
+      INDEXER_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/indexer
       # ══════════════════════════════════════════════════════════════════════
       # THE CUSTODY SET, which is what `GET /v1/custody/:chain/:network/total`
       # sums and what micro-ledger reconciles its custody accounts against.
@@ -1394,7 +1428,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      ANALYTICS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/analytics
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics
       ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: analytics-migrate
@@ -1410,7 +1444,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      ANALYTICS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/analytics
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics
       ANALYTICS_PSEUDONYM_KEY: estate-only-pseudonym-key-00000000000000
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:-estate-placeholder-token-0000000000000000}
       INSTANCE_ID: analytics-estate
@@ -1451,7 +1485,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      CUSTODY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/custody
+      CUSTODY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/custody
       POLICY_BASE_URL: http://policy:4000
       INSTANCE_ID: custody-migrate
     # THE MIGRATOR NEEDS THE KEYRING TOO. `migrator.ts` imports `env.ts`, which
@@ -1473,7 +1507,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      CUSTODY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/custody
+      CUSTODY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/custody
       POLICY_BASE_URL: http://policy:4000
       # OUTBOX_SIGNING_SECRET IS STILL A PLACEHOLDER IN A PUBLIC FILE AND IS A
       # LIVE DEFECT — it is left here rather than fixed alongside the master
@@ -1547,7 +1581,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      WALLET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/wallet
+      WALLET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/wallet
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
@@ -1574,7 +1608,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      WALLET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/wallet
+      WALLET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/wallet
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
@@ -1630,7 +1664,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      SETTLEMENT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/settlement
+      SETTLEMENT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/settlement
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
@@ -1652,7 +1686,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      SETTLEMENT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/settlement
+      SETTLEMENT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/settlement
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
@@ -1690,7 +1724,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
+      BILLING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
       BILLING_PRICING_URL: http://pricing:4000
       INSTANCE_ID: billing-migrate
@@ -1706,7 +1740,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      BILLING_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/billing
+      BILLING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/billing
       BILLING_LEDGER_URL: http://ledger:4000
       BILLING_PRICING_URL: http://pricing:4000
       # The long-lived credential. See wallet's block for what it replaces.
@@ -1730,7 +1764,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      MINT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/mint
+      MINT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/mint
       # Mint prices in USD and settles in EMBER since its migration 6, so it needs
       # pricing at boot exactly as billing does. Missing, mint refuses to start and
       # its migrator never runs — which is how billing spent a morning serving v10
@@ -1752,7 +1786,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      MINT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/mint
+      MINT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/mint
       # Mint prices in USD and settles in EMBER since its migration 6, so it needs
       # pricing at boot exactly as billing does. Missing, mint refuses to start and
       # its migrator never runs — which is how billing spent a morning serving v10
@@ -1804,7 +1838,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      MARKET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/market
+      MARKET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/market
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
@@ -1833,7 +1867,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      MARKET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/market
+      MARKET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/market
       LEDGER_URL: http://ledger:4000
       INDEXER_URL: http://indexer:4000
       POLICY_URL: http://policy:4000
@@ -1936,7 +1970,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      TRADE_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/trade
+      TRADE_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/trade
       LEDGER_URL: http://ledger:4000
       PRICING_URL: http://pricing:4000
       BILLING_URL: http://billing:4000
@@ -1954,7 +1988,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      TRADE_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/trade
+      TRADE_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/trade
       LEDGER_URL: http://ledger:4000
       PRICING_URL: http://pricing:4000
       BILLING_URL: http://billing:4000
@@ -1982,7 +2016,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
+      WORLDS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/worlds
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       INSTANCE_ID: worlds-migrate
@@ -1998,7 +2032,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      WORLDS_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/worlds
+      WORLDS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/worlds
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       # The long-lived credential. See wallet's block for what it replaces.
@@ -2024,7 +2058,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
+      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda
       WORLDS_URL: http://worlds:4000
       BILLING_URL: http://billing:4000
       INSTANCE_ID: nda-migrate
@@ -2040,7 +2074,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      NDA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/nda
+      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda
       WORLDS_URL: http://worlds:4000
       BILLING_URL: http://billing:4000
       # The long-lived credential. See wallet's block for what it replaces.
@@ -2066,7 +2100,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      COMMUNITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/community
+      COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community
       LEDGER_BASE_URL: http://ledger:4000
       POLICY_BASE_URL: http://policy:4000
       COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
@@ -2083,7 +2117,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      COMMUNITY_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/community
+      COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community
       LEDGER_BASE_URL: http://ledger:4000
       POLICY_BASE_URL: http://policy:4000
       COMMUNITY_SERVICE_CREDENTIAL: ${COMMUNITY_SERVICE_CREDENTIAL:-estate-placeholder-token-0000000000000000}
@@ -2167,7 +2201,7 @@ services:
       # same `env.ts`, and a migrator that disagreed with its service about the
       # port would be one more copy of a fact to drift.
       PORT: "4022"
-      TESSERA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/tessera
+      TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera
       # A SECOND variable holding the same value, on purpose. `tessera/src/env.ts:150-160`
       # explains it: outbound signatures and inbound verification are one secret
       # today and stop being one the day the estate moves to per-producer signing
@@ -2186,7 +2220,7 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       PORT: "4022"
-      TESSERA_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/tessera
+      TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera
       STUDIO_URL: http://studio:4000
       LEDGER_URL: http://ledger:4000
       MARKET_URL: http://market:4000
@@ -2271,7 +2305,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/aetherholm
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm
       INSTANCE_ID: aetherholm-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -2285,7 +2319,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/aetherholm
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm
       INSTANCE_ID: aetherholm-estate
     env_file: *outbox-secrets
     ports:
@@ -2336,7 +2370,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      EMBERKIN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/emberkin
+      EMBERKIN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/emberkin
       # The migrator loads the same `env.ts`, which demands these three URLs and
       # the token before it will construct a config — so they are supplied here
       # too. It dials none of them.
@@ -2357,7 +2391,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      EMBERKIN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/emberkin
+      EMBERKIN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/emberkin
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       WORLDS_URL: http://worlds:4000
@@ -2541,7 +2575,7 @@ services:
       # nothing, but it loads the same `env.ts`, and a migrator that disagreed
       # with its service about the port would be one more copy of a fact to drift.
       PORT: "4021"
-      FORESIGHT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/foresight
+      FORESIGHT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/foresight
       # Foresight quotes a stake brought in BTC or ETH against EMBER, so it needs
       # pricing. Left OPTIONAL in the service rather than required, deliberately: a
       # missing quote makes non-EMBER staking inert, where a required variable would
@@ -2576,7 +2610,7 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       PORT: "4021"
-      FORESIGHT_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/foresight
+      FORESIGHT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/foresight
       # Foresight quotes a stake brought in BTC or ETH against EMBER, so it needs
       # pricing. Left OPTIONAL in the service rather than required, deliberately: a
       # missing quote makes non-EMBER staking inert, where a required variable would
@@ -2745,7 +2779,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      BEACON_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/beacon
+      BEACON_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/beacon
       BEACON_TOKEN: estate-only-beacon-breakglass-000000000
       INSTANCE_ID: beacon-migrate
     depends_on:
@@ -2792,7 +2826,7 @@ services:
       # holding two roots would be a name that lies to the next reader, which is
       # the cost this repository keeps paying for elsewhere.
       NODE_EXTRA_CA_CERTS: /etc/ssl/estate/trust.crt
-      BEACON_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/beacon
+      BEACON_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/beacon
       BEACON_TOKEN: estate-only-beacon-breakglass-000000000
       # ── `wallet` AND `custody` ADDED 2026-08-04, AND THE ABSENCE WAS NOT NEUTRAL ────
       #
@@ -2978,7 +3012,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      FAUCET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/faucet
+      FAUCET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/faucet
       # The migrator imports the same `env.ts`, which builds the WHOLE config
       # before it opens a connection — so every required value is supplied here
       # too. It dials none of them and signs nothing.
@@ -3004,7 +3038,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      FAUCET_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/faucet
+      FAUCET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/faucet
       # Inbound, not outbound: the credential Prometheus presents in
       # `x-faucet-token` to read `/metrics`, which publishes the REMAINING
       # BUDGET and is gated for exactly that reason. Never identity-minted —
@@ -3059,7 +3093,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      ADMIN_API_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/admin_api
+      ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api
       IDENTITY_URL: http://identity:4000
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
@@ -3078,7 +3112,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      ADMIN_API_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/admin_api
+      ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api
       IDENTITY_URL: http://identity:4000
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
@@ -3566,7 +3600,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      LANTERN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/lantern
+      LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern
       LANTERN_TOKEN: estate-only-lantern-token-000000000000
       INSTANCE_ID: lantern-migrate
     depends_on:
@@ -3580,7 +3614,7 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      LANTERN_DATABASE_URL: postgres://cloudsforge:estate-only-not-a-real-password@postgres:5432/lantern
+      LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern
       # Thirty-six characters. `requiredSecret` refuses anything under 24 AND
       # refuses a known placeholder by name (`changeme`, `secret`, `token`, …),
       # so this cannot be shortened or made "obvious" without a dead container.

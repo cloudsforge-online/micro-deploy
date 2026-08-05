@@ -176,6 +176,29 @@ jobs:
           fi
           echo "ok: no outbox signing secret is given a value anywhere in the tree"
 
+          # THE SAME DEFECT, A THIRD TIME, AND THE WIDEST OF THE THREE.
+          # `POSTGRES_PASSWORD` was a literal on the `postgres` service AND spelled
+          # out inside 56 `postgres://cloudsforge:...@postgres` connection strings
+          # in the same PUBLIC file — 57 copies of one value, byte-identical on
+          # mainnet and testnet, so testnet access was mainnet access at the
+          # database layer. micro-org#157.
+          #
+          # TWO PATTERNS, because the two spellings fail differently. A guard that
+          # only knew `POSTGRES_PASSWORD` would have passed this file on the day it
+          # was worst: the variable was one line and the URLs were fifty-six, and
+          # it is the URLs that a careless edit reintroduces one at a time.
+          hits=$(git grep -nIE -e 'POSTGRES_PASSWORD *[:=] *[^ $%"'"'"'#<]' \
+                               -e 'postgres(ql)?://[^:@/ ]+:[^$@ ]+@' || true)
+          if [ -n "$hits" ]; then
+            echo "::error::a Postgres password is given a literal value in a tracked file"
+            echo "$hits" | sed -E 's#(PASSWORD *[:=] *).*#\1<redacted>#; s#(://[^:]*:)[^@]*@#\1<redacted>@#'
+            echo "It belongs in compose/estate/tokens.env (mainnet) or tokens.testnet.env"
+            echo "(testnet), both gitignored, interpolated as \${CF_POSTGRES_PASSWORD}."
+            echo "If this value was ever pushed, rotate it: runbooks/runbook-postgres-password.md"
+            exit 1
+          fi
+          echo "ok: no Postgres password is spelled out in any tracked file, variable or URL"
+
           mkdir -p compose/secrets
           umask 077
           for network in mainnet testnet; do
@@ -196,6 +219,21 @@ jobs:
             } > "compose/secrets/outbox.${network}.env"
           done
           echo "ok: two throwaway keyrings and two throwaway bus keys minted for the render steps"
+
+          # AND THE TOKENS FILES, which is where `CF_POSTGRES_PASSWORD` lives now
+          # that it is not a literal. `:?` in the compose file means a missing one
+          # stops `docker compose config` outright, so the render steps below
+          # cannot run on a clean checkout without these — the same argument as
+          # the keyring above, and the reason that `:?` is safe to rely on.
+          #
+          # TWO DIFFERENT VALUES, ON PURPOSE. The point of the rotation was that
+          # the networks stopped sharing one password, and the assertion in the
+          # render step below can only detect a regression to a shared value if
+          # what CI hands the two renders is itself different.
+          mkdir -p compose/estate
+          openssl rand -hex 24 | sed 's/^/CF_POSTGRES_PASSWORD=/' > compose/estate/tokens.env
+          openssl rand -hex 24 | sed 's/^/CF_POSTGRES_PASSWORD=/' > compose/estate/tokens.testnet.env
+          echo "ok: two throwaway, and deliberately different, Postgres passwords minted"
 
       # ── EVERY LONG-RUNNING SERVICE COMES BACK BY ITSELF ──────────────────────
       #
@@ -221,9 +259,17 @@ jobs:
         working-directory: deploy
         run: |
           set -euo pipefail
-          docker compose -f compose/docker-compose.estate.yml config --format json \
+          # BOTH env files, both times. `--env-file` REPLACES the default `.env`
+          # rather than adding to it, so naming only the network file drops every
+          # credential in the tokens file — the defect that cost testnet its whole
+          # keyring in #158, reproduced here in miniature the moment the Postgres
+          # password stopped being a literal.
+          docker compose --env-file compose/mainnet.env \
+            --env-file compose/estate/tokens.env \
+            -f compose/docker-compose.estate.yml config --format json \
             > /tmp/mainnet.json
           docker compose --env-file compose/testnet.env \
+            --env-file compose/estate/tokens.testnet.env \
             -f compose/docker-compose.estate.yml config --format json > /tmp/testnet.json
           python3 - <<'PY'
           import json
@@ -253,6 +299,34 @@ jobs:
               for name, value in m.items():
                   assert len(value) >= 43, f"{service}: {name} is too short to be a generated secret"
           print("ok — mainnet and testnet custody hold separate keyrings, service and migrator alike")
+
+          # THE TWO ESTATES MUST NOT SHARE A POSTGRES PASSWORD. One value stood in
+          # 57 places across BOTH networks (micro-org#157), so testnet access was
+          # mainnet access at the database layer. Compared, never printed — an
+          # assertion that echoes the value it protects has published it.
+          def pg(d):
+              return d['services']['postgres']['environment']['POSTGRES_PASSWORD']
+          mpw, tpw = pg(mn), pg(tn)
+          assert mpw and tpw, "a POSTGRES_PASSWORD rendered EMPTY — the tokens file never reached the render"
+          assert mpw != tpw, "mainnet and testnet rendered the SAME Postgres password"
+          assert min(len(mpw), len(tpw)) >= 24, "a Postgres password is under the 24-character floor"
+
+          # AND EVERY CONNECTION STRING MUST CARRY ITS OWN NETWORK'S VALUE. The
+          # variable was never the hard part: 56 of the 57 copies were spelled out
+          # inside `postgres://cloudsforge:...@postgres` URLs, and that is the form
+          # a careless edit reintroduces one line at a time.
+          def urls(d):
+              return [(s, k, v) for s, spec in d['services'].items()
+                      for k, v in (spec.get('environment') or {}).items()
+                      if isinstance(v, str) and v.startswith('postgres://')]
+          for own, other, d, label in ((mpw, tpw, mn, 'mainnet'), (tpw, mpw, tn, 'testnet')):
+              got = urls(d)
+              assert got, f"{label}: not one connection string rendered"
+              for s, k, v in got:
+                  assert f':{own}@' in v, f"{label}: {s}.{k} does not carry this network's password"
+                  assert f':{other}@' not in v, f"{label}: {s}.{k} carries the OTHER network's password"
+          print(f"ok — the estates hold different Postgres passwords, across "
+                f"{len(urls(mn))} mainnet and {len(urls(tn))} testnet connection strings")
 
           print(f"ok — {len(mp)} mainnet ports, {len(tp)} testnet ports, no overlap; "
                 f"projects {mn['name']} / {tn['name']}")
