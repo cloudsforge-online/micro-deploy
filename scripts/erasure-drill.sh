@@ -61,13 +61,26 @@ dc()   { docker compose -p "$PROJECT" -f "$COMPOSE" "$@"; }
 
 # One place that talks to Postgres. `-qtA` is tuples-only and unaligned, so the
 # answer is the value and not a box drawn around it.
+#
+# ── `</dev/null` IS THE LOAD-BEARING PART OF BOTH OF THESE ────────────────────
+#
+# `docker compose exec` forwards stdin to the container even under `-T`, which
+# disables the TTY and not the stream. Every caller below sits inside a
+# `while read` loop fed by a here-string or a file, so the FIRST psql call
+# swallowed the whole remaining list and the loop ended after one iteration.
+#
+# The symptom is the reason this is a comment and not a one-character fix: the
+# drill reported on service one, said nothing whatsoever about services two
+# through sixteen, and exited 0. A coverage check that silently covers one row
+# is worse than no coverage check, and this file exists to catch exactly that
+# shape of defect elsewhere in the estate.
 psqlq() {
   db=$1; shift
-  dc exec -T postgres psql -qtA -U cloudsforge -d "$db" -c "$*" 2>/dev/null | tr -d ' \r'
+  dc exec -T postgres psql -qtA -U cloudsforge -d "$db" -c "$*" </dev/null 2>/dev/null | tr -d ' \r'
 }
 psqlx() {
   db=$1; shift
-  dc exec -T postgres psql -q -U cloudsforge -d "$db" -c "$*" >/dev/null 2>&1
+  dc exec -T postgres psql -q -U cloudsforge -d "$db" -c "$*" </dev/null >/dev/null 2>&1
 }
 
 [ -f "$REGISTER" ] || { echo "erasure-drill: no register at $REGISTER" >&2; exit 2; }
@@ -87,8 +100,38 @@ EMAIL="erasure-drill-$$@example.test"
 PASS="correct-horse-battery-staple-42"
 reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"handle\":\"erasure$$\",\"password\":\"$PASS\"}")
-utok=$(printf '%s' "$reg" | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
-[ -n "$utok" ] || { bad "register did not issue a token: $(printf '%s' "$reg" | head -c 160)"; exit 1; }
+printf '%s' "$reg" | grep -q '"verificationRequired":true' \
+  || { bad "register did not ask for verification: $(printf '%s' "$reg" | head -c 160)"; exit 1; }
+ok "registered; the address must be proved before the account can act"
+
+# ── PROVING THE ADDRESS, WITHOUT A MAILBOX AND WITHOUT A SHORTCUT ─────────────
+#
+# `email_verification_tokens` stores a `token_hash` and nothing else — identity
+# never keeps the plaintext, correctly — so the token cannot be read out of the
+# table it is checked against. It is read instead from the `verifyUrl` on the
+# `identity.email.verification_requested` event identity itself emitted, which is
+# the same string the email would have carried. The user's own flow, one hop
+# earlier.
+#
+# The token is a CREDENTIAL. It goes from psql into curl inside one pipeline and
+# is never echoed, never written to a file, and never interpolated into a message
+# — including the failure message below, which reports only whether one was found.
+vtok=$(psqlq identity "select payload->>'verifyUrl' from outbox where topic = 'identity.email.verification_requested' and payload->>'email' = '$EMAIL' order by occurred_at desc limit 1" \
+  | sed 's/.*[#?&]token=//; s/&.*//')
+[ -n "$vtok" ] || { bad "no verification event carried a link for the drill account"; exit 1; }
+verified=$(curl -s -X POST "$IDENTITY/auth/email/verify" -H 'content-type: application/json' \
+  -d "{\"token\":\"$vtok\"}")
+unset vtok
+printf '%s' "$verified" | grep -q '"accessToken"' \
+  || { bad "verification was refused"; exit 1; }
+ok "the address is proved through /auth/email/verify"
+
+# Signed in through the ordinary route. `identifier`, not `email` — the field is
+# named for the fact that a handle works here too.
+utok=$(curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
+  -d "{\"identifier\":\"$EMAIL\",\"password\":\"$PASS\"}" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
+[ -n "$utok" ] || { bad "sign-in did not issue a token"; exit 1; }
 
 # Captured while the account still answers: the token dies with the account, and
 # every assertion below is keyed on this id.
@@ -142,12 +185,16 @@ trap 'rm -f "$BASE"' EXIT
 while IFS='|' read -r service database url action seed residual; do
   before=$(psqlq "$database" "${residual//\{\{uid\}\}/$uid}")
   inbox=$(psqlq "$database" "select count(*) from inbox where topic = 'identity.user.deleted'")
-  printf '%s|%s|%s|%s|%s|%s\n' "$service" "$database" "$action" "${before:-0}" "${inbox:-0}" "$residual" >>"$BASE"
-  if [ "${before:-0}" -gt 0 ]; then
-    ok "$service holds $before row(s) naming the subject ($action)"
-  else
-    bad "$service holds NOTHING for the subject — its erasure check would be vacuous"
-  fi
+  printf '%s|%s|%s|%s|%s|%s\n' "$service" "$database" "$action" "${before:-?}" "${inbox:-0}" "$residual" >>"$BASE"
+  # A query that ERRORED and a query that answered zero both come back empty from
+  # psql, and they mean opposite things: one is "the service holds nothing", the
+  # other is "this check never ran". Kept apart, because a check that never ran
+  # must never be reported as a check that passed.
+  case "$before" in
+    '')  bad "$service: the residual query did not run against '$database' — is the service migrated?" ;;
+    0)   bad "$service holds NOTHING for the subject — its erasure check would be vacuous" ;;
+    *)   ok "$service holds $before row(s) naming the subject ($action)" ;;
+  esac
 done <<<"$rows"
 
 echo
@@ -179,7 +226,9 @@ while IFS='|' read -r service database action before inbox_before residual; do
     sleep 1
   done
   ack=$(psqlq "$database" "select count(*) from inbox where topic = 'identity.user.deleted'")
-  if [ "${left:-1}" != "0" ]; then
+  if [ -z "$left" ]; then
+    bad "$service: the residual query did not run against '$database' — nothing was verified"
+  elif [ "$left" != "0" ]; then
     bad "$service: $left row(s) still name the subject after ${DEADLINE}s (was $before) — the subscription, the handler or the relay is broken"
   elif [ "${ack:-0}" -le "${inbox_before:-0}" ]; then
     # Zero rows and no acknowledgement is the shape of a check that passed for
