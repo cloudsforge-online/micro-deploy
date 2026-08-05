@@ -611,6 +611,74 @@ for service in $SERVICES; do
   fi
 done
 
+# ── THIS FILE IS REGENERATED, AND IT IS ALSO THE ONLY LOCAL OVERRIDE CHANNEL ──
+#
+# `release-deploy.sh:60` passes exactly two env files — the estate env and this
+# one, tokens last so tokens win on any shared key. That makes this the ONLY
+# place an operator can override a value that must not be committed, because
+# `compose/mainnet.env` and `compose/testnet.env` are both tracked in a public
+# repository.
+#
+# Every run above builds the file from scratch in `$tmp` and moves it over the
+# old one, so any such override was silently destroyed by the next bootstrap.
+# That is not hypothetical: `EMBER_RPC_URL=http://172.17.0.1:8545` is in
+# mainnet's tokens file right now and is the only reason settlement can reach
+# the chain at all — settlement has no `extra_hosts`, so `host.docker.internal`
+# does not resolve inside it (micro-org#191). A bootstrap would have taken that
+# line out and left every EMBER withdrawal failing to build with
+# `TypeError: fetch failed`, on a chain whose node is healthy and one hop away.
+#
+# So: any key present in the old file and absent from the new one is carried
+# forward, and the NAMES are printed. Names only — a value is a secret until
+# proven otherwise, and this script's output is read over somebody's shoulder.
+#
+# Carrying forward is the safe direction. A key this script manages is always
+# written into `$tmp` above and so is always overwritten by the fresh value;
+# only a key it does NOT manage can reach this branch, and the correct thing to
+# do with a value the deploy does not own is to leave it alone.
+if [ -f "$TOKENS_FILE" ]; then
+  carried=$(python3 - "$TOKENS_FILE" "$tmp" <<'PY'
+import sys
+
+def keys(path):
+    out = []
+    for line in open(path, encoding='utf-8', errors='replace'):
+        line = line.strip()
+        if not line or line.startswith('#') or '=' not in line:
+            continue
+        out.append(line.split('=', 1)[0].strip())
+    return out
+
+old_path, new_path = sys.argv[1], sys.argv[2]
+fresh = set(keys(new_path))
+
+# LAST occurrence wins, which is what compose does with a repeated key in a
+# single `--env-file`. Keeping the first would hand the estate a value the old
+# file was not actually running with.
+kept = {}
+for line in open(old_path, encoding='utf-8', errors='replace'):
+    stripped = line.strip()
+    if not stripped or stripped.startswith('#') or '=' not in stripped:
+        continue
+    name = stripped.split('=', 1)[0].strip()
+    if name in fresh:
+        continue
+    kept[name] = stripped
+
+if kept:
+    with open(new_path, 'a', encoding='utf-8') as tmp:
+        tmp.write('\n# Carried forward from the previous tokens file: this script does not\n')
+        tmp.write('# write these names, and regenerating the file used to delete them.\n')
+        for line in kept.values():
+            tmp.write(line + '\n')
+print(' '.join(kept))
+PY
+)
+  if [ -n "$carried" ]; then
+    ok "carried forward $(printf '%s' "$carried" | wc -w | tr -d ' ') operator-set value(s): $carried"
+  fi
+fi
+
 mv "$tmp" "$TOKENS_FILE"
 ok "minted $minted token(s) and $credentialled credential(s) into $TOKENS_FILE"
 
