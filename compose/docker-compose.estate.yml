@@ -192,6 +192,96 @@ x-outbox-secret-file: &outbox-secret-file
 x-outbox-secrets: &outbox-secrets
   - *outbox-secret-file
 
+# ══════════════════════════════════════════════════════════════════════════════
+# THE TWO VARIABLES WITHOUT WHICH NOTHING IN THIS ESTATE CAN BE WITHDRAWN.
+#
+# Neither appeared anywhere in this file, and between them they closed the money-
+# out path for EVERY asset, not merely for the ones nobody had wired yet. Both
+# are anchors rather than repeated literals because each is read by a service AND
+# by its migrator (both import the eagerly-loaded `env.ts`), and a value that
+# differs between the two is a schema migration running under a configuration the
+# service will not itself accept.
+#
+# ── WALLET_FEE_QUOTES — ABSENT, SO EVERY WITHDRAWAL WAS REFUSED 503 ───────────
+#
+# `wallet/src/env.ts:329` reads it with a default of `'{}'`, `wallet/src/index.ts:189`
+# wires that empty table into `staticFeeQuoter`, and `wallet/src/settlement.ts:100-110`
+# throws `FeeUnavailableError` for any asset the table does not name. The route
+# turns that into 503 `fee_unavailable` at `wallet/src/withdrawals.ts:300-305`,
+# BEFORE the idempotency claim and before any ledger reservation — so the estate
+# has been refusing every withdrawal of every asset, safely and silently, for as
+# long as this file has existed. `micro-beacon` recorded it from the outside
+# (`beacon/src/browser/walletjourneys.ts:29,307`) and was right.
+#
+# ── WHY EMBER IS THE ONLY ENTRY, AND WHY THAT IS NOT AN OVERSIGHT ─────────────
+#
+# `staticFeeQuoter`'s docstring states the rule this file is obeying: an operator
+# STATES the fee, and an asset absent from the table is refused "rather than
+# priced by guessing". This estate runs exactly one chain — `INDEXER_CHAINS=ember:mainnet`
+# in `env/chain.mainnet.env:41` — so EMBER is the only asset whose fee anyone here
+# can measure rather than invent.
+#
+# 21000000000000 is MEASURED, not copied: `eth_gasPrice` on this estate's own
+# hearth-seed answers 0x3b9aca00 (1 gwei) and a plain transfer is 21000 gas, so
+# 21000 x 1e9 = 2.1e13 wei = 0.000021 EMBER at 18 decimals
+# (`contracts/packages/chain/src/index.ts:196`). It agrees with the figure
+# `wallet/src/testsupport.ts:633` has always used, which is a check, not the source.
+#
+# A STRING, not a number: `parseFeeQuotes` converts with `BigInt` and never
+# `Number`, because an EVM fee routinely exceeds `Number.MAX_SAFE_INTEGER` and a
+# float would round the number a withdrawal is priced at.
+#
+# **LTC IS DELIBERATELY ABSENT AND MUST STAY ABSENT UNTIL AN LTC NODE EXISTS.**
+# Custody now derives Litecoin addresses and `micro-wallet` will move LTC
+# (`wallet/src/addresses.ts:99`), so Send offers it — and it is refused here,
+# immediately, at 503, having moved nothing. That is the honest answer: there is
+# no Litecoin node in this estate, so there is no measured LTC fee to state, and
+# stating one anyway is the guess the fail-closed rule exists to forbid. The
+# alternative is worse, not better: a stated fee makes the withdrawal ACCEPTED,
+# reserves the user's balance, and only refunds it an hour later when
+# `SETTLEMENT_STUCK_MINUTES` expires. A loud immediate refusal beats an hour-long
+# hold every time. Add the node, measure `estimatesmartfee`, then add the entry.
+x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000"}'
+
+# ── SETTLEMENT_RPC_URLS — ABSENT, SO NOTHING COULD BE BUILT OR BROADCAST ──────
+#
+# The brief that sent me here said this needed "an `ltc` entry". It needed more
+# than that: the variable was absent ENTIRELY, so `settlement/src/env.ts:314`
+# resolved it to `{}` and EVERY chain was endpointless. Measured on the live
+# estate rather than inferred — settlement's own boot line reports
+# `chains:[{ember,endpoint:false},{eth,false},{btc,false},{sol,false},{ltc,false}]`
+# (`settlement/src/index.ts:58`). So this is not a Litecoin gap. An EMBER
+# withdrawal reaching settlement would `eth_chainId`/`eth_getTransactionCount`/
+# `eth_getBalance` at `settlement/src/evm.ts:633-636`, get `NoEndpointError`, and
+# be classified `endpoint` with a refund at the deadline
+# (`settlement/src/withdrawals.ts:368-374`). `GET /v1/fees/...` 503s for the same
+# reason (`settlement/src/server.ts:373-375,495`).
+#
+# `ember` points at the same node the indexer follows and by the same expression,
+# so the follower and the broadcaster cannot disagree about which chain this is —
+# see the note on `INDEXER_RPC_EMBER_MAINNET` in `env/chain.mainnet.env`.
+#
+# ── `ltc` IS SUPPLIED ONLY WHEN AN OPERATOR HAS A NODE, AND THAT IS THE POINT ─
+#
+# `LTC_RPC_URL` unset leaves the key out, which leaves `NoEndpointError` standing.
+# That refusal is CORRECT and is not being softened: it is a named, permanent,
+# operator-actionable classification, and pointing the key at a node that is not
+# there would replace it with a connection failure classified `unclassified`
+# (`settlement/src/withdrawals.ts:398`) — a round trip per tick, telling nobody.
+# Absent beats wrong. Set the variable and the entry appears with no code change.
+#
+# TWO THINGS BLOCK AN LTC ENDPOINT TODAY AND BOTH ARE FILED, NOT HIDDEN:
+#   1. There is no Litecoin node on this host, and mainnet Litecoin is not a
+#      thing this ProLiant can sync beside two Hearth chains and 60 containers.
+#   2. **The transport cannot authenticate to one even if it existed.**
+#      `settlement/src/registry.ts:161` builds its client with
+#      `baseUrl: parsed.origin`, and `URL.origin` DISCARDS userinfo — so
+#      `http://user:pass@ltc:9332` sends no `Authorization` header and Litecoin
+#      Core answers 401. There is no cookie-auth path either. That is a defect in
+#      `micro-settlement`, which this repository does not own.
+x-settlement-rpc-urls: &settlement-rpc-urls
+  '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}}'
+
 # The JWKS seam. Every service that verifies a token fetches identity's keys over
 # a real network here, which is the thing no unit suite could reach.
 x-identity-trust: &identity-trust
@@ -1360,6 +1450,11 @@ services:
       PRICING_URL: http://pricing:4000
       WALLET_CHALLENGE_DOMAIN: localhost
       WALLET_CHALLENGE_URI: http://localhost:4103
+      # On the MIGRATOR too, and not for symmetry: `src/migrator.ts:20` imports
+      # the eagerly-loaded `env.ts`, so it parses this variable at boot exactly as
+      # the service does. Setting it on one and not the other means a malformed
+      # table migrates the schema and then refuses to serve it.
+      WALLET_FEE_QUOTES: *wallet-fee-quotes
       INSTANCE_ID: wallet-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1395,6 +1490,9 @@ services:
       # renewal treadmill. Both are passed while the migration is in flight;
       # the service logs that it IGNORES the token when it holds a credential.
       WALLET_IDENTITY_CREDENTIAL: ${WALLET_IDENTITY_CREDENTIAL:-}
+      # See the anchor. This one line is the difference between an estate that
+      # can be withdrawn from and one that answers 503 to every asset.
+      WALLET_FEE_QUOTES: *wallet-fee-quotes
       INSTANCE_ID: wallet-estate
     env_file: *outbox-secrets
     ports:
@@ -1428,6 +1526,9 @@ services:
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
       SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # On the migrator for the reason wallet's block gives: `src/migrator.ts:25`
+      # imports the eager `env.ts` and parses this at boot.
+      SETTLEMENT_RPC_URLS: *settlement-rpc-urls
       INSTANCE_ID: settlement-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1446,6 +1547,9 @@ services:
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
       SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # See the anchor. Without this the service boots reporting `endpoint:false`
+      # for all five chains and can neither build nor broadcast anything.
+      SETTLEMENT_RPC_URLS: *settlement-rpc-urls
       INSTANCE_ID: settlement-estate
     env_file: *outbox-secrets
     ports:

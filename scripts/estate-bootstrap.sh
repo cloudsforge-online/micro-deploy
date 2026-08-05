@@ -591,6 +591,28 @@ subscribe indexer    indexer.deposit.confirmed     http://wallet:4000/events
 subscribe settlement settlement.outbound.confirmed http://wallet:4000/events
 subscribe settlement settlement.outbound.failed    http://wallet:4000/events
 
+# ── AND THE RETURN LEG WAS SEEDED WITHOUT THE OUTBOUND ONE ────────────────────
+#
+# The three rows above are settlement ANSWERING wallet. Nothing ever asked it.
+# `wallet.withdrawal.requested` (wallet/src/outbox.ts:76) is the handover itself —
+# step 2 of the four settlement/src/... describes — and settlement consumes it by
+# HTTP push at `POST /v1/events`, dispatching on the topic at
+# `settlement/src/server.ts:523,873`. There was no row pointing at it in any
+# producer's table, so every withdrawal wallet accepted was emitted into a void:
+# reserved through the ledger, written `queued`, and never built by anybody.
+#
+# Grepped before writing, not assumed — `wallet.withdrawal.requested` appeared
+# nowhere in this repository. It is the third of the three things that had to be
+# true for a withdrawal to work, and it is the one no environment variable would
+# have fixed: with `WALLET_FEE_QUOTES` and `SETTLEMENT_RPC_URLS` both supplied and
+# this row missing, a withdrawal still stops dead one hop earlier, and it stops
+# by silence rather than by refusal.
+#
+# NOTE THE PATH. wallet's own intake is `/events` and settlement's is `/v1/events`
+# (`wallet/src/server.ts:441` against `settlement/src/server.ts:523`). The two
+# services genuinely disagree; the rows above are not a template for this one.
+subscribe wallet     wallet.withdrawal.requested   http://settlement:4000/v1/events
+
 echo "── 5d. the audit mirror — admin-api subscribes to the audited topics ────"
 #
 # Claim 9 of the eleven "one platform" tests — an operator answers "where did this
