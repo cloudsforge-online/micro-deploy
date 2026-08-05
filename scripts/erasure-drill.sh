@@ -85,6 +85,68 @@ psqlx() {
 
 [ -f "$REGISTER" ] || { echo "erasure-drill: no register at $REGISTER" >&2; exit 2; }
 
+# ── `SCAN`: THE RESIDUAL QUERY THAT CANNOT BE OUT OF DATE ─────────────────────
+#
+# A per-service list of tables to check is a list that goes stale the first time
+# somebody adds a column, and it can only ever assert what its author remembered.
+# `SCAN` asks the database instead: every text, uuid, varchar and jsonb column in
+# every table in `public`, counted for any row containing the subject's id.
+#
+# It is deliberately blunt and deliberately over-broad. It found the defect three
+# separate agents hit independently — the `outbox` table keeps the user id in its
+# `actor` and its `payload`, in every repository, and no erasure handler had ever
+# touched it. A curated table list would not have, because nobody thinks of the
+# transport as a place personal data comes to rest.
+#
+# `query_to_xml` is how a count is taken over a table named by a row rather than
+# by the query text: plain SQL cannot interpolate an identifier, and this stays
+# a single statement, needing no function, no plpgsql and no privileges the drill
+# does not already have.
+#
+# It is a full scan of every table. That is fine here — a drill database holds
+# tens of rows — and it is not something to point at production.
+#
+# ── DECLARED RETENTION IS SUBTRACTED, NEVER HIDDEN ────────────────────────────
+#
+# Some services keep a row that still names the person, lawfully and on purpose:
+# an invoice under a tax record-keeping obligation, a settlement sweep source
+# whose custody binding is the only way the coin at that address is ever
+# recoverable. Those are decisions with a basis behind them, and each one is
+# argued table by table in its own service's erasure handler.
+#
+# They are handled by NAMING the tables in the register's `retained` column,
+# which does two things at once: `SCAN` skips them, so the service can pass, and
+# the drill COUNTS them separately and prints what survived. A retention nobody
+# can see is indistinguishable from a service that forgot to erase — so the
+# choice here is between a green tick that hides it and a green tick that reads
+# out the exception, and only the second is worth having.
+#
+# A table NOT named here that still holds the subject is a failure. That is the
+# whole force of the mechanism: retention has to be declared in advance, in the
+# file the deploy reads, rather than discovered afterwards in a query result.
+scan_sql() {
+  printf "%s" "select coalesce(sum(n), 0)::int from (select (xpath('/row/c/text()', query_to_xml(format('select count(*) as c from %I.%I where %I::text like %L', table_schema, table_name, column_name, '%$1%'), false, true, '')))[1]::text::int as n from information_schema.columns where table_schema = 'public' and data_type in ('text','uuid','character varying','jsonb') and $2) t"
+}
+
+# `retained` as a SQL predicate. `-` means nothing is retained, which has to read
+# as "exclude no table" rather than as an empty IN list.
+not_retained() {
+  case "$1" in
+    -|'') printf 'true' ;;
+    *)    printf "table_name not in (%s)" "$(printf '%s' "$1" | sed "s/[^,]*/'&'/g")" ;;
+  esac
+}
+
+# The register's `residual` cell, turned into runnable SQL.
+residual_sql() {
+  if [ "$1" = "SCAN" ]; then scan_sql "$2" "$(not_retained "$3")"; else printf '%s' "${1//\{\{uid\}\}/$2}"; fi
+}
+
+# The mirror image: how much the declared exceptions actually kept.
+retained_sql() {
+  scan_sql "$1" "table_name in ($(printf '%s' "$2" | sed "s/[^,]*/'&'/g"))"
+}
+
 # ── the register, read once ───────────────────────────────────────────────────
 #
 # Held in parallel line-oriented strings rather than arrays of structs, because
@@ -93,6 +155,23 @@ psqlx() {
 rows=$(grep -v '^[[:space:]]*#' "$REGISTER" | grep -v '^[[:space:]]*$')
 [ -n "$rows" ] || { echo "erasure-drill: the register has no rows" >&2; exit 2; }
 count=$(printf '%s\n' "$rows" | wc -l | tr -d ' ')
+
+# ── EVERY ROW HAS EXACTLY SIX DELIMITERS, CHECKED BEFORE ANYTHING RUNS ────────
+#
+# The cells hold SQL, and SQL's string concatenation operator is `||` — which is
+# two of this file's field delimiter. Two seeds used it, split into extra fields,
+# and `residual` was then read as a fragment of the seed. That failed loudly
+# ("the residual query did not run") only by luck; a row that split the other way
+# would have run a DIFFERENT service's query and reported a pass.
+#
+# So the shape is checked here, once, before a user is created. Use `concat(a, b)`
+# in a cell, never `||`.
+malformed=$(awk -F'|' 'NF != 7 { print NR ": " $1 " has " (NF - 1) " delimiters, expected 6" }' <<<"$rows")
+if [ -n "$malformed" ]; then
+  echo "erasure-drill: $REGISTER is malformed — a cell almost certainly contains a '|':" >&2
+  printf '  %s\n' "$malformed" >&2
+  exit 2
+fi
 
 echo "── the subject ──────────────────────────────────────────────────────────"
 # `$$` keeps concurrent runs from colliding on the handle's unique index.
@@ -159,7 +238,7 @@ curl -s -X PUT "$NOTIFY/preferences" -H "authorization: Bearer $utok" \
 # `fails` incremented inside it is discarded at the closing `done` and every
 # failure below would be counted as a pass — the exact class of defect this file
 # exists to catch, and it would be catching it in itself.
-while IFS='|' read -r service database url action seed residual; do
+while IFS='|' read -r service database url action retained seed residual; do
   [ "$seed" = "-" ] && continue
   if psqlx "$database" "${seed//\{\{uid\}\}/$uid}"; then
     note "$service: seeded"
@@ -182,18 +261,31 @@ echo "── BEFORE: every service must actually hold the person ─────
 # actually observed, and the two cannot be re-derived differently.
 BASE=$(mktemp -t erasure-drill)
 trap 'rm -f "$BASE"' EXIT
-while IFS='|' read -r service database url action seed residual; do
-  before=$(psqlq "$database" "${residual//\{\{uid\}\}/$uid}")
+while IFS='|' read -r service database url action retained seed residual; do
+  before=$(psqlq "$database" "$(residual_sql "$residual" "$uid" "$retained")")
   inbox=$(psqlq "$database" "select count(*) from inbox where topic = 'identity.user.deleted'")
-  printf '%s|%s|%s|%s|%s|%s\n' "$service" "$database" "$action" "${before:-?}" "${inbox:-0}" "$residual" >>"$BASE"
+  printf '%s|%s|%s|%s|%s|%s|%s\n' "$service" "$database" "$action" "${before:-?}" "${inbox:-0}" "$residual" "$retained" >>"$BASE"
   # A query that ERRORED and a query that answered zero both come back empty from
   # psql, and they mean opposite things: one is "the service holds nothing", the
   # other is "this check never ran". Kept apart, because a check that never ran
   # must never be reported as a check that passed.
-  case "$before" in
-    '')  bad "$service: the residual query did not run against '$database' — is the service migrated?" ;;
-    0)   bad "$service holds NOTHING for the subject — its erasure check would be vacuous" ;;
-    *)   ok "$service holds $before row(s) naming the subject ($action)" ;;
+  case "$residual:$before" in
+    # ── ACK-ONLY: a service that never held the raw subject in the first place ──
+    #
+    # `analytics` is pseudonymous by construction: it stores
+    # HMAC(pepper, "cf.analytics.lookup.v1|" || subject) and never the subject
+    # (`analytics/src/pseudonym.ts:23`), so a scan for the person's id finds
+    # nothing before the deletion as well as after, and asserting "0 rows"
+    # against it would be the vacuous check this drill exists to refuse.
+    #
+    # What IS asserted for it is the acknowledgement: a new inbox row proves the
+    # event reached the handler and the per-subject salt was destroyed. That is
+    # the whole of the fix that mattered here — until its subscription was
+    # seeded, `eraseSubject` was code no event could ever reach.
+    ACK-ONLY:*) note "$service: pseudonymous by construction; asserted by acknowledgement, not by row count" ;;
+    *:'')       bad "$service: the residual query did not run against '$database' — is the service migrated?" ;;
+    *:0)        bad "$service holds NOTHING for the subject — its erasure check would be vacuous" ;;
+    *)          ok "$service holds $before row(s) naming the subject ($action)" ;;
   esac
 done <<<"$rows"
 
@@ -217,12 +309,20 @@ psqlx identity "update jobs set run_at = now() where kind = 'identity.tombstone'
 
 echo
 echo "── AFTER: no row in any database may still name the person ──────────────"
-while IFS='|' read -r service database action before inbox_before residual; do
-  q="${residual//\{\{uid\}\}/$uid}"
+while IFS='|' read -r service database action before inbox_before residual retained; do
+  q=$(residual_sql "$residual" "$uid" "$retained")
   left=""
   for _ in $(seq 1 "$DEADLINE"); do
-    left=$(psqlq "$database" "$q")
-    [ "${left:-1}" = "0" ] && break
+    # ACK-ONLY waits on the acknowledgement instead: there is no row count to
+    # fall, so polling one would exit instantly and prove nothing.
+    if [ "$residual" = "ACK-ONLY" ]; then
+      left=0
+      now=$(psqlq "$database" "select count(*) from inbox where topic = 'identity.user.deleted'")
+      [ "${now:-0}" -gt "${inbox_before:-0}" ] && break
+    else
+      left=$(psqlq "$database" "$q")
+      [ "${left:-1}" = "0" ] && break
+    fi
     sleep 1
   done
   ack=$(psqlq "$database" "select count(*) from inbox where topic = 'identity.user.deleted'")
@@ -235,7 +335,17 @@ while IFS='|' read -r service database action before inbox_before residual; do
     # the wrong reason, so it is a failure and not a pass with a caveat.
     bad "$service: 0 rows name the subject, but NO new inbox row arrived ($inbox_before → $ack) — the event never landed"
   else
-    ok "$service: $before → 0 by $action, acknowledged ($inbox_before → $ack)"
+    if [ "$residual" = "ACK-ONLY" ]; then
+      ok "$service: acknowledged ($inbox_before → $ack) — $action"
+    else
+      ok "$service: $before → 0 by $action, acknowledged ($inbox_before → $ack)"
+    fi
+    # Declared retention, read out rather than left implicit. Counted AFTER the
+    # erasure, so this is what a regulator would actually still find.
+    if [ "$retained" != "-" ] && [ -n "$retained" ]; then
+      kept=$(psqlq "$database" "$(retained_sql "$uid" "$retained")")
+      note "retained by declaration: ${kept:-?} row(s) in $retained — basis in ${service}/src/erasure.ts"
+    fi
   fi
 done <"$BASE"
 

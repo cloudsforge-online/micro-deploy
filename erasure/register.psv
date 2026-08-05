@@ -42,12 +42,20 @@
 #              lives in the service's own handler, table by table, next to the
 #              code that does it, because a rationale in a deploy file is a
 #              rationale that drifts from the behaviour it describes
+#   retained   tables that lawfully KEEP a row naming the person, comma-separated,
+#              or `-`. Declared in advance, here, so that `SCAN` skips them and
+#              the drill can still print what survived. A table not named here
+#              that holds the subject after erasure is a FAILURE — which is what
+#              makes this a declaration rather than an excuse
 #   seed       SQL giving the drill user something to lose, `{{uid}}` substituted.
 #              `-` means the user acquires data through a real flow instead
-#   residual   SQL counting rows that STILL name the subject. MUST be > 0 before
-#              the deletion and 0 after. The before-check is not ceremony: an
-#              assertion over an empty table passes for the wrong reason, and
-#              that is this estate's most-repeated defect
+#   residual   `SCAN`, or SQL counting rows that STILL name the subject. MUST be
+#              > 0 before the deletion and 0 after. The before-check is not
+#              ceremony: an assertion over an empty table passes for the wrong
+#              reason, and that is this estate's most-repeated defect.
+#              `SCAN` asks the database instead of trusting a hand-kept list —
+#              every text, uuid, varchar and jsonb column in every table. It is
+#              what found the `outbox` leak that no handler had ever touched
 #
 # Pipe-separated because the SQL contains commas, spaces and quotes. Bash 3.2 on
 # macOS has no associative arrays — an associative-array port map silently broke
@@ -62,20 +70,20 @@
 # withdrawal to prove settlement forgets a user would test a payment path, not an
 # erasure path. Nothing on the path under test is stubbed or intercepted.
 #
-# service|database|url|action|seed|residual
+# service|database|url|action|retained|seed|residual
 #
 # ── SEEDED SINCE BEFORE THIS FILE ─────────────────────────────────────────────
 # Both erase for real, and both were already proven end to end by estate-verify.
 # They are here so the register is the whole truth rather than the new part of it.
-activity|activity|http://activity:4000/ingest|delete|-|select count(*) from activity_records where user_id = '{{uid}}'
-notify|notify|http://notify:4000/ingest|delete|-|select (select count(*) from notifications where user_id = '{{uid}}') + (select count(*) from channel_targets where user_id = '{{uid}}') + (select count(*) from preferences where user_id = '{{uid}}') + (select count(*) from digests where user_id = '{{uid}}')
+activity|activity|http://activity:4000/ingest|delete|-|-|SCAN
+notify|notify|http://notify:4000/ingest|delete|-|-|SCAN
 #
 # ── HAD A HANDLER, HAD NO SUBSCRIPTION ───────────────────────────────────────
 # `trade` deletes bots and backtests and has done since it was written. Nothing
 # ever delivered the event to it, so the code was correct and unreachable — which
 # is indistinguishable from absent, and is why the register seeds rather than
 # documents.
-trade|trade|http://trade:4000/v1/events|delete|insert into series (id, symbol, asset_code, timeframe, source) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'DRILL', 'EMBER', '1h', 'drill') on conflict do nothing; insert into backtests (user_id, series_id, strategy_id, seed, start_cash, fee_bps, slippage_bps) values ('{{uid}}', '00000000-0000-4000-8000-0000000d5111', 'sma-cross', 1, 100, 10, 10)|select (select count(*) from bots where user_id = '{{uid}}') + (select count(*) from backtests where user_id = '{{uid}}')
+trade|trade|http://trade:4000/v1/events|delete|-|insert into series (id, symbol, asset_code, timeframe, source) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'DRILL', 'EMBER', '1h', 'drill') on conflict do nothing; insert into backtests (user_id, series_id, strategy_id, seed, start_cash, fee_bps, slippage_bps) values ('{{uid}}', '00000000-0000-4000-8000-0000000d5111', 'sma-cross', 1, 100, 10, 10)|SCAN
 #
 # ── REGISTERED BECAUSE IT IS BROKEN, NOT BECAUSE IT WORKS ────────────────────
 # `market`'s handler runs and erases NOTHING: it sets `expires_at` on the
@@ -88,4 +96,117 @@ trade|trade|http://trade:4000/v1/events|delete|insert into series (id, symbol, a
 # would make the drill green by choosing not to look. A red line naming the
 # service and the reason is the honest form of "not done", and it turns green the
 # day market erases rather than the day somebody remembers to add it back.
-market|market|http://market:4000/v1/events|NOT ERASING — expires listings only|insert into listings (seller_subject, asset_kind, item_urn, quantity, item_asset_code, pricing_mode, price, asset_code, settlement_mode, status) values ('user:{{uid}}', 'token', 'cf:mint:token:drill', 1, 'DRILL', 'fixed', 100, 'EMBER', 'custodial', 'draft')|select count(*) from listings where seller_subject = 'user:{{uid}}'
+market|market|http://market:4000/v1/events|NOT ERASING — expires listings only|-|insert into listings (seller_subject, asset_kind, item_urn, quantity, item_asset_code, pricing_mode, price, asset_code, settlement_mode, status) values ('user:{{uid}}', 'token', 'cf:mint:token:drill', 1, 'DRILL', 'fixed', 100, 'EMBER', 'custodial', 'draft')|SCAN
+#
+# ── THE FOURTEEN THAT STORED A PERSON AND HAD NO SUBSCRIBER AT ALL ───────────
+#
+# Each row's reasoning is argued table by table in that service's own
+# `src/erasure.ts` header, next to the code that does it. What is recorded HERE
+# is only the part a deploy needs: where the event goes, and which tables are
+# allowed to still name the person afterwards.
+#
+# billing — purchases, invoices and payouts are retained DE-IDENTIFIED under
+# GDPR Art. 17(3)(b), tax and accounting record-keeping; they are also summed by
+# `recycle.ts`, so deleting them would restate a period already posted to the
+# ledger. subscriptions are retained de-identified AND forced terminal, because
+# an anonymised `active` row goes on charging for ever. entitlements,
+# usage_records and idempotency_keys are deleted — the last held a full copy of
+# the subject inside its `response` jsonb, which no survey of `subject` COLUMNS
+# would ever have found.
+billing|billing|http://billing:4000/v1/events|mixed|-|insert into usage_records (subject, meter, quantity) values ('user:{{uid}}', 'drill', 1)|SCAN
+#
+# settlement — `outbound_transactions` keeps raw_tx, tx_hash and to_address as
+# proof the withdrawal was authorised (Art. 17(3)(b) and (e)); `user_id` is
+# nulled and the row marked. `sweep_sources` is retained WHOLE and is the one
+# declared exception here: the custody binding is the only route back to the coin
+# at that address, and nulling it strands a user's own funds permanently.
+#
+# NOTE `treasuries.custody_user_id` is the literal 'cloudsforge:treasury' and is
+# not a data subject at all — #162 listed it as one.
+settlement|settlement|http://settlement:4000/v1/events|mixed|sweep_sources|insert into sweep_sources (chain, network, address, address_key, custody_chain, custody_family, custody_user_id, custody_order_id) values ('ember', 'mainnet', concat('0x', substr(md5('{{uid}}'), 1, 40)), 'drill-{{uid}}', 'ember', 'evm', '{{uid}}', 'drill-order'); insert into outbound_transactions (purpose, chain, network, from_address, from_address_key, to_address, to_address_key, asset_code, amount, fee, idempotency_key, user_id) values ('withdrawal', 'ember', 'mainnet', '0xd5110000000000000000000000000000000d5111', 'k1', '0xd5120000000000000000000000000000000d5122', 'k2', 'EMBER', 1, 1, concat('drill-', substr(md5('{{uid}}'), 1, 16)), '{{uid}}')|SCAN
+#
+# policy — policy_decisions and freezes are retained under Art. 17(3)(b), the
+# AML obligation, and 17(3)(e). trusted_addresses, velocity_counters and
+# cooling_off_timers are deleted: a saved withdrawal address is a preference,
+# and a preference has no retention basis at all.
+policy|policy|http://policy:4000/v1/events|mixed|policy_decisions,freezes|insert into trusted_addresses (subject, address, effective_at, added_by) values ('user:{{uid}}', '0xd5110000000000000000000000000000000d5111', now(), 'drill')|SCAN
+#
+# tessera — a land registry that forgets who owns a parcel is broken, so parcels,
+# objects, placements, bookings and beacons are ANONYMISED to a random
+# `erased:<uuid>` rather than deleted; entitlements, draft listings and presence
+# are deleted. Nine `on delete restrict` foreign keys make the final
+# `delete from accounts` a completeness PROOF: miss one table and it raises 23503
+# rather than passing quietly.
+tessera|tessera|http://tessera:4022/v1/events|mixed|-|insert into accounts (subject) values ('user:{{uid}}')|SCAN
+#
+# mint — split on whether the token ever reached a chain. A never-broadcast token
+# is deleted outright; a broadcast one keeps `owner_address` and `tx_hash` under
+# Art. 17(3)(b) because the chain is immutable and the record is what reconciles
+# against it, while `owner_subject` and `owner_wallet_id` go.
+mint|mint|http://mint:4000/v1/events|mixed|-|insert into tokens (owner_subject, owner_wallet_id, owner_address, chain, network, name, symbol, decimals, supply, price_shards) values ('user:{{uid}}', 'drill-wallet', '0xd5110000000000000000000000000000000d5111', 'ember', 'mainnet', 'Drill', 'DRL', 0, 1, 1)|SCAN
+#
+# emberkin — the save cascades to battles; achievements go with it. One row is
+# kept, anonymised: `reward_grants` records a ledger posting that was actually
+# made, Art. 17(3)(b). Its `idempotency_key` held the PLAINTEXT user uuid rather
+# than a hash, which is why anonymising the row alone was not enough.
+emberkin|emberkin|http://emberkin:4000/v1/events|mixed|reward_grants|insert into saves (user_id, warden_name, seed, current_region) values ('{{uid}}', 'Drill', 1, 'ember-vale')|SCAN
+#
+# aetherholm — research and alliance membership are deleted. Battles, fleets and
+# cities split on whether a battle pins them: a two-sided battle record is the
+# OTHER participant's history too, so a pinned city is anonymised, renamed and
+# abandoned rather than removed. `chronicles` and `battles` are frozen by trigger,
+# so a redaction records `digest_at_sealing` and `erasures_applied` — visible,
+# rather than a silent edit to an immutable log.
+aetherholm|aetherholm|http://aetherholm:4000/v1/events|mixed|-|insert into archipelagos (id, kind, name, seed, owner_subject, entitlement_id) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'skerry', 'Drill', 1, 'user:{{uid}}', 'drill-ent') on conflict do nothing; insert into research (archipelago_id, user_id, node) values ('00000000-0000-4000-8000-0000000d5111', '{{uid}}', 'drill-node')|SCAN
+#
+# ── HAD A HANDLER NO EVENT COULD REACH, AND MOST OF THEM WERE ALSO WRONG ─────
+#
+# These six were listed in #162 as "handler code no event will ever reach". They
+# were also, with one exception, incorrect — which is the argument for driving a
+# real deletion rather than reading the code: a handler nothing calls is a
+# handler nobody has ever seen be wrong.
+#
+# admin-api — an audit trail exists so that the person it records cannot edit it,
+# and `audit_events` is hash-chained over `subject_id` and `payload`, so removing
+# a subject would break the chain that makes the log evidence. Retained under
+# Art. 17(3)(b) and (e), with the reachable half implemented instead: an erasure
+# register, an Art. 18 restriction at the read surface, and real anonymisation of
+# `approvals`, which is not chained.
+admin-api|admin_api|http://admin-api:4000/v1/events|mixed|audit_events,audit_subject_erasures|insert into approvals (action, subject_kind, subject_id, reason_code, reason, requested_by, expires_at) values ('drill', 'user', '{{uid}}', 'drill', 'drill', 'user:00000000-0000-4000-8000-0000000d5100', now() + interval '1 day')|SCAN
+#
+# devplatform — the handler was an explicit no-op returning `{revoked: 0}`, the
+# worst of the failure modes because it reports success. Its REASONING was right
+# (an API key belongs to the organisation, not to the developer who created it,
+# so revoking it on their departure would break the org's integrations) — the
+# defect was that `api_keys.created_by` kept the departed developer's
+# `user:<uuid>` on a live credential. The key stays live; the attribution goes.
+devplatform|devplatform|http://devplatform:4000/v1/events|anonymise|-|insert into developer_orgs (id, identity_org_id, name, slug) values ('00000000-0000-4000-8000-0000000d5100'::uuid, 'drill-org', 'Drill', 'drill-org') on conflict do nothing; insert into projects (id, org_id, name, slug) values ('00000000-0000-4000-8000-0000000d5111'::uuid, '00000000-0000-4000-8000-0000000d5100', 'Drill', 'drill') on conflict do nothing; insert into environments (id, project_id, name) values ('00000000-0000-4000-8000-0000000d5122'::uuid, '00000000-0000-4000-8000-0000000d5111', 'test') on conflict do nothing; insert into api_keys (environment_id, project_id, environment, lookup_id, display, secret_algo, secret_salt, secret_hash, name, created_by) values ('00000000-0000-4000-8000-0000000d5122', '00000000-0000-4000-8000-0000000d5111', 'test', translate(substr(md5('{{uid}}'), 1, 16), '0189', 'wxyz'), concat('cfk_test_', translate(substr(md5('{{uid}}'), 1, 16), '0189', 'wxyz')), 'scrypt$N=16384,r=8,p=1,keyLen=64', '00112233445566778899aabbccddeeff', '00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff', 'drill', 'user:{{uid}}')|SCAN
+#
+# nda — not a non-disclosure service: it is *Ninety Days After*, a world
+# simulation. Its handler read `payload.subject`; identity sends `userId`, so
+# every real deletion erased nothing and answered 202. Its own test built an
+# envelope carrying `subject`, so the test and the handler agreed with each other
+# and neither agreed with the producer.
+nda|nda|http://nda:4000/v1/events|delete|-|insert into worlds (id, name, season_length, width, height, tick_interval_minutes, seed) values ('drill-world', 'Drill', 30, 16, 16, 60, 'drill') on conflict do nothing; insert into players (id, world_id, user_id, handle, homestead_x, homestead_y, resources) values (concat('drill-', substr(md5('{{uid}}'), 1, 12)), 'drill-world', '{{uid}}', 'drill', 0, 0, '{}'::jsonb)|SCAN
+#
+# community — pseudonymisation, which is defensible for public posts and must be
+# described as what it is rather than as deletion. It reached 4 of the 11 columns
+# that named the person: `communities.owner_subject`, both `delegations`
+# subjects, `proposals.target_subject`, `executions.executed_by` and the body of
+# `discussion_posts` all survived, the last because `redacted_at` masked on READ
+# only — the text was still in the table.
+community|community|http://community:4000/v1/events|pseudonymise|-|insert into communities (id, slug, name, kind, owner_subject, join_policy, governance_model) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'drill', 'Drill', 'guild', 'user:{{uid}}', 'open', 'one_member_one_vote') on conflict do nothing; insert into memberships (community_id, subject) values ('00000000-0000-4000-8000-0000000d5111', 'user:{{uid}}')|SCAN
+#
+# analytics — the only one whose handler was RIGHT in shape and wrong in aim: the
+# subject came from `envelope.actor`, which is whoever REQUESTED the deletion. A
+# support-raised erasure destroyed the operator's salt while the deleted account
+# stayed attributable.
+#
+# ACK-ONLY, and that is not a weaker check — it is the honest one. This service
+# never stores the raw subject at all: `pseudonym.ts:23` keys on
+# HMAC(pepper, "cf.analytics.lookup.v1|" || subject). Scanning for the person's
+# id finds nothing before the deletion as well as after, so asserting zero would
+# be exactly the vacuous check the BEFORE phase exists to refuse. The
+# acknowledgement is what proves the seam: until this row existed, `eraseSubject`
+# was code no event could reach.
+analytics|analytics|http://analytics:4000/ingest|destroy the per-subject salt|-|-|ACK-ONLY
