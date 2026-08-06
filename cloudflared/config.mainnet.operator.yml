@@ -61,8 +61,8 @@ ingress:
   # depends on.
   #
   # Pay's `/internal` routes take a `userId` as a PARAMETER rather than reading
-  # it from an authenticated session (`billing/src/server.ts:505`), so reaching
-  # one from off the box is an act-as-anyone primitive. `policy.yml:200` already
+  # it from an authenticated session (`billing/src/server.ts`), so reaching
+  # one from off the box is an act-as-anyone primitive. `policy.yml` already
   # refuses it inside the host at priority 100000; this is the second copy that
   # three files in this repository have spent months claiming already existed.
   #

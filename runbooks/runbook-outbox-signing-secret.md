@@ -37,7 +37,7 @@ They live in `compose/secrets/outbox.${CF_EMBER_NETWORK:-mainnet}.env`, mode
 values and always must: one estate's key must not authenticate deliveries on the
 other.
 
-Not `tokens.env`, for two measured reasons: `estate-bootstrap.sh:506` rewrites
+Not `tokens.env`, for two measured reasons: `estate-bootstrap.sh` rewrites
 that file wholesale, and the testnet stack is brought up with `--env-file
 compose/testnet.env`, which REPLACES the default `.env` rather than adding to it,
 so a value there reaches exactly one of the two live stacks.
@@ -49,9 +49,9 @@ asserts every run that no signing secret is a literal in the compose file.
 
 ## Why it can be rotated at all: the verifier takes a list
 
-`contracts/packages/events/src/index.ts:1412` — `verifyDelivery` accepts
+`contracts/packages/events/src/index.ts` — `verifyDelivery` accepts
 `secrets: string | readonly string[]`, tries every candidate with a timing-safe
-comparison (`:1444-1455`) and returns `keyIndex` naming which one matched.
+comparison and returns `keyIndex` naming which one matched.
 
 **That `keyIndex` is the instrument this runbook depends on.** It is how you know
 a rotation has finished rather than believing it has.
@@ -87,7 +87,7 @@ message.
 ## Events in flight
 
 **Signatures are computed at DELIVERY time, not at enqueue time**
-(`ledger/src/outbox.ts:297` — `signEvent(...)` is inside the relay loop; the
+(`ledger/src/outbox.ts` — `signEvent(...)` is inside the relay loop; the
 outbox table has no signature column). So a row that has been queued for an hour
 is signed with whatever key the producer holds when it is finally sent, and there
 is no such thing as a stored old-key signature waiting to be rejected.

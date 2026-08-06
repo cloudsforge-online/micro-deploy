@@ -123,7 +123,7 @@ function fileSourcesFor(env: Env): readonly FileSource[] {
  *
  * The database is the independent second opinion, and it is the RIGHT one: `custody_keys` and
  * `custody_seeds` are the rows that say which blobs must exist. `FileVault` writes one `key.enc`
- * per slot (`custody/src/vault.ts:70-79`), so the counts are equal by construction and a
+ * per slot (`custody/src/vault.ts`), so the counts are equal by construction and a
  * disagreement is a real defect rather than a tolerance.
  *
  * **It throws rather than warns.** A warning on a backup that cannot restore custody is a warning

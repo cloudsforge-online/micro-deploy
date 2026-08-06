@@ -24,11 +24,11 @@
  * `POST /v1/listings/:id/activate` does not merely flip a status. It posts a
  * reservation to micro-ledger in the same transaction, moving `quantity` of the
  * listing's `itemAssetCode` from the seller's `available` account to their
- * `reserved` one (`market/src/listings.ts:538-552` → `escrow.ts:138-169`). The
+ * `reserved` one (`market/src/listings.ts` → `escrow.ts`). The
  * schema then makes the rule permanent: `listings_active_is_escrowed` — "a
  * listing cannot be active unless it names the ledger reservation holding its
  * item. Nothing is ever for sale that the seller has not actually put up"
- * (`market/README.md:64`). A seller who holds nothing gets a 402 and the listing
+ * (`market/README.md`). A seller who holds nothing gets a 402 and the listing
  * stays a draft.
  *
  * The operator holds none of these item assets in the ledger, and there are
@@ -53,19 +53,19 @@
  * from being live. That posting is not this script's to invent. `market-web`'s
  * browse page reads `status=active` by default and deliberately does not show
  * drafts — "a browse page that asked for drafts would be showing sellers'
- * unpublished work to buyers" (`market-web/src/pages/browse.tsx:33-35`) — so the
+ * unpublished work to buyers" (`market-web/src/pages/browse.tsx`) — so the
  * public surface stays empty and the reason is a real blocker in the estate
  * rather than a gap in the seeding.
  *
  * ── IDEMPOTENCY ─────────────────────────────────────────────────────────────
  *
  *   * `POST /v1/listings` REQUIRES an `Idempotency-Key` of 8-200 characters
- *     matching `[A-Za-z0-9_:.-]` (`market/src/server.ts:260, 1206-1234`), and a
+ *     matching `[A-Za-z0-9_:.-]` (`market/src/server.ts, 1206-1234`), and a
  *     replay comes back 200 with `replayed: true`. Fixed keys are used so a
  *     retry inside one run replays.
  *   * `POST /v1/collections` has NO idempotency wrapper, and a duplicate `slug`
  *     is an unmapped unique violation that surfaces as **500 internal**
- *     (`server.ts:502-503`) rather than a 409. So the collection is listed for
+ *     (`server.ts`) rather than a 409. So the collection is listed for
  *     first, always.
  *   * Listings have no unique constraint of any kind, so beyond the key they are
  *     matched client-side on `itemUrn` — and the list route defaults to
@@ -126,7 +126,7 @@ const COLLECTION = {
     'and not a simulated market. The art is from the estate\'s existing FLUX 2 Pro asset sets; ' +
     'nothing was generated for the shop.',
   // Empty rather than a made-up split: a non-empty royalties array must sum to
-  // exactly 10000 across real subjects (`listings.ts:197-212`), and inventing a
+  // exactly 10000 across real subjects (`listings.ts`), and inventing a
   // recipient would be inventing a party.
   royalties: [],
 }
@@ -139,7 +139,7 @@ const COLLECTION = {
  * activated in this estate at all — `INDEXER_CHAINS` is unset, so the escrow
  * status check fails closed with 503.
  *
- * Amounts cross the wire as decimal strings (`money.ts:222-227` refuses a JSON
+ * Amounts cross the wire as decimal strings (`money.ts` refuses a JSON
  * number outright); bps are JSON numbers. Prices are in SHARD.
  */
 const LISTINGS = [

@@ -75,7 +75,7 @@ const RPC = process.env.EMBER_HOST_RPC || 'http://127.0.0.1:8545';
 //
 // This script asserted 7412 as a literal, from when there was one chain. There
 // are two now — `hearth`/7411 on the mainnet estate and `hearth-testnet`/7412 on
-// the testnet estate (`hearth/node/src/params.js:37-38`) — and 8545 is the
+// the testnet estate (`hearth/node/src/params.js`) — and 8545 is the
 // mainnet seed, so the DEFAULT here had to move with `EMBER_HOST_RPC`'s default
 // or the script would refuse the very node it points at.
 //
@@ -169,7 +169,7 @@ const hexToBig = (h) => BigInt(h);
 /**
  * The owner's mining key.
  *
- * Read, used to sign, and never echoed. `evmnode.js:78` writes this file at mode
+ * Read, used to sign, and never echoed. `evmnode.js` writes this file at mode
  * 0600 the first time the miner starts; if it is not there the miner has never
  * run and there is nothing to spend.
  */
@@ -249,8 +249,8 @@ async function http(url, options = {}, attempts = 10) {
  *
  * `wallet` is the honest principal rather than a convenient one: it is the
  * service that labels deposit addresses `deposit:<userId>`
- * (`wallet/src/deposits.ts:284`) and that debits the ledger's custody account
- * when one confirms (`:627`). Seeding is that flow, done by hand.
+ * (`wallet/src/deposits.ts`) and that debits the ledger's custody account
+ * when one confirms. Seeding is that flow, done by hand.
  */
 async function walletToken() {
   const signin = await http(`${IDENTITY}/auth/login`, {
@@ -296,7 +296,7 @@ async function seedUser() {
 /**
  * A wallet token that is still valid, minting a new one before the old expires.
  *
- * **A service token lives 600 seconds** (identity/src/tokens.ts:28) and the wait
+ * **A service token lives 600 seconds** (identity/src/tokens.ts) and the wait
  * for the confirmed aggregate below can run for twenty minutes. Holding one
  * token across that would produce a 401 in the middle of a wait — which the
  * custody route reports the same way it reports every other refusal, so the

@@ -8,15 +8,15 @@
 #
 # ── WHY ONLY THE SEED ─────────────────────────────────────────────────────────
 #
-# `hearth/docker-compose.testnet.yml` declares three services: the seed (:65) and
+# `hearth/docker-compose.testnet.yml` declares three services: the seed and
 # two miners (:84, :103), each with `HEARTH_MINE: "1"` and `HEARTH_THROTTLE: 0.6`
 # (:91-92, :110-111). On this host — 4 cores, already carrying 46 estate services
 # and 7 telemetry containers — those two miners took the load average to 37. This
 # machine is the SEED and the ecosystem; the owner mines from their Mac and PC
-# with `hearth-mine` over HTTPS (`hearth/node/bin/hearth-mine.js:3-13`).
+# with `hearth-mine` over HTTPS (`hearth/node/bin/hearth-mine.js`).
 #
 # The seed needs no `HEARTH_MINE: "0"` override: it never had the variable, and
-# `hearth/node/bin/hearthd.js:68` arms mining only on the exact string `"1"`.
+# `hearth/node/bin/hearthd.js` arms mining only on the exact string `"1"`.
 # Naming the service on the command line is what keeps the miners down —
 # `depends_on` runs seed→miner, never the reverse.
 #
@@ -27,7 +27,7 @@
 # here is meant to be reachable from the LAN, only through the gateway.
 #
 # But loopback alone is not enough either. The gateway and the estate reach the
-# chain as `host.docker.internal`, which `docker-compose.gateway.yml:218-219`
+# chain as `host.docker.internal`, which `docker-compose.gateway.yml`
 # maps to `host-gateway` — measured on this host as 172.17.0.1, the default
 # bridge. A process bound to 127.0.0.1 does not accept on 172.17.0.1, so a
 # loopback-only node answers the operator's curl and 502s every container.
@@ -44,7 +44,7 @@ services:
     # ── THE NAME, WHICH IS NOT FREE ───────────────────────────────────────────
     #
     # `container_name: hearth-testnet-seed` is a LITERAL at
-    # `hearth/docker-compose.testnet.yml:67`, and container names are global to
+    # `hearth/docker-compose.testnet.yml`, and container names are global to
     # the daemon. The legacy `stack` project — working dir
     # /home/malf/dev/fullstack/stack, deliberately stopped with `restart=no` —
     # still holds that exact name on an exited container, so a plain `up` here
@@ -68,7 +68,7 @@ services:
       # behind holds 1827 blocks of UTXO history — `ember1…` outputs and a
       # 44-byte DER Ed25519 `coinbasePub` (`302a300506032b6570…`), not the
       # 65-byte uncompressed secp256k1 key the account model requires at
-      # `node/src/chain/miner.js:141`. Subdirectory, so the two can never meet.
+      # `node/src/chain/miner.js`. Subdirectory, so the two can never meet.
       #
       # ── AND NOW A THIRD SUBDIRECTORY, FOR A THIRD CHAIN ────────────────────
       #
@@ -84,7 +84,7 @@ services:
       HEARTH_DATA: /data/hearth-mainnet
       # ── THE NETWORK, WHICH IS THE CHAIN ID ────────────────────────────────
       #
-      # `hearth/docker-compose.testnet.yml:69` sets `hearth-testnet` for all three
+      # `hearth/docker-compose.testnet.yml` sets `hearth-testnet` for all three
       # of its services, and this overlay used to inherit it — so the MAINNET
       # estate's seed answered `"network":"hearth-testnet","chainId":7412`, the
       # same id as the testnet estate's own seed. Two independent chains (separate
@@ -94,15 +94,15 @@ services:
       # the chain id and to nothing else. Acceptable while both were test chains;
       # not acceptable for the one called mainnet.
       #
-      # `hearth/node/src/params.js:37-38` maps `hearth` to 7411 and
-      # `hearth-testnet` to 7412, and `:8` reads `HEARTH_NETWORK` with `hearth` as
+      # `hearth/node/src/params.js` maps `hearth` to 7411 and
+      # `hearth-testnet` to 7412, and reads `HEARTH_NETWORK` with `hearth` as
       # its default — so this line restores that default rather than inventing
       # anything. An unregistered value is a hard error at require() time
-      # (`params.js:52-58`), which is the failure mode this deserves.
+      # (`params.js`), which is the failure mode this deserves.
       #
       # THE ESTATE HAS TO FOLLOW, and does: `compose/env/chain.mainnet.env` sets
       # `INDEXER_CHAINS=ember:mainnet`, which is what makes
-      # `indexer/src/evm.ts:471-480` assert 7411 rather than 7412 before it writes
+      # `indexer/src/evm.ts` assert 7411 rather than 7412 before it writes
       # a block, and `docker-compose.miners.yml` mines this node as `hearth`.
       HEARTH_NETWORK: "hearth"
     ports: !override
@@ -120,13 +120,13 @@ services:
       # ── IT PROBES 8545 TOO, BECAUSE THAT IS THE PORT THE ESTATE ACTUALLY USES ──
       #
       # This was `GET :8645/info` alone. `/info` is still the REST port's cheapest
-      # truthful answer (`evmnode.js:434`), but 8645 is not the port anything in
+      # truthful answer (`evmnode.js`), but 8645 is not the port anything in
       # this estate talks to: `CF_RPC_UPSTREAM`, the indexer, foresight and the
       # gateway all speak Ethereum JSON-RPC on 8545, and only `/mining/*` uses REST.
       #
       # The two are SEPARATE `http.createServer` listeners in one process —
-      # `evmnode.js:411` (`listenRest`) and `:214` (`listenJsonRpc`) — and a bind
-      # failure on either is reported with `this.error(...)` at `:414` and `:217`
+      # `evmnode.js` (`listenRest`) and (`listenJsonRpc`) — and a bind
+      # failure on either is reported with `this.error(...)` and
       # and is NOT fatal. So a node whose JSON-RPC never came up keeps running,
       # keeps answering `/info` 200, and reports HEALTHY while every consumer 502s.
       # A green light on a component nobody can reach is the failure this estate has
@@ -135,7 +135,7 @@ services:
       # ── AND IT PINS THE CHAIN ID, WHICH IS THE ONE THING /info CANNOT SELF-CHECK ─
       #
       # 7411 is `0x1cf3`, the id `HEARTH_NETWORK: "hearth"` above selects through
-      # `params.js:37-38`. Pinning it here catches exactly the defect fixed in
+      # `params.js`. Pinning it here catches exactly the defect fixed in
       # `fix(chain): mainnet and testnet were two chains sharing one identity`: this
       # seed answered `"network":"hearth-testnet","chainId":7412` for weeks while
       # serving happily, so EIP-155 made every mainnet signature replayable on

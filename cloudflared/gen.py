@@ -180,11 +180,11 @@ ENVIRONMENTS = {
 # not the origin this estate uses and has not been since the `tunnel` entrypoint
 # was added: cloudflared is given a PLAIN HTTP url so that hop does no handshake
 # and needs no certificate at all — `compose/env/traefik.env` says so where it
-# deletes `CF_TLS_DEFAULT_CERT`, and `compose/docker-compose.gateway.yml:237`
+# deletes `CF_TLS_DEFAULT_CERT`, and `compose/docker-compose.gateway.yml`
 # defines `--entrypoints.tunnel.address=:81` for exactly this.
 #
 # The port is NOT 81. That is the CONTAINER port; the published loopback bind is
-# `${CF_GW_PORT_BASE}81` (docker-compose.gateway.yml:302), which is 9081 on
+# `${CF_GW_PORT_BASE}81` (docker-compose.gateway.yml), which is 9081 on
 # mainnet and 9181 on testnet — and `81` was chosen over continuing the 95/96/97
 # run because 9098/9099 are already the otel collector's.
 #
@@ -475,8 +475,8 @@ def render(env, tunnel_name, rules, *, note):
   # depends on.
   #
   # Pay's `/internal` routes take a `userId` as a PARAMETER rather than reading
-  # it from an authenticated session (`billing/src/server.ts:505`), so reaching
-  # one from off the box is an act-as-anyone primitive. `policy.yml:200` already
+  # it from an authenticated session (`billing/src/server.ts`), so reaching
+  # one from off the box is an act-as-anyone primitive. `policy.yml` already
   # refuses it inside the host at priority 100000; this is the second copy that
   # three files in this repository have spent months claiming already existed.
   #
@@ -533,7 +533,7 @@ PUBLIC_NOTE = """\
 # custody's export ceremony reads `amr` and `auth_time` off it
 # (custody/src/exports.ts, gates 4 and 6) — so the caller is a first-party
 # browser on `hub.<apex>` and needs the app CORS allowlist, which `api.<apex>`
-# deliberately does not carry. `gateway/dynamic/estate-web.yml:669` argues this
+# deliberately does not carry. `gateway/dynamic/estate-web.yml` argues this
 # at length. Their protection is the token, the CORS allowlist, and the
 # `/internal` refusal above — not obscurity."""
 

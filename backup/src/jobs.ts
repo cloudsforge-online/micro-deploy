@@ -4,7 +4,7 @@
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * **ONE QUEUE, TWO PROCESSES, NO HANDLER COLLISION.**
  *
- * `JobRunner.claim()` filters by REGISTERED kind (`runtime/packages/jobs/src/index.ts:377`). This
+ * `JobRunner.claim()` filters by REGISTERED kind (`runtime/packages/jobs/src/index.ts`). This
  * process registers only `backup.*`; admin-api registers only its own four. Neither can take the
  * other's work even though both poll the same `jobs` table in the same database, and neither needs
  * to know the other exists. Migration 10's header states the consequence: if no runner is deployed,

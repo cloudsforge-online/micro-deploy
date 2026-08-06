@@ -2,7 +2,7 @@
 
 This directory is mounted read-only into `tessera-web` at
 `/usr/share/nginx/html/world-assets`, which is the path
-`tessera-web/src/lib/hosts.ts:136` resolves every sprite under and
+`tessera-web/src/lib/hosts.ts` resolves every sprite under and
 `tessera-web/nginx.conf:73` serves with `try_files $uri =404`.
 
 **It held one README until 2026-08-05, and that was a live defect for as long as

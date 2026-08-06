@@ -21,7 +21,7 @@
  * That distinction matters for two entries in particular, which the registry
  * calls out: `lantern` and `beacon` are `inSwitcher: true` and serve NO page —
  * both answer `404 application/json` on their own hostname, because
- * `estate-web.yml:432` routes the whole beacon host to the API. Probing them for
+ * `estate-web.yml` routes the whole beacon host to the API. Probing them for
  * a 200 would have manufactured two permanently red probes out of a
  * misunderstanding. `servesUi` excludes them, and it is right to.
  *
@@ -32,7 +32,7 @@
  *
  * ── IDEMPOTENT BY CONSTRUCTION ───────────────────────────────────────────────
  *
- * `PUT /v1/probes/:name` is an upsert keyed on the name (`beacon/src/server.ts:503`).
+ * `PUT /v1/probes/:name` is an upsert keyed on the name (`beacon/src/server.ts`).
  * There is nothing to check first and nothing to duplicate: running this twice
  * writes the same nineteen rows twice and the count does not move.
  *
@@ -91,7 +91,7 @@ import { ok, bad, skip, note, head, WEB_SUFFIX, SITE_HOST } from './lib.mjs'
 
 /**
  * Beacon is not in the shared SERVICES map because it is the only consumer, and
- * because its host is API-only: `estate-web.yml:432` says in its own words that
+ * because its host is API-only: `estate-web.yml` says in its own words that
  * "no bundle is served at `beacon<suffix>`" and routes the whole host to the
  * service. So this is the front door, not a loopback shortcut.
  */
@@ -156,8 +156,8 @@ function urlFor(surface) {
  *
  * `worlds.titles` is the read micro-org#181 names, and it clears all three tests:
  *
- *   1. `worlds/src/server.ts:531` — `define('GET', '/v1/titles', …)` makes NO
- *      `authenticate` call. Its sibling `POST` at `:548` does, immediately, so
+ *   1. `worlds/src/server.ts` — `define('GET', '/v1/titles', …)` makes NO
+ *      `authenticate` call. Its sibling `POST` does, immediately, so
  *      the omission is a decision rather than an oversight.
  *   2. It calls `listTitles(deps.sql, …)`. One table, one query — the exact read
  *      that was failing during #150 while every bundle probe stayed green.

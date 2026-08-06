@@ -64,7 +64,7 @@ docker compose -p cfmicro \
 ```
 
 Host ports are `4100 + the service's index in micro-org's registry` (`portFor`,
-`cfctl.ts:868`) — derived from the one list that orders every repository rather
+`cfctl.ts`) — derived from the one list that orders every repository rather
 than picked, because a hand-chosen port has already collided twice here. They
 bind to `127.0.0.1` only. The frontends continue that sequence at 4126.
 
@@ -89,7 +89,7 @@ They are reachable two ways, and only one of them is a product:
 
 | | Address | What works |
 | --- | --- | --- |
-| Direct | `127.0.0.1:4126` … `:4141` | the bundle, its assets, its 404 semantics |
+| Direct | `127.0.0.1:4126` … | the bundle, its assets, its 404 semantics |
 | Through the gateway | `https://hub.$CF_WEB_APEX` and the other fourteen | **all of the above plus every API call the page makes** |
 
 The distinction is not cosmetic. `cloudsforgeHosts()` reads
@@ -116,15 +116,15 @@ is easy to get wrong:
 | JSON-RPC | `https://rpc.cloudsforge.online` | `https://rpc-testnet.cloudsforge.online` |
 | Chain id | **7411** (`0x1cf3`) | **7412** (`0x1cf4`) |
 | P2P | — | `wss://p2p-testnet.cloudsforge.online/p2p` (only `/p2p` is routed) |
-| Tunnel origin | `http://127.0.0.1:9081` (`cloudflared/config.mainnet.operator.yml:76`) | `http://127.0.0.1:9181` (`cloudflared/config.testnet.public.yml:69`) |
+| Tunnel origin | `http://127.0.0.1:9081` (`cloudflared/config.mainnet.operator.yml`) | `http://127.0.0.1:9181` (`cloudflared/config.testnet.public.yml`) |
 
 **Testnet hostnames are SINGLE-LABEL.** `<surface>.testnet.cloudsforge.online`
 is dead and cannot be revived without Advanced Certificate Manager: Cloudflare's
 Universal SSL is `*.cloudsforge.online` plus the apex, a wildcard matches exactly
 one label, so a two-label name fails the handshake at the edge before a request
-reaches this estate (`gateway/dynamic/tls.yml:76`). `testnet.cloudsforge.online`
+reaches this estate (`gateway/dynamic/tls.yml`). `testnet.cloudsforge.online`
 survives because it is itself one label. `envLabel()` and `splitEnvLabel()` in
-`ui/packages/ui/src/surfaces.ts:1059-1078` are the composer and its inverse, and
+`ui/packages/ui/src/surfaces.ts` are the composer and its inverse, and
 `scripts/check-apex-prefix.py` reads `ENV_LABELS` from that module so there is
 one list rather than two that drift.
 
@@ -156,13 +156,13 @@ over" rather than "there is no such service here".
 
 `IDENTITY_HANDOFF_ORIGINS` defaulted to `''` and no compose file in this
 repository set it. `isAllowedOrigin` is `env.handoffOrigins.includes(origin)`
-over an empty array (`identity/src/handoff.ts:32`), so `createHandoffCode`
+over an empty array (`identity/src/handoff.ts`), so `createHandoffCode`
 returned null for **every** origin and `POST /auth/handoff` answered 403 to
 everyone. A person could sign in at Hub and reach **no other surface** — which
 is where most of the 86 tier-T3 scenarios go on their second step.
 
 Nothing caught it because nothing in this repository had ever minted a hand-off
-code: identity's own suite sets the variable in `testsupport.ts:47`, so the
+code: identity's own suite sets the variable in `testsupport.ts`, so the
 empty-by-default case was only ever exercised by a deployment, and there had
 never been one. It is now set on identity to the fifteen surface origins this
 file serves, and `estate-verify.sh` drives the whole hand-off — mint at Hub,
@@ -196,8 +196,8 @@ the first admin is a direct `UPDATE` against identity's database.
 buried in a verification script where a production runbook cannot find it.
 
 > **The ten-minute cliff.** identity issues service tokens with a 600-second TTL
-> (`identity/src/tokens.ts:28`) and nothing re-mints one. wallet built the seam —
-> `const token = () => env.serviceToken` (`wallet/src/index.ts:90`) is a function
+> (`identity/src/tokens.ts`) and nothing re-mints one. wallet built the seam —
+> `const token = () => env.serviceToken` (`wallet/src/index.ts`) is a function
 > called per request precisely so a short-lived token could rotate — but it
 > returns a static environment string, and its own comment says the rotation
 > waits for "when identity starts minting them". Ten minutes after the bootstrap,
@@ -223,15 +223,15 @@ this repository, and none is worked around here.
 ### The relay cannot authenticate, so two consumers can never be fed
 
 **`event_subscriptions` has no column for a credential, and the relay sends
-none.** `identity/src/outbox.ts:320` attaches exactly `cf-signature` and
+none.** `identity/src/outbox.ts` attaches exactly `cf-signature` and
 `cf-event-id`; the table is `(topic, url, active, created_at)`
-(`identity/src/migrations.ts:58`). Two consumers gate their bus intake behind a
+(`identity/src/migrations.ts`). Two consumers gate their bus intake behind a
 scoped token, so no subscription row can ever work for them:
 
 | Consumer | Route | Demands | Consequence |
 | --- | --- | --- | --- |
-| `analytics` | `POST /ingest` | `authenticate()` + `SCOPE_INGEST` before it reads a byte (`analytics/src/server.ts:468`) | `identity.user.registered` is "the denominator of every onboarding cohort" (`analytics/src/catalogue.ts:307`) and never arrives — **every onboarding metric in the estate is structurally zero** |
-| `admin-api` | `POST /v1/events` | `authenticate()` + `admin:audit:write` (`server.ts:554`, `scopes.ts:52`) | the audit mirror for all 26 `AUDITED_TOPICS` is never fed, so 17 §7 claim 9 cannot pass |
+| `analytics` | `POST /ingest` | `authenticate()` + `SCOPE_INGEST` before it reads a byte (`analytics/src/server.ts`) | `identity.user.registered` is "the denominator of every onboarding cohort" (`analytics/src/catalogue.ts`) and never arrives — **every onboarding metric in the estate is structurally zero** |
+| `admin-api` | `POST /v1/events` | `authenticate()` + `admin:audit:write` (`server.ts`, `scopes.ts`) | the audit mirror for all 26 `AUDITED_TOPICS` is never fed, so 17 §7 claim 9 cannot pass |
 
 Measured rather than predicted: seeding the analytics row first produced
 `attempts=67, last_error=POST http://analytics:4000/ingest → 401` against an
@@ -447,10 +447,10 @@ legal at all. It owns TLS, CORS, and the `/internal` refusal.
 
 This paragraph used to say that `/internal` was refused by a path rule in
 `deploy/cloudflared/config.example.yml`, "asserted by a CI job that parses that
-YAML (`.github/workflows/ci.yml:155`)". **Neither of those existed.** There was
+YAML (`.github/workflows/ci.yml`)". **Neither of those existed.** There was
 no `cloudflared/` directory in this repository, and `ci.yml` had a single job in
 it running `scripts/surface-routes.py`. Two other files repeated the same claim
-(`gateway/dynamic/policy.yml:13`, `compose/docker-compose.gateway.yml:17`), so
+(`gateway/dynamic/policy.yml`, `compose/docker-compose.gateway.yml`), so
 the estate's record of where this control lived cited a file and a check that
 were never written — which is exactly the defect `surface-routes.py`'s check 4
 exists to catch, sitting one directory outside what that check reads.
@@ -539,7 +539,7 @@ costs a scrape config rather than a rewrite, and nothing has ever scraped it."*
 
 The scrape config is written and it works. It costs a scrape config **and a
 credential**: Beacon gates `/metrics` behind the same auth as every other route
-(`infra/beacon/src/server.js:373`), which is correct — an open `/metrics`
+(`infra/beacon/src/server.js`), which is correct — an open `/metrics`
 publishes the shape of the estate to anyone who can reach the port — but it is a
 step the decision record does not mention.
 

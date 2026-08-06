@@ -139,7 +139,7 @@ Both must be zero.
 
 ## COMPOSE VARIABLES ARE INTERPOLATED, SO SOURCE THE TOKENS
 
-`docker-compose.estate.yml:1750` reads `MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-}`.
+`docker-compose.estate.yml` reads `MARKET_SERVICE_TOKEN: ${MARKET_SERVICE_TOKEN:-}`.
 That is shell interpolation, not an `env_file:`, and `compose/testnet.env` does
 not contain the tokens. Bringing testnet up with `--env-file compose/testnet.env`
 alone therefore renders every service token EMPTY, and `market` refuses to start
@@ -154,7 +154,7 @@ with *"MARKET_SERVICE_TOKEN is required"*. Source both:
 ## THE PLACEHOLDER THAT PASSES THE PLACEHOLDER CHECK
 
 Every service rejects placeholder secrets at boot with an **exact-match set of
-eight strings** (`notify/src/env.ts:44`; beacon, faucet, custody and market carry
+eight strings** (`notify/src/env.ts`; beacon, faucet, custody and market carry
 their own copies). An exact-match set only rejects the placeholders somebody
 thought of.
 

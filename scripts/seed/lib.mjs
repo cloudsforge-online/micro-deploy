@@ -54,8 +54,8 @@ export const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/tru
 /**
  * The gateway's own env file — `env/traefik.env`, or `env/traefik.testnet.env`
  * when `CF_TRAEFIK_ENV` selects it, which is the same expression
- * `compose/docker-compose.gateway.yml:50`, `scripts/gateway-reload.sh:100` and
- * `scripts/release-deploy.sh:78` all use. One rule, four readers.
+ * `compose/docker-compose.gateway.yml`, `scripts/gateway-reload.sh` and
+ * `scripts/release-deploy.sh` all use. One rule, four readers.
  */
 const TRAEFIK_ENV = path.join(
   ROOT,
@@ -142,7 +142,7 @@ export const SITE_HOST =
 /**
  * The API host, read from the file the GATEWAY reads rather than guessed.
  *
- * `estate-up.sh:117` reads it from exactly here and refuses to start without it,
+ * `estate-up.sh` reads it from exactly here and refuses to start without it,
  * because an unset `CF_API_HOST` makes every public API route answer 502 with
  * nothing in Traefik's log. Guessing `api${WEB_SUFFIX}` would be right today and
  * wrong the first time somebody deploys under a real apex.
@@ -228,7 +228,7 @@ function readEmberRpc() {
 /**
  * The directory holding `coinbase-key.json` for THIS environment's miner.
  *
- * `compose/docker-compose.miners.yml:134,161` already declares the deployed
+ * `compose/docker-compose.miners.yml,161` already declares the deployed
  * layout — `${CF_MINER_KEYS}/mainnet` and `${CF_MINER_KEYS}/testnet` — and this
  * is the same expression rather than a second convention. Before it, the seeders
  * looked only at `~/.cloudsforge/ember-testnet/miner`, a developer-laptop path
@@ -259,7 +259,7 @@ export const COMPOSE = process.env.COMPOSE || 'compose/docker-compose.estate.yml
  * ══════════════════════════════════════════════════════════════════════════════
  * **WITHOUT THIS, EVERY COMPOSE CALL RESOLVED TO MAINNET, ON BOTH ESTATES.**
  *
- * `docker-compose.estate.yml:64` is `name: ${CF_PROJECT:-cloudsforge-estate}`, and
+ * `docker-compose.estate.yml` is `name: ${CF_PROJECT:-cloudsforge-estate}`, and
  * `CF_PROJECT=cf-testnet` lives in `compose/testnet.env`. A compose call that does
  * not pass that file gets the DEFAULT — so it addressed the mainnet project no
  * matter which estate the run was aimed at.
@@ -345,7 +345,7 @@ export class ApiError extends Error {
  * expected back, because the foresight gateway rule discriminates on it: the
  * router for `/markets` is `HeaderRegexp('Accept', 'application/json')` at
  * priority 700 and without it the same path is served by the SPA bundle
- * (`gateway/dynamic/estate-web.yml:499-503`). A seeder that omitted the header
+ * (`gateway/dynamic/estate-web.yml`). A seeder that omitted the header
  * would receive an HTML page with status 200 and report success.
  */
 export async function api(service, path_, opts = {}) {
@@ -403,7 +403,7 @@ export async function whoami(token) {
  *
  * Used only where a route refuses a user principal outright — micro-ledger is
  * the whole of that list, and it refuses users by design (`ledger/src/
- * server.ts:575`) because `wallet` is what a user talks to.
+ * server.ts`) because `wallet` is what a user talks to.
  */
 export async function serviceToken(userToken, service, scopes) {
   const { body } = await api('identity', '/service-tokens', {
@@ -422,8 +422,8 @@ export async function serviceToken(userToken, service, scopes) {
  * ── WHY A SEEDER NEEDS THIS AT ALL ───────────────────────────────────────────
  *
  * Two services this seeder drives still PRESENT a ten-minute JWT verbatim rather
- * than exchanging a long-lived credential — `foresight/src/index.ts:101` and
- * `market/src/index.ts:83` are both `const token = () => env.serviceToken`. Both
+ * than exchanging a long-lived credential — `foresight/src/index.ts` and
+ * `market/src/index.ts` are both `const token = () => env.serviceToken`. Both
  * compose entries default that variable to
  * `estate-placeholder-token-0000000000000000`, so ANY plain `docker compose up`
  * silently replaces a working credential with a string that is not a JWT.

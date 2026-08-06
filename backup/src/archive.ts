@@ -6,7 +6,7 @@
  *
  * `docs/custody-backup-restore.md` §1.2: every custody blob is sealed with AES-256-GCM and the
  * slot name — the chain address, or `seed:<uuid>` — is authenticated as additional data
- * (`setAAD("<slot>|v<n>")`, `custody/src/crypto.ts:168`). Moving `key.enc` from one address's
+ * (`setAAD("<slot>|v<n>")`, `custody/src/crypto.ts`). Moving `key.enc` from one address's
  * directory to another's does not decrypt to the wrong key; it fails the GCM tag outright. The
  * document states the consequence in its own words: **"the vault must be restored with its
  * directory names intact."**

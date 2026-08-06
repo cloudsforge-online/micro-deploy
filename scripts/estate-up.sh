@@ -94,7 +94,7 @@ export CLOUDSFORGE_RELEASE=${CLOUDSFORGE_RELEASE:-estate}
 # share the zone and differ in the SUFFIX — so a preflight that reads mainnet's
 # file and compares apexes would agree with itself while a testnet bring-up was
 # pointed at the wrong env file entirely. It reads the same variable
-# `scripts/gateway-reload.sh:100` reads, so the two agree about which file is in
+# `scripts/gateway-reload.sh` reads, so the two agree about which file is in
 # play, and it compares the values that actually differ.
 TRAEFIK_ENV="compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
 if [ ! -f "$TRAEFIK_ENV" ]; then

@@ -72,7 +72,7 @@ scrape_configs:
   #
   # It costs one thing more than AD-20 predicted: a credential. Beacon gates
   # /metrics behind the same auth as every other route (infra/beacon/src/
-  # server.js:373) — deliberately, because an open /metrics publishes the shape
+  # server.js) — deliberately, because an open /metrics publishes the shape
   # of the estate to anyone who can reach the port. Beacon accepts a static
   # break-glass token in an `x-beacon-token` header, so the cost is a scrape
   # config plus BEACON_TOKEN being set. It is EMPTY in the running estate today,
@@ -83,7 +83,7 @@ scrape_configs:
   - job_name: beacon
     scheme: http
     # Beacon holds live state in memory and its /metrics never touches Postgres
-    # (metrics.js:8-12), so a 30s scrape is free. It is slower than the global
+    # (metrics.js), so a 30s scrape is free. It is slower than the global
     # 15s because every value behind it changes on Beacon's own probe schedule,
     # not on ours — scraping faster samples the same number twice.
     scrape_interval: 30s

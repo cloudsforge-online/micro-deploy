@@ -17,7 +17,7 @@
 #   volume          namespaced by the `-p cf-testnet-chain` project
 #
 # THE CHAIN ID IS 7412 HERE AND 7411 ON THE OTHER ONE, WHICH IT WAS NOT.
-# `node/src/params.js:37-38` maps hearth->7411 and hearth-testnet->7412, and this
+# `node/src/params.js` maps hearth->7411 and hearth-testnet->7412, and this
 # file used to record that BOTH seeds ran as `hearth-testnet` — two INDEPENDENT
 # chains (separate volumes, separate genesis-forward history, no peering; 8646 is
 # unpublished on both) sharing one identity. They could not merge, but a signed
@@ -32,7 +32,7 @@
 # `compose/env/chain.<network>.env`, loaded through an `env_file:` whose PATH is
 # interpolated from `CF_EMBER_NETWORK`. The mainnet estate loads
 # `chain.mainnet.env` and asserts 7411; this one loads `chain.testnet.env` and
-# asserts 7412, at `indexer/src/evm.ts:471-480`, before it will write a block.
+# asserts 7412, at `indexer/src/evm.ts`, before it will write a block.
 #
 # This seed is unchanged. It was always `hearth-testnet` and it stays that way.
 services:
@@ -51,8 +51,8 @@ services:
     healthcheck:
       # The mainnet overlay carries the full argument; it applies here unchanged
       # except for the id. In short: 8645 (REST) and 8545 (Ethereum JSON-RPC) are
-      # SEPARATE listeners in one process (`evmnode.js:411` and `:214`), a bind
-      # failure on either is logged and not fatal (`:414`, `:217`), and 8545 is the
+      # SEPARATE listeners in one process (`evmnode.js` and), a bind
+      # failure on either is logged and not fatal, and 8545 is the
       # port the estate actually consumes — so probing only `/info` reports HEALTHY
       # on a node no consumer can reach.
       #

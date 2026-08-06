@@ -24,8 +24,8 @@ private key at rest; the version stamped on each blob selects which secret
 decrypts it.
 
 **It does not derive addresses.** Addresses come from a per-(user, family) BIP-39
-mnemonic generated from the system CSPRNG (`custody/src/keys.ts:390`,
-`custody/src/hd.ts:81`). The mnemonic is then encrypted under the keyring and
+mnemonic generated from the system CSPRNG (`custody/src/keys.ts`,
+`custody/src/hd.ts`). The mnemonic is then encrypted under the keyring and
 stored like any other blob. So:
 
 - Losing the keyring does not change any address. It makes every stored key and
@@ -53,7 +53,7 @@ The two environments hold **different** keyrings, and CI asserts they resolve to
 different files. One compromise must not take both.
 
 It is deliberately NOT in `compose/estate/tokens.env`, which is the estate's
-other gitignored secrets file: `scripts/estate-bootstrap.sh:506` replaces that
+other gitignored secrets file: `scripts/estate-bootstrap.sh` replaces that
 file wholesale on every run (`mv "$tmp" "$TOKENS_FILE"`). A master secret there
 would be silently replaced by a routine bootstrap, and a replaced master secret
 is not a rotation - it is every blob undecryptable, with no way back.
@@ -121,7 +121,7 @@ and it is the only thing that turns a hope into a backup.
    Booting proves the value passes `assertMasterSecret`. It does not yet prove it
    decrypts anything.
 4. **Drive one real signature.** A faucet drip calls `POST /v1/sign`
-   (`faucet/src/custodyclient.ts:182`), which decrypts a stored blob under the
+   (`faucet/src/custodyclient.ts`), which decrypts a stored blob under the
    restored keyring. A successful drip is the proof; a healthy container is not.
 5. Restore the original file, restart, and record the wall-clock time. A
    rehearsal that fails changes the procedure - it is never just noted.

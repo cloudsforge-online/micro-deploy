@@ -4,12 +4,12 @@
  * ── WHAT MAKES THIS IDEMPOTENT ───────────────────────────────────────────────
  *
  * `POST /markets` has NO idempotency key — the only route in this service that
- * takes one is `/deploy` (`foresight/src/server.ts:1033-1039`), and a double
+ * takes one is `/deploy` (`foresight/src/server.ts`), and a double
  * POST to `/markets` therefore creates two drafts. So this is check-then-create,
  * and the discriminator is the QUESTION TEXT.
  *
  * `questionHash` would be the more precise key — it is a keccak over the whole
- * question document and is returned on every view (`markets.ts:232-244`) — but it
+ * question document and is returned on every view (`markets.ts`) — but it
  * is deliberately NOT used here, because it covers `closeTime` too. A seeder
  * keyed on it would create a second copy of the same question every time a close
  * date was edited, which is exactly the duplicate a re-run must not make. The
@@ -84,7 +84,7 @@ const require = createRequire(import.meta.url)
 // which was the literal 7412 and is now derived from the same `CF_EMBER_NETWORK`
 // the estate keys its chain `env_file:` on. `EMBER_HOST_RPC` below defaults to
 // 8545 — the MAINNET seed, chain 7411 — so a 7412 fallback beside it was a pair
-// that could not both be right (`hearth/node/src/params.js:37-38`).
+// that could not both be right (`hearth/node/src/params.js`).
 const CHAIN_ID = Number(
   process.env.EMBER_CHAIN_ID || { mainnet: 7411, testnet: 7412 }[EMBER_NETWORK],
 )
@@ -191,7 +191,7 @@ async function send(chain, { to, value }) {
  *
  * ── ONE ACT, TWO DEFECTS, AND NEITHER IS PAPERED OVER ────────────────────────
  *
- *   1. **The ten-minute cliff.** `foresight/src/index.ts:101` is `const token =
+ *   1. **The ten-minute cliff.** `foresight/src/index.ts` is `const token =
  *      () => env.serviceToken`: the value is PRESENTED, so it must be a JWT, and
  *      identity issues those with a 600s TTL. Both custody calls a deploy needs
  *      come from leased BACKGROUND jobs, so a seeding run longer than ten
@@ -202,7 +202,7 @@ async function send(chain, { to, value }) {
  *      row on success AFTER the handler returns — so the self-enqueue collides
  *      with the row being run, does nothing, and is then deleted. Every
  *      recurring job in this service runs exactly once per process start.
- *      `foresight-market-journey.mjs:225-256` diagnoses this at length and works
+ *      `foresight-market-journey.mjs` diagnoses this at length and works
  *      around it by INSERTing into the `jobs` table directly.
  *
  * This does not write that SQL. A recreate solves both at once: the token is
@@ -325,7 +325,7 @@ async function createMissing(existing, userToken) {
       continue
     }
     if (new Date(q.closeTime).getTime() <= Date.now()) {
-      // foresight refuses a close time in the past (`markets.ts:257-259`) and it
+      // foresight refuses a close time in the past (`markets.ts`) and it
       // is right to. Saying which question aged out is more useful than a 400.
       skip(`"${q.question.slice(0, 56)}…" — its close time has passed; not created`)
       continue
@@ -413,7 +413,7 @@ async function deployAndOpen(markets, userToken, chain) {
   const balance = big(await rpc('eth_getBalance', [chain.key.address, 'latest']))
   const gasPrice = big(await rpc('eth_gasPrice'))
   // The service bids DOUBLE the quoted price against its gas limit
-  // (`foresight/src/evm.ts:334`), and the funding gate is `bid * gasLimit`. A
+  // (`foresight/src/evm.ts`), and the funding gate is `bid * gasLimit`. A
   // deployer funded at the QUOTE sits in `awaiting_funds` for ever.
   const needed = gasPrice * 2n * DEPLOY_GAS_LIMIT
   const perMarket = (needed * 3n) / 2n

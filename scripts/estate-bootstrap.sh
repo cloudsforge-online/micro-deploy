@@ -9,7 +9,7 @@
 #
 # A newly deployed estate cannot issue its own first credential.
 #
-#   * `POST /service-tokens` requires the `admin` role (identity/src/server.ts:1265,
+#   * `POST /service-tokens` requires the `admin` role (identity/src/server.ts,
 #     via authenticateAdmin).
 #   * `users.roles` defaults to '{}' and NO route in identity grants a role.
 #   * admin-api's bootstrap endpoint returns 501 — deliberately.
@@ -24,7 +24,7 @@
 #
 # This file used to say that ten minutes after it ran, every service-to-service
 # call in the money tier began failing 401 until it was run again — because
-# identity issues service tokens with a 600s TTL (identity/src/tokens.ts:28) and
+# identity issues service tokens with a 600s TTL (identity/src/tokens.ts) and
 # nothing re-minted one. It named the fix it could not make: "a longer-lived
 # machine credential, or a client-credentials grant a service can call for
 # itself". **identity now has exactly that.**
@@ -49,7 +49,7 @@
 # THE CLIFF IS NOT GONE FROM THE ESTATE UNTIL EVERY CONSUMER ADOPTS THE
 # CREDENTIAL. Each service must call the exchange from its token provider
 # instead of returning a static string — wallet's `const token = () =>
-# env.serviceToken` (wallet/src/index.ts:90) is the seam, and it was always
+# env.serviceToken` (wallet/src/index.ts) is the seam, and it was always
 # meant for this. Until an owner does that for their service, that service is
 # still on the cliff and re-running this script is still its only renewal.
 # `estate-verify.sh` proves the exchange works end to end over a real socket.
@@ -73,7 +73,7 @@ TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 # not variables at all:
 #
 #   1. THE PROJECT NAME, which is not passed here and never was. It comes from
-#      `compose/docker-compose.estate.yml:64` — `name: ${CF_PROJECT:-cloudsforge-estate}`
+#      `compose/docker-compose.estate.yml` — `name: ${CF_PROJECT:-cloudsforge-estate}`
 #      — and `CF_PROJECT=cf-testnet` lives ONLY in `compose/testnet.env`, which
 #      this script did not load. So `IDENTITY=http://127.0.0.1:5100` pointed the
 #      HTTP calls at testnet while every `docker compose exec postgres` below
@@ -360,27 +360,27 @@ echo "── 5. mint one service token per credential ────────�
 #   ledger                                reads a long-lived CREDENTIAL; see below.
 #
 # `emberkin` is on this list for exactly tessera's reason and was checked the same
-# way rather than assumed from the variable's name: `emberkin/src/index.ts:60` is
+# way rather than assumed from the variable's name: `emberkin/src/index.ts` is
 # `const token = (): string => env.serviceToken`, so the value is PRESENTED as a
 # bearer and must be a JWT. `EMBERKIN_IDENTITY_CREDENTIAL` is also minted, by 5b,
 # and handing that to it instead would 401 every one of its three upstreams.
 #
 # ── LEDGER IS OFF THIS LIST AGAIN, AND THIS TIME IT IS THE FIX ────────────────
 #
-# It was added here because `ledger/src/jobs.ts:251` calls the indexer's custody
+# It was added here because `ledger/src/jobs.ts` calls the indexer's custody
 # aggregate and nothing was handing it a bearer: the call went out
 # unauthenticated, the indexer answered 401, ledger mapped that to `undefined`,
 # the run was UNOBSERVED, and EMBER froze — on an authentication error, while
 # reporting the same state it correctly reports when no chain is followed.
 #
 # Handing it a token from this list fixed that for exactly 600 seconds. The token
-# minted here lives 600s (identity/src/tokens.ts:28) and ledger's reconciliation
-# job runs every 900s (`ledger/src/jobs.ts:108`), so it authenticated on the first
+# minted here lives 600s (identity/src/tokens.ts) and ledger's reconciliation
+# job runs every 900s (`ledger/src/jobs.ts`), so it authenticated on the first
 # run after a bootstrap and never again. Ledger was the one service on that cliff
 # whose credential is used AFTER it — settlement, market and trade are driven on
 # request paths inside the window; a background job on a 900s timer cannot be.
 #
-# So the entry is deleted rather than renewed. `ledger/src/env.ts:362` now reads
+# So the entry is deleted rather than renewed. `ledger/src/env.ts` now reads
 # `LEDGER_IDENTITY_CREDENTIAL` and exchanges it per call, and section 5b below
 # already mints that credential for every service in the grants map — ledger
 # included, with no edit here, which is the point of deriving SERVICES from the
@@ -399,7 +399,7 @@ echo "── 5. mint one service token per credential ────────�
 # ── TESSERA IS ON THIS LIST, AND THE VARIABLE'S NAME LIES ─────────────────────
 #
 # `TESSERA_SERVICE_CREDENTIAL` is spelled like community's long-lived credential
-# and is NOT one. `tessera/src/index.ts:127` presents the value straight through
+# and is NOT one. `tessera/src/index.ts` presents the value straight through
 # as a bearer — `token: async () => env.serviceCredential ?? ''` — under a header
 # that says "until this service is granted a credential in the deploy, the
 # credential IS the token". So it must be minted here, as a TOKEN, or the Kiln
@@ -415,7 +415,7 @@ echo "── 5. mint one service token per credential ────────�
 # ── FORESIGHT IS ON THIS LIST, AND ITS CLIFF IS THE WORST OF THE THREE ────────
 #
 # Checked the same way, not assumed from the variable's name: `foresight/src/
-# index.ts:101` is `const token = () => env.serviceToken`, handed straight to the
+# index.ts` is `const token = () => env.serviceToken`, handed straight to the
 # `HttpClient` for custody, the indexer, the ledger, policy and admin-api. There
 # is no `ServiceTokenProvider`, no `/service-tokens/exchange` call and no `cfsc_`
 # handling anywhere in `foresight/src`. So the value is PRESENTED and must be a
@@ -427,7 +427,7 @@ echo "── 5. mint one service token per credential ────────�
 # shape that froze EMBER through `ledger`: a 600-second token behind a longer
 # timer. A market approved eleven minutes after a bootstrap sits unfinished until
 # the next one. Recorded rather than papered over; micro-foresight owns the fix
-# and `index.ts:101` is already the seam for it.
+# and `index.ts` is already the seam for it.
 #
 # ── SETTLEMENT IS GONE FROM THIS LIST, AND LEAVING IT WOULD HAVE RE-BROKEN A ──
 # ── HEALTHY ESTATE ON THE NEXT RUN ────────────────────────────────────────────
@@ -435,7 +435,7 @@ echo "── 5. mint one service token per credential ────────�
 # Same deletion as `ledger`'s above, and for the same reason: since
 # `micro-settlement@8573da7` settlement holds a long-lived credential and
 # exchanges it through `ServiceTokenProvider` (`settlement/src/upstreams.ts`).
-# `settlement/src/env.ts:409-414` reads `SETTLEMENT_IDENTITY_CREDENTIAL` first
+# `settlement/src/env.ts` reads `SETTLEMENT_IDENTITY_CREDENTIAL` first
 # and then `SETTLEMENT_SERVICE_TOKEN` when THAT value carries the `cfsc_`
 # prefix — and a value that is a genuine JWT is now reported at boot and
 # IGNORED, because using it is the defect.
@@ -601,7 +601,7 @@ for service in $SERVICES; do
     #
     # settlement's compose block passes only `SETTLEMENT_SERVICE_TOKEN`, so the
     # credential written on the line above reaches no container under its own
-    # name. `settlement/src/env.ts:409-414` accepts the credential under the
+    # name. `settlement/src/env.ts` accepts the credential under the
     # OLD name precisely so this repair does not have to wait on a deploy edit
     # — the prefix disambiguates it (credentials are `cfsc_…`, tokens are JWTs
     # beginning `eyJ`), and a JWT under that name is now ignored rather than
@@ -621,7 +621,7 @@ done
 
 # ── THIS FILE IS REGENERATED, AND IT IS ALSO THE ONLY LOCAL OVERRIDE CHANNEL ──
 #
-# `release-deploy.sh:60` passes exactly two env files — the estate env and this
+# `release-deploy.sh` passes exactly two env files — the estate env and this
 # one, tokens last so tokens win on any shared key. That makes this the ONLY
 # place an operator can override a value that must not be committed, because
 # `compose/mainnet.env` and `compose/testnet.env` are both tracked in a public
@@ -705,13 +705,13 @@ echo "── 5c. event subscriptions — WHO RECEIVES WHAT IS DEPLOY CONFIGURATI
 # ── ONE CONSUMER THAT CANNOT BE SUBSCRIBED, AND ONE THAT NOW CAN ──────────────
 #
 # **The relay cannot authenticate, so a consumer that demands a token can never
-# be fed by the bus.** `identity/src/outbox.ts:325` sends exactly two headers —
+# be fed by the bus.** `identity/src/outbox.ts` sends exactly two headers —
 # `cf-signature` and `cf-event-id` — and `event_subscriptions` has no column for a
-# credential (topic, url, active, created_at; identity/src/migrations.ts:58).
+# credential (topic, url, active, created_at; identity/src/migrations.ts).
 #
 #   * **analytics** `POST /ingest` still calls `authenticate(ctx, deps)` then
 #     `requireExactScope(principal, SCOPE_INGEST)` before it reads a byte
-#     (analytics/src/server.ts:468-469). STILL NOT SUBSCRIBED. Seeding it here
+#     (analytics/src/server.ts). STILL NOT SUBSCRIBED. Seeding it here
 #     once gave `attempts=67, last_error=POST http://analytics:4000/ingest → 401`
 #     and an empty inbox — measured, not predicted.
 #
@@ -719,7 +719,7 @@ echo "── 5c. event subscriptions — WHO RECEIVES WHAT IS DEPLOY CONFIGURATI
 #     longer does. micro-admin-api removed the bearer check because "no outbox
 #     relay in this estate can present a bearer, and this service was additionally
 #     verifying a signature format nobody sends, so the mirror received nothing at
-#     all" (admin-api/src/server.ts:25-35). It now verifies the body with
+#     all" (admin-api/src/server.ts). It now verifies the body with
 #     `verifyDelivery` against OUTBOX_SIGNING_SECRET, over the exact bytes
 #     received, BEFORE `JSON.parse` — which is precisely what the relay sends. So
 #     the audit mirror is subscribable, and is subscribed below.
@@ -728,7 +728,7 @@ echo "── 5c. event subscriptions — WHO RECEIVES WHAT IS DEPLOY CONFIGURATI
 # outbox and micro-analytics. Recorded rather than half-configured.
 subscribe() {
   db=$1; topic=$2; url=$3
-  # `</dev/null` is load-bearing and is the same defect `erasure-drill.sh:65-80`
+  # `</dev/null` is load-bearing and is the same defect `erasure-drill.sh`
   # documents in itself: this is called from inside a `while read` loop fed by a
   # here-string, and `docker compose exec -T` inherits and DRAINS that stdin. The
   # first call swallows the rest of the register, the loop ends after one row, and
@@ -742,9 +742,9 @@ subscribe() {
 }
 
 # identity.user.registered had NO SUBSCRIBER, and two services classify it:
-# activity turns it into a feed record (activity/src/classify.ts:190) and
+# activity turns it into a feed record (activity/src/classify.ts) and
 # analytics counts it as "the denominator of every onboarding cohort"
-# (analytics/src/catalogue.ts:307). Both were consumers with no producer.
+# (analytics/src/catalogue.ts). Both were consumers with no producer.
 #
 # Only activity is subscribed. analytics is one of the two consumers the relay
 # cannot authenticate to — see above. Its onboarding denominator stays zero, and
@@ -803,7 +803,7 @@ fi
 # thing identity ever told it was that somebody had left. `channel_targets` was
 # EMPTY on the mainnet estate, which meant every email the estate has ever
 # composed routed to in-app only. That is not a transport fault: notify's
-# at-least-one-channel guarantee (notify/src/channels.ts:88-91) delivers
+# at-least-one-channel guarantee (notify/src/channels.ts) delivers
 # in-app and reports success, so a configured SMTP transport changes nothing
 # while notify holds no address to send to. #42 read as "SMTP is unconfigured"
 # for exactly this reason.
@@ -811,15 +811,15 @@ fi
 # THE ADDRESS IS LEARNED, NOT LOOKED UP. notify never queries identity for an
 # email — there is no such call, deliberately, because a notifier that can read
 # the user directory is a notifier worth stealing. It learns the address from
-# the event that already carries one: `notify/src/catalogue.ts:659-682` declares
+# the event that already carries one: `notify/src/catalogue.ts` declares
 # `learns: { channel: 'email', read: emailOf(event.payload) }` on
-# `identity.email.verification_requested`, and `pipeline.ts:423-461` writes the
+# `identity.email.verification_requested`, and `pipeline.ts` writes the
 # `channel_targets` row. So this row is what puts an address on file at all.
 subscribe identity identity.email.verification_requested http://notify:4000/ingest
 
 # And this is the one that makes registration itself produce a notification.
 # `identity.user.registered` deliberately carries NO address
-# (catalogue.ts:623-625 has no `learns`), so it is useless on its own — it can
+# (catalogue.ts has no `learns`), so it is useless on its own — it can
 # only be delivered to a user notify already knows. The two rows are therefore a
 # PAIR and the order they arrive in matters: verification_requested teaches the
 # address, registered is the thing worth sending to it. Seeding one without the
@@ -853,7 +853,7 @@ subscribe identity identity.password.reset_requested http://notify:4000/ingest
 
 # ── WALLET'S INBOX WAS FED BY NOBODY ──────────────────────────────────────────
 #
-# `wallet/src/server.ts:441` serves `POST /events` and branches on exactly three
+# `wallet/src/server.ts` serves `POST /events` and branches on exactly three
 # topics — `indexer.deposit.confirmed`, `settlement.outbound.confirmed` and
 # `settlement.outbound.failed`. Not one row in any producer's
 # `event_subscriptions` pointed at `http://wallet:4000/events`. Queried, not
@@ -878,10 +878,10 @@ subscribe settlement settlement.outbound.failed    http://wallet:4000/events
 # ── AND THE RETURN LEG WAS SEEDED WITHOUT THE OUTBOUND ONE ────────────────────
 #
 # The three rows above are settlement ANSWERING wallet. Nothing ever asked it.
-# `wallet.withdrawal.requested` (wallet/src/outbox.ts:76) is the handover itself —
+# `wallet.withdrawal.requested` (wallet/src/outbox.ts) is the handover itself —
 # step 2 of the four settlement/src/... describes — and settlement consumes it by
 # HTTP push at `POST /v1/events`, dispatching on the topic at
-# `settlement/src/server.ts:523,873`. There was no row pointing at it in any
+# `settlement/src/server.ts,873`. There was no row pointing at it in any
 # producer's table, so every withdrawal wallet accepted was emitted into a void:
 # reserved through the ledger, written `queued`, and never built by anybody.
 #
@@ -893,7 +893,7 @@ subscribe settlement settlement.outbound.failed    http://wallet:4000/events
 # by silence rather than by refusal.
 #
 # NOTE THE PATH. wallet's own intake is `/events` and settlement's is `/v1/events`
-# (`wallet/src/server.ts:441` against `settlement/src/server.ts:523`). The two
+# (`wallet/src/server.ts` against `settlement/src/server.ts`). The two
 # services genuinely disagree; the rows above are not a template for this one.
 subscribe wallet     wallet.withdrawal.requested   http://settlement:4000/v1/events
 
@@ -988,7 +988,7 @@ subscribe_all admin-api http://admin-api:4000/v1/events $audited
 # made the route MAC-only, verifying the delivery signature over the raw bytes,
 # so its subscriptions are real for the first time.
 #
-# Its topic list is its own (`EVENT_TOPICS`, analytics/src/catalogue.ts:343),
+# Its topic list is its own (`EVENT_TOPICS`, analytics/src/catalogue.ts),
 # derived from the catalogue rather than repeated here — it overlaps the audited
 # set but is not the same list, and neither is a subset of the other.
 analytics_topics=$(python3 - "${ANALYTICS_CATALOGUE:-../analytics/src/catalogue.ts}" <<'PY'
@@ -1023,10 +1023,10 @@ echo "── 5e. the faucet's own custody address — minted once, then reused �
 #
 # custody's pinned `(ember, testnet)` treasury is SETTLEMENT'S. Signing the
 # faucet's drips out of it would put two services on one nonce, which
-# `settlement/src/worker.ts:8-18` exists because is how a payment is permanently
+# `settlement/src/worker.ts` exists because is how a payment is permanently
 # lost. So this mints a SECOND treasury-purpose address. That is allowed and is
 # not a second pin: `getTreasuryPin` is consulted only for `purpose: 'deposit'`
-# (`custody/src/keys.ts:307`), so the pin plays no part in signing a transfer.
+# (`custody/src/keys.ts`), so the pin plays no part in signing a transfer.
 #
 # ── AND IT MUST NOT MINT A NEW ONE EVERY RUN ────────────────────────────────
 #
@@ -1049,7 +1049,7 @@ echo "── 5e. the faucet's own custody address — minted once, then reused �
 #
 # The binding fields are read out of the compose file rather than repeated here.
 # custody compares seven identity fields character for character and its 403
-# deliberately does not name the one that disagreed (`custody/src/keys.ts:277`),
+# deliberately does not name the one that disagreed (`custody/src/keys.ts`),
 # so a second hand-typed copy of `faucet-estate-treasury-1` would be a 403 that
 # cannot be debugged from any response.
 #
@@ -1145,14 +1145,14 @@ echo "── 5f. foresight's oracle and treasury addresses ───────
 #
 # ── THE ORACLE IS `purpose: deployer`, AND THAT IS NOT A MISTAKE ──────────────
 #
-# `custody/src/gates.ts:35` has three signable purposes and none of them signs a
+# `custody/src/gates.ts` has three signable purposes and none of them signs a
 # contract CALL: `transfer` requires empty calldata and says in terms that
 # widening it would turn the key into a signing oracle. So foresight's oracle
 # resolves a market by CREATING a contract — `ForesightResolver`, whose
 # constructor calls `oracleAct` and which then deploys with no runtime code — and
 # the market checks `msg.sender == createAddress(oracle, nonce)`, which is
 # exactly as strong as checking the oracle address itself
-# (`foresight/src/resolve.ts:19-33`, `ForesightMarket._isOracle`). A
+# (`foresight/src/resolve.ts`, `ForesightMarket._isOracle`). A
 # `treasury`-purpose oracle would be refused by custody's shape gate at the first
 # resolution, with a market's winners waiting on it.
 #
@@ -1166,7 +1166,7 @@ echo "── 5f. foresight's oracle and treasury addresses ───────
 # ── THE MINTING SERVICE IS `foresight` ITSELF, UNLIKE THE FAUCET ──────────────
 #
 # `custody:address:create` IS in foresight's derived grant — it mints a deployer
-# address per market at `deploy.ts:340` and must be able to. So asking under its
+# address per market at `deploy.ts` and must be able to. So asking under its
 # own name here is honest, where asking under `wallet` for the faucet was the
 # point (the faucet has no such grant and must not).
 foresight_user=$(grep -m1 'FORESIGHT_ORACLE_USER_ID:' "$COMPOSE" | sed 's/.*: *//')
@@ -1180,7 +1180,7 @@ else
   # The settlement fee's destination, bound into every market at deploy time.
   # `purpose: treasury` and a DIFFERENT orderId from the oracle's: one address
   # per role, because custody binds seven fields per key and a shared row would
-  # put the fee and the oracle on one nonce — `settlement/src/worker.ts:8-18`'s
+  # put the fee and the oracle on one nonce — `settlement/src/worker.ts`'s
   # lesson. It never signs anything here; `ForesightMarket.settle()` pushes to it
   # permissionlessly, and it is an EOA rather than a contract precisely because a
   # reverting treasury is how a market becomes unsettleable.

@@ -7,9 +7,9 @@
  * participants, so it is worth being precise about why it is allowed.
  *
  * `PUT /v1/worlds/:id/bots` is a FEATURE OF THE GAME, not a trick played on a
- * reader. `worlds.ts:575-578` inserts each one with `is_bot = true`, `user_id =
+ * reader. `worlds.ts` inserts each one with `is_bot = true`, `user_id =
  * null`, and a handle of the literal form `bot-<personality>-<n>`. The roster
- * route returns `isBot` on every row (`worlds.ts:603`). A bot is therefore
+ * route returns `isBot` on every row (`worlds.ts`). A bot is therefore
  * labelled as a bot in the schema, on the wire and in its own name — there is no
  * position from which one could be mistaken for a person.
  *
@@ -33,11 +33,11 @@
  *
  * ── IDEMPOTENCY, AND A TRAP SPECIFIC TO THIS SERVICE ────────────────────────
  *
- * `worlds.name` has NO unique constraint (`migrations.ts:123-152`), so the check
+ * `worlds.name` has NO unique constraint (`migrations.ts`), so the check
  * is a list-and-match on the name and the create is guarded by it.
  *
  * The trap: nda namespaces its idempotency key by ROUTE ONLY, not by principal —
- * `namespacedKey` is `` `${route}:${clientKey}` `` (`nda/src/idempotency.ts:82-84`).
+ * `namespacedKey` is `` `${route}:${clientKey}` `` (`nda/src/idempotency.ts`).
  * Two different callers sending the same key to the same route collide, and the
  * loser can be served the winner's response. Every key below is therefore
  * prefixed with `estate-seed.` so it cannot collide with a real player's, and is
@@ -54,7 +54,7 @@
 
 import { api, ok, bad, skip, note, head, sleep } from './lib.mjs'
 
-/** `name` is trimmed and must be 3-40 characters (`rules.ts:423-424`). */
+/** `name` is trimmed and must be 3-40 characters (`rules.ts`). */
 const WORLD = {
   name: 'Emberfall Commons',
   width: 24,
@@ -104,7 +104,7 @@ export async function seedNda(token) {
 
   // ── the roster ─────────────────────────────────────────────────────────────
   // Idempotent by construction: `syncBots` brings the roster IN LINE WITH a
-  // target rather than adding to it (`worlds.ts:547-596`), so sending the same
+  // target rather than adding to it (`worlds.ts`), so sending the same
   // count twice is a no-op in the service and not merely in this script.
   const bots = await api('nda', `/v1/worlds/${world.id}/bots`, {
     method: 'PUT',
@@ -120,7 +120,7 @@ export async function seedNda(token) {
 
   // ── the one human ──────────────────────────────────────────────────────────
   // Naturally idempotent: an existing player comes back `created: false`
-  // (`worlds.ts:401-402`). Joining is allowed while the world is in lobby.
+  // (`worlds.ts`). Joining is allowed while the world is in lobby.
   const joined = await api('nda', `/v1/worlds/${world.id}/join`, {
     method: 'POST',
     token,

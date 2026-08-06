@@ -21,7 +21,7 @@ machinery that does not exist is the failure mode this estate has already had tw
 
 | | State | Evidence |
 | --- | --- | --- |
-| **The house seed itself** — the plan/record table, the symmetry CHECK, the at-open-only triggers, the ceilings, the approve/open routes, the market-page disclosure | **Built, deployed, fire-tested.** `house_seeds` exists in the `foresight` database of **both** stacks, migration `8 \| house_seeds` applied `2026-08-04 15:05:10`, with all six CHECKs and all three triggers present. **0 rows.** | `foresight/src/houseseed.ts`, `foresight/src/migrations.ts` version 8, `server.ts:1168`/`:1295`, `foresight-web/src/pages/market.tsx:271` |
+| **The house seed itself** — the plan/record table, the symmetry CHECK, the at-open-only triggers, the ceilings, the approve/open routes, the market-page disclosure | **Built, deployed, fire-tested.** `house_seeds` exists in the `foresight` database of **both** stacks, migration `8 \| house_seeds` applied `2026-08-04 15:05:10`, with all six CHECKs and all three triggers present. **0 rows.** | `foresight/src/houseseed.ts`, `foresight/src/migrations.ts` version 8, `server.ts`/, `foresight-web/src/pages/market.tsx` |
 | **`engagement_policies`** | **Exists in the `admin_api` database of both stacks**, migration `8 \| engagement`, with every named constraint and the raise-needs-approval trigger. **0 rows — no cap has ever been set.** Siblings `engagement_transfers` (0 rows) and `engagement_fee_recycle` (1 row, `recycle_bps = 0`, untouched since the migration wrote it) also exist. Routes are mounted and auth-guarded (`GET /v1/engagement/policies` → 401 unauthenticated, not 404). | `admin-api/src/migrations.ts` version 8, `admin-api/src/engagement.ts` |
 | **The ledger accounts** — `platform:engagement-treasury`, `engagement:foresight` | **DO NOT EXIST.** Zero accounts matching `engagement` in either stack. The mainnet ledger holds 28 accounts (25 `user:*`, 2 `custody`, 1 `platform`); **the testnet ledger holds zero accounts at all.** No posting anywhere references an engagement subject. | — |
 
@@ -37,12 +37,12 @@ and a funded external key (§2).
 ### The blocker
 
 > **`FORESIGHT_HOUSE_ADDRESS` is unset on both live stacks, deliberately.** It is
-> `optionalAddress` (`foresight/src/env.ts:591`), absent is a declared supported mode
-> (`foresight/src/env.ts:415-423`), and `docker-compose.estate.yml:2623-2628` states the
+> `optionalAddress` (`foresight/src/env.ts`), absent is a declared supported mode
+> (`foresight/src/env.ts`), and `docker-compose.estate.yml` states the
 > absence and the reason in the compose file itself. Confirmed absent from the
 > environment of both `cloudsforge-estate-foresight-1` and `cf-testnet-foresight-1`.
 > With it absent, `POST /markets/:id/approve` refuses any `houseSeedPerOutcomeWei` with
-> **409 `house_address_unconfigured`** (`foresight/src/server.ts:1186-1193`).
+> **409 `house_address_unconfigured`** (`foresight/src/server.ts`).
 >
 > Setting it is the owner's decision — it is the decision to put real money at risk —
 > and nothing in this document does it for you.
@@ -54,7 +54,7 @@ and a funded external key (§2).
 
 **One thing this document will tell you that you may not expect:** the ledger leg of
 the engagement treasury is denominated in **SHARD**, a *retired* asset
-(`admin-api/src/actions.ts:500-516`; `contracts/packages/chain/src/index.ts:58` lists
+(`admin-api/src/actions.ts`; `contracts/packages/chain/src/index.ts` lists
 `SHARD` in `RETIRED_ASSETS`). The house seed itself is EMBER wei and is clean. The two
 do not meet. See §9 — it changes what "fund the treasury" means, and it is why the
 answer to the owner's literal question is what it is.
@@ -73,18 +73,18 @@ Why it has to be that way, rather than a design choice that could be revisited:
 
 1. **Custody physically cannot sign a stake.** `stake(uint8)` is a value-bearing
    contract CALL. Custody has exactly three EVM signing shapes — creation (value must
-   be zero, `custody/src/signing.ts:210-227`), plain value transfer (data must be
-   empty, `custody/src/signing.ts:231-260`), and sweep. None of them is "call a
+   be zero, `custody/src/signing.ts`), plain value transfer (data must be
+   empty, `custody/src/signing.ts`), and sweep. None of them is "call a
    contract with value". This is the same constraint that makes the Foresight oracle
    resolve a market by *creating* a contract instead of calling one
-   (`docker-compose.estate.yml:2602-2609`).
+   (`docker-compose.estate.yml`).
 2. **A seeder contract is worse, not better.** If a contract staked on the house's
    behalf, the *contract* would be the staker, and its winnings would strand at an
-   address with no key (`foresight/src/houseseed.ts:9-18`, `foresight/README.md:364-366`).
+   address with no key (`foresight/src/houseseed.ts`, `foresight/README.md`).
 3. **So the house is an ordinary bettor with a published address** — funded the way
    the platform's miner coinbases are published (21 §3), staking through the same
    entrypoint every bettor uses. `micro-foresight` records and gates the seed; it
-   never sends it (`foresight/README.md:406-409`).
+   never sends it (`foresight/README.md`).
 
 ### 1.1 The coinbase addresses the EMBER lives at
 
@@ -112,15 +112,15 @@ mistake on mainnet.
 You do **not** need to write new tooling. Two scripts in this repository already do
 every step of this against the real chain, and both read the miner key the same way:
 
-- `deploy/scripts/ember-seed.js:177` — reads
+- `deploy/scripts/ember-seed.js` — reads
   `$EMBER_MINER_DATA/coinbase-key.json` (default `$EMBER_HOME/miner/`), signs, and
-  broadcasts plain EMBER transfers. Its header (`:57-60`) states the discipline: the
+  broadcasts plain EMBER transfers. Its header states the discipline: the
   key is *"never printed, never logged and never written anywhere"*.
 - `deploy/scripts/foresight-market-journey.mjs` — the full market lifecycle on the
   live chain, including **the exact `stake(uint8)` construction you need**:
 
   ```js
-  // deploy/scripts/foresight-market-journey.mjs:489-493
+  // deploy/scripts/foresight-market-journey.mjs
   const stakeSel = selector('stake(uint8)')          // keccak256(sig)[0..4]
   await send(yes, { to: contract, value: YES_STAKE,
                     data: Buffer.concat([stakeSel, word(0)]),   // 0 = YES
@@ -131,11 +131,11 @@ every step of this against the real chain, and both read the miner key the same 
   ```
 
   Note `word(0)` / `word(1)`: `stake(uint8)` takes **0 = YES, 1 = NO**, and there is
-  no N-ary form (`deploy/scripts/seed/foresight-questions.mjs:60`).
+  no N-ary form (`deploy/scripts/seed/foresight-questions.mjs`).
 
 Transactions must be **legacy (type 0)**. This chain has no fee market, and a type-2
 transaction signed against a zero base fee is one the chain cannot execute
-(`foresight-market-journey.mjs:204-210`). Both scripts already sign type 0.
+(`foresight-market-journey.mjs`). Both scripts already sign type 0.
 
 ---
 
@@ -152,8 +152,8 @@ one. So the key is **hot: online, on disk, on the machine that signs.** There is
 arrangement of this feature in which that is not true.
 
 Source is explicit about it rather than shy: *"The address holds its own key **OUTSIDE
-this estate's custody**"* (`foresight/src/env.ts:419-420`), and the compose file
-records that *"this estate has no such key"* (`docker-compose.estate.yml:2626`).
+this estate's custody**"* (`foresight/src/env.ts`), and the compose file
+records that *"this estate has no such key"* (`docker-compose.estate.yml`).
 
 ### 2.2 Where it will end up living, honestly
 
@@ -193,7 +193,7 @@ you are accepting:
 - **Agent-transcript exposure is a live, repeated failure here.** Issues #144, #156
   and `custody-backup-restore.md` §7.1 all record secrets reaching agent transcripts
   on disk. The custody runbook's rule exists because of it: do key work **at the
-  machine's own console, not over SSH** (`custody-backup-restore.md:232-234`).
+  machine's own console, not over SSH** (`custody-backup-restore.md`).
 
 ### 2.3 What to do about it, in order of how much it buys you
 
@@ -210,11 +210,11 @@ you are accepting:
    whole defensibility of this programme is that the position is disclosed
    (21 §2: *"invisible house positions — is refused outright… it is the one form of
    this that costs nothing and it is fraud"*). The market page shows the address
-   already (`foresight-web/src/components/houseseed.tsx:107-114`).
+   already (`foresight-web/src/components/houseseed.tsx`).
 4. **Do not reuse the miner coinbase as the house address.** Two reasons, both real:
    the coinbase balance changes every time it wins a block, so any statement about
    what the house holds is true only between blocks
-   (`ember-seed.js:44-46` makes the same point for the custody set); and it would put
+   (`ember-seed.js` makes the same point for the custody set); and it would put
    every EMBER the platform has ever mined behind one hot key that signs contract
    calls.
 
@@ -231,16 +231,16 @@ this is (1) — how much you leave there.
 
 | Variable | Required? | Absent means | Source |
 | --- | --- | --- | --- |
-| `FORESIGHT_HOUSE_ADDRESS` | optional | **No engagement programme.** Approve with a seed → 409 `house_address_unconfigured`. Everything else unaffected. | `env.ts:591`, `server.ts:1186-1193` |
-| `ADMIN_API_URL` | optional | **Seeding refused outright** → 409 `seed_policy_unconfigured`, because the caps cannot be read and 21 §8 says nothing moves before the caps exist. | `server.ts:1194-1201`, `adminapiclient.ts:19-21` |
-| `FORESIGHT_SERVICE_TOKEN` | optional | Must carry scope **`admin:read`**, exact-matched by admin-api — `admin:*` will not do. Without it the policy read fails → seeding refused, fail-closed. | `adminapiclient.ts:29-33`, `:47` |
-| `FORESIGHT_RPC_URLS` | effectively required | Empty by default; a chain with no endpoint is refused rather than falling back to a public node nobody chose. Nothing reaches a chain. | `env.ts:585`, `docker-compose.estate.yml:2652-2658` |
+| `FORESIGHT_HOUSE_ADDRESS` | optional | **No engagement programme.** Approve with a seed → 409 `house_address_unconfigured`. Everything else unaffected. | `env.ts`, `server.ts` |
+| `ADMIN_API_URL` | optional | **Seeding refused outright** → 409 `seed_policy_unconfigured`, because the caps cannot be read and 21 §8 says nothing moves before the caps exist. | `server.ts`, `adminapiclient.ts` |
+| `FORESIGHT_SERVICE_TOKEN` | optional | Must carry scope **`admin:read`**, exact-matched by admin-api — `admin:*` will not do. Without it the policy read fails → seeding refused, fail-closed. | `adminapiclient.ts` |
+| `FORESIGHT_RPC_URLS` | effectively required | Empty by default; a chain with no endpoint is refused rather than falling back to a public node nobody chose. Nothing reaches a chain. | `env.ts`, `docker-compose.estate.yml` |
 | `FORESIGHT_NETWORK` | required | `mainnet` additionally requires `FORESIGHT_MAINNET_ENABLED=true` or the service refuses to boot — a one-word typo cannot put a market on mainnet. | `chain.mainnet.env:56-72` |
-| `FORESIGHT_DEFAULT_FEE_BPS` | optional | Default **200** (2%), max 1,000 (10%). Matters for the economics in §7. | `env.ts:555` |
+| `FORESIGHT_DEFAULT_FEE_BPS` | optional | Default **200** (2%), max 1,000 (10%). Matters for the economics in §7. | `env.ts` |
 
 `ADMIN_API_URL` **is already set** on the live estate (`http://admin-api:4000`,
-`docker-compose.estate.yml:2717`), deliberately and ahead of need — the reasoning is
-written out at `:2643-2650`. So the house address is the only foresight-side gap.
+`docker-compose.estate.yml`), deliberately and ahead of need — the reasoning is
+written out. So the house address is the only foresight-side gap.
 
 > **The trap in setting it.** `FORESIGHT_HOUSE_ADDRESS` is **not wired through compose
 > at all.** Its only occurrence in `deploy/compose/docker-compose.estate.yml` is line
@@ -255,13 +255,13 @@ written out at `:2643-2650`. So the house address is the only foresight-side gap
 > required, separate step — see §4 step 3.
 >
 > (Compare `FORESIGHT_TREASURY_ADDRESS`, which *is* mapped, at
-> `docker-compose.estate.yml:2687` and `:2760` — two blocks, because the migrate and
+> `docker-compose.estate.yml` and — two blocks, because the migrate and
 > service definitions are separate. The house address needs the same treatment.)
 
 ### 3.2 On `micro-admin-api`
 
 The seed *sizes* are not environment variables. They are a row in `engagement_policies`
-(`admin-api/src/migrations.ts:382-434`) with two columns that matter here:
+(`admin-api/src/migrations.ts`) with two columns that matter here:
 
 - `seed_per_market_wei` — EMBER wei per **outcome side** per market
 - `seed_per_day_wei` — EMBER wei per **outcome side** per UTC day
@@ -269,11 +269,9 @@ The seed *sizes* are not environment variables. They are a row in `engagement_po
 Both are `numeric(78,0)` — any uint256, exact. Two constraints will bite you:
 
 - `engagement_policies_seed_pair` — you must set **both or neither**. A per-market size
-  with no per-day bound is exactly the unbounded spend the ceilings exist to refuse
-  (`:420-422`).
+  with no per-day bound is exactly the unbounded spend the ceilings exist to refuse.
 - `engagement_policies_seeds_are_foresights` — seed sizes may only be set on the
-  `foresight` row. Every other service spends through grants and never stakes
-  (`:415-417`).
+  `foresight` row. Every other service spends through grants and never stakes.
 
 You set them with the **`engagement.policy.set`** action (§6).
 
@@ -292,7 +290,7 @@ vice versa — and the estate has already been bitten once by two chains sharing
 
 Numbered, with the verification after each step. **Do the whole thing on testnet
 first.** Every `curl` here goes through the gateway over TLS with the estate CA
-supplied — never `curl -k`, for the reason `foresight-market-journey.mjs:32-41`
+supplied — never `curl -k`, for the reason `foresight-market-journey.mjs`
 records at length.
 
 ### Step 0 — decide the numbers, before touching anything
@@ -303,7 +301,7 @@ EMBER you will leave sitting at the house address. §7 tells you what those cost
 
 ### Step 1 — create the house key, back it up, publish the address
 
-At the machine's console, not over SSH (`custody-backup-restore.md:232-234`).
+At the machine's console, not over SSH (`custody-backup-restore.md`).
 
 **Verify:** the paper copy transcribes *back* to the same checksum
 (`custody-backup-restore.md` §4.2 step 3). The address appears on the network site
@@ -332,9 +330,9 @@ alone does nothing (§3.1):
 
 1. Add the env mapping to the foresight service block in
    `deploy/compose/docker-compose.estate.yml`, the way
-   `FORESIGHT_TREASURY_ADDRESS` is mapped at `:2687` and `:2760`:
+   `FORESIGHT_TREASURY_ADDRESS` is mapped and:
    `FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}`. Leave the explanatory
-   comment at `:2618-2628` in place and amend it — it is the record of why the
+   comment in place and amend it — it is the record of why the
    variable was absent, and the amendment is the record of the decision to change that.
 2. Set the value in the environment file, and restart foresight.
 
@@ -365,7 +363,7 @@ curl --cacert "$ESTATE_CA" -s "$ADMIN_API_URL/v1/engagement/policies" \
 ```
 
 The `foresight` row must carry both `seedPerMarketWei` and `seedPerDayWei` as decimal
-strings. `adminapiclient.ts:112-118` refuses anything else — a policy it cannot read
+strings. `adminapiclient.ts` refuses anything else — a policy it cannot read
 exactly is one it will not enforce approximately.
 
 ### Step 5 — approve a market with a seed
@@ -377,7 +375,7 @@ curl --cacert "$ESTATE_CA" -s -X POST "$FORESIGHT_URL/markets/$MARKET_ID/approve
 ```
 
 **Verify:** the response carries a `houseSeed` object with `state: "planned"` and
-`amountPerOutcomeWei` equal to what you sent (`server.ts:1240-1246`). The refusals you
+`amountPerOutcomeWei` equal to what you sent (`server.ts`). The refusals you
 might get instead, and what each means:
 
 | Code | Status | Meaning |
@@ -389,7 +387,7 @@ might get instead, and what each means:
 | `seed_above_policy` | 409 | Above your own per-market cap. |
 | `seed_daily_cap` | 409 | Today's seeds plus this one exceed your per-day cap. |
 
-(`server.ts:1178-1228`.)
+(`server.ts`.)
 
 ### Step 6 — send the two stakes, from the house address
 
@@ -400,7 +398,7 @@ construction in §1.2.
 **Exactly, not at-least.** `recordHouseStake` compares the mirror against the plan and
 demands equality; an overshoot is refused because it would make the disclosure
 *understate* the house, which is the direction dishonesty lives in
-(`houseseed.ts:177-200`).
+(`houseseed.ts`).
 
 ### Step 7 — confirm the seed landed **on chain**, not by asking the API
 
@@ -409,7 +407,7 @@ because the mirror is a database and databases can be behind or wrong. Ask the
 contract itself:
 
 ```bash
-# stakeOf(address) -> (uint256 yes, uint256 no)  — ForesightMarket.sol:352
+# stakeOf(address) -> (uint256 yes, uint256 no)  — ForesightMarket.sol
 SEL=$(printf 'stakeOf(address)' | keccak-256sum | cut -c1-8)   # or precompute
 curl --cacert "$ESTATE_CA" -s -X POST "$EMBER_RPC_URL" \
   -H 'content-type: application/json' \
@@ -418,7 +416,7 @@ curl --cacert "$ESTATE_CA" -s -X POST "$EMBER_RPC_URL" \
 
 The answer is two 32-byte words: the house's YES stake and its NO stake. **Both must
 equal `S`, and they must be equal to each other.** Cross-check the contract's total
-holdings the way the journey script does (`foresight-market-journey.mjs:495-498`):
+holdings the way the journey script does (`foresight-market-journey.mjs`):
 `eth_getBalance` on the contract must equal the sum of every stake in it.
 
 Only when the chain says this is true is it true. The API's answer in step 8 is
@@ -433,13 +431,13 @@ curl --cacert "$ESTATE_CA" -s -X POST "$FORESIGHT_URL/markets/$MARKET_ID/open" \
 
 **This is the gate that makes the whole scheme honest, and it is why step 7 is not
 merely diligence.** Opening a seeded market is *refused* unless the mirror shows the
-exact symmetric position (`server.ts:1295-1308` → `houseseed.ts:185-212`). If step 7
+exact symmetric position (`server.ts` → `houseseed.ts`). If step 7
 was wrong, this returns `house_seed_not_staked` with the planned and observed figures
 side by side. A market cannot open claiming a seed it does not have.
 
 **Verify:** the response's `houseSeed.state` is `"staked"`, `stakedAt` equals the
 market's `openedAt` **exactly** (the trigger `house_seeds_carry_open_timestamp`
-enforces equality, not proximity — `migrations.ts:684-687`), and `txHashYes`/`txHashNo`
+enforces equality, not proximity — `migrations.ts`), and `txHashYes`/`txHashNo`
 are the two hashes from step 6.
 
 ### Step 9 — verify the public disclosure
@@ -447,11 +445,11 @@ are the two hashes from step 6.
 Load the market page. It must show the disclosure sentence, the per-outcome and total
 amounts, the house address, the share of the pool, and both transaction hashes
 (`foresight-web/src/components/houseseed.tsx`). The sentence is composed once by the
-service and rendered verbatim (`houseseed.ts:230-243`).
+service and rendered verbatim (`houseseed.ts`).
 
 If the page renders the **symmetry alarm** — *"The seed on this page is not symmetric"*
 — stop and investigate; the page is telling readers not to stake
-(`houseseed.tsx:140-148`).
+(`houseseed.tsx`).
 
 ---
 
@@ -468,7 +466,7 @@ To reconstruct any past seed without trusting a service:
    disclosed seed — the schema comment is candid that nothing can stop the house
    address staking again through the public contract, but such a stake sits in
    `positions` with a block after open and is publicly attributable
-   (`foresight/src/migrations.ts:566-571`).
+   (`foresight/src/migrations.ts`).
 
 ---
 
@@ -480,11 +478,11 @@ There are **two layers**, and they are different in kind.
 
 | Ceiling | Value | Enforced by |
 | --- | --- | --- |
-| Per outcome side, per market | 10²¹ wei = **1,000 EMBER** | `house_seeds_within_market_ceiling` CHECK (`foresight/src/migrations.ts:607-609`) **and** `engagement_policies_seed_within_ceiling` (`admin-api/src/migrations.ts:426-433`) |
-| Per outcome side, per UTC day | 10²² wei = **10,000 EMBER** | trigger `house_seeds_daily_ceiling` (`foresight/src/migrations.ts:709-730`) and the same admin-api CHECK |
+| Per outcome side, per market | 10²¹ wei = **1,000 EMBER** | `house_seeds_within_market_ceiling` CHECK (`foresight/src/migrations.ts`) **and** `engagement_policies_seed_within_ceiling` (`admin-api/src/migrations.ts`) |
+| Per outcome side, per UTC day | 10²² wei = **10,000 EMBER** | trigger `house_seeds_daily_ceiling` (`foresight/src/migrations.ts`) and the same admin-api CHECK |
 
 These hold against **anyone with a database connection**, not just against the route.
-They are mirrored in `houseseed.ts:46-49` and `admin-api/src/engagement.ts:56-57` so the
+They are mirrored in `houseseed.ts` and `admin-api/src/engagement.ts` so the
 routes can refuse with a sentence, but the constraint is the enforcement.
 
 **Changing a hard ceiling means editing both migrations and re-deploying both
@@ -498,18 +496,17 @@ check and then fails at the insert.
 `engagement_policies`. Read at approval time, **fail-closed**: if admin-api cannot be
 reached, approval *with a seed* refuses and says retry; approval *without* one is
 untouched, because an unreachable operator surface must not stop ordinary markets
-(`adminapiclient.ts:16-18`, `:103-110`).
+(`adminapiclient.ts`).
 
 **Lowering is free. Raising is approval-gated.** This asymmetry is enforced in the
 schema, not restated in a route — the trigger `engagement_raise_needs_approval`
-(`admin-api/src/migrations.ts:467-514`) refuses any raise that does not name a *fresh,
-approved* `engagement.policy.set` approval, and refuses an approval that is not one
-(`:500-505`). The route refuses too (`admin-api/src/server.ts:1252-1257`), but the
+(`admin-api/src/migrations.ts`) refuses any raise that does not name a *fresh,
+approved* `engagement.policy.set` approval, and refuses an approval that is not one. The route refuses too (`admin-api/src/server.ts`), but the
 trigger is the enforcement of record.
 
-To lower: `PUT /v1/engagement/policies/foresight` (`admin-api/src/server.ts:1257`).
+To lower: `PUT /v1/engagement/policies/foresight` (`admin-api/src/server.ts`).
 To raise: raise an `engagement.policy.set` approval and execute it
-(`admin-api/src/actions.ts:562-574`).
+(`admin-api/src/actions.ts`).
 
 ### 6.3 The number that should actually govern you
 
@@ -530,10 +527,10 @@ exactly what happens, in plain arithmetic.
 
 The house stakes `S` on YES and `S` on NO, so it puts in **`2S`**. Outside bettors then
 stake `Y` on YES and `N` on NO. The market resolves. The contract's parimutuel maths
-(`ForesightMarket.sol:381-416`) is:
+(`ForesightMarket.sol`) is:
 
 - the fee is `feeBps` × the **losing** pool — charged against other people's losses,
-  never against a winner's principal (`:372-385`);
+  never against a winner's principal;
 - winners divide `total − fee` in proportion to their stake on the winner.
 
 Say YES wins. The house held `S` of the `S+Y` winning pool, so it gets back
@@ -579,7 +576,7 @@ most you deploy is `2D`.
 
 **What it buys.** A parimutuel market with one bettor is a refund machine — the lone
 winner splits a pool containing only their own stake, so nobody's first bet can ever be
-interesting (`foresight/README.md:334-336`). The subsidy buys a market that a first
+interesting (`foresight/README.md`). The subsidy buys a market that a first
 bettor can meaningfully enter. That is the entire return, and it is a product return,
 not a financial one.
 
@@ -601,7 +598,7 @@ placed:
 
 None of these can retroactively affect an open market, and that is deliberate — a
 recorded stake is **immutable**, because it is the disclosure the market page shows
-(trigger `house_seeds_carry_open_timestamp`, `foresight/src/migrations.ts:673-676`).
+(trigger `house_seeds_carry_open_timestamp`, `foresight/src/migrations.ts`).
 
 ### 8.2 Money already in a market
 
@@ -611,19 +608,17 @@ ways:
 
 **If the market is voided or cancelled — the house gets everything back, whole.**
 `payoutOf` on a void market returns *"everything they put in, on both sides, exactly"*
-(`ForesightMarket.sol:405-409`), the fee is zero on anything but `Resolved`
-(`:381-385`), and `claimableFrom` returns the current block timestamp so there is **no
-dispute window to wait out** (`:393-397`). Call `claim()` from the house address.
-Voiding is available at any time, including before close — *"that is the point of it"*
-(`:229-233`).
+(`ForesightMarket.sol`), the fee is zero on anything but `Resolved`, and `claimableFrom` returns the current block timestamp so there is **no
+dispute window to wait out**. Call `claim()` from the house address.
+Voiding is available at any time, including before close — *"that is the point of it"*.
 
 **If the market resolves normally** — the house claims its proportional winnings like
 any other staker, after the dispute window (24h by default,
-`foresight/src/env.ts:602-608`). `claim()` from the house address, or `claimFor(house)`
+`foresight/src/env.ts`). `claim()` from the house address, or `claimFor(house)`
 from anywhere — `claimFor` exists precisely so a batching job can push a payout, and its
 failure costs nobody anything because the staker can always call `claim` themselves
-(`ForesightMarket.sol:427-437`). **A double claim is impossible**, structurally: the
-flag is set before the transfer (`:444-446`).
+(`ForesightMarket.sol`). **A double claim is impossible**, structurally: the
+flag is set before the transfer.
 
 **Unclaimed money is not lost, but it is not automatic either.** Nothing in this estate
 claims on the house's behalf today. If you seed markets and never claim, the EMBER sits
@@ -639,7 +634,7 @@ select market_id, amount_yes_wei, state, staked_at from house_seeds order by cre
 
 From the house address the EMBER returns the way 21 §3 says everything does — **through
 the front door**: deposit to a custody address, indexer confirmation, conversion
-(`houseseed.ts:20-26`). There is no privileged path, and there should not be.
+(`houseseed.ts`). There is no privileged path, and there should not be.
 
 ---
 
@@ -647,17 +642,17 @@ the front door**: deposit to a custody address, indexer confirmation, conversion
 
 ### 9.1 The market page says EMBER, not Shards — and that is correct
 
-`docs/ecosystem/21-engagement-treasury.md:98` words the disclosure as *"CloudsForge
+`docs/ecosystem/21-engagement-treasury.md` words the disclosure as *"CloudsForge
 seeded this pool with X **Shards** so early odds exist."* SHARD is a **retired** asset
-(`contracts/packages/chain/src/index.ts:58`), so a live surface saying it would be a
+(`contracts/packages/chain/src/index.ts`), so a live surface saying it would be a
 correctness problem.
 
 **It does not.** The sentence is composed once, server-side, in EMBER
-(`foresight/src/houseseed.ts:241`), rendered verbatim by the client
-(`foresight-web/src/components/houseseed.tsx:62`), and the client's own fallback also
-says EMBER (`foresight-web/src/lib/houseseed.ts:110`). The divergence from the document
-was deliberate and is recorded in both source (`houseseed.ts:222-229`) and README
-(`foresight/README.md:385-390`): converting wei through an administered price would make
+(`foresight/src/houseseed.ts`), rendered verbatim by the client
+(`foresight-web/src/components/houseseed.tsx`), and the client's own fallback also
+says EMBER (`foresight-web/src/lib/houseseed.ts`). The divergence from the document
+was deliberate and is recorded in both source (`houseseed.ts`) and README
+(`foresight/README.md`): converting wei through an administered price would make
 the disclosed number move without anybody staking anything, so the honest unit is the
 pool's own.
 
@@ -665,29 +660,29 @@ pool's own.
 page.
 
 Do not confuse this with **Sparks** — 10⁻⁶ EMBER, a legitimate *display denomination*,
-explicitly *"not a second asset code"* (`contracts/packages/chain/src/index.ts:394-425`).
+explicitly *"not a second asset code"* (`contracts/packages/chain/src/index.ts`).
 
 ### 9.2 But the engagement treasury's ledger leg genuinely is SHARD-denominated
 
 This is the real one, and it is a defect rather than a wording problem.
 
 `engagement.transfer` posts both sides of its ledger entry with
-**`assetCode: 'SHARD'`** (`admin-api/src/actions.ts:500`, `:504`, `:512`, `:516`), the
-column is `amount_shards` (`admin-api/src/migrations.ts:544`), the cap is
-`transfer_cap_shards` (`:390`), and the admin operator UI renders the balances labelled
-**"Shards"** (`admin-web/src/pages/engagement.tsx:154`, `:161`, `:185`, `:231`).
+**`assetCode: 'SHARD'`** (`admin-api/src/actions.ts`), the
+column is `amount_shards` (`admin-api/src/migrations.ts`), the cap is
+`transfer_cap_shards`, and the admin operator UI renders the balances labelled
+**"Shards"** (`admin-web/src/pages/engagement.tsx`).
 
 The UI label is *not wrong* — it faithfully describes what the ledger holds. Relabelling
 it "EMBER" alone would turn a correct label into a lie. The problem is one layer down:
 
 - **SHARD is retired.** `assertIssuable('SHARD')` throws
-  (`contracts/packages/chain/src/index.ts:82-87`). No new SHARD can be issued.
+  (`contracts/packages/chain/src/index.ts`). No new SHARD can be issued.
 - The ledger permits SHARD on `transfer` deliberately, because 69,000 SHARD sit in live
   accounts and a rule that refused those kinds would strand every unit of it
-  (`ledger/src/entries.ts:271-281`) — so the transfer will *execute*. It just moves a
+  (`ledger/src/entries.ts`) — so the transfer will *execute*. It just moves a
   retired asset.
 - **Meanwhile the seed caps in the same table are EMBER wei**
-  (`seed_per_market_wei`, `admin-api/src/migrations.ts:391-396`), and the seed on chain
+  (`seed_per_market_wei`, `admin-api/src/migrations.ts`), and the seed on chain
   is EMBER. **The two legs of one programme are denominated in two different assets, one
   of which is retired.**
 

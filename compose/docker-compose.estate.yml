@@ -35,7 +35,7 @@
 #
 # ── HOST PORTS ARE DERIVED, NOT CHOSEN ─────────────────────────────────────────
 #
-# 4100 + the service's index in micro-org's registry (`portFor`, cfctl.ts:868).
+# 4100 + the service's index in micro-org's registry (`portFor`, cfctl.ts).
 # The estate has already lost time twice to a hand-picked port that belonged to
 # another service, so the number is derived from the one list that orders every
 # repository. They bind to 127.0.0.1 only.
@@ -113,14 +113,14 @@ x-common-env: &common-env
 # per-address AES key from it with scrypt, so anybody who read this file and ever
 # obtained the `custody-keys` volume — a backup, a disk, a stray `docker cp` —
 # held the plaintext of all 387 blobs on it. It is not the address derivation
-# (that is a per-user BIP-39 mnemonic, `custody/src/hd.ts:390`), so no address was
+# (that is a per-user BIP-39 mnemonic, `custody/src/hd.ts`), so no address was
 # forgeable from this file alone. It is every key at rest, and that is enough.
 #
 # WHY A FILE AND NOT `${...}` FROM `compose/estate/tokens.env`, which is the
 # estate's existing gitignored mechanism and the obvious first answer. Two
 # measured reasons, either of which is fatal on its own:
 #
-#   1. `tokens.env` IS REGENERATED. `scripts/estate-bootstrap.sh:506` does
+#   1. `tokens.env` IS REGENERATED. `scripts/estate-bootstrap.sh` does
 #      `mv "$tmp" "$TOKENS_FILE"` — the file is replaced wholesale on every run.
 #      A master secret living there would be silently replaced by a bootstrap,
 #      and a replaced master secret is not a rotation: it is 387 blobs nothing
@@ -176,7 +176,7 @@ x-custody-secrets: &custody-secrets
 # Same mechanics as `x-custody-secrets` above, for the same measured reasons:
 # an `env_file:` PATH is interpolated and read relative to THIS file, so it is
 # independent of whichever `--env-file` the operator passed, and `tokens.env` is
-# not usable (estate-bootstrap.sh:506 rewrites it wholesale, and the testnet
+# not usable (estate-bootstrap.sh rewrites it wholesale, and the testnet
 # `--env-file compose/testnet.env` drops it entirely). `required: true` is the
 # fail-closed half. `compose/secrets/` is gitignored whole.
 #
@@ -257,19 +257,19 @@ x-analytics-pepper-file: &analytics-pepper-file
 # mainnet too.
 #
 # WHAT THIS CHANGES, WHICH IS EVERYTHING ABOUT THIS SERVICE. Until now studio
-# had NEVER generated an image: `env.ts:302` returns `flux: null` when the
+# had NEVER generated an image: `env.ts` returns `flux: null` when the
 # endpoint is unset and the placeholder backend answers instead. All 40 assets
 # in the live database came from it, each with an empty model. So this is not a
 # configuration tidy-up — it is the difference between a service that draws and
 # one that has only ever pretended to.
 #
-# `STUDIO_IMAGE_MODEL` is deliberately NOT set here: `env.ts:279` already
+# `STUDIO_IMAGE_MODEL` is deliberately NOT set here: `env.ts` already
 # defaults it to `FLUX.2-pro` whenever the endpoint is present, and
 # `AZURE_FOUNDRY_IMAGE_PATH` likewise defaults to the flux-2-pro provider path.
 # Restating either would be a second source of truth for a value the service
 # already knows.
 #
-# Both halves or neither — `env.ts:273-278` refuses to boot on one without the
+# Both halves or neither — `env.ts` refuses to boot on one without the
 # other, because "an endpoint with no key looks exactly like a key that has been
 # revoked". `required: true` below is the other half of that: a missing file is
 # a container that stops, not one that quietly draws placeholders again.
@@ -289,14 +289,14 @@ x-studio-secret-file: &studio-secret-file
 #
 # ── WALLET_FEE_QUOTES — ABSENT, SO EVERY WITHDRAWAL WAS REFUSED 503 ───────────
 #
-# `wallet/src/env.ts:329` reads it with a default of `'{}'`, `wallet/src/index.ts:189`
-# wires that empty table into `staticFeeQuoter`, and `wallet/src/settlement.ts:100-110`
+# `wallet/src/env.ts` reads it with a default of `'{}'`, `wallet/src/index.ts`
+# wires that empty table into `staticFeeQuoter`, and `wallet/src/settlement.ts`
 # throws `FeeUnavailableError` for any asset the table does not name. The route
-# turns that into 503 `fee_unavailable` at `wallet/src/withdrawals.ts:300-305`,
+# turns that into 503 `fee_unavailable` at `wallet/src/withdrawals.ts`,
 # BEFORE the idempotency claim and before any ledger reservation — so the estate
 # has been refusing every withdrawal of every asset, safely and silently, for as
 # long as this file has existed. `micro-beacon` recorded it from the outside
-# (`beacon/src/browser/walletjourneys.ts:29,307`) and was right.
+# (`beacon/src/browser/walletjourneys.ts,307`) and was right.
 #
 # ── WHY EMBER IS THE ONLY ENTRY, AND WHY THAT IS NOT AN OVERSIGHT ─────────────
 #
@@ -309,8 +309,8 @@ x-studio-secret-file: &studio-secret-file
 # 21000000000000 is MEASURED, not copied: `eth_gasPrice` on this estate's own
 # hearth-seed answers 0x3b9aca00 (1 gwei) and a plain transfer is 21000 gas, so
 # 21000 x 1e9 = 2.1e13 wei = 0.000021 EMBER at 18 decimals
-# (`contracts/packages/chain/src/index.ts:196`). It agrees with the figure
-# `wallet/src/testsupport.ts:633` has always used, which is a check, not the source.
+# (`contracts/packages/chain/src/index.ts`). It agrees with the figure
+# `wallet/src/testsupport.ts` has always used, which is a check, not the source.
 #
 # A STRING, not a number: `parseFeeQuotes` converts with `BigInt` and never
 # `Number`, because an EVM fee routinely exceeds `Number.MAX_SAFE_INTEGER` and a
@@ -318,7 +318,7 @@ x-studio-secret-file: &studio-secret-file
 #
 # **LTC IS DELIBERATELY ABSENT AND MUST STAY ABSENT UNTIL AN LTC NODE EXISTS.**
 # Custody now derives Litecoin addresses and `micro-wallet` will move LTC
-# (`wallet/src/addresses.ts:99`), so Send offers it — and it is refused here,
+# (`wallet/src/addresses.ts`), so Send offers it — and it is refused here,
 # immediately, at 503, having moved nothing. That is the honest answer: there is
 # no Litecoin node in this estate, so there is no measured LTC fee to state, and
 # stating one anyway is the guess the fail-closed rule exists to forbid. The
@@ -348,16 +348,16 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"
 # ── SETTLEMENT_RPC_URLS — ABSENT, SO NOTHING COULD BE BUILT OR BROADCAST ──────
 #
 # The brief that sent me here said this needed "an `ltc` entry". It needed more
-# than that: the variable was absent ENTIRELY, so `settlement/src/env.ts:314`
+# than that: the variable was absent ENTIRELY, so `settlement/src/env.ts`
 # resolved it to `{}` and EVERY chain was endpointless. Measured on the live
 # estate rather than inferred — settlement's own boot line reports
 # `chains:[{ember,endpoint:false},{eth,false},{btc,false},{sol,false},{ltc,false}]`
-# (`settlement/src/index.ts:58`). So this is not a Litecoin gap. An EMBER
+# (`settlement/src/index.ts`). So this is not a Litecoin gap. An EMBER
 # withdrawal reaching settlement would `eth_chainId`/`eth_getTransactionCount`/
-# `eth_getBalance` at `settlement/src/evm.ts:633-636`, get `NoEndpointError`, and
+# `eth_getBalance` at `settlement/src/evm.ts`, get `NoEndpointError`, and
 # be classified `endpoint` with a refund at the deadline
-# (`settlement/src/withdrawals.ts:368-374`). `GET /v1/fees/...` 503s for the same
-# reason (`settlement/src/server.ts:373-375,495`).
+# (`settlement/src/withdrawals.ts`). `GET /v1/fees/...` 503s for the same
+# reason (`settlement/src/server.ts,495`).
 #
 # `ember` points at the same node the indexer follows and by the same expression,
 # so the follower and the broadcaster cannot disagree about which chain this is —
@@ -369,14 +369,14 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"
 # That refusal is CORRECT and is not being softened: it is a named, permanent,
 # operator-actionable classification, and pointing the key at a node that is not
 # there would replace it with a connection failure classified `unclassified`
-# (`settlement/src/withdrawals.ts:398`) — a round trip per tick, telling nobody.
+# (`settlement/src/withdrawals.ts`) — a round trip per tick, telling nobody.
 # Absent beats wrong. Set the variable and the entry appears with no code change.
 #
 # TWO THINGS BLOCK AN LTC ENDPOINT TODAY AND BOTH ARE FILED, NOT HIDDEN:
 #   1. There is no Litecoin node on this host, and mainnet Litecoin is not a
 #      thing this ProLiant can sync beside two Hearth chains and 60 containers.
 #   2. **The transport cannot authenticate to one even if it existed.**
-#      `settlement/src/registry.ts:161` builds its client with
+#      `settlement/src/registry.ts` builds its client with
 #      `baseUrl: parsed.origin`, and `URL.origin` DISCARDS userinfo — so
 #      `http://user:pass@ltc:9332` sends no `Authorization` header and Litecoin
 #      Core answers 401. There is no cookie-auth path either. That is a defect in
@@ -388,7 +388,7 @@ x-settlement-rpc-urls: &settlement-rpc-urls
 # WHICH NETWORK THE MONEY TIER THINKS IT IS ON — AND IT WAS NOT THIS ONE.
 #
 # `WALLET_NETWORK` and `SETTLEMENT_NETWORK` both default to `testnet`
-# (`wallet/src/env.ts:348`, `settlement/src/env.ts:324`) and NEITHER was set here.
+# (`wallet/src/env.ts`, `settlement/src/env.ts`) and NEITHER was set here.
 # `INDEXER_CHAINS` and `LEDGER_RECONCILE_NETWORK` were set, to `mainnet`. So on
 # the mainnet estate the money tier was split down the middle, and every symptom
 # of it looked like something else:
@@ -417,7 +417,7 @@ x-settlement-rpc-urls: &settlement-rpc-urls
 #
 # It does not migrate the `deposit_address_assignments` rows already written on
 # `testnet`. They stay, inert: the partial unique index is on
-# `(user_id, asset_code, network)` (`wallet/src/migrations.ts:318`), so an
+# `(user_id, asset_code, network)` (`wallet/src/migrations.ts`), so an
 # existing user's next request mints a fresh MAINNET address rather than
 # colliding. Anyone holding one of the old testnet addresses would be holding an
 # address this estate no longer watches. That exposure is bounded and was checked
@@ -714,7 +714,7 @@ services:
       #
       # `IDENTITY_HANDOFF_ORIGINS` defaulted to '' and this file never set it.
       # `isAllowedOrigin` is `env.handoffOrigins.includes(origin)`
-      # (identity/src/handoff.ts:32) over an empty frozen array, so
+      # (identity/src/handoff.ts) over an empty frozen array, so
       # `createHandoffCode` returned null for EVERY origin and `POST /auth/handoff`
       # answered 403 to every caller (identity/src/server.ts, the handoff route).
       #
@@ -727,11 +727,11 @@ services:
       #
       # WHY IT IS A LIST OF ORIGINS AND NOT A WILDCARD. The code is BOUND to the
       # origin it was minted for and redeemed only from that origin, matched
-      # against the browser's own `Origin` header (identity/src/handoff.ts:73-86).
+      # against the browser's own `Origin` header (identity/src/handoff.ts).
       # That binding is the entire security property of the hand-off; an allowlist
       # that admitted anything would mint codes redeemable from an attacker's page.
       # env.ts refuses a value carrying a path, query or fragment (`origin()`,
-      # identity/src/env.ts:92-106), so a wrong entry is a dead container rather
+      # identity/src/env.ts), so a wrong entry is a dead container rather
       # than a silently-ignored line.
       #
       # These are the sixteen surfaces this compose file serves, at the apex the
@@ -743,9 +743,9 @@ services:
       # deployed surface. It is here because a title is developed against this
       # estate rather than against a stub: `pnpm dev` on 5172 signs in through
       # the same identity container as everything else, and `createHandoffCode`
-      # returns null for an origin not on this list (identity/src/handoff.ts:32),
+      # returns null for an origin not on this list (identity/src/handoff.ts),
       # so without it a developer's sign-in 403s with nothing server-side saying
-      # why. It is `http`, which `origin()` accepts (identity/src/env.ts:92-106),
+      # why. It is `http`, which `origin()` accepts (identity/src/env.ts),
       # and it is loopback — an allowlist entry that only an attacker running
       # code on the developer's own machine could reach, at which point the
       # hand-off code is not the exposure.
@@ -792,14 +792,14 @@ services:
       #
       # `IDENTITY_ACCOUNT_URL` was unset, and unset is not a failure here: it is
       # optional, defaults to '' and becomes `accountUrl: null`
-      # (identity/src/env.ts:276,291). `emailVerification.ts:183-184` then emits
+      # (identity/src/env.ts,291). `emailVerification.ts` then emits
       # the event with `linkable: false` and NO `verifyUrl` — so the mail is sent,
       # and it contains no way to verify. Silent, like every other defect in this
       # header: nothing errors, the user simply cannot finish signing up.
       #
-      # It is HUB, not the apex. `emailVerification.ts:118-122` builds
+      # It is HUB, not the apex. `emailVerification.ts` builds
       # `${accountUrl}/account/verify#token=…` and hub-web is what serves that
-      # route (hub-web/src/app.tsx:156). The apex would 404.
+      # route (hub-web/src/app.tsx). The apex would 404.
       #
       # THE TOKEN IS AFTER `#`, NOT `?`, AND THAT IS LOAD-BEARING — a fragment is
       # never sent to a server, so the token cannot land in an access log. Do not
@@ -829,7 +829,7 @@ services:
       # `custody`, `faucet` and `foresight` had no entry at all.
       #
       # The fact lives in the SERVICES, which already declare the scopes their
-      # deploy must mint — `community/src/index.ts:130` says so outright: "The
+      # deploy must mint — `community/src/index.ts` says so outright: "The
       # scopes it needs are named in `LEDGER_SCOPES`, `POLICY_SCOPES` and
       # `INDEXER_SCOPES` so the deploy can mint exactly those." Twenty repositories
       # follow that convention and nothing consumed it until now.
@@ -837,7 +837,7 @@ services:
       # The derivation reads two seams — an exported `*_SCOPES` constant in a
       # module that presents a credential, and the `scopes:` body of a
       # `POST /service-tokens/exchange` call (which is how `beacon` states its
-      # demand, beacon/src/ecosystem.ts:563). It refuses to guess: a module that
+      # demand, beacon/src/ecosystem.ts). It refuses to guess: a module that
       # presents a credential and declares nothing FAILS unless it is named, with
       # a written reason, in `compose/estate/grant-gaps.json` — ten such modules,
       # each naming the repository that owns it. See that file and the tool header.
@@ -982,7 +982,7 @@ services:
       # THE ASSETS RECONCILIATION SWEEPS — WRITTEN OUT RATHER THAN INHERITED
       # FROM THE DEFAULT, BECAUSE THIS IS A DECISION AND EMBER WILL FREEZE.
       #
-      # `SHARD,EMBER` is also ledger's default (ledger/src/env.ts:208). It is
+      # `SHARD,EMBER` is also ledger's default (ledger/src/env.ts). It is
       # spelled here anyway so that the decision is attributable in the manifest
       # instead of being an absence somebody has to know about.
       #
@@ -994,7 +994,7 @@ services:
       # Hearth node, the indexer follows nothing, and the custody route answers
       # 503 `chain_not_followed`. THAT IS THE HONEST ANSWER — if Hearth has not
       # launched then no EMBER is backed by anything, which is
-      # docs/ecosystem/00-current-state.md:22 rather than an inconvenience on
+      # docs/ecosystem/00-current-state.md rather than an inconvenience on
       # the way to fixing it. EMBER custody here is zero, so the freeze costs
       # nothing; were it non-zero the freeze would be correct rather than
       # regrettable. There is no third case.
@@ -1027,7 +1027,7 @@ services:
       #
       # THESE TWO ARE PROVISIONED AHEAD OF THE CODE THAT READS THEM, and that is
       # said plainly rather than left to be discovered: micro-ledger's job
-      # handler (ledger/src/jobs.ts:213) does not make this call yet, so today
+      # handler (ledger/src/jobs.ts) does not make this call yet, so today
       # these are inert. They are set now because the alternative is a deploy
       # edit racing a code deploy, and because a URL and a timeout are not
       # secrets — rule 9's concern is the `env_file: .env` fan-out that put the
@@ -1037,7 +1037,7 @@ services:
       # "it will 401 until ledger holds a grant … the correct sequence is:
       # ledger's client exports `INDEXER_SCOPES = ['indexer:read']`, the map is
       # regenerated, the grant appears." Both halves have now happened —
-      # `ledger/src/jobs.ts:251` makes the call, `ledger/src/indexerclient.ts`
+      # `ledger/src/jobs.ts` makes the call, `ledger/src/indexerclient.ts`
       # declares the scope, and `derive-grants.mjs` picked it up on its next run
       # without one character being typed into the grants map by hand.
       #
@@ -1046,24 +1046,24 @@ services:
       # ledger read `LEDGER_SERVICE_TOKEN` and nothing was ever setting it — so
       # the call went out with no bearer, the indexer answered 401, the 401 maps
       # to `undefined`, the reconciliation ran unobserved, and EMBER froze.
-      # `ledger/src/index.ts:170` logs that at FATAL.
+      # `ledger/src/index.ts` logs that at FATAL.
       #
       # AND SETTING IT WAS NOT ENOUGH, WHICH IS WHY THE VARIABLE BELOW CHANGED.
       # `LEDGER_SERVICE_TOKEN` carried a token that lives 600s
-      # (identity/src/tokens.ts:28), read once at import, while the
-      # reconciliation job runs every 900s (ledger/src/jobs.ts:108). 600 < 900,
+      # (identity/src/tokens.ts), read once at import, while the
+      # reconciliation job runs every 900s (ledger/src/jobs.ts). 600 < 900,
       # so the chain-backing call authenticated on the FIRST run after a
       # bootstrap and on no run ever again — and the resulting freeze was
       # byte-identical to the honest "no chain is followed" one. It passed
       # verification only because `estate-up.sh` bootstraps and verifies inside
       # the window: a check that could only be run the one way that passes.
       #
-      # micro-ledger fixed it at the layer that owns it. `ledger/src/env.ts:362`
+      # micro-ledger fixed it at the layer that owns it. `ledger/src/env.ts`
       # now reads `LEDGER_IDENTITY_CREDENTIAL` — long-lived, `cfsc_…`, already
       # minted by `estate-bootstrap.sh` — and exchanges it for a fresh token per
       # call at `POST /service-tokens/exchange` via `@cloudsforge/auth`'s
       # `ServiceTokenProvider`, as wallet, billing, custody and community do.
-      # `env.ts:363` keeps `legacyServiceTokenPresent` purely to COMPLAIN about
+      # `env.ts` keeps `legacyServiceTokenPresent` purely to COMPLAIN about
       # the old variable, so handing it back would be silently ignored rather
       # than obeyed. That is why this is a rename and not an addition.
       #
@@ -1241,7 +1241,7 @@ services:
   #
   # ── THE ASSET ROOT, AND WHY IT NEEDED A CONTAINER OF ITS OWN ──────────────────
   #
-  # `STUDIO_ASSET_ROOT` was UNSET here, and `studio/src/env.ts:322` defaults it to
+  # `STUDIO_ASSET_ROOT` was UNSET here, and `studio/src/env.ts` defaults it to
   # `./out` — resolved against WORKDIR, so `/app/out`. `/app` is root-owned
   # (`drwxr-xr-x root root`, every layer COPYed as root) and the image drops to
   # `USER node` (uid 1000). So the first thing every generation did was
@@ -1320,7 +1320,7 @@ services:
       # STUDIO_ASSET_BASE_URL is deliberately left unset: no HTTP server in this
       # environment serves that directory, so a base URL here would mint
       # `storageUrl`s that look fetchable and 404 — a zero wearing a status code.
-      # Unset, `assets.ts:101` stores a `file://` URL, which is honest about where
+      # Unset, `assets.ts` stores a `file://` URL, which is honest about where
       # the bytes actually are. Read them with
       #   docker compose -f compose/docker-compose.estate.yml run --rm \
       #     -v studio-assets:/a busybox:1.37 find /a -type f
@@ -1439,12 +1439,12 @@ services:
       # sums and what micro-ledger reconciles its custody accounts against.
       #
       # `deposit:` is the label micro-wallet writes for every assigned deposit
-      # address (wallet/src/deposits.ts:284), and coin arriving there is debited
+      # address (wallet/src/deposits.ts), and coin arriving there is debited
       # to the ledger's custody asset account — so those addresses ARE the
       # custody position.
       #
       # `treasury:` IS CARRIED AND NOTHING WRITES IT. micro-settlement sweeps
-      # deposits to a pinned treasury address (settlement/src/bitcoin.ts:814)
+      # deposits to a pinned treasury address (settlement/src/bitcoin.ts)
       # and its grant below has no `indexer:write`, so treasury addresses are
       # not registered with the indexer at all. On a deployment that has swept,
       # the aggregate therefore UNDER-reports, which reads at the ledger as
@@ -1474,7 +1474,7 @@ services:
       # interpolated too, so `${EMBER_RPC_URL}` still reaches through it.
       #
       # It is also not enough to add the mainnet variable beside the testnet one
-      # and let the unused one sit: `env.ts:351` is a MIRROR CHECK that refuses to
+      # and let the unused one sit: `env.ts` is a MIRROR CHECK that refuses to
       # boot when an `INDEXER_RPC_*` names a scope `INDEXER_CHAINS` does not list.
       # Exactly one of the two files may ever be loaded, which is what an
       # interpolated path gives and what a merged map does not.
@@ -1630,7 +1630,7 @@ services:
     # for the whole finding and for why `down -v` is not a safe habit here.
     #
     # `/var/lib/custody`, the PARENT of `CUSTODY_DATA_DIR`'s default
-    # (`/var/lib/custody/keys`, custody/src/env.ts:203): the service creates its
+    # (`/var/lib/custody/keys`, custody/src/env.ts): the service creates its
     # own `keys/` subdirectory, and mounting the leaf would leave the parent
     # unwritable and reproduce the same EACCES one level up.
     volumes:
@@ -1658,8 +1658,8 @@ services:
   # ── THE TEN-MINUTE CLIFF ──────────────────────────────────────────────────────
   #
   # identity issues service tokens with a TTL of 600 seconds
-  # (identity/src/tokens.ts:28). Nothing below re-mints. wallet built the seam for
-  # it — `const token = () => env.serviceToken` (wallet/src/index.ts:90), a
+  # (identity/src/tokens.ts). Nothing below re-mints. wallet built the seam for
+  # it — `const token = () => env.serviceToken` (wallet/src/index.ts), a
   # function called per request precisely so a short-TTL token could rotate
   # without a restart — but the function returns a static environment string, and
   # its own comment concedes the rotation waits for "when identity starts minting
@@ -1684,7 +1684,7 @@ services:
       PRICING_URL: http://pricing:4000
       WALLET_CHALLENGE_DOMAIN: localhost
       WALLET_CHALLENGE_URI: http://localhost:4103
-      # On the MIGRATOR too, and not for symmetry: `src/migrator.ts:20` imports
+      # On the MIGRATOR too, and not for symmetry: `src/migrator.ts` imports
       # the eagerly-loaded `env.ts`, so it parses this variable at boot exactly as
       # the service does. Setting it on one and not the other means a malformed
       # table migrates the schema and then refuses to serve it.
@@ -1765,7 +1765,7 @@ services:
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
       SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      # On the migrator for the reason wallet's block gives: `src/migrator.ts:25`
+      # On the migrator for the reason wallet's block gives: `src/migrator.ts`
       # imports the eager `env.ts` and parses this at boot.
       SETTLEMENT_RPC_URLS: *settlement-rpc-urls
       SETTLEMENT_NETWORK: *money-network
@@ -1974,14 +1974,14 @@ services:
       # network name, and the thing that must fetch it is somebody's browser.
       # Hence a second, PUBLIC, variable naming the same service.
       #
-      # UNSET IS A SUPPORTED MODE AND IT IS SILENT. `env.ts:350` defaults it to
-      # '' and `server.ts:966` then answers `uploadUrl: null` — which that file
+      # UNSET IS A SUPPORTED MODE AND IT IS SILENT. `env.ts` defaults it to
+      # '' and `server.ts` then answers `uploadUrl: null` — which that file
       # calls "the honest answer", and it is, but the cost is that every gallery
       # image fails to render with no error anywhere. Market's own metric help
       # text names this exact case: "a `detached` that climbs far above
       # `attached` is sellers finding their images are not rendering, which is
       # what an unset STUDIO_PUBLIC_URL looks like from the outside"
-      # (server.ts:224).
+      # (server.ts).
       #
       # Interpolated rather than literal, for the reason the hand-off allowlist
       # above is: a literal would serve testnet's listings from mainnet's studio.
@@ -1998,7 +1998,7 @@ services:
       # ── WHY A STATIC SERVICE TOKEN CANNOT BE THE ANSWER HERE ─────────────
       #
       # A service token's TTL is 10 MINUTES, hard-coded, and identity refuses to
-      # lengthen it (identity/src/tokens.ts:32-33). estate-bootstrap.sh bakes one
+      # lengthen it (identity/src/tokens.ts). estate-bootstrap.sh bakes one
       # into this environment and the container then runs for days. Measured on
       # this estate 2026-08-05: market's token had been expired for 17.5 HOURS.
       # Calling policy from inside the container with market's own token returned
@@ -2009,7 +2009,7 @@ services:
       # THE REAL FIX IS THE CREDENTIAL BELOW, not a fresher token. It is
       # long-lived, `ServiceTokenProvider` exchanges it for short-lived scoped
       # tokens and refreshes them, and it survives a restart — the pattern
-      # `foresight` (src/upstreams.ts:150-163) and `ledger` already use.
+      # `foresight` (src/upstreams.ts) and `ledger` already use.
       # estate-bootstrap.sh has minted MARKET_IDENTITY_CREDENTIAL all along and
       # nothing read it. IDENTITY_URL is not set because market falls back to
       # IDENTITY_ISSUER, which `*identity-trust` above already provides.
@@ -2251,7 +2251,7 @@ services:
   # Every other service here binds 4000 (from `x-common-env`) and is mapped to a
   # derived host port. **tessera binds 4022**, and that is not a quirk to
   # normalise — it is the point of the choice, argued at 23-tessera.md §10.1 and
-  # again in `tessera/src/env.ts:31-55`.
+  # again in `tessera/src/env.ts`.
   #
   # This estate keeps three port spaces and keeps confusing them: the port a
   # service BINDS, the HOST port here (derived, `4100 + index in
@@ -2295,7 +2295,7 @@ services:
   # ── WHAT IT TALKS TO, AND WHAT IS DELIBERATELY OPTIONAL ─────────────────────
   #
   # `STUDIO_URL`, `LEDGER_URL` and `MARKET_URL` are all optional in
-  # `tessera/src/env.ts:168-178`, and their absence is a SUPPORTED mode: the Kiln
+  # `tessera/src/env.ts`, and their absence is a SUPPORTED mode: the Kiln
   # answers 503 `kiln_unconfigured` rather than 500 and every other route still
   # serves. They are set anyway, because a world whose Kiln is cold in the one
   # environment we can drive is a world whose Kiln has never been driven.
@@ -2312,7 +2312,7 @@ services:
       # port would be one more copy of a fact to drift.
       PORT: "4022"
       TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera
-      # A SECOND variable holding the same value, on purpose. `tessera/src/env.ts:150-160`
+      # A SECOND variable holding the same value, on purpose. `tessera/src/env.ts`
       # explains it: outbound signatures and inbound verification are one secret
       # today and stop being one the day the estate moves to per-producer signing
       # keys. A service that read one variable for both would have to be found.
@@ -2386,7 +2386,7 @@ services:
   #
   # ── THE PORT, AND WHY THIS IS *NOT* A SECOND tessera ────────────────────────
   #
-  # aetherholm BINDS 4120 by default (`aetherholm/src/env.ts:105`, `.env.example`,
+  # aetherholm BINDS 4120 by default (`aetherholm/src/env.ts`, `.env.example`,
   # `Dockerfile:87`), and 4120 IS ADMIN-API'S HOST PORT IN THIS FILE. The tessera
   # block above argues at length for keeping a service's own bind port and moving
   # the healthcheck instead; that argument turns on 4022 sitting BELOW the derived
@@ -2400,7 +2400,7 @@ services:
   # 4000 and the HOST port is derived.
   #
   # HOST PORT 4124 IS DERIVED, NOT CHOSEN: index 24 in `deployableRepos()`, via
-  # `portFor` (org/tools/cfctl.ts:987). `make check-web` recomputes it.
+  # `portFor` (org/tools/cfctl.ts). `make check-web` recomputes it.
   #
   # ── WHAT IT IS HANDED, AND WHAT IT DELIBERATELY IS NOT ──────────────────────
   #
@@ -2457,7 +2457,7 @@ services:
   # ── EMBERKIN_SERVICE_TOKEN IS A TOKEN AND MUST NOT BE HANDED A CREDENTIAL ───
   #
   # This is the tessera trap again, and it is worth stating per service because
-  # the variable NAME is not what settles it. `emberkin/src/index.ts:60` is
+  # the variable NAME is not what settles it. `emberkin/src/index.ts` is
   # `const token = (): string => env.serviceToken` — the value is PRESENTED as a
   # bearer, verbatim, with no exchange. So it must be a ten-minute JWT from
   # `POST /service-tokens`, and it is minted in `estate-bootstrap.sh`'s
@@ -2540,7 +2540,7 @@ services:
   #
   # ── HOST PORT 4123 IS DERIVED, NOT CHOSEN ───────────────────────────────────
   #
-  # Index 23 in `deployableRepos()`, via `portFor` (org/tools/cfctl.ts:987), and
+  # Index 23 in `deployableRepos()`, via `portFor` (org/tools/cfctl.ts), and
   # re-derived rather than copied from a brief: `node --experimental-strip-types`
   # over `org/tools/registry.ts` prints `4123 foresight` at position 23, between
   # `4122 emberkin` and `4124 aetherholm`. `make check-web` recomputes it.
@@ -2561,7 +2561,7 @@ services:
   #     number of repositories appended to `deployableRepos()` can ever reach it.
   #     So it keeps its port and the healthcheck moves.
   #
-  # foresight binds 4021 (`foresight/src/env.ts:316`, `Dockerfile:86 EXPOSE 4021`,
+  # foresight binds 4021 (`foresight/src/env.ts`, `Dockerfile:86 EXPOSE 4021`,
   # and micro-ui's registry row, whose test pins it as "the port the service
   # actually binds"). 4021 is tessera's case exactly — one below 4022, in the same
   # unreachable region — and it collides with nothing: every host pin in this file
@@ -2569,7 +2569,7 @@ services:
   # anchor it costs, exactly as tessera's did.
   #
   # There is a second, decisive reason not to normalise it, and it is already
-  # committed: `gateway/dynamic/public-api.yml:193` sends the public API's
+  # committed: `gateway/dynamic/public-api.yml` sends the public API's
   # `/v1/markets` and `/v1/categories` to `http://foresight:4021`, read off this
   # image's own `EXPOSE`. Setting `PORT: "4000"` here would break the public API
   # surface and put this file in drift with the gateway, which
@@ -2579,7 +2579,7 @@ services:
   #
   # It was right when written, and it is worth keeping the correction visible
   # rather than swapping the paragraph out. It said `FORESIGHT_SERVICE_TOKEN` is
-  # PRESENTED verbatim — `foresight/src/index.ts:101` was `const token = () =>
+  # PRESENTED verbatim — `foresight/src/index.ts` was `const token = () =>
   # env.serviceToken` handed straight to five HttpClients — so handing it the
   # credential would have sent custody, the indexer, the ledger and policy a
   # Bearer that is not a JWT, earning 401 with nothing in any log naming why.
@@ -2588,10 +2588,10 @@ services:
   # BACKGROUND JOBS**, which is the shape that froze EMBER through `ledger`. A
   # market approved eleven minutes after a bootstrap sat in `awaiting_funds` with
   # a 401 from custody until somebody re-ran the bootstrap. And it named the fix —
-  # "one seam wide, `index.ts:101` is already a function called per request,
+  # "one seam wide, `index.ts` is already a function called per request,
   # exactly so that it could become `serviceTokenProvider(...).token`".
   #
-  # That is what micro-foresight did. `foresight/src/upstreams.ts:142` builds a
+  # That is what micro-foresight did. `foresight/src/upstreams.ts` builds a
   # real `ServiceTokenProvider`, so **both variables are passed below**: the
   # credential is what it exchanges, and the token remains for the paths that
   # still present one. The service prefers the credential when both are set, and
@@ -2621,7 +2621,7 @@ services:
   # reuses them on every later run, and appends them to `tokens.env`.
   #
   # The ORACLE is `purpose: 'deployer'`, which looks wrong and is not.
-  # `custody/src/gates.ts:35` has three signable purposes and none of them signs a
+  # `custody/src/gates.ts` has three signable purposes and none of them signs a
   # contract CALL — `transfer` requires empty calldata and says widening it would
   # make the key a signing oracle. So foresight's oracle resolves a market by
   # CREATING a contract (`ForesightResolver`, whose constructor calls `oracleAct`
@@ -2631,7 +2631,7 @@ services:
   #
   # The per-market DEPLOYER addresses are NOT bootstrapped: the service mints one
   # per market itself, idempotently on `(chain, network, userId='foresight',
-  # orderId=<market id>)` (`deploy.ts:340`), which is what `custody:address:create`
+  # orderId=<market id>)` (`deploy.ts`), which is what `custody:address:create`
   # is in its grant for. Each one needs gas before its market can deploy; the
   # service reports that as `awaiting_funds` and logs the exact shortfall rather
   # than burning an attempt.
@@ -2649,7 +2649,7 @@ services:
   #     which is the documented behaviour and not a degradation.
   #   * `FORESIGHT_PROPOSER_*` and `FORESIGHT_SEARCH_*`. No external model or
   #     search adapter is wired here, so the idea pipeline records "no proposals"
-  #     and the operator queue stays empty. `index.ts:79` logs
+  #     and the operator queue stays empty. `index.ts` logs
   #     `proposerConfigured: false` at boot so an operator can see which mode they
   #     are in without an error line every six hours.
   #   * `FORESIGHT_MAINNET_ENABLED`. NO LONGER IN THIS GROUP, and the correction
@@ -2744,10 +2744,10 @@ services:
       # The browser-facing half of studio, exactly as in `market` above — see the
       # long note there. Foresight holds an asset reference and builds `bytesUrl`
       # from this at read time, deliberately NOT storing a URL in the durable
-      # event (`foresight/src/images.test.ts:487` asserts that), so the value is
+      # event (`foresight/src/images.test.ts` asserts that), so the value is
       # read on every render and a wrong one is wrong everywhere at once.
       #
-      # `env.test.ts:236-260` requires an ORIGIN and rejects a path — a trailing
+      # `env.test.ts` requires an ORIGIN and rejects a path — a trailing
       # slash is accepted and normalised, anything more throws at boot. The
       # interpolation below produces a bare origin on both estates.
       #
@@ -2755,13 +2755,13 @@ services:
       # yet. Set now for the reason given in market's block.
       STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # A TOKEN, NOT A CREDENTIAL. See the long note above; it is presented
-      # verbatim by `index.ts:101` and a `cfsc_…` secret here 401s all five
+      # verbatim by `index.ts` and a `cfsc_…` secret here 401s all five
       # upstreams.
       FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
       # `FORESIGHT_NETWORK` AND `FORESIGHT_MAINNET_ENABLED` ARE IN THE SAME
       # `env_file` AS THE INDEXER'S, AND THAT IS THE POINT.
       #
-      # `env.ts:374-379` refuses to boot on `FORESIGHT_NETWORK=mainnet` unless
+      # `env.ts` refuses to boot on `FORESIGHT_NETWORK=mainnet` unless
       # `FORESIGHT_MAINNET_ENABLED=true`, so that a one-word typo cannot put
       # strangers' money on a live chain. That gate is worth keeping and is easy
       # to defeat by accident — the obvious parameterisation here would have been
@@ -2775,7 +2775,7 @@ services:
       # the gate on is a diff somebody has to read. `foresight` reads the same
       # file as `indexer` so the two cannot name different networks.
       #
-      # `chainIdOf(chain, market.network)` (`foresight/src/deploy.ts:421`) is what
+      # `chainIdOf(chain, market.network)` (`foresight/src/deploy.ts`) is what
       # actually signs, so a `FORESIGHT_NETWORK` disagreeing with the node would
       # produce transactions the node rejects on EIP-155 — silently, at the one
       # moment a market is created.
@@ -2840,7 +2840,7 @@ services:
   #
   # This is the third variable in this file whose name has to be checked against
   # its USE rather than read (see tessera and emberkin above, in the opposite
-  # direction). `beacon/src/ecosystem.ts:549` EXCHANGES it at
+  # direction). `beacon/src/ecosystem.ts` EXCHANGES it at
   # `POST /service-tokens/exchange` for a `ledger:read` token, so it is the
   # long-lived `cfsc_…` kind — which section 5b of `estate-bootstrap.sh` already
   # mints, under the name `BEACON_IDENTITY_CREDENTIAL`. The deploy is where those
@@ -2874,12 +2874,12 @@ services:
   #   insert or update on table "slo_observations" violates foreign key
   #   constraint "slo_observations_slo_name_fkey"
   #
-  # `jobs.ts:299` records against `journeySloName(name)` = `<journey>.runs`, and
+  # `jobs.ts` records against `journeySloName(name)` = `<journey>.runs`, and
   # `slos` is EMPTY: nothing seeds it. `upsertSlo` has exactly one caller in the
-  # repository — `PUT /v1/slos/:name` (server.ts:685, admin-only) — so an SLO is
+  # repository — `PUT /v1/slos/:name` (server.ts, admin-only) — so an SLO is
   # REGISTERED, never derived, and beacon ships no catalogue.
   #
-  # It does not crash: `jobs.ts:305` catches and warns, so the service is healthy
+  # It does not crash: `jobs.ts` catches and warns, so the service is healthy
   # and the journeys are real. What is lost is every objective and every error
   # budget — the numbers the gate is supposed to gate ON. A green `/readyz` here
   # is worth less than it looks, which is this file's recurring lesson.
@@ -2887,7 +2887,7 @@ services:
   # NOT FIXED HERE, AND THE CHOICE IS DELIBERATE. Registering eleven SLOs from
   # `estate-bootstrap.sh` is defensible — section 5c already argues that WHO
   # RECEIVES WHAT is deploy configuration, and an objective of 99% is written
-  # down (13-operational-model.md:437, "99% of scheduled runs pass. A skip counts
+  # down (13-operational-model.md, "99% of scheduled runs pass. A skip counts
   # against it"). But the objective, tier and window of each journey are the
   # GATE'S OWN policy, and inventing eleven of them in a compose repository is
   # how a threshold nobody agreed to becomes the one the estate is judged by.
@@ -2979,9 +2979,9 @@ services:
       BEACON_HANDOFF_ORIGIN: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # ── A STATUS PAGE BEHIND A LOGIN IS NOT A STATUS PAGE ────────────────────
       #
-      # `BEACON_PUBLIC_STATUS` defaults FALSE (`beacon/src/env.ts:330`) and was set nowhere here,
+      # `BEACON_PUBLIC_STATUS` defaults FALSE (`beacon/src/env.ts`) and was set nowhere here,
       # so `GET /api/status/public` ran `authorise(ctx, deps, READ_SCOPE)` first
-      # (`beacon/src/server.ts:459`) and answered 401 to the browser that is meant to read it.
+      # (`beacon/src/server.ts`) and answered 401 to the browser that is meant to read it.
       # `status-web` therefore rendered "Not determined — our status service answered with HTTP
       # 404" (404 because the gateway had no route either; both halves are fixed together, and
       # adding only the route would have turned the 404 into a 401, which is not progress).
@@ -3023,7 +3023,7 @@ services:
   # {deployableRepos} from './tools/registry.ts'; …"` in micro-org prints
   # `4144 faucet ops`, and `make check-web` recomputes it on every run.
   #
-  # It BINDS 4013 by default (`faucet/src/env.ts:311`, `Dockerfile:84`), which
+  # It BINDS 4013 by default (`faucet/src/env.ts`, `Dockerfile:84`), which
   # is not a number this file hands to anybody — but it is normalised to 4000
   # anyway, by `x-common-env`'s `PORT`. That follows `nda` and `aetherholm` and
   # not `tessera`: tessera's 4022 is argued from sitting BELOW the derived 4100+
@@ -3034,10 +3034,10 @@ services:
   # ── CUSTODY_TOKEN IS PRESENTED, NOT EXCHANGED, AND THAT WAS CHECKED ─────────
   #
   # The fourth variable in this file whose authority had to be read out of the
-  # source rather than off its name. `faucet/src/index.ts:137` is
+  # source rather than off its name. `faucet/src/index.ts` is
   # `token: () => env.custodyToken`, handed straight to `HttpClient`, which sets
   # `authorization: Bearer <that value>` verbatim (`runtime/packages/http/src/
-  # index.ts:342`). There is no `ServiceTokenProvider` anywhere in this
+  # index.ts`). There is no `ServiceTokenProvider` anywhere in this
   # repository. So the value must be a ten-minute JWT from
   # `POST /service-tokens` — NOT `FAUCET_IDENTITY_CREDENTIAL`, which section 5b
   # of the bootstrap also mints and which is sitting in `tokens.env` looking
@@ -3080,7 +3080,7 @@ services:
   #
   # `FAUCET_CUSTODY_ORDER_ID` / `_USER_ID` are the other half of that binding.
   # Custody compares seven identity fields character for character and its 403
-  # deliberately does not name which one disagreed (`custody/src/keys.ts:277`),
+  # deliberately does not name which one disagreed (`custody/src/keys.ts`),
   # so these cannot be debugged from a response: they are written here, read by
   # the bootstrap from this same file, and never typed twice.
   #
@@ -3097,9 +3097,9 @@ services:
   #
   # ── AND THAT IS WHY BOTH FAUCET SERVICES SIT BEHIND A PROFILE ──────────────
   #
-  # `faucet/src/env.ts:63` is `export const NETWORK = 'testnet' as const`, with
+  # `faucet/src/env.ts` is `export const NETWORK = 'testnet' as const`, with
   # the annotation chosen so that `NETWORK === 'mainnet'` is a COMPILE ERROR and
-  # not a branch. `index.ts:108-120` reads `eth_chainId` at boot and calls
+  # not a branch. `index.ts` reads `eth_chainId` at boot and calls
   # `process.exit(1)` on anything that is not 7412. There is no configuration
   # under which this service runs against EMBER mainnet, deliberately: its own
   # header calls a testnet faucet pointed at mainnet "an unauthenticated
@@ -3140,7 +3140,7 @@ services:
       # too. It dials none of them and signs nothing.
       FAUCET_TOKEN: ${FAUCET_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); PIN FAUCET_REQUESTER_SALT BEFORE ROTATING or every rate-limit bucket re-keys (faucet/src/env.ts:425)}
       # PINNED, AND THE PINNING IS THE POINT: unset, faucet DERIVES this salt from
-      # FAUCET_TOKEN (faucet/src/env.ts:425 -> requester.ts:206), so rotating the token
+      # FAUCET_TOKEN (faucet/src/env.ts -> requester.ts), so rotating the token
       # would silently re-key every requester pseudonym and rate-limit bucket. Pinned
       # to the value derived from the PRE-ROTATION token, continuity survives rotation.
       FAUCET_REQUESTER_SALT: ${FAUCET_REQUESTER_SALT:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
@@ -3173,7 +3173,7 @@ services:
       # is the mistake `analytics` was removed from the CREDENTIALS list for.
       FAUCET_TOKEN: ${FAUCET_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); PIN FAUCET_REQUESTER_SALT BEFORE ROTATING or every rate-limit bucket re-keys (faucet/src/env.ts:425)}
       # PINNED, AND THE PINNING IS THE POINT: unset, faucet DERIVES this salt from
-      # FAUCET_TOKEN (faucet/src/env.ts:425 -> requester.ts:206), so rotating the token
+      # FAUCET_TOKEN (faucet/src/env.ts -> requester.ts), so rotating the token
       # would silently re-key every requester pseudonym and rate-limit bucket. Pinned
       # to the value derived from the PRE-ROTATION token, continuity survives rotation.
       FAUCET_REQUESTER_SALT: ${FAUCET_REQUESTER_SALT:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
@@ -3379,8 +3379,8 @@ services:
   # ── THE HOST PORTS ARE DERIVED, LIKE EVERY OTHER PORT HERE ────────────────────
   #
   # 4100 + the repository's index in micro-org's registry — the same `portFor`
-  # rule the 21 services above obey (org/tools/cfctl.ts:868, over
-  # `deployableRepos()` in org/tools/registry.ts:134). Read out of the registry
+  # rule the 21 services above obey (org/tools/cfctl.ts, over
+  # `deployableRepos()` in org/tools/registry.ts). Read out of the registry
   # rather than typed:
   #
   #   node --import tsx -e "import {deployableRepos} from './tools/registry.ts'; \
@@ -3662,7 +3662,7 @@ services:
     # is 392 files, and comparing FLUX against a challenger by rebuilding the
     # image would be a rebuild per comparison. The client makes that safe — it
     # resolves by stable relative path and there is NO code path in the bundle
-    # that can name a provider (`tessera-web/src/lib/hosts.ts:100-112`), so the
+    # that can name a provider (`tessera-web/src/lib/hosts.ts`), so the
     # directory behind the path is the only variable.
     #
     # THE DEFAULT IS STILL THE EMPTY DIRECTORY, and that is a supported state,
@@ -3977,9 +3977,9 @@ volumes:
   # read-only image layer, so `FileVault.write` fell over on the FIRST WRITE:
   #
   #     EACCES: permission denied, mkdir '/var/lib/custody'
-  #       at FileVault.write (custody/src/vault.ts:72)
-  #       at ensureSeed (custody/src/keys.ts:213)
-  #       at provisionAddress (custody/src/keys.ts:122)
+  #       at FileVault.write (custody/src/vault.ts)
+  #       at ensureSeed (custody/src/keys.ts)
+  #       at provisionAddress (custody/src/keys.ts)
   #
   # `select count(*) from custody_keys` returned **0**. Not "few" — none. **The
   # key service in this estate had never successfully minted a key**, for the
