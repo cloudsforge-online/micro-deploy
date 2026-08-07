@@ -305,6 +305,12 @@ the machine.
 
 ## Releases
 
+> **What is deployed right now, and the rule that governs it, is
+> [`docs/releasing.md`](docs/releasing.md).** One version across the entire
+> estate — a change to one service is a version bump and a deploy for all
+> forty-six. That document says what mainnet and testnet are running today, and
+> why thirteen simultaneous versions on mainnet was the thing worth ending.
+
 A release is a file, not a tag. micro-org owns the format and the generator; this
 repository owns the **consumer**, which did not exist.
 
