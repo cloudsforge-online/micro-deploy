@@ -9,7 +9,7 @@ What is deployed right now, and the one rule that governs how it changes.
 | Environment | Compose project | Version | Containers | Deployed |
 | --- | --- | --- | --- | --- |
 | **Testnet** | `cf-testnet` | **2.3.0** | 46 services + `postgres:17-alpine` | 2026-08-07 |
-| **Mainnet** | `cloudsforge-estate` | **2.3.0** | 46 services + `postgres:17-alpine` | 2026-08-07 |
+| **Mainnet** | `cloudsforge-estate` | **2.3.0** | 45 services + `postgres:17-alpine` | 2026-08-07 |
 
 Both read the same number. That is the point, and it is new — see the next
 section for what it replaced.
@@ -142,7 +142,25 @@ link covered by the consent banner, or throw on line one of a module — all
 three of those shipped, and all three passed automated checks that only fetched
 bytes.
 
-### 4. Mainnet
+### 4. Back up mainnet first
+
+`release-deploy.sh` does **not** take a backup, and a release runs every
+service's migrator against a live production database. `--rollback` puts the
+images back; it does not put a schema back.
+
+```sh
+P=cloudsforge-estate; OUT=/home/malf/backups/pre-<version>; mkdir -p "$OUT/db"
+for d in $(docker exec ${P}-postgres-1 psql -U cloudsforge -d postgres -tAc \
+    "select datname from pg_database where datistemplate=false and datname<>'postgres'"); do
+  docker exec ${P}-postgres-1 pg_dump -U cloudsforge -d "$d" -Fc > "$OUT/db/$d.dump"
+done
+```
+
+For 2.3.0 that was 28 databases, 129M, about a minute. There is no version of
+this release that is worth skipping it for. Restore is
+`docs/estate-backup-restore.md`.
+
+### 5. Mainnet
 
 The manifest is generated from the repositories, not written by hand. In
 `micro-org`:
@@ -152,7 +170,7 @@ cfctl release <version>          # reads each package.json + git HEAD
                                  # refuses a dirty checkout
 ```
 
-That writes `org/releases/<version>.json`. Then on the host:
+That writes `org/releases/<version>.yaml`. Then on the host:
 
 ```sh
 cd /home/malf/dev/cloudsforge/deploy
@@ -168,10 +186,62 @@ Defaults it uses: `BASE=compose/docker-compose.estate.yml`,
 Mainnet does **not** get `docker-compose.design.yml`. That overlay is testnet
 only.
 
-### 5. Confirm
+### 6. Confirm
 
 Run the two `docker ps` commands at the top of this document. Two lines each.
 Anything else is not this release.
+
+---
+
+## When a deploy fails on `denied`, and what it usually is not
+
+This bit 2.3.0 and will bite again, so it is written down rather than
+remembered.
+
+The mainnet deploy aborted before changing anything, with:
+
+```
+FAIL ghcr.io/cloudsforge-online/micro-explorer-web:2.3.0 — denied: denied
+1 of 45 image(s) cannot be pulled. NOT DEPLOYING.
+```
+
+**Nothing was wrong with that image.** The package was public, the tag existed,
+`cfctl release --verify` had passed all forty-six minutes earlier, testnet was
+already running that exact image, and `docker manifest inspect` on the same ref
+on the same host succeeded seconds later. Re-running the deploy unchanged
+worked.
+
+The cause is at `scripts/release-deploy.sh:223`: one `docker manifest inspect`
+per image, **no retry**, in a loop that fires forty-five authenticated requests
+at GHCR back to back. GHCR occasionally answers one of them `denied` under that
+burst. It is an availability answer, not an authorization fact. Same family as
+the transient `403 Forbidden` the `publish` job returned on `pricing` and `site`
+in this same release, which also cleared on a plain re-run.
+
+The trap is that the script's own comment says a `denied` here is *"usually the
+GHCR visibility trap"* — a package that inherited a private repository's
+visibility. That is a real failure, it needs a human, and it never clears by
+itself. But it is the **rarer** of the two, so the message sends you to check
+settings that are already correct.
+
+So:
+
+1. Do not change any visibility setting yet. Check the package first —
+   `gh api /orgs/cloudsforge-online/packages/container/<name> --jq .visibility`
+   — and check the tag is listed.
+2. If both are fine, run the exact same deploy command again. The pre-flight
+   check runs before anything is touched, so a failed run changed nothing and a
+   retry is free.
+3. If the **same** ref fails twice, then it is real: visibility, or an image
+   that was never published because its `publish` job was red.
+
+Tracked as micro-org#242, with the fix: retry each inspect a few times and only
+call it `denied` after the last attempt, which would let the script tell the two
+cases apart instead of guessing.
+
+**Do not let this become a habit of re-running failed production deploys without
+reading the failure.** The check is right to refuse; a half-applied release is
+the thing it exists to prevent. Read which ref failed, and why, every time.
 
 ---
 
