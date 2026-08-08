@@ -1,4 +1,4 @@
-# -- 2.4.0, ON TESTNET ONLY ----------------------------------------------------
+# -- 2.5.0, ON TESTNET ONLY ----------------------------------------------------
 #
 # Applied as a THIRD overlay after `docker-compose.release.yml`, and only for the
 # testnet project. The release overlay is shared by both estates, so editing its
@@ -21,8 +21,8 @@
 # them, which carried twenty-odd more between them. So "which release is this box
 # on?" had thirty answers and not one of them was the estate.
 #
-# It is 2.4.0 for all seventy-four containers. Anything on this estate NOT
-# reading 2.4.0 is visibly not this release, and that is checkable with one
+# It is 2.5.0 for all seventy-four containers. Anything on this estate NOT
+# reading 2.5.0 is visibly not this release, and that is checkable with one
 # `docker ps` rather than with a spreadsheet.
 #
 # THE RULE THIS COMES FROM, IN THE OWNER'S WORDS: "from now on all container
@@ -150,7 +150,42 @@
 # The services underneath carry no behaviour change at this tag. They are here so
 # the version names the estate rather than the half of it a reader can see.
 #
-# -- WHAT 2.4.0 ADDS OVER 2.3.0 ------------------------------------------------
+# -- WHAT 2.5.0 ADDS OVER 2.4.0 ------------------------------------------------
+#
+# One behaviour change, in two services, and it is a repair to the platform's
+# solvency check rather than anything a visitor will see. micro-org#248.
+#
+# THE CHAIN AND THE BOOKS CAN AGREE AGAIN. `micro-ledger` reconciles the ledger's
+# custody total against `micro-indexer`'s custody aggregate, which sums the
+# balances of every address the platform has registered as its own. Registering
+# an address raised the aggregate. NOTHING raised the ledger side, because no
+# service had ever booked platform float as anything at all.
+#
+# So on 2026-08-05 the mainnet EMBER treasury was pinned at 12:39:37 and
+# registered at 12:40:11 holding 25.000021 EMBER. Reconciliation recorded
+# `drift -25000020999999996000` and froze the asset. EVERY EMBER WITHDRAWAL IN
+# THE ESTATE WAS REFUSED FOR THREE DAYS WHILE THE PLATFORM HELD MORE COIN THAN
+# IT OWED -- an invented insolvency, and one that any future registration would
+# have reproduced.
+#
+# At this tag, watching and booking are ONE operation. `micro-settlement` asks
+# `micro-indexer` what the address holds -- at the aggregate's own confirmation
+# depth, from a block hash proved either side of the read, because a reading at
+# `latest` would book coin the aggregate will not count for another sixty blocks
+# and freeze the asset from the other side -- then watches it, then posts one
+# entry: debit `(custody, ASSET, available)`, credit `(platform, ASSET,
+# treasury)`. It books the address's own measured balance and never `the drift`,
+# because the drift is an aggregate a genuine shortfall also moves.
+#
+# TESTNET IS WHERE THIS IS PROVED. Mainnet's treasury was already registered and
+# repaired by hand, so its migration starts life marked as booked and the new
+# code never touches it. Testnet registers one from scratch, which is the only
+# place the whole path runs end to end.
+#
+# The other seventy-two containers carry no change and are here because the
+# version names the estate.
+#
+# -- WHAT 2.4.0 ADDED OVER 2.3.0 -----------------------------------------------
 #
 # One behaviour change, in `notify`, and seventy-three containers that carry no
 # change at all and are here because the version names the estate.
@@ -225,77 +260,77 @@
 #
 # Edit it HERE and copy it there. The host is not a checkout and does not pull.
 services:
-  activity:            { image: ghcr.io/cloudsforge-online/micro-activity:2.4.0 }
-  activity-migrate:    { image: ghcr.io/cloudsforge-online/micro-activity:2.4.0 }
-  admin-api:           { image: ghcr.io/cloudsforge-online/micro-admin-api:2.4.0 }
-  admin-api-migrate:   { image: ghcr.io/cloudsforge-online/micro-admin-api:2.4.0 }
-  admin-web:           { image: ghcr.io/cloudsforge-online/micro-admin-web:2.4.0 }
-  aetherholm:          { image: ghcr.io/cloudsforge-online/micro-aetherholm:2.4.0 }
-  aetherholm-migrate:  { image: ghcr.io/cloudsforge-online/micro-aetherholm:2.4.0 }
-  aetherholm-web:      { image: ghcr.io/cloudsforge-online/micro-aetherholm-web:2.4.0 }
-  analytics:           { image: ghcr.io/cloudsforge-online/micro-analytics:2.4.0 }
-  analytics-migrate:   { image: ghcr.io/cloudsforge-online/micro-analytics:2.4.0 }
-  beacon:              { image: ghcr.io/cloudsforge-online/micro-beacon:2.4.0 }
-  beacon-migrate:      { image: ghcr.io/cloudsforge-online/micro-beacon:2.4.0 }
-  beacon-web:          { image: ghcr.io/cloudsforge-online/micro-beacon-web:2.4.0 }
-  billing:             { image: ghcr.io/cloudsforge-online/micro-billing:2.4.0 }
-  billing-migrate:     { image: ghcr.io/cloudsforge-online/micro-billing:2.4.0 }
-  community:           { image: ghcr.io/cloudsforge-online/micro-community:2.4.0 }
-  community-migrate:   { image: ghcr.io/cloudsforge-online/micro-community:2.4.0 }
-  custody:             { image: ghcr.io/cloudsforge-online/micro-custody:2.4.0 }
-  custody-migrate:     { image: ghcr.io/cloudsforge-online/micro-custody:2.4.0 }
-  devplatform:         { image: ghcr.io/cloudsforge-online/micro-devplatform:2.4.0 }
-  devplatform-migrate: { image: ghcr.io/cloudsforge-online/micro-devplatform:2.4.0 }
-  devportal-web:       { image: ghcr.io/cloudsforge-online/micro-devportal-web:2.4.0 }
-  emberkin:            { image: ghcr.io/cloudsforge-online/micro-emberkin:2.4.0 }
-  emberkin-migrate:    { image: ghcr.io/cloudsforge-online/micro-emberkin:2.4.0 }
-  emberkin-web:        { image: ghcr.io/cloudsforge-online/micro-emberkin-web:2.4.0 }
-  explorer-web:        { image: ghcr.io/cloudsforge-online/micro-explorer-web:2.4.0 }
-  faucet:              { image: ghcr.io/cloudsforge-online/micro-faucet:2.4.0 }
-  faucet-migrate:      { image: ghcr.io/cloudsforge-online/micro-faucet:2.4.0 }
-  foresight:           { image: ghcr.io/cloudsforge-online/micro-foresight:2.4.0 }
-  foresight-migrate:   { image: ghcr.io/cloudsforge-online/micro-foresight:2.4.0 }
-  foresight-web:       { image: ghcr.io/cloudsforge-online/micro-foresight-web:2.4.0 }
-  hub-api:             { image: ghcr.io/cloudsforge-online/micro-hub-api:2.4.0 }
-  hub-web:             { image: ghcr.io/cloudsforge-online/micro-hub-web:2.4.0 }
-  identity:            { image: ghcr.io/cloudsforge-online/micro-identity:2.4.0 }
-  identity-migrate:    { image: ghcr.io/cloudsforge-online/micro-identity:2.4.0 }
-  indexer:             { image: ghcr.io/cloudsforge-online/micro-indexer:2.4.0 }
-  indexer-migrate:     { image: ghcr.io/cloudsforge-online/micro-indexer:2.4.0 }
-  lantern:             { image: ghcr.io/cloudsforge-online/micro-lantern:2.4.0 }
-  lantern-migrate:     { image: ghcr.io/cloudsforge-online/micro-lantern:2.4.0 }
-  lantern-web:         { image: ghcr.io/cloudsforge-online/micro-lantern-web:2.4.0 }
-  ledger:              { image: ghcr.io/cloudsforge-online/micro-ledger:2.4.0 }
-  ledger-migrate:      { image: ghcr.io/cloudsforge-online/micro-ledger:2.4.0 }
-  market:              { image: ghcr.io/cloudsforge-online/micro-market:2.4.0 }
-  market-migrate:      { image: ghcr.io/cloudsforge-online/micro-market:2.4.0 }
-  market-web:          { image: ghcr.io/cloudsforge-online/micro-market-web:2.4.0 }
-  mint:                { image: ghcr.io/cloudsforge-online/micro-mint:2.4.0 }
-  mint-migrate:        { image: ghcr.io/cloudsforge-online/micro-mint:2.4.0 }
-  mint-web:            { image: ghcr.io/cloudsforge-online/micro-mint-web:2.4.0 }
-  nda:                 { image: ghcr.io/cloudsforge-online/micro-nda:2.4.0 }
-  nda-migrate:         { image: ghcr.io/cloudsforge-online/micro-nda:2.4.0 }
-  network-site:        { image: ghcr.io/cloudsforge-online/micro-network-site:2.4.0 }
-  notify:              { image: ghcr.io/cloudsforge-online/micro-notify:2.4.0 }
-  notify-migrate:      { image: ghcr.io/cloudsforge-online/micro-notify:2.4.0 }
-  policy:              { image: ghcr.io/cloudsforge-online/micro-policy:2.4.0 }
-  policy-migrate:      { image: ghcr.io/cloudsforge-online/micro-policy:2.4.0 }
-  pricing:             { image: ghcr.io/cloudsforge-online/micro-pricing:2.4.0 }
-  pricing-migrate:     { image: ghcr.io/cloudsforge-online/micro-pricing:2.4.0 }
-  settlement:          { image: ghcr.io/cloudsforge-online/micro-settlement:2.4.0 }
-  settlement-migrate:  { image: ghcr.io/cloudsforge-online/micro-settlement:2.4.0 }
-  site:                { image: ghcr.io/cloudsforge-online/micro-site:2.4.0 }
-  status-web:          { image: ghcr.io/cloudsforge-online/micro-status-web:2.4.0 }
-  studio:              { image: ghcr.io/cloudsforge-online/micro-studio:2.4.0 }
-  studio-migrate:      { image: ghcr.io/cloudsforge-online/micro-studio:2.4.0 }
-  tessera:             { image: ghcr.io/cloudsforge-online/micro-tessera:2.4.0 }
-  tessera-migrate:     { image: ghcr.io/cloudsforge-online/micro-tessera:2.4.0 }
-  tessera-web:         { image: ghcr.io/cloudsforge-online/micro-tessera-web:2.4.0 }
-  trade:               { image: ghcr.io/cloudsforge-online/micro-trade:2.4.0 }
-  trade-migrate:       { image: ghcr.io/cloudsforge-online/micro-trade:2.4.0 }
-  trade-web:           { image: ghcr.io/cloudsforge-online/micro-trade-web:2.4.0 }
-  wallet:              { image: ghcr.io/cloudsforge-online/micro-wallet:2.4.0 }
-  wallet-migrate:      { image: ghcr.io/cloudsforge-online/micro-wallet:2.4.0 }
-  worlds:              { image: ghcr.io/cloudsforge-online/micro-worlds:2.4.0 }
-  worlds-migrate:      { image: ghcr.io/cloudsforge-online/micro-worlds:2.4.0 }
-  worlds-web:          { image: ghcr.io/cloudsforge-online/micro-worlds-web:2.4.0 }
+  activity:            { image: ghcr.io/cloudsforge-online/micro-activity:2.5.0 }
+  activity-migrate:    { image: ghcr.io/cloudsforge-online/micro-activity:2.5.0 }
+  admin-api:           { image: ghcr.io/cloudsforge-online/micro-admin-api:2.5.0 }
+  admin-api-migrate:   { image: ghcr.io/cloudsforge-online/micro-admin-api:2.5.0 }
+  admin-web:           { image: ghcr.io/cloudsforge-online/micro-admin-web:2.5.0 }
+  aetherholm:          { image: ghcr.io/cloudsforge-online/micro-aetherholm:2.5.0 }
+  aetherholm-migrate:  { image: ghcr.io/cloudsforge-online/micro-aetherholm:2.5.0 }
+  aetherholm-web:      { image: ghcr.io/cloudsforge-online/micro-aetherholm-web:2.5.0 }
+  analytics:           { image: ghcr.io/cloudsforge-online/micro-analytics:2.5.0 }
+  analytics-migrate:   { image: ghcr.io/cloudsforge-online/micro-analytics:2.5.0 }
+  beacon:              { image: ghcr.io/cloudsforge-online/micro-beacon:2.5.0 }
+  beacon-migrate:      { image: ghcr.io/cloudsforge-online/micro-beacon:2.5.0 }
+  beacon-web:          { image: ghcr.io/cloudsforge-online/micro-beacon-web:2.5.0 }
+  billing:             { image: ghcr.io/cloudsforge-online/micro-billing:2.5.0 }
+  billing-migrate:     { image: ghcr.io/cloudsforge-online/micro-billing:2.5.0 }
+  community:           { image: ghcr.io/cloudsforge-online/micro-community:2.5.0 }
+  community-migrate:   { image: ghcr.io/cloudsforge-online/micro-community:2.5.0 }
+  custody:             { image: ghcr.io/cloudsforge-online/micro-custody:2.5.0 }
+  custody-migrate:     { image: ghcr.io/cloudsforge-online/micro-custody:2.5.0 }
+  devplatform:         { image: ghcr.io/cloudsforge-online/micro-devplatform:2.5.0 }
+  devplatform-migrate: { image: ghcr.io/cloudsforge-online/micro-devplatform:2.5.0 }
+  devportal-web:       { image: ghcr.io/cloudsforge-online/micro-devportal-web:2.5.0 }
+  emberkin:            { image: ghcr.io/cloudsforge-online/micro-emberkin:2.5.0 }
+  emberkin-migrate:    { image: ghcr.io/cloudsforge-online/micro-emberkin:2.5.0 }
+  emberkin-web:        { image: ghcr.io/cloudsforge-online/micro-emberkin-web:2.5.0 }
+  explorer-web:        { image: ghcr.io/cloudsforge-online/micro-explorer-web:2.5.0 }
+  faucet:              { image: ghcr.io/cloudsforge-online/micro-faucet:2.5.0 }
+  faucet-migrate:      { image: ghcr.io/cloudsforge-online/micro-faucet:2.5.0 }
+  foresight:           { image: ghcr.io/cloudsforge-online/micro-foresight:2.5.0 }
+  foresight-migrate:   { image: ghcr.io/cloudsforge-online/micro-foresight:2.5.0 }
+  foresight-web:       { image: ghcr.io/cloudsforge-online/micro-foresight-web:2.5.0 }
+  hub-api:             { image: ghcr.io/cloudsforge-online/micro-hub-api:2.5.0 }
+  hub-web:             { image: ghcr.io/cloudsforge-online/micro-hub-web:2.5.0 }
+  identity:            { image: ghcr.io/cloudsforge-online/micro-identity:2.5.0 }
+  identity-migrate:    { image: ghcr.io/cloudsforge-online/micro-identity:2.5.0 }
+  indexer:             { image: ghcr.io/cloudsforge-online/micro-indexer:2.5.0 }
+  indexer-migrate:     { image: ghcr.io/cloudsforge-online/micro-indexer:2.5.0 }
+  lantern:             { image: ghcr.io/cloudsforge-online/micro-lantern:2.5.0 }
+  lantern-migrate:     { image: ghcr.io/cloudsforge-online/micro-lantern:2.5.0 }
+  lantern-web:         { image: ghcr.io/cloudsforge-online/micro-lantern-web:2.5.0 }
+  ledger:              { image: ghcr.io/cloudsforge-online/micro-ledger:2.5.0 }
+  ledger-migrate:      { image: ghcr.io/cloudsforge-online/micro-ledger:2.5.0 }
+  market:              { image: ghcr.io/cloudsforge-online/micro-market:2.5.0 }
+  market-migrate:      { image: ghcr.io/cloudsforge-online/micro-market:2.5.0 }
+  market-web:          { image: ghcr.io/cloudsforge-online/micro-market-web:2.5.0 }
+  mint:                { image: ghcr.io/cloudsforge-online/micro-mint:2.5.0 }
+  mint-migrate:        { image: ghcr.io/cloudsforge-online/micro-mint:2.5.0 }
+  mint-web:            { image: ghcr.io/cloudsforge-online/micro-mint-web:2.5.0 }
+  nda:                 { image: ghcr.io/cloudsforge-online/micro-nda:2.5.0 }
+  nda-migrate:         { image: ghcr.io/cloudsforge-online/micro-nda:2.5.0 }
+  network-site:        { image: ghcr.io/cloudsforge-online/micro-network-site:2.5.0 }
+  notify:              { image: ghcr.io/cloudsforge-online/micro-notify:2.5.0 }
+  notify-migrate:      { image: ghcr.io/cloudsforge-online/micro-notify:2.5.0 }
+  policy:              { image: ghcr.io/cloudsforge-online/micro-policy:2.5.0 }
+  policy-migrate:      { image: ghcr.io/cloudsforge-online/micro-policy:2.5.0 }
+  pricing:             { image: ghcr.io/cloudsforge-online/micro-pricing:2.5.0 }
+  pricing-migrate:     { image: ghcr.io/cloudsforge-online/micro-pricing:2.5.0 }
+  settlement:          { image: ghcr.io/cloudsforge-online/micro-settlement:2.5.0 }
+  settlement-migrate:  { image: ghcr.io/cloudsforge-online/micro-settlement:2.5.0 }
+  site:                { image: ghcr.io/cloudsforge-online/micro-site:2.5.0 }
+  status-web:          { image: ghcr.io/cloudsforge-online/micro-status-web:2.5.0 }
+  studio:              { image: ghcr.io/cloudsforge-online/micro-studio:2.5.0 }
+  studio-migrate:      { image: ghcr.io/cloudsforge-online/micro-studio:2.5.0 }
+  tessera:             { image: ghcr.io/cloudsforge-online/micro-tessera:2.5.0 }
+  tessera-migrate:     { image: ghcr.io/cloudsforge-online/micro-tessera:2.5.0 }
+  tessera-web:         { image: ghcr.io/cloudsforge-online/micro-tessera-web:2.5.0 }
+  trade:               { image: ghcr.io/cloudsforge-online/micro-trade:2.5.0 }
+  trade-migrate:       { image: ghcr.io/cloudsforge-online/micro-trade:2.5.0 }
+  trade-web:           { image: ghcr.io/cloudsforge-online/micro-trade-web:2.5.0 }
+  wallet:              { image: ghcr.io/cloudsforge-online/micro-wallet:2.5.0 }
+  wallet-migrate:      { image: ghcr.io/cloudsforge-online/micro-wallet:2.5.0 }
+  worlds:              { image: ghcr.io/cloudsforge-online/micro-worlds:2.5.0 }
+  worlds-migrate:      { image: ghcr.io/cloudsforge-online/micro-worlds:2.5.0 }
+  worlds-web:          { image: ghcr.io/cloudsforge-online/micro-worlds-web:2.5.0 }
