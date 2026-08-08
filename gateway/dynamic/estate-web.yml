@@ -860,10 +860,18 @@ http:
     # gateway; with it, and with the CORS entry policy.yml now adds for this apex, the round trip
     # completes.
     #
-    # The WHOLE host, not a prefix: identity serves 34 unversioned routes at the root
+    # The WHOLE host, not a prefix: identity serves its routes UNVERSIONED at the root
     # (identity/src/server.ts onward) and picking prefixes here would be a second, drifting
     # copy of that list. `/internal` is still refused above every router in this file by
     # policy.yml's priority-100000 rule, which nothing here can outrank.
+    #
+    # This note used to say "34 unversioned routes" and the figure was wrong — the count is
+    # 41 today, from `grep -c "define('" src/server.ts` minus the two `/internal` routes.
+    # It is stated as a command rather than as a number on purpose. A count written into a
+    # comment in another repository is a claim that goes stale the next time someone adds a
+    # route, silently, and identity's own README was wrong about the same number in two
+    # places for the same reason. Nothing here depends on the figure: the router matches the
+    # host, so it is right for 34 routes and right for 41.
     cf-web-nimbus:
       rule: 'Host(`nimbus{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
