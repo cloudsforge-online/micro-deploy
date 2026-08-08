@@ -532,8 +532,8 @@ printf '%s' "$bal" | grep -q '1000' \
 #
 # 1000 wei of custody was credited to the ledger and no coin arrived on any
 # chain to match it. EMBER is reconciled on this estate
-# (`LEDGER_RECONCILE_ASSETS=SHARD,EMBER`) and carries NO tolerance entry, and
-# `ledger/src/env.ts:149` is explicit that "an asset absent from the map gets
+# (`LEDGER_RECONCILE_ASSETS=SHARD,EMBER,LTC`) and carries NO tolerance entry,
+# and `ledger/src/env.ts` is explicit that "an asset absent from the map gets
 # zero tolerance, not infinity". So the drill's 1000 wei is not a rounding
 # nuisance — it is drift, the only kind there is, and the next reconciliation
 # run freezes EMBER and refuses every withdrawal in the asset estate-wide.
@@ -548,7 +548,7 @@ printf '%s' "$bal" | grep -q '1000' \
 # drill unwinds itself: every assertion above has already been made against a
 # real posting, and reversing it afterwards costs the section nothing it was
 # testing. `POST /entries/:id/reverse` is the ledger's own first-class unwind
-# (ledger/src/server.ts:462) rather than a hand-built mirror-image entry — it
+# (ledger/src/server.ts) rather than a hand-built mirror-image entry — it
 # writes `reverses_entry_id`, so the pair is legible afterwards as a drill and
 # not as two unrelated movements of money.
 if [ -n "${deposit_entry_id:-}" ]; then
