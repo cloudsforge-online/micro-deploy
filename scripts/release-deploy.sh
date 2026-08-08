@@ -78,7 +78,7 @@ done
 
 # ── THE APEX, WHICH THIS SCRIPT USED TO WALK STRAIGHT PAST ─────────────────────
 #
-# `estate-up.sh:86-105` refuses to start when the shell's `CF_WEB_APEX` disagrees
+# `estate-up.sh` refuses to start when the shell's `CF_WEB_APEX` disagrees
 # with the gateway's, because "the surfaces would be served on one apex and
 # identity's hand-off allowlist would name another". This script never mentioned
 # the apex at all, so the release path bypassed that guard entirely — and it cost
@@ -179,7 +179,7 @@ echo "── rendering $manifest ───────────────�
 # untouched, which is the right direction to fail in, but it dies on every
 # attempt until this flag is passed.
 #
-# `release-render.py:49-93` added the flag FOR THIS CASE and names faucet in its
+# `release-render.py` added the flag FOR THIS CASE and names faucet in its
 # own comment. Nothing ever passed it. That is the whole defect: a fix that
 # reached the tool and not the caller, which is the same shape as the four
 # frontend fixes this release is carrying.
@@ -264,7 +264,7 @@ echo "  all $checked image(s) exist"
 # the deploy below uses — and asserts three things about it:
 #
 #   1. it is not empty. An empty allowlist refuses every origin by design
-#      (identity/src/handoff.ts:32 is `allowlist.includes(origin)` over a frozen
+#      (identity/src/handoff.ts is `allowlist.includes(origin)` over a frozen
 #      empty array), and that design is correct — "empty means allow everything"
 #      is how an allowlist becomes an open redirector. It is the DEPLOYMENT's
 #      value that must not be empty, and nothing checked that until now.

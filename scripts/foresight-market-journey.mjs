@@ -46,7 +46,7 @@
  *
  * ── THE TEN-MINUTE TOKEN, WHICH THIS SCRIPT WILL WALK INTO ───────────────────
  *
- * `FORESIGHT_SERVICE_TOKEN` is presented verbatim by `foresight/src/index.ts:101`
+ * `FORESIGHT_SERVICE_TOKEN` is presented verbatim by `foresight/src/index.ts`
  * and lives 600 seconds. Both custody calls this journey needs — the deploy and
  * the resolution — are made from LEASED BACKGROUND JOBS, so a journey longer than
  * ten minutes crosses the cliff mid-flight. Rather than pretend otherwise, this
@@ -130,7 +130,7 @@ const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correct-horse-battery-stap
 // by EIP-155 to a chain the node will refuse, and the refusal arrives as an
 // opaque RPC error in the middle of a market deploy. There are two chains now:
 // `hearth`/7411 on the mainnet estate and `hearth-testnet`/7412 on the testnet
-// one (`hearth/node/src/params.js:37-38`), and `EMBER_HOST_RPC` above defaults to
+// one (`hearth/node/src/params.js`), and `EMBER_HOST_RPC` above defaults to
 // 8545, which is the MAINNET seed. `CF_EMBER_NETWORK` is the same variable the
 // estate keys its chain `env_file:` on.
 const EMBER_NETWORK = process.env.CF_EMBER_NETWORK || 'mainnet'
@@ -262,10 +262,10 @@ async function api(base, path_, { method = 'GET', body, token, expect, idempoten
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  * **THIS STANDS IN FOR A RE-ARM micro-foresight DOES NOT HAVE, AND THE DEFECT WAS FOUND BY
  * RUNNING THIS SCRIPT.** Every one of foresight's handlers re-enqueues its own `(kind, key)` from
- * INSIDE the handler — `jobs.ts:177` for `market.deploy`, `:233` for `market.close`, `:259` for
- * `mirror.sync`, `:291` for `resolution.post`, and the same for `idea.propose` and `fee.report`.
+ * INSIDE the handler — `jobs.ts` for `market.deploy` for `market.close` for
+ * `mirror.sync` for `resolution.post`, and the same for `idea.propose` and `fee.report`.
  * `JobRunner` deletes the row on success AFTER the handler returns (`runtime/packages/jobs/src/
- * index.ts:407` → `complete()` → `delete from jobs where id = $1`), and the unique constraint is
+ * index.ts` → `complete()` → `delete from jobs where id = $1`), and the unique constraint is
  * on `(kind, key)` — so the self-enqueue collides with the row the handler is running, does
  * nothing, and is then deleted. **Every recurring job in this service runs exactly once per
  * process start and never again.**
@@ -274,7 +274,7 @@ async function api(base, path_, { method = 'GET', body, token, expect, idempoten
  * rather than guessed: "It cannot re-arm itself from inside its own handler: the runner deletes
  * the row on success *after* the handler returns, so a self-enqueue would be deleted a moment
  * later and the schedule would stop. Doing it from the completion event is the only point at which
- * the row is gone." (`ledger/src/jobs.ts:132-137`, `rescheduleRecurring`.) Ledger, wallet,
+ * the row is gone." (`ledger/src/jobs.ts`, `rescheduleRecurring`.) Ledger, wallet,
  * settlement, indexer, mint, market, emberkin, beacon and faucet all have live future-dated rows
  * in their `jobs` tables right now; foresight's table was EMPTY ten minutes after boot.
  *
@@ -386,7 +386,7 @@ async function main() {
     resolutionSourceRef: `${EMBER_NETWORK === 'mainnet' ? 'hearth-seed' : 'hearth-testnet-seed'} eth_getBlockByNumber(latest) on chain ${CHAIN_ID}`,
     closeTime: closeTime.toISOString(),
     // ZERO, deliberately, and it is the one parameter chosen for this script rather than for a
-    // market. The default is 86,400s (foresight/src/env.ts:351) — "long enough that a wrong
+    // market. The default is 86,400s (foresight/src/env.ts) — "long enough that a wrong
     // resolution can be noticed by somebody who was asleep" — and a claim cannot be made until it
     // elapses. A day-long wait would make this journey unrunnable and would prove nothing extra:
     // `_claim` checks `block.timestamp < resolvedAt + disputeWindowSeconds`, which is the same
@@ -422,7 +422,7 @@ async function main() {
   ok(`custody minted a deployer for this market: ${deployer}`)
 
   // 3,000,000 gas (FORESIGHT_DEPLOY_GAS_LIMIT) at the BID, not at the quote. `gasPriceBid`
-  // (foresight/src/evm.ts:334) doubles whatever the chain quotes, and the funding gate is
+  // (foresight/src/evm.ts) doubles whatever the chain quotes, and the funding gate is
   // `bid * gasLimit` — so funding against the quote leaves the deploy one factor of two short and
   // stuck in `awaiting_funds` for ever. Found by running it: the service logged
   // `required: 6000000000000000` against a 1 gwei quote.

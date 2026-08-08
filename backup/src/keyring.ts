@@ -37,7 +37,7 @@
 
 /**
  * The shape §1.3 says the keyring is assembled by scanning for: `CUSTODY_MASTER_SECRET_V<n>`,
- * matched by pattern rather than by name (`custody/src/env.ts:256`). Matched the same way here so
+ * matched by pattern rather than by name (`custody/src/env.ts`). Matched the same way here so
  * that a rotation to V4 does not quietly slip past a hard-coded list of V1–V3.
  */
 const KEYRING_VARIABLE = /^CUSTODY_MASTER_SECRET_V[0-9]+$/

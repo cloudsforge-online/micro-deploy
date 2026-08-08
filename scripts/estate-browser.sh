@@ -110,8 +110,8 @@ echo "── the gateway must be answering before a browser is pointed at it ─
 #
 # This line used to say `--resolve "hub.${APEX}:443:127.0.0.1"` with the port
 # written out. Both compose files publish the gateway on `${CF_GATEWAY_PORT:-443}`
-# (`compose/docker-compose.gateway.yml:311`,
-# `compose/docker-compose.estate-gateway.yml:55`) and `compose/testnet.env:101`
+# (`compose/docker-compose.gateway.yml`,
+# `compose/docker-compose.estate-gateway.yml`) and `compose/testnet.env:101`
 # sets it to 10443, so nothing was listening on 443 in a testnet project and this
 # preflight could never have passed there — it would have printed FATAL and told
 # the operator to bring an estate up that was already up.
@@ -155,7 +155,7 @@ echo
 # and its public key can be pinned.
 #
 # That matters because `--insecure-tls` is not a warning suppressant. In
-# `beacon/src/cli.ts:294` it sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide
+# `beacon/src/cli.ts` it sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide
 # AND passes `ignoreHttpsErrors: true` to every browser context — validation off
 # for every host, every error, for ever. Pointed at staging, this suite would
 # report green through an expired certificate, one issued for the wrong

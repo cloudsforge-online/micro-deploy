@@ -133,7 +133,7 @@ groups:
     rules:
       # 1 pass, 0 fail or error, 0.5 skip. `== 1` and not `!= 0`, because a skip
       # is not-run and a skip is never green — Beacon emits 0.5 precisely so
-      # this distinction is available rather than assumed (metrics.js:145).
+      # this distinction is available rather than assumed (metrics.js).
       - record: cf:journey_passing
         expr: (beacon_journey_status == bool 1)
 

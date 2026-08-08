@@ -19,16 +19,16 @@
 #
 # ── TESTNET, NOT "DEVNET", AND THE ESTATE ALREADY SAID SO ─────────────────────
 #
-# `contracts/packages/chain/src/index.ts:17` declares `Network = 'mainnet' |
+# `contracts/packages/chain/src/index.ts` declares `Network = 'mainnet' |
 # 'testnet'`. There is no third value, so a "devnet" has nowhere to live in the
-# type system — `indexer/src/chains.ts:57` would refuse the string, and
+# type system — `indexer/src/chains.ts` would refuse the string, and
 # `LEDGER_RECONCILE_NETWORK` (docker-compose.estate.yml) has said `testnet` since
 # before this chain existed. The full ecosystem is testnet; production will be
 # mainnet; there is no third vocabulary.
 #
 # That also settles the parameters. EMBER is 15-second blocks and 60
 # confirmations — fifteen minutes to a confirmed balance — and
-# `contracts/packages/chain/src/index.ts:45` calls that depth "the number Hearth
+# `contracts/packages/chain/src/index.ts` calls that depth "the number Hearth
 # publishes to exchanges". Shortening it for a nicer dev loop would leave the
 # estate's own `chainSpec().confirmations` reasoning about a chain that no longer
 # matched its constants, which is not a faster environment but a dishonest one.

@@ -70,14 +70,14 @@ export const SURFACES = [
     // ── `?status=open`, AND THE UNFILTERED LIST WOULD HAVE BEEN A CHECK THAT
     //    COULD NOT FAIL ────────────────────────────────────────────────────────
     //
-    // This was `/markets?limit=200`. `foresight/src/server.ts:498-503` treats an
+    // This was `/markets?limit=200`. `foresight/src/server.ts` treats an
     // absent `status` as NO FILTER, so that read returns drafts, approved markets
-    // and voided test artefacts alike — and `foresight-web/src/pages/markets.tsx:40`
+    // and voided test artefacts alike — and `foresight-web/src/pages/markets.tsx`
     // opens on `useState<MarketStatus | null>('open')`. The browse page asks for
     // open markets and nothing else.
     //
     // The two diverge in a state this estate reaches every time: a market cannot
-    // open until its contract is on chain (`markets.ts:417-418` requires
+    // open until its contract is on chain (`markets.ts` requires
     // `deploy_state = 'deployed'`), and the seeder skips the deploy whenever the
     // mining key or the node is out of reach. That leaves nine `approved` rows —
     // measured today — which the unfiltered read counts and the page does not

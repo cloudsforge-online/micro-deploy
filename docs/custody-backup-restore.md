@@ -28,7 +28,7 @@ are self-contained — leads to a "backup" that restores nothing.
 | --- | --- | --- |
 | What it is | `CUSTODY_MASTER_SECRET_V<n>`, one per envelope version | A 24-word BIP-39 mnemonic per (user, family) |
 | Where it lives | Environment, from a gitignored `env_file` | Encrypted, in the vault, at slot `seed:<uuid>` |
-| Comes from | An operator running `openssl rand -base64 48` | `generateMnemonic(wordlist, 256)` — the system CSPRNG (`custody/src/hd.ts:38`, `custody/src/hd.ts:106`) |
+| Comes from | An operator running `openssl rand -base64 48` | `generateMnemonic(wordlist, 256)` — the system CSPRNG (`custody/src/hd.ts`, `custody/src/hd.ts`) |
 | What it does | **Encrypts things at rest.** Nothing else | **Derives addresses.** Nothing else |
 | Backed up by | The physical procedure in §4 | Being inside a blob the vault backup covers |
 
@@ -37,9 +37,9 @@ seed.** This distinction has been got wrong in this estate before and it changes
 what every other statement means:
 
 - Changing the keyring **changes no address.** Addresses are derived from the
-  mnemonic (`custody/src/keys.ts:204-205`), which the keyring merely wraps.
+  mnemonic (`custody/src/keys.ts`), which the keyring merely wraps.
 - Losing the keyring makes every blob **permanently undecryptable** — and because
-  the mnemonics are themselves blobs (`custody/src/keys.ts:391-393`), it destroys
+  the mnemonics are themselves blobs (`custody/src/keys.ts`), it destroys
   the recovery phrases too. There is no second copy of a mnemonic anywhere. The
   coins at those addresses can never be spent again by anyone.
 - Leaking the keyring yields **no private key on its own.** It yields every
@@ -54,17 +54,17 @@ what every other statement means:
 v<n>:base64( salt? || iv || tag || ciphertext )
 ```
 
-- **AES-256-GCM.** IV 12 bytes, tag 16 bytes (`custody/src/crypto.ts:42-45`).
+- **AES-256-GCM.** IV 12 bytes, tag 16 bytes (`custody/src/crypto.ts`).
 - **The data key is derived per slot**, `scrypt(secret_v<n>, salt)` → 32 bytes
-  (`custody/src/crypto.ts:139-144`). One leaked data key never unlocks a second
+  (`custody/src/crypto.ts`). One leaked data key never unlocks a second
   address.
 - **The version stamp selects the SECRET, not just the salt**
-  (`custody/src/crypto.ts:16-29`). This is what makes rotation possible at all.
+  (`custody/src/crypto.ts`). This is what makes rotation possible at all.
   `decrypt` reads the stamp off the blob and picks the matching secret
-  (`custody/src/crypto.ts:176-206`), so a keyring holding several versions reads
+  (`custody/src/crypto.ts`), so a keyring holding several versions reads
   blobs written under any of them.
-- **Per-version parameters are frozen for ever** (`custody/src/crypto.ts:60-64`,
-  `custody/src/crypto.ts:76`):
+- **Per-version parameters are frozen for ever** (`custody/src/crypto.ts`,
+  `custody/src/crypto.ts`):
 
   | Version | scrypt cost | Salt |
   | --- | --- | --- |
@@ -74,7 +74,7 @@ v<n>:base64( salt? || iv || tag || ciphertext )
   Editing a released version's parameters does not re-encrypt anything. It makes
   every blob at that version undecryptable.
 - **The slot name is authenticated** — `setAAD("<slot>|v<n>")`
-  (`custody/src/crypto.ts:168`, `custody/src/crypto.ts:203`). Moving `key.enc`
+  (`custody/src/crypto.ts`, `custody/src/crypto.ts`). Moving `key.enc`
   from one address's directory to another's fails the GCM tag instead of
   decrypting to a key that does not match the row. **This is why the vault must
   be restored with its directory names intact.**
@@ -82,28 +82,28 @@ v<n>:base64( salt? || iv || tag || ciphertext )
 ### 1.3 What `CUSTODY_KEY_VERSION` selects
 
 It is the **write** version only — the version new blobs are written under
-(`custody/src/env.ts:333-341`). Reading is governed by the blob's own stamp. The
+(`custody/src/env.ts`). Reading is governed by the blob's own stamp. The
 keyring is assembled by scanning the environment for `CUSTODY_MASTER_SECRET_V<n>`
-by pattern rather than by name (`custody/src/env.ts:256`,
-`custody/src/env.ts:298-318`), which is what makes a rotation a **deploy** rather
+by pattern rather than by name (`custody/src/env.ts`,
+`custody/src/env.ts`), which is what makes a rotation a **deploy** rather
 than a code change.
 
 Two boot-time refusals worth knowing, because they are the difference between a
 loud failure and a silent one:
 
 - `CUSTODY_KEY_VERSION` set to a version with no secret behind it → refuses to
-  start (`custody/src/env.ts:334-341`). Otherwise new addresses would be written
+  start (`custody/src/env.ts`). Otherwise new addresses would be written
   under a key nothing holds.
 - If `CUSTODY_KEY_VERSION` is absent it defaults to the **highest** version
-  present (`custody/src/env.ts:333`). Adding `..._V3` therefore silently makes v3
+  present (`custody/src/env.ts`). Adding `..._V3` therefore silently makes v3
   the write version. Set it explicitly anyway; an implicit write version is one
   nobody can see in a diff.
 
 ### 1.4 Where the blobs are
 
 One directory per slot under `CUSTODY_DATA_DIR`, mode `0700`, each holding one
-`key.enc` at `0600` (`custody/src/vault.ts:70-79`). A slot is a chain address, or
-`seed:<uuid>` for an HD seed (`custody/src/vault.ts:105-107`). Writes are
+`key.enc` at `0600` (`custody/src/vault.ts`). A slot is a chain address, or
+`seed:<uuid>` for an HD seed (`custody/src/vault.ts`). Writes are
 `rename`-into-place, so a crash mid-rotation leaves the whole old blob or the
 whole new one, never a truncated file.
 
@@ -199,7 +199,7 @@ docker logs ${P}-custody-1 2>&1 | grep '"msg":"starting"'
 ```
 
 The startup line reports `keyVersion` and `readableKeyVersions`
-(`custody/src/index.ts:41-48`). **`readableKeyVersions` must contain every
+(`custody/src/index.ts`). **`readableKeyVersions` must contain every
 version any restored blob carries.** Check the blobs' own stamps, which is one
 command and does not decrypt anything:
 
@@ -301,7 +301,7 @@ ciphertext.
 
 7. **A `FORESIGHT_HOUSE_ADDRESS` key, if one is ever created, belongs on this list
    from the moment it exists.** It signs `stake(uint8)` calls, which custody has no
-   shape for (`custody/src/signing.ts:210-260`), so it is a hot key outside custody
+   shape for (`custody/src/signing.ts`), so it is a hot key outside custody
    with exactly the miner keys' properties — plaintext on disk, unrotatable without
    abandoning the address the public disclosure names. Back it up by §4.2 **before**
    funding it, and cap the exposure by leaving only a working balance there. The full
@@ -314,7 +314,7 @@ ciphertext.
 
 Rotate when the keyring is exposed, suspected exposed, or on a schedule. The
 machinery exists precisely so that a compromise is survivable
-(`custody/src/reencrypt.ts:1-29`).
+(`custody/src/reencrypt.ts`).
 
 > ### THE STEP THAT DESTROYS FUNDS IF SKIPPED
 >
@@ -365,19 +365,19 @@ docker compose -p $P -f $D/compose/docker-compose.estate.yml \
 docker logs ${P}-custody-1 2>&1 | grep '"msg":"starting"'
 #   readableKeyVersions MUST list both. If it lists only one, STOP.
 
-# ---- 4. DRAIN. The job does this every 30s by itself (custody/src/jobs.ts:45);
+# ---- 4. DRAIN. The job does this every 30s by itself (custody/src/jobs.ts);
 #         run the CLI to do it now and get a definitive exit code.
 docker exec ${P}-custody-1 node --import tsx src/reencrypt-cli.ts; echo "exit=$?"
 ```
 
 `reencrypt-cli` **exits non-zero while anything remains**
-(`custody/src/reencrypt-cli.ts:59-65`), so `exit=0` is the same statement as "the
+(`custody/src/reencrypt-cli.ts`), so `exit=0` is the same statement as "the
 old secret can now be removed". It is restartable and cannot lose a key: per row
 it writes the new blob first, then updates the row, and decrypts by the stamp the
-blob carries rather than by the row (`custody/src/reencrypt.ts:105-117`). The
+blob carries rather than by the row (`custody/src/reencrypt.ts`). The
 cost of a crash is doing one row twice.
 
-The seeds are drained too (`custody/src/reencrypt.ts:83-100`) — a mnemonic is the
+The seeds are drained too (`custody/src/reencrypt.ts`) — a mnemonic is the
 master key for every address of a (user, family), and rotating the keys but not
 the thing they were derived from would be half a rotation.
 
@@ -391,7 +391,7 @@ docker exec ${P}-custody-1 sh -c \
 #   every blob must read v$NEW:
 ```
 
-`GET /v1/admin/rotation` (`custody/src/server.ts:821`) reports the same number for
+`GET /v1/admin/rotation` (`custody/src/server.ts`) reports the same number for
 an operator without shell access.
 
 ```bash
@@ -407,7 +407,7 @@ docker logs ${P}-custody-1 2>&1 | grep '"msg":"starting"'
 ```
 
 A retained old secret is not a lesser secret — it decrypts every blob not yet
-re-encrypted (`custody/src/env.ts:308-314`). It gets the same paper treatment for
+re-encrypted (`custody/src/env.ts`). It gets the same paper treatment for
 as long as it exists, and it is destroyed the day it stops being needed.
 
 ### 5.3 The verification that proves a rotation
@@ -609,7 +609,7 @@ backups rather than filing them.**
 
 ## 8. The boot guard is NOT in the shipped image
 
-`custody/src/env.ts:196-238` (`assertMasterSecret`) refuses a master secret that
+`custody/src/env.ts` (`assertMasterSecret`) refuses a master secret that
 is not base64/hex, carries under 32 bytes, falls below a measured entropy floor,
 or contains a placeholder marker. Verified 2026-08-05 against the image the estate
 host actually runs, `ghcr.io/cloudsforge-online/micro-custody:1.0.0`, built
@@ -767,7 +767,7 @@ first precondition query to final verification was **under 10 minutes**.
 
 - **The drain competes with the background job, and the arithmetic looks wrong.**
   The CLI reported `remaining=386` at start but only re-encrypted 266 blobs itself.
-  The recurring `custody.reencrypt` job (`custody/src/jobs.ts:45`, every 30 s,
+  The recurring `custody.reencrypt` job (`custody/src/jobs.ts`, every 30 s,
   batch 50) had already taken the rest. This is correct behaviour and the counters
   are per-process, not per-rotation. **Judge completion by `remaining=0` and the
   exit code, never by comparing the two numbers.**

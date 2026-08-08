@@ -6,7 +6,7 @@
  *
  * `POST /v1/tokens` OPENS AN ORDER. It charges nothing and deploys nothing —
  * "Nothing is charged and nothing is deployed, and an order that could not be
- * built is refused here" (`mint/README.md:73`). The order lands in
+ * built is refused here" (`mint/README.md`). The order lands in
  * `awaiting_payment`, and the whole of what it asserts is that somebody intends
  * to launch a token with these parameters. That is a truthful thing for the
  * platform to say about its own tokens, so it is seeded.
@@ -14,7 +14,7 @@
  * **`POST /v1/tokens/:id/pay` is NOT called, and that is the honest stopping
  * point rather than an omission.** Paying debits `MINT_DEPLOY_PRICE_SHARDS`
  * (2,500) of real SHARD from the owner's micro-ledger balance
- * (`orders.ts:99-140`). The operator has no SHARD, and the only way to get some
+ * (`orders.ts`). The operator has no SHARD, and the only way to get some
  * would be to post a ledger entry crediting it — money invented to make a
  * surface look busy. `21-engagement-treasury.md` §2 refuses exactly that class
  * of thing, and it does not become acceptable because the invented balance is
@@ -24,7 +24,7 @@
  * `POST /v1/tokens/:id/deploy` is not called either, and here the reason is
  * simply that it cannot work: `MINT_RPC_URLS` is unset in the estate's compose
  * file, and mint refuses rather than falling back to a public node nobody chose
- * (`mint/src/env.ts:270`). A deploy would loop rather than fail cleanly.
+ * (`mint/src/env.ts`). A deploy would loop rather than fail cleanly.
  *
  * ── WHAT THE SURFACE ACTUALLY SHOWS ─────────────────────────────────────────
  *
@@ -39,7 +39,7 @@
  * **micro-mint has no idempotency infrastructure at all** — its own README says
  * so twice: "No helper, no table, no module, no header. Grep the repository:
  * `Idempotency-Key` appears nowhere. A retried POST /v1/tokens therefore creates
- * a second draft order" (`mint/README.md:126-129`). Nor is there a unique index
+ * a second draft order" (`mint/README.md`). Nor is there a unique index
  * on `symbol`, `name`, or anything else an order carries.
  *
  * So this is check-then-create and nothing else, and the discriminator is the
@@ -50,7 +50,7 @@
  * working seeder.
  *
  * Project pages need no such care: `PUT /v1/tokens/:id/page` is an upsert on a
- * unique `token_id` (`migrations.ts:248`), so re-sending is free.
+ * unique `token_id` (`migrations.ts`), so re-sending is free.
  */
 
 import fs from 'node:fs'
@@ -70,7 +70,7 @@ import { api, ok, bad, skip, note, head, ROOT, MINER_DATA } from './lib.mjs'
  */
 function ownerAddress() {
   // `MINER_DATA` is `lib.mjs`'s, and it looks in `../miner-keys/<network>` —
-  // the layout `compose/docker-compose.miners.yml:134` already declares — before
+  // the layout `compose/docker-compose.miners.yml` already declares — before
   // falling back to the laptop path this function used to be the only reader of.
   // On the deployment host the laptop path does not exist, so this returned null
   // and every token order was skipped for want of a key two directories away.
@@ -87,14 +87,14 @@ function ownerAddress() {
  * Three token orders the platform genuinely intends.
  *
  * The `features` x `cap` matrix is a hard gate with exactly three legal
- * combinations (`mint/src/catalogue.ts:39-64`, enforced at the order by
+ * combinations (`mint/src/catalogue.ts`, enforced at the order by
  * `assertBuildable`): `[]` is `fixed` and forbids a cap; `["mintable",
  * "burnable"]` is `mintable` and forbids a cap; `["mintable","burnable",
  * "pausable"]` is `foundry` and REQUIRES one with `cap >= supply`. One of each,
  * so the catalogue's three variants are all represented on the surface.
  *
  * Amounts cross the wire as strings; `decimals` and any bps are JSON numbers.
- * `requireQuantity` refuses a JSON number outright (`server.ts:713-719`).
+ * `requireQuantity` refuses a JSON number outright (`server.ts`).
  */
 const ORDERS = [
   {

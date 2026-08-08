@@ -92,7 +92,7 @@ services:
       #   container, described here as "the cheapest possible proof that label
       #   discovery is working" — a self-test for a mechanism that has never
       #   worked, routing a dashboard that does not exist either, since there is
-      #   no `--api` flag and `:8082` is the metrics entrypoint. Three vestigial
+      #   no `--api` flag and is the metrics entrypoint. Three vestigial
       #   things propping each other up.
       #
       #   SO THE FILE PROVIDER IS THE MECHANISM, not a fallback. Every upstream
@@ -286,7 +286,7 @@ services:
       - "127.0.0.1:${CF_GW_PORT_BASE:-90}96:443"
       - "127.0.0.1:${CF_GW_PORT_BASE:-90}97:8082"
       # The plaintext tunnel entrypoint. `98` would have continued the run above
-      # and IS ALREADY TAKEN: docker-compose.telemetry.yml:45-46 publishes the
+      # and IS ALREADY TAKEN: docker-compose.telemetry.yml publishes the
       # otel collector on 9098 and 9099, so 9090-9099 is fully allocated on the
       # mainnet base and only the testnet base has room. A suffix that is free in
       # one environment and not the other is precisely the collision this

@@ -6,7 +6,7 @@
  *
  * Counted before any seeding ran: `products = 5`, `prices = 5`. The catalogue
  * has never been empty on any migrated deployment, because migration 9
- * (`billing/src/migrations.ts:389-423`) seeds it — an Ember Cape at 250 Shards,
+ * (`billing/src/migrations.ts`) seeds it — an Ember Cape at 250 Shards,
  * an Extra Character Slot at 400, a 90-day Season Pass at 1,000, a small Private
  * World at 750 and a monthly Guild Hall at 500. `GET /products` is deliberately
  * unauthenticated, because "a shop that needs a token to show its prices cannot
@@ -32,7 +32,7 @@
  * **2. The one content-creating route IS a financial transaction.**
  * `POST /purchases` posts a balanced journal entry inside the claim transaction:
  * it debits the user's SHARD `available` liability account and credits
- * `platform` SHARD `fees` revenue (`billing/src/ledger.ts:303-333`). There is no
+ * `platform` SHARD `fees` revenue (`billing/src/ledger.ts`). There is no
  * comp route, no free-grant route and no operator-grant route — `refund()` even
  * refuses to reverse a grant with no entry behind it, which proves such grants
  * are expected to arrive by a path this repository does not contain.

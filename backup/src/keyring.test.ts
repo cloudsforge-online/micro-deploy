@@ -27,7 +27,7 @@ test('the refusal names VARIABLES and never a value', () => {
   // ══════════════════════════════════════════════════════════════════════════════════════════════
   // THE VARIABLE NAME IS HELD IN `held` RATHER THAN WRITTEN INLINE, AND THAT IS NOT A STYLE CHOICE.
   //
-  // `deploy/.github/workflows/ci.yml:175` fails the build on any tracked line matching
+  // `deploy/.github/workflows/ci.yml` fails the build on any tracked line matching
   // `CUSTODY_MASTER_SECRET_V[0-9]+ *[:=] *<something that is not a quote, $, %, or #>`. Written the
   // obvious way — the name, a colon, then a bare identifier — this test IS that shape exactly, so a
   // test asserting that a keyring is REFUSED failed the build for looking like a committed keyring.

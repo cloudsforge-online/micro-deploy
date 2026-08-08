@@ -296,7 +296,7 @@ while IFS='|' read -r service database url action retained seed residual; do
     #
     # `analytics` is pseudonymous by construction: it stores
     # HMAC(pepper, "cf.analytics.lookup.v1|" || subject) and never the subject
-    # (`analytics/src/pseudonym.ts:23`), so a scan for the person's id finds
+    # (`analytics/src/pseudonym.ts`), so a scan for the person's id finds
     # nothing before the deletion as well as after, and asserting "0 rows"
     # against it would be the vacuous check this drill exists to refuse.
     #
@@ -325,7 +325,7 @@ baselined=$(wc -l <"$BASE" | tr -d ' ')
 
 echo
 echo "── the deletion, through the route a user would use ─────────────────────"
-# Password re-entry is required by identity (`src/server.ts:1844-1847`) and is
+# Password re-entry is required by identity (`src/server.ts`) and is
 # not bypassed here: this is the same call the account settings page makes.
 del=$(curl -s -o /dev/null -w '%{http_code}' -X DELETE "$IDENTITY/users/me" \
   -H "authorization: Bearer $utok" -H 'content-type: application/json' \

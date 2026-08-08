@@ -14,7 +14,7 @@
 // a copy of a fact that lives somewhere else, and copies rot silently.
 //
 // The fact lives in the SERVICES. Each one already declares, in its own source, the scopes its
-// deploy must mint for it — `community/src/index.ts:130` says so in as many words: "The scopes it
+// deploy must mint for it — `community/src/index.ts` says so in as many words: "The scopes it
 // needs are named in `LEDGER_SCOPES`, `POLICY_SCOPES` and `INDEXER_SCOPES` so the deploy can mint
 // exactly those." Twenty repositories follow that convention and NOTHING CONSUMED IT. This is the
 // consumer.
@@ -413,7 +413,7 @@ for (const repo of repos) {
     //
     // `beacon` builds no `HttpClient`; it calls `POST /service-tokens/exchange` with raw fetch and
     // states its demand in the request body — `body: { scopes: ['ledger:read'] }`
-    // (beacon/src/ecosystem.ts:563). That is the most direct declaration of demand in the estate:
+    // (beacon/src/ecosystem.ts). That is the most direct declaration of demand in the estate:
     // not a constant a deploy is trusted to read across, but the exact bytes identity is asked for.
     // Reading it is why `beacon` needs no entry in the gaps file despite following none of the
     // client conventions.

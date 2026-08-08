@@ -9,7 +9,7 @@
  * casting votes nobody cast — which is the "ghost bettors" of
  * `docs/ecosystem/21-engagement-treasury.md` §2 wearing a committee's clothes.
  * A fabricated quorum is worse than a fabricated bid, because a governance
- * system MOVES MONEY BY VOTE (`community/README.md:5-13`) and a reader who
+ * system MOVES MONEY BY VOTE (`community/README.md`) and a reader who
  * believes the votes are real is being misled about who decided.
  *
  * So nothing here invents a member. **Every act below is performed by the
@@ -25,7 +25,7 @@
  * Two layers, because the service has two.
  *
  *   * Every mutating route requires an `Idempotency-Key` of 8-200 characters
- *     matching `[A-Za-z0-9._:-]` (`community/src/server.ts:146-147, 1209-1214`),
+ *     matching `[A-Za-z0-9._:-]` (`community/src/server.ts, 1209-1214`),
  *     and the key is namespaced by principal, so a fixed key per artefact is
  *     safe and makes a retry inside one run a replay rather than a duplicate.
  *
@@ -38,7 +38,7 @@
  *
  * ── A TRAP WORTH WRITING DOWN ───────────────────────────────────────────────
  *
- * A duplicate `slug` does NOT come back as a 409. `community/src/server.ts:348-405`
+ * A duplicate `slug` does NOT come back as a 409. `community/src/server.ts`
  * has no `23505` branch, so the Postgres unique violation surfaces as a **500
  * `internal`**. A seeder that treated "not 409" as "created" would report success
  * on a failed run. Hence the list-first, always.
@@ -56,7 +56,7 @@
 
 import { api, ok, bad, skip, head } from './lib.mjs'
 
-/** The one community. Slug shape is `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$` (`migrations.ts:120`). */
+/** The one community. Slug shape is `^[a-z0-9][a-z0-9-]{1,62}[a-z0-9]$` (`migrations.ts`). */
 const COMMUNITY = {
   slug: 'forge-council',
   name: 'The Forge Council',
@@ -70,13 +70,13 @@ const COMMUNITY = {
  *
  * `community` holds no money: an account here names a `(subject, asset,
  * purpose=treasury)` triple in micro-ledger and `treasury_subject` is a
- * generated column pinned to `'community:' || id` (`community/README.md:17-32`).
+ * generated column pinned to `'community:' || id` (`community/README.md`).
  * Declaring one moves nothing and claims nothing about a balance, which is
  * exactly why it is safe to seed and a purchase is not.
  */
 const TREASURY_ASSETS = ['SHARD', 'EMBER']
 
-/** Asset shape is `^[A-Z][A-Z0-9:_-]{0,120}$` (`migrations.ts:239`). */
+/** Asset shape is `^[A-Z][A-Z0-9:_-]{0,120}$` (`migrations.ts`). */
 const ROLES = [
   {
     name: 'steward',
@@ -92,8 +92,8 @@ const inDays = (n) => new Date(Date.now() + n * 86_400_000).toISOString()
  *
  * The treasury one is a real shape the service enforces: `treasury_spend`
  * requires the `spend` bag, a recipient matching
- * `^(user|community|organisation):[A-Za-z0-9._-]{1,128}$` (`migrations.ts:362`),
- * and a timelock at least fifteen minutes after close (`proposals.ts:181-186`).
+ * `^(user|community|organisation):[A-Za-z0-9._-]{1,128}$` (`migrations.ts`),
+ * and a timelock at least fifteen minutes after close (`proposals.ts`).
  * It PROPOSES a spend; it does not make one. Nothing moves unless a real
  * membership votes it through and the execution job runs.
  */
@@ -244,7 +244,7 @@ async function ensureProposals(token, communityId) {
     // A proposal left in `draft` accepts no discussion and no vote, and renders
     // as empty as no proposal at all. `open` is the state that invites the first
     // real member to do something. No Idempotency-Key on this route by design
-    // (`routeidempotency.test.ts:34-51`): a second open is a state conflict.
+    // (`routeidempotency.test.ts`): a second open is a state conflict.
     if (proposal.status === 'draft') {
       const opened = await api('community', `/v1/proposals/${proposal.id}/open`, {
         method: 'POST',

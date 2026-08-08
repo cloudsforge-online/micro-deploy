@@ -76,7 +76,7 @@ one.
 This is a decision, recorded in `compose/docker-compose.estate.yml` beside
 `LEDGER_RECONCILE_ASSETS`, and it is not a bug to engineer around. If the chain
 has not launched then no EMBER is backed by anything, which is
-`docs/ecosystem/00-current-state.md:22` rather than an inconvenience. If EMBER
+`docs/ecosystem/00-current-state.md` rather than an inconvenience. If EMBER
 custody is zero the freeze costs nothing; if it is not zero, the platform is
 holding a liability it cannot prove backing for and freezing is correct.
 

@@ -42,7 +42,7 @@
 # ── WHAT IS DELIBERATELY ABSENT ────────────────────────────────────────────────
 #
 # `ledger`. Every one of its routes refuses a non-service principal
-# (ledger/src/server.ts:575), so it has no public surface. That is correct — the
+# (ledger/src/server.ts), so it has no public surface. That is correct — the
 # financial source of truth is reached through wallet and billing — and it is
 # recorded here so nobody reads the gap as an oversight.
 #
@@ -75,7 +75,7 @@ http:
 
   routers:
     # ---------------------------------------------------------------- pricing
-    # Unversioned upstream: GET /rates, /rates/:asset (pricing/src/server.ts:312,321)
+    # Unversioned upstream: GET /rates, /rates/:asset (pricing/src/server.ts,321)
     cf-api-pricing:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/rates`)'
       priority: 1000
@@ -84,7 +84,7 @@ http:
       service: cf-api-pricing
 
     # --------------------------------------------------------------- activity
-    # Unversioned upstream: GET /feed, /feed/:id (activity/src/server.ts:318,351)
+    # Unversioned upstream: GET /feed, /feed/:id (activity/src/server.ts,351)
     cf-api-activity:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/feed`)'
       priority: 1000
@@ -93,7 +93,7 @@ http:
       service: cf-api-activity
 
     # -------------------------------------------------------------- foresight
-    # Unversioned upstream: /categories, /markets (foresight/src/server.ts:398,409)
+    # Unversioned upstream: /categories, /markets (foresight/src/server.ts,409)
     cf-api-foresight:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/markets`) || PathPrefix(`/v1/categories`))'
       priority: 1000
@@ -102,8 +102,8 @@ http:
       service: cf-api-foresight
 
     # --------------------------------------------------------------- identity
-    # Unversioned upstream: GET /auth/me (identity/src/server.ts:891).
-    # NOTE: identity refuses a SERVICE token on /auth/me (identity/src/server.ts:540),
+    # Unversioned upstream: GET /auth/me (identity/src/server.ts).
+    # NOTE: identity refuses a SERVICE token on /auth/me (identity/src/server.ts),
     # so a devplatform API key has no whoami through this route. Recorded in
     # 18 §3.3d; micro-devplatform owns the answer.
     cf-api-identity:
@@ -140,10 +140,10 @@ http:
 
     # ----------------------------------------------------------------- worlds
     # `/v1/seasons` was missing here, and it is the route a TITLE is paid through.
-    # `worlds/src/server.ts:802` serves `POST /v1/seasons/:id/rewards`, which accepts a service
+    # `worlds/src/server.ts` serves `POST /v1/seasons/:id/rewards`, which accepts a service
     # principal holding `worlds:title` — that is a title crediting a player at the end of a season.
     # Without a router it fell through to the catch-all, so **no title could be paid a season
-    # reward through the public host**. `GET /v1/seasons/:id/budget` (`:779`) was unreachable the
+    # reward through the public host**. `GET /v1/seasons/:id/budget` was unreachable the
     # same way, which is the read a title uses to know whether a grant will fit the budget.
     #
     # It was invisible to the drift check on purpose-built grounds: `sdk/tools/public-api.ts`
@@ -199,7 +199,7 @@ http:
     # on this host it answered 502 on BOTH networks — api and api-testnet alike,
     # so this was never a leftover from folding `worlds-api` into the API host.
     # A 502 there says "the API is up and its backend has fallen over"; the API
-    # was fine and every route worked. `scripts/estate-verify.sh:2818` argues
+    # was fine and every route worked. `scripts/estate-verify.sh` argues
     # this at length under "WHY A ROUTE THAT 502s IS THE WORST OF THE THREE
     # ANSWERS", and this router was the estate's own counter-example.
     #
@@ -211,7 +211,7 @@ http:
     #
     # Losing `cf-api-headers` on the miss costs nothing: the tunnel entrypoint
     # applies `cf-request-id`, `cf-security-headers` and `cf-cors` to every
-    # request before routing (`compose/docker-compose.gateway.yml:266`), so a
+    # request before routing (`compose/docker-compose.gateway.yml`), so a
     # 404 here is still CORS-clean for a browser.
     #
     # ── AND `/livez` AND `/readyz` ARE DELIBERATELY NOT SERVED HERE ──────────
@@ -219,7 +219,7 @@ http:
     # They now 404 with everything else unmatched, and that was a decision, not
     # a side effect. Rule 4 of `org/README.md` does require all three of
     # `/livez`, `/readyz` and `/metrics` — but it is enforced by
-    # `org/.github/workflows/service-ci.yml:997`, which greps a SERVICE REPO's
+    # `org/.github/workflows/service-ci.yml`, which greps a SERVICE REPO's
     # `source-dir`. It is a rule about services. `api.<apex>` is not a service:
     # it is a gateway-composed SURFACE multiplexing the nine independent
     # services named above, each of which already satisfies rule 4 in its own
@@ -235,8 +235,8 @@ http:
     #
     # `nimbus`, `pay` and `vault` answering 200 on `/livez` is not a precedent
     # against this; it is the reason for it. Each is a WHOLE-HOST route to a
-    # single service (`estate-web.yml:899` nimbus -> cf-svc-identity, `:968`
-    # pay -> cf-svc-billing, `:978` vault -> cf-svc-custody), so their `/livez`
+    # single service (`estate-web.yml` nimbus -> cf-svc-identity
+    # pay -> cf-svc-billing vault -> cf-svc-custody), so their `/livez`
     # is that one service's own and means exactly what it says. `api` has no
     # such single service to speak for it.
     #

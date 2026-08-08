@@ -25,7 +25,7 @@
 set -uo pipefail
 
 # Host ports are 4100 + the service's index in micro-org's registry (portFor,
-# cfctl.ts:868) — derived from the one list that orders every repository rather
+# cfctl.ts) — derived from the one list that orders every repository rather
 # than picked, because the estate has twice lost time to a hand-chosen port that
 # already belonged to something else.
 IDENTITY=${IDENTITY:-http://127.0.0.1:4100}
@@ -73,7 +73,7 @@ LANTERN=${LANTERN:-http://127.0.0.1:4141}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 
 # WHICH CHAIN THIS ESTATE IS ON — 0x1cf3 is 7411 (`hearth`), 0x1cf4 is 7412
-# (`hearth-testnet`), per `hearth/node/src/params.js:37-38`.
+# (`hearth-testnet`), per `hearth/node/src/params.js`.
 #
 # The EMBER section near the end of this file asserted `0x1cf4` as a literal, from
 # when there was one chain, and it had become a check that could not pass: 8545 is
@@ -245,7 +245,7 @@ fi
 #
 # `beacon` is the honest caller here and its whole derived grant is `ledger:read`,
 # from the scopes it names at its own exchange call site
-# (beacon/src/ecosystem.ts:563). A monitor reading the trial balance is exactly
+# (beacon/src/ecosystem.ts). A monitor reading the trial balance is exactly
 # this request.
 stok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
   -H 'content-type: application/json' -d '{"service":"beacon","scopes":["ledger:read"]}' \
@@ -490,7 +490,7 @@ docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d indexer 
 # Nothing is credited by this, and that is deliberate rather than a shortcut. The
 # address belongs to nobody, so `claimCredit` returns `ignored: unknown_address`
 # — but `withInbox` has already inserted `(topic, event_id)` by then
-# (wallet/src/outbox.ts:459), so the inbox row is the proof the delivery was
+# (wallet/src/outbox.ts), so the inbox row is the proof the delivery was
 # authenticated, parsed and dispatched. Crediting a real balance to prove a
 # signature scheme would put a money movement inside a security check.
 wi_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d wallet \
@@ -667,7 +667,7 @@ echo
 echo "── THE TEN-MINUTE CLIFF: a call made AFTER its token expired ────────────"
 #
 # THE DEFECT THIS SECTION EXISTS FOR. Service tokens expire in 600 seconds
-# (identity/src/tokens.ts:28). Consuming services read theirs from an environment
+# (identity/src/tokens.ts). Consuming services read theirs from an environment
 # variable at boot and nothing re-minted it, because nothing COULD: the only
 # issuer was an operator holding the `admin` role. The estate therefore worked
 # perfectly for the first ten minutes of any deployment and then every
@@ -689,7 +689,7 @@ echo "── THE TEN-MINUTE CLIFF: a call made AFTER its token expired ───
 # would be caught.
 #
 # The sleep must clear the token's TTL *plus* the verifier's clock tolerance,
-# which is 5s by default (runtime/packages/auth/src/index.ts:106). 3 + 5 = 8, so
+# which is 5s by default (runtime/packages/auth/src/index.ts). 3 + 5 = 8, so
 # 12 is comfortably past it without being slow.
 CLIFF_TTL=3
 CLIFF_SLEEP=12
@@ -779,8 +779,8 @@ revoke_code=$(code -X POST "$IDENTITY/service-credentials/$cred_id/revoke" \
 echo
 echo "── THE ONBOARDING TOPIC THAT HAD NO SUBSCRIBER ──────────────────────────"
 # `identity.user.registered` is consumed by TWO services — activity turns it into
-# a feed record (activity/src/classify.ts:190) and analytics counts it as "the
-# denominator of every onboarding cohort" (analytics/src/catalogue.ts:307) — and
+# a feed record (activity/src/classify.ts) and analytics counts it as "the
+# denominator of every onboarding cohort" (analytics/src/catalogue.ts) — and
 # nothing subscribed either of them, so both were consumers with no producer and
 # every onboarding metric in the estate was structurally zero.
 #
@@ -955,7 +955,7 @@ echo "── STUDIO ACTUALLY WRITES: the check this file did not have ───�
 # For the whole life of this environment, studio's entry above was `/livez` and
 # `/readyz` and nothing else — and both were GREEN while every generation of
 # every kind failed. `STUDIO_ASSET_ROOT` was unset in the compose file, so
-# `studio/src/env.ts:322` fell back to `./out` → `/app/out`, which is root-owned
+# `studio/src/env.ts` fell back to `./out` → `/app/out`, which is root-owned
 # in an image that runs `USER node`. The result:
 #
 #     EACCES: permission denied, mkdir '/app/out'
@@ -1046,11 +1046,11 @@ echo "── TESSERA: the world, driven — provision, claim, and the two refusa
 #
 #   1. `GET /v1/title` — the descriptor worlds reads before it holds any credential. Public by
 #      contract. If `private_world` is missing from it, worlds' provisioning bridge never calls
-#      this title at all (worlds/src/provisioning.ts:441-451) and a purchase is taken for a ward
+#      this title at all (worlds/src/provisioning.ts) and a purchase is taken for a ward
 #      nobody raises.
 #   2. `POST /v1/provision` under worlds' `tessera:provision` — **the first code path the
 #      `world.private.small` SKU has ever had.** It has existed in billing since
-#      billing/src/migrations.ts:405 and no title in this estate has ever served it. 201 on the
+#      billing/src/migrations.ts and no title in this estate has ever served it. 201 on the
 #      first ask, 200 AND THE SAME URN on the replay, because the idempotency is a PRIMARY KEY on
 #      `provisions.entitlement_id` rather than a check-then-insert.
 #   3. A Homestead claimed by a real signed-in user — 201 with `objectCap` 160 (§6.2's table) —
@@ -1064,9 +1064,9 @@ echo "── TESSERA: the world, driven — provision, claim, and the two refusa
 # before step 2 created one, which is why the order is not rearrangeable.
 #
 # NOTE ON WHAT IS NOT PROVED HERE: the Kiln. It is configured in this environment (STUDIO_URL and
-# a token are both set) and it cannot work, because `tessera/src/studioclient.ts:93` posts to
+# a token are both set) and it cannot work, because `tessera/src/studioclient.ts` posts to
 # `POST /v1/generations` and micro-studio serves no such route — its generation route is
-# `POST /v1/brand-kits/:id/generate` (studio/src/server.ts:418) and its status body is nested
+# `POST /v1/brand-kits/:id/generate` (studio/src/server.ts) and its status body is nested
 # under `job`, not flat. Driving a firing here would assert a 202 this file could not distinguish
 # from a working Kiln. It is recorded as a defect for micro-tessera and micro-studio to agree a
 # contract on, rather than dressed up as a passing check.
@@ -1123,7 +1123,7 @@ wtok3=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $at
 # and reporting 200 where 201 was the thing under test.
 #
 # THE ORDER OF THE CHARACTERS IS LOAD-BEARING, and finding out why is what the second run of this
-# section bought. `wardSlugFrom` (tessera/src/titlecontract.ts:192-195) strips non-alphanumerics
+# section bought. `wardSlugFrom` (tessera/src/titlecontract.ts) strips non-alphanumerics
 # and takes THE FIRST TWELVE CHARACTERS: `estate-verify-4321` and `estate-verify-8765` both become
 # `private-estateverify`, and the second one violates `wards_slug_key`. So the timestamp and pid go
 # first, where twelve characters can still tell two runs apart.
@@ -1154,7 +1154,7 @@ if [ -n "$wtok3" ]; then
   # ── A SECOND, DIFFERENT ENTITLEMENT THAT SHARES A SLUG PREFIX ───────────────
   #
   # Found by running this section twice, which is the only way it surfaces. `wardSlugFrom`
-  # (tessera/src/titlecontract.ts:192-195) builds `private-<first 12 alphanumerics of the
+  # (tessera/src/titlecontract.ts) builds `private-<first 12 alphanumerics of the
   # entitlement id>`, and the doc comment directly above it says the entitlement id is used
   # "because [it] is already unique" — but the truncation throws that uniqueness away. Two
   # DIFFERENT paid entitlements whose ids agree for twelve characters collide on `wards_slug_key`,
@@ -1222,7 +1222,7 @@ fi
 # ── THE CLAIM: a real signed-in person, and the refusal that is a database index ──
 #
 # `utok` is the drill user registered at the top of this file — a plain user token with no scopes
-# at all, which is exactly what a player has. `requireUser` (tessera/src/server.ts:897-911) checks
+# at all, which is exactly what a player has. `requireUser` (tessera/src/server.ts) checks
 # a scope ONLY for a service principal; a user is their own authority.
 # ── THE WARD IS THE ONE THIS RUN RAISED, NOT WHATEVER /v1/wards LISTS FIRST ───
 #
@@ -1479,7 +1479,7 @@ echo "── THE SIXTEEN FRONTENDS: served, and proved to be more than a 200 ─
 # never that the app works".
 #
 # The legacy estate solved this with a real browser
-# (stack/infra/beacon/src/journeys/web.js:41-55: wait for network idle, then
+# (stack/infra/beacon/src/journeys/web.js: wait for network idle, then
 # assert the body has text the application itself produced). There is no browser
 # here and adding one to a bash script would be the wrong place for it — that is
 # the T3 harness being built in micro-beacon, per docs/ecosystem/22 §4.
@@ -1727,8 +1727,8 @@ SITE_HOST=${CF_SITE_HOST:-$WEB_APEX}
 # This read `${CF_GATEWAY_HTTPS_PORT:-443}`, and `CF_GATEWAY_HTTPS_PORT` is
 # assigned in no compose file, no env file and no script — grep the tree. So it
 # always took the 443 default. The name the gateway is actually published under is
-# `CF_GATEWAY_PORT` (`compose/docker-compose.gateway.yml:311` and
-# `compose/docker-compose.estate-gateway.yml:55`), and `compose/testnet.env:101`
+# `CF_GATEWAY_PORT` (`compose/docker-compose.gateway.yml` and
+# `compose/docker-compose.estate-gateway.yml`), and `compose/testnet.env:101`
 # sets it to 10443. Every gateway assertion below therefore addressed port 443 in
 # a testnet project, where nothing is bound — 000 across the board, reported as a
 # dead gateway rather than as a suite looking at the wrong port.
@@ -1910,11 +1910,11 @@ done
 
 echo "── the surfaces' own APIs, behind the same hostname ─────────────────────"
 # Every frontend resolves its API base by comparing origins (`resolveApiBase`,
-# e.g. hub-web/src/lib/hosts.ts:34-42): served from its registry host, the base is
+# e.g. hub-web/src/lib/hosts.ts): served from its registry host, the base is
 # the EMPTY STRING and every request is relative. micro-network-site states the
 # obligation outright — "the base is '' and the drip request is relative, which is
 # what the registry asserts AND WHAT THE GATEWAY THEREFORE HAS TO ROUTE"
-# (network-site/src/lib/hosts.ts:63-64).
+# (network-site/src/lib/hosts.ts).
 #
 # Routing only the bundle leaves every surface loading beautifully and answering
 # nothing. A 401 is the RIGHT answer here — it proves the service replied — and it
@@ -2086,12 +2086,12 @@ case "$allow" in
 esac
 
 # pay. and vault. — the two hostnames micro-hub-web named as missing and could not
-# add from its own repository (hub-web/src/lib/money.ts:34-41). `hosts().pay` is
+# add from its own repository (hub-web/src/lib/money.ts). `hosts().pay` is
 # wallet and `hosts().keyvault` is custody, and both are called with the USER'S
 # OWN token from Hub's origin, so both need the app CORS allowlist that the API
 # host deliberately does not carry.
 # The paths are the ones hub-web actually calls, read off its own call sites
-# (hub-web/src/lib/money.ts:140 and :192) rather than picked: `/health` was tried
+# (hub-web/src/lib/money.ts and :192) rather than picked: `/health` was tried
 # first here and answered 404 from custody, which is indistinguishable at a glance
 # from the router being absent. A 401 is the pass — it proves the service replied.
 for rec in "pay /v1/deposits wallet" "vault /v1/exports custody"; do
@@ -2118,13 +2118,13 @@ echo "── CROSS-SURFACE SSO: the hand-off, driven end to end ─────�
 # THE DEFECT THIS SECTION EXISTS FOR. `IDENTITY_HANDOFF_ORIGINS` defaulted to ''
 # and no compose file in this repository set it. `isAllowedOrigin` is
 # `env.handoffOrigins.includes(origin)` over an empty array
-# (identity/src/handoff.ts:32), so `createHandoffCode` returned null for EVERY
+# (identity/src/handoff.ts), so `createHandoffCode` returned null for EVERY
 # origin and `POST /auth/handoff` answered 403 to everyone. A person could sign in
 # at Hub and reach NO OTHER SURFACE — which is where most of the 86 tier-T3
 # scenarios in doc 22 go on their second step.
 #
 # Nothing caught it because nothing in this repository had ever minted a hand-off
-# code: identity's own suite sets the variable in `testsupport.ts:47`, so the
+# code: identity's own suite sets the variable in `testsupport.ts`, so the
 # empty-by-default case was only ever exercised by a deployment, and there had
 # never been one.
 #
@@ -2135,7 +2135,7 @@ echo "── CROSS-SURFACE SSO: the hand-off, driven end to end ─────�
 #    THING FOR IT ───────────────────────────────────────────────────────────────
 #
 # This read `accessToken` straight out of the register response. `micro-identity`
-# 1.1.0 removed that session on purpose — `server.ts:805-815`, "NO SESSION. THIS
+# 1.1.0 removed that session on purpose — `server.ts`, "NO SESSION. THIS
 # IS THE POINT OF THE ROUTE'S 202" — so registration now answers 202 with no
 # token and an account that cannot sign in until its email is verified.
 #
@@ -2200,7 +2200,7 @@ fi
 # Market redeems it, presenting the Origin a browser would send. This is the
 # assertion that proves the whole path: the code is bound to the origin it was
 # minted for and matched against the browser's own header
-# (identity/src/handoff.ts:73-86).
+# (identity/src/handoff.ts).
 so_new=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff/redeem" \
   -H 'content-type: application/json' -H "origin: https://market$WEB_SUFFIX" \
@@ -2283,7 +2283,7 @@ cb_anon=$(code "$INDEXER/v1/custody/ember/$EMBER_NETWORK/total")
 #
 # It holds one today. `ledger/src/indexerclient.ts` exports `INDEXER_SCOPES = ['indexer:read']`,
 # the derivation picked it up with nothing typed into the grants map by hand, and
-# `estate-bootstrap.sh` now hands ledger the token its `env.ts:310` has always read.
+# `estate-bootstrap.sh` now hands ledger the token its `env.ts` has always read.
 #
 # Driving it AS LEDGER is what separates two states that a health check cannot tell apart and that
 # are completely different facts:
@@ -2309,7 +2309,7 @@ cb_tok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $a
 # ledger is actually handed, and nothing was setting it.
 #
 # The variable CHANGED, and the check follows the variable rather than being dropped with it.
-# `ledger/src/env.ts:362` reads `LEDGER_IDENTITY_CREDENTIAL` — long-lived, `cfsc_…` — and exchanges
+# `ledger/src/env.ts` reads `LEDGER_IDENTITY_CREDENTIAL` — long-lived, `cfsc_…` — and exchanges
 # it per call. A JWT here would be the retired `LEDGER_SERVICE_TOKEN`, so the prefix is asserted:
 # `cfsc_` and not `ey`, which is the difference between a credential that outlives the job's timer
 # and a token that does not.
@@ -2319,7 +2319,7 @@ lsvc=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}
   && ok "the ledger container holds a real long-lived LEDGER_IDENTITY_CREDENTIAL — it can authenticate to the indexer on EVERY run, not just the first" \
   || bad "ledger has no LEDGER_IDENTITY_CREDENTIAL in its environment; its custody call goes out unauthenticated, the 401 maps to undefined, and EMBER freezes on an auth error while LOOKING exactly like the honest no-chain freeze"
 
-# AND THE RETIRED VARIABLE MUST BE GONE, not merely unused. `ledger/src/env.ts:363` keeps
+# AND THE RETIRED VARIABLE MUST BE GONE, not merely unused. `ledger/src/env.ts` keeps
 # `legacyServiceTokenPresent` only to COMPLAIN about it: handing it back would be ignored, so a
 # deploy that still set it would look configured and behave unconfigured. It is also a live JWT with
 # a real `sub` and real scopes sitting in a file for no reader.
@@ -2337,13 +2337,13 @@ lleg=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}
 # defect they described no longer exists in the code they described it in.
 #
 # What it was: `LEDGER_SERVICE_TOKEN` carried a 600-second token
-# (identity/src/tokens.ts:28) read once at import, and the reconciliation job
-# runs every 900 seconds (`ledger/src/jobs.ts:108`). 600 < 900, so the
+# (identity/src/tokens.ts) read once at import, and the reconciliation job
+# runs every 900 seconds (`ledger/src/jobs.ts`). 600 < 900, so the
 # chain-backing call authenticated for the FIRST run after a bootstrap and for no
 # run after that, ever — and `estate-up.sh` bootstraps and verifies inside the
 # window, which is exactly why it was invisible.
 #
-# What fixed it: `ledger/src/env.ts:362` reads the long-lived
+# What fixed it: `ledger/src/env.ts` reads the long-lived
 # `LEDGER_IDENTITY_CREDENTIAL` and exchanges it for a fresh token PER CALL at
 # `POST /service-tokens/exchange`. There is no expiry to outrun and nothing for
 # this script to renew, so the workaround has no subject left.
@@ -2515,7 +2515,7 @@ else
   # ── 0. THE KEY, WHICH IS THE PART THAT CANNOT BE UNDONE ────────────────────
   #
   # Hearth binds the coinbase public key into the proof-of-work seed
-  # (`chain/miner.js:103`) and signs the proof with the private key (`:84`), so
+  # (`chain/miner.js`) and signs the proof with the private key, so
   # the owner's miner MUST hold a real key — `hearthd --evm` refuses
   # `--miner-address` for exactly that reason. That makes a file on this machine
   # worth money, and every other check in this file is cheap by comparison: a
@@ -2532,7 +2532,7 @@ else
     else
       ok "the miner's key is outside every git work tree — no ignore rule stands between it and a commit"
     fi
-    # 2. 0600. `evmnode.js:78` writes it that way; this catches a later chmod.
+    # 2. 0600. `evmnode.js` writes it that way; this catches a later chmod.
     kmode=$(stat -f '%Lp' "$EMBER_KEY" 2>/dev/null || stat -c '%a' "$EMBER_KEY" 2>/dev/null)
     [ "$kmode" = 600 ] && ok "…and is mode 600" \
       || bad "the miner's key is mode ${kmode:-unknown}, not 600 — anything running as another user on this machine can read it"
@@ -2891,10 +2891,10 @@ echo "── THE FAUCET, AND THE CHAIN THIS ESTATE ACTUALLY RUNS ─────
 #
 # ── WHY A ROUTE THAT 502s IS THE WORST OF THE THREE ANSWERS ───────────────────
 #
-# `micro-faucet` will only ever run against the EMBER testnet. `faucet/src/env.ts:63`
+# `micro-faucet` will only ever run against the EMBER testnet. `faucet/src/env.ts`
 # is `export const NETWORK = 'testnet' as const`, annotated that way so that
 # `NETWORK === 'mainnet'` is a COMPILE ERROR rather than a branch, and
-# `faucet/src/index.ts:108-120` reads `eth_chainId` at boot and exits on anything
+# `faucet/src/index.ts` reads `eth_chainId` at boot and exits on anything
 # that is not 7412. That is right and is not being weakened: a faucet is an
 # unauthenticated withdrawal endpoint that happens to be pointed at a worthless
 # chain, and the mainnet EMBER on this host is mined, publicly reachable and
@@ -2918,7 +2918,7 @@ echo "── THE FAUCET, AND THE CHAIN THIS ESTATE ACTUALLY RUNS ─────
 #
 # The estate briefly had mainnet and testnet the wrong way round. Nothing at this
 # level would have noticed: both nodes speak an identical protocol and answer
-# every request correctly, about the wrong chain. `faucet/src/env.test.ts:46-61`
+# every request correctly, about the wrong chain. `faucet/src/env.test.ts`
 # pins the faucet's own half — CHAIN_ID is 7412, mainnet is 7411, and the two are
 # asserted to differ — so the SERVICE could not have been fooled. What had no
 # check was the ESTATE: which chain this project's node is actually on, and

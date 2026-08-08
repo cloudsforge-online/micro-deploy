@@ -9,14 +9,14 @@
 #
 # ── WHY IT HOLDS A PRIVATE KEY, WHICH IS NOT SLOPPINESS ───────────────────────
 #
-# Hearth binds the coinbase into the work itself. `node/src/chain/miner.js:103`
+# Hearth binds the coinbase into the work itself. `node/src/chain/miner.js`
 # hashes `POW.powSeed(cand.coreHash, n, cand.header.coinbasePub)` — the coinbase
-# PUBLIC KEY is an input to the proof-of-work seed — and `:84` seals the winning
+# PUBLIC KEY is an input to the proof-of-work seed — and seals the winning
 # candidate with `HDR.signProof(digestHex, privateKey)`, so the proof is signed
-# by the coinbase key. `bin/hearthd.js:64` therefore REFUSES `--miner-address`
+# by the coinbase key. `bin/hearthd.js` therefore REFUSES `--miner-address`
 # under `--evm` rather than silently ignoring it.
 #
-# That is how `01-product-vision.md:20`'s "no farms, no pools" is enforced
+# That is how `01-product-vision.md`'s "no farms, no pools" is enforced
 # structurally rather than asserted: work done for one address cannot be
 # redirected to another, because the address is part of what is being hashed. A
 # miner that mines to you must hold your key. There is no version of this that
@@ -24,7 +24,7 @@
 #
 # ── THE KEY, AND WHERE IT IS NOT ──────────────────────────────────────────────
 #
-# `$EMBER_MINER_DATA/coinbase-key.json`, written by `evmnode.js:78` at mode 0600
+# `$EMBER_MINER_DATA/coinbase-key.json`, written by `evmnode.js` at mode 0600
 # on first start. Three properties, each deliberate:
 #
 #   * It is OUTSIDE EVERY GIT REPOSITORY. Not gitignored — absent. `~/.cloudsforge`
@@ -85,7 +85,7 @@ PEER=${EMBER_MINER_PEER:-127.0.0.1:8646}
 # sleeps `(1-t)*12`ms between 150-hash batches.
 #
 # 0.6 is the default here because it is what the two compose miners already run
-# (`docker-compose.testnet.yml:68`), so the owner's node competes on equal terms
+# (`docker-compose.testnet.yml`), so the owner's node competes on equal terms
 # rather than being handicapped or privileged.
 #
 # It is a HOST process, so it spends the Mac's cores and not the container VM's
@@ -163,7 +163,7 @@ case "${1:-status}" in
   stop)
     if pid=$(running_pid); then
       # SIGINT, not SIGKILL: hearthd installs a SIGINT handler
-      # (`bin/hearthd.js:94`) and the chain is append-only NDJSON, so an
+      # (`bin/hearthd.js`) and the chain is append-only NDJSON, so an
       # interrupted write is a truncated last line rather than a corrupt store.
       kill -INT "$pid" 2>/dev/null
       attempt=0

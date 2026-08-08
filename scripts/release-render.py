@@ -49,7 +49,7 @@ parser.add_argument("--base", default="compose/docker-compose.estate.yml", help=
 # ── WHICH ENVIRONMENT'S SERVICE LIST, WHICH IS NOT A DETAIL ──────────────────
 #
 # The base file renders a DIFFERENT SET OF SERVICES per environment: `faucet` is
-# defined on testnet and not on mainnet (faucet/src/env.ts:63 fixes NETWORK to
+# defined on testnet and not on mainnet (faucet/src/env.ts fixes NETWORK to
 # 'testnet' at compile time — mainnet EMBER is mined money and has no faucet).
 #
 # Without this, `config --services` below was always asked the MAINNET question,

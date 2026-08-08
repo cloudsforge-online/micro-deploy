@@ -23,7 +23,7 @@
  *      compared and on which field.
  *   3. **A named source of truth, recorded before the market opens.** foresight
  *      hashes `resolutionSourceRef` into `question_hash` and commits that to the
- *      contract (`foresight/src/markets.ts:232-244`), so the source cannot be
+ *      contract (`foresight/src/markets.ts`), so the source cannot be
  *      changed after the fact even by an operator with a database connection.
  *      That is the property that makes naming it worth doing.
  *
@@ -41,8 +41,8 @@
  * ── CATEGORIES ARE THE SERVICE'S, NOT THIS FILE'S ────────────────────────────
  *
  * `category` and `resolutionSourceKind` are checked against `foresight/src/
- * categories.ts:65-89` at create time, and a wrong pairing is a 400
- * (`bad_source_kind`, `markets.ts:250-256`). The three categories are
+ * categories.ts` at create time, and a wrong pairing is a 400
+ * (`bad_source_kind`, `markets.ts`). The three categories are
  * `protocol_network`, `market_prices` and `scheduled_public_events`; three
  * questions are written for each, so no category renders as an empty tab.
  *
@@ -53,12 +53,12 @@
  * its own schedule — an official election return, a final championship
  * classification — needs longer, because the window has to outlive the gap
  * between the event and its publication. 86,400s for the first kind, 604,800s
- * for the second. The ceiling is 2,592,000s (`server.ts:747-750`).
+ * for the second. The ceiling is 2,592,000s (`server.ts`).
  *
  * ── OUTCOMES ARE BINARY BECAUSE THE SERVICE IS ───────────────────────────────
  *
  * `stake(uint8)` takes 0 = YES and 1 = NO and there is no N-ary form
- * (`foresight/src/server.ts:590`, `migrations.ts:280`). Every question below is
+ * (`foresight/src/server.ts`, `migrations.ts`). Every question below is
  * therefore phrased so that YES and NO are exhaustive and mutually exclusive,
  * and `resolutionCriteria` always says what NO means rather than leaving it to
  * be inferred.
@@ -313,7 +313,7 @@ export const FORESIGHT_QUESTIONS = [
     //
     // The first draft of this entry asked whether a named driver would win the
     // World Drivers' Championship. It was rewritten before it was ever posted.
-    // `foresight/src/categories.ts:79-84` describes this category as "About the
+    // `foresight/src/categories.ts` describes this category as "About the
     // event, never about an individual", and `REFUSALS[0]` refuses "a market on
     // a named private individual". A competing Formula One driver is not a
     // private individual and a championship classification is not their life, so
@@ -369,7 +369,7 @@ export const FORESIGHT_QUESTIONS = [
  *
  *   * **A market WITH a `contractAddress` is left alone.** `POST /markets/:id/void` answers 409
  *     `on_chain` for these by design — "void it through the oracle so the chain and the registry
- *     agree" (`foresight/src/server.ts:981-988`) — and the oracle path needs the market to be
+ *     agree" (`foresight/src/server.ts`) — and the oracle path needs the market to be
  *     `closed`, which needs it to have been `open`. Two of the three never opened, so there is no
  *     API path that voids them, and the honest thing is to say so rather than to reach past the
  *     service into its database. That is a finding, recorded here, not a licence to write SQL.
@@ -384,8 +384,8 @@ export const TEST_ARTEFACT_VOID_REASON =
  *
  * The network and the chain id are both alternations, not literals. This pattern was pinned to
  * `testnet` / `7412` and the journey script now emits whichever pair `CF_EMBER_NETWORK` selects
- * (`foresight-market-journey.mjs:117-118` — `hearth` is 7411, `hearth-testnet` is 7412 per
- * `hearth/node/src/params.js:37-38`). Left pinned, this would have stopped matching its own
+ * (`foresight-market-journey.mjs` — `hearth` is 7411, `hearth-testnet` is 7412 per
+ * `hearth/node/src/params.js`). Left pinned, this would have stopped matching its own
  * artefacts on the mainnet estate and quietly left every one of them standing as a real market —
  * a false NEGATIVE, which is the direction that does damage here.
  *

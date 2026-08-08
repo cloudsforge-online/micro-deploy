@@ -12,10 +12,10 @@ http:
     #
     # This USED TO SAY that the refusal was "a path rule in
     # deploy/cloudflared/config.example.yml and a CI job
-    # (.github/workflows/ci.yml:155) that parses that YAML". Neither existed.
+    # (.github/workflows/ci.yml) that parses that YAML". Neither existed.
     # There was no cloudflared/ directory in this repository at all, and ci.yml
     # had one job in it, running scripts/surface-routes.py — so this file, and
-    # README.md:406, and docker-compose.gateway.yml:17, all cited a control that
+    # README.md, and docker-compose.gateway.yml, all cited a control that
     # was never written. That is the failure surface-routes.py's check 4 exists
     # for ("A ROUTER DESCRIBED IN PROSE IS NOT A ROUTER"), one directory over,
     # where check 4 could not see it because it only reads gateway/dynamic/*.yml.
@@ -106,7 +106,7 @@ http:
           #
           # It has to be here rather than in a second middleware: `cf-cors` is applied to every
           # router on `websecure` by the entryPoint chain
-          # (compose/docker-compose.gateway.yml:90), so a second CORS middleware would run beside
+          # (compose/docker-compose.gateway.yml), so a second CORS middleware would run beside
           # this one on the same request rather than instead of it, and two middlewares each
           # setting `Access-Control-Allow-Origin` is not a configuration anyone should have to
           # reason about at 3am.
@@ -178,14 +178,14 @@ http:
           #
           # THE CALL THAT NEEDS IT is `POST /markets/:id/deploy` on foresight, which REQUIRES an
           # `Idempotency-Key` of 8 to 200 characters and answers 400 without one
-          # (`idempotencyKeyOf`, foresight/src/server.ts:1033-1040). The operator panel is the only
+          # (`idempotencyKeyOf`, foresight/src/server.ts). The operator panel is the only
           # client that calls it from a browser, and it has always called foresight cross-origin —
           # from `foresight-admin.<apex>` before the P13 fold and from `admin.<apex>` after it. So
           # the deploy control could not have worked in a browser at any point, and the fold did
           # not cause that; it inherited it.
           #
           # WHY NOTHING CAUGHT IT. The estate's other caller of that route is
-          # `scripts/foresight-market-journey.mjs:372`, which runs under Node — no origin, no
+          # `scripts/foresight-market-journey.mjs`, which runs under Node — no origin, no
           # preflight, no CORS. So the journey passed against a route no browser could reach, which
           # is the shape of defect this directory keeps rediscovering: a check that exercises the
           # path by a mechanism the real client does not use.

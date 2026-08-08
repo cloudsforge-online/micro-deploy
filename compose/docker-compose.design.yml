@@ -1,0 +1,301 @@
+# -- 2.4.0, ON TESTNET ONLY ----------------------------------------------------
+#
+# Applied as a THIRD overlay after `docker-compose.release.yml`, and only for the
+# testnet project. The release overlay is shared by both estates, so editing its
+# pins would have put an unreviewed rewrite in front of mainnet users -- which is
+# the opposite of what a branch is for.
+#
+# To take it away, drop the `-f compose/docker-compose.design.yml` and redeploy.
+# Nothing else changes, because nothing else was touched.
+#
+# A TAG HERE MUST DIFFER FROM THE ONE ON main. `worlds-web` sat at 1.0.1 in this
+# file while main was also 1.0.1, so its branch build published nothing -- GHCR
+# tags are immutable -- and testnet served the old bundle behind a green run and
+# a successful deploy. Nothing compares merged code to running code, so the
+# version is the deploy unit: bump it or ship nothing.
+#
+# -- ONE VERSION, THE WHOLE ESTATE ---------------------------------------------
+#
+# The 1.x edition of this file pinned seventeen frontends at eleven different
+# versions and said nothing at all about the twenty-nine services underneath
+# them, which carried twenty-odd more between them. So "which release is this box
+# on?" had thirty answers and not one of them was the estate.
+#
+# It is 2.4.0 for all seventy-four containers. Anything on this estate NOT
+# reading 2.4.0 is visibly not this release, and that is checkable with one
+# `docker ps` rather than with a spreadsheet.
+#
+# THE RULE THIS COMES FROM, IN THE OWNER'S WORDS: "from now on all container
+# services will be on the same version, if you do a change to one, you will
+# update the version to be the same to all, and then deploy them." One changed
+# line in one service means forty-six version bumps and forty-six deploys. It is
+# written up in `deploy/docs/releasing.md`, with the reasoning.
+#
+# -- WHAT 2.1.x CARRIES --------------------------------------------------------
+#
+# 2.0.0 was the site rewrite: every tile, paragraph, button and product
+# description, browser mining back on the site, the previous wording gone.
+#
+# 2.1.0 is the second pass over that copy, and it is a minor rather than a major
+# because it changes what the same pages say, not what they are. Engineering
+# provenance had been rendered AT CUSTOMERS -- repository paths, HTTP routes and
+# status codes printed inside sentences meant for people who will never open the
+# repository. Those are gone from the consumer surfaces and the claims they
+# supported are kept, in the reader's words, with the provenance moved into
+# source comments where the next maintainer will actually look for it. API
+# vocabulary stays on devportal-web and on the operator consoles (admin, beacon,
+# lantern), because there the reader is the person the route name is for.
+#
+# Also in this tag: meta descriptions brought under 160 characters across the
+# estate, four page headings that named a noun instead of making a promise, and
+# one 404 screen that had no heading of any level for a screen reader to find.
+#
+# The services underneath carry no behaviour change at this tag. They are here so
+# that the version names the estate rather than the half of it a reader can see.
+#
+# -- WHERE THESE IMAGES CAME FROM ----------------------------------------------
+#
+# All seventy-four, forty-six distinct images, are in GHCR, so `docker compose
+# pull` is the right command here.
+#
+# At 2.0.0 the frontends had been built on this host from each repository's
+# `sitev2` branch and pushed by hand, because CI builds `main` and
+# `design-system/**` and nothing else. That is no longer true and it is worth
+# saying why it changed: `publish-image.yml` checks out `micro-ui` with no `ref:`
+# and therefore always at its default branch, so a frontend built from a side
+# branch would have silently linked against ui@main's older surface registry --
+# a hand-built image that does not match its own sources. All eighteen sitev2
+# branches were fast-forwarded into main instead, and every image at this tag was
+# published by its own repository's CI on a green push to main, which is the
+# designed path (the `publish` job, gated on `github.ref == refs/heads/main`).
+#
+# Mainnet is unaffected by that merge. It does not deploy from main; it deploys
+# from a pinned release manifest that still names 1.x, which is also why this
+# overlay is still testnet-only.
+#
+# Three repositories missed the 2.1.0 publish -- aetherholm-web, devportal-web
+# and explorer-web -- each on a differently-broken "Estate rules" gate rather
+# than on anything in their code. Written up in micro-org#239 and fixed at
+# source rather than skipped. 2.1.1 published 46 of 46 on the first attempt.
+#
+# -- WHAT 2.1.1 ADDS OVER 2.1.0 ------------------------------------------------
+#
+# 2.1.0 was checked the way the four attempts before it were: by asserting about
+# the source. 2.1.1 was checked by opening all seventeen surfaces in Chromium and
+# reading what came back, and that found six things no source check could see.
+# Tessera's front door had no heading of any level -- a stranger got one cryptic
+# sentence and a screen reader got an empty heading list. Five meta descriptions
+# were longer than a search result will show, network at 240 characters. Four
+# paragraphs told the reader what the page used to say. Three headings named a
+# noun instead of saying what the page does. All fixed at this tag.
+#
+# Also measured in the browser here, not inferred: 64 internal links PRESSED
+# rather than fetched, every one landing on a page with exactly one h1 and real
+# content; the consent banner on all seventeen surfaces with the analytics tag
+# NOT loaded until it is answered; no console error and no failed request
+# anywhere; and no repository path, route or status code left in any sentence on
+# a consumer surface -- the only remaining ones are on developers, where the
+# reader is the person a route name is for.
+#
+# -- WHAT 2.2.0 ADDS OVER 2.1.1 ------------------------------------------------
+#
+# 2.1.1 was checked by opening every surface and pressing sixty-four links, and
+# every one of them was reported as landing correctly. The owner then pressed the
+# same links on this estate and reported that most of them "take you to the
+# ecosystem page". Both observations were true, and the gap between them is the
+# whole of this tag.
+#
+# React Router does not reset the scroll position when the address changes, and
+# no frontend here did it either -- searching all seventeen for ScrollRestoration
+# or a scrollTo call found nothing anywhere. So a link pressed part-way down a
+# page opened the next page at that same offset. On the marketing site that is
+# severe, because every page there ends with the same grid of all the products:
+# pressing a product tile two thousand pixels down the home page landed the
+# reader on that product's page, scrolled to the grid of every OTHER product,
+# which is exactly what the ecosystem page looks like.
+#
+# It was invisible to the 2.1.1 check because that harness pressed links and
+# asserted the destination had one h1 and real content -- a correctly routed,
+# wrongly scrolled page passes that. Measured before fixing: /products/trade
+# clicked from the home page went from scrollY 1965 to 1466, with "The rest of
+# it", "Products" and "This site" on screen and its own h1 far above the fold.
+# Written up in micro-org#240.
+#
+# The fix is components/scroll-to-top.tsx in each of the seventeen frontends,
+# mounted inside BrowserRouter. It leaves POP alone so back and forward still
+# restore where the reader was, honours a #hash so in-page anchors keep working,
+# and scrolls instantly rather than smoothly, because animating a page change
+# makes every click feel slow. It is a per-app file rather than a @cloudsforge/ui
+# export on purpose: ui is consumed as `link:` and carries its own router copy in
+# its own node_modules, so a router hook imported from inside the package reads a
+# different context and throws -- the same trap test-loader.ts exists to solve
+# for React. That was tried first and reverted; twelve duplicated lines beat
+# adding a router to resolve.dedupe in seventeen vite configs.
+#
+# Also at this tag, and the reason the site's own version matters here: the
+# owner read the home, ecosystem, platform and about pages back line by line and
+# named thirteen sentences that do not survive being read once. They were written
+# at the architecture rather than at a person -- explaining why a section sits
+# where it does, denying a design nobody had proposed, arguing about what the
+# word "platform" means, and naming the same four nouns twice in consecutive
+# sentences. All rewritten. One was not a style fault but a factual one: the site
+# said Hearth "runs the Ethereum virtual machine", when what is here is an
+# Ethereum-compatible machine written in Node. That both borrowed a guarantee
+# that is not ours and hid the thing that was actually built, and it now says so.
+#
+# The six product tiles say what a person does there in one line each, and the
+# blurbs behind them are the surface registry's, so they are the same six lines
+# wherever any surface renders a tile.
+#
+# The services underneath carry no behaviour change at this tag. They are here so
+# the version names the estate rather than the half of it a reader can see.
+#
+# -- WHAT 2.4.0 ADDS OVER 2.3.0 ------------------------------------------------
+#
+# One behaviour change, in `notify`, and seventy-three containers that carry no
+# change at all and are here because the version names the estate.
+#
+# NOTIFY NO LONGER SENDS MAIL TO A DOMAIN THE STANDARDS RESERVE. micro-org#243.
+#
+# `beacon` registers a synthetic account roughly every thirty-eight seconds, each
+# at `beacon+<hex>@beacon.test`. `.test` is reserved by RFC 6761 s6: it has no
+# mail exchanger, cannot be delegated one, and every message addressed there is
+# undeliverable by construction. The estate was sending them anyway -- and then
+# retrying each one up to `deliveries.max_attempts`, which is six.
+#
+# What that cost, measured on the host on 2026-08-07: 7,319 of mainnet's 7,398
+# users are beacon's, 5,259 of 5,290 email channel targets are beacon's, and the
+# provider's daily allowance was exhausted by them. On that day the estate sent
+# 89 messages and failed 1,839. The failures included identity's email
+# verification links, so a person who registered while the allowance was spent
+# never received one and could not verify. Across both estates 4,483 verification
+# tokens have been issued and NONE has ever been consumed.
+#
+# The rule is a standard, not a deny-list: reserved TLDs (`.test`, `.example`,
+# `.invalid`, `.localhost`) from RFC 6761 s6 and the documentation domains
+# (`example.com`, `.net`, `.org`) from RFC 2606 s3. It matches on the final
+# LABEL, so `testing.com`, `example.company`, `invalidate.co` and `localhost.com`
+# are ordinary deliverable domains and stay that way -- the negative cases have
+# their own tests, because `endsWith('test')` passes every positive case and
+# refuses real people's mail for ever.
+#
+# It is applied in `channelsAvailable`, BEFORE the route is chosen, not in the
+# adapter. That is the load-bearing part: no delivery row is written, nothing is
+# retried six times, nothing is dead-lettered, and the address is not counted as
+# a user with no address on file. The adapter carries the same check as a
+# backstop for rows written before this shipped.
+#
+# HOW TO SEE IT WORKED: `users` must keep climbing at roughly ninety-five an hour
+# while `deliveries where channel='email'` stays flat. A flat user count means
+# beacon stopped, which measures nothing.
+#
+# -- WHAT 2.3.0 ADDS OVER 2.2.0 ------------------------------------------------
+#
+# Two defects in the consent banner, both found by the owner using it rather
+# than by any check here.
+#
+# It asked again on every subdomain. The decision was kept in `localStorage`,
+# which is scoped to an ORIGIN, and every surface in this estate is a different
+# subdomain -- so a reader who accepted on the marketing site was asked again on
+# hub, again on explorer, again on developers, again on status. Seventeen
+# banners, one decision they had already made. It is now a cookie on the
+# registrable domain, which every subdomain can see. `localStorage` is still
+# written and still read as a fallback, so nobody who already answered is asked
+# again because the mechanism changed.
+#
+# And it covered the last footer link. The banner is fixed to the bottom of the
+# viewport, so on a first visit it sat on top of the final link in the footer
+# and the click landed on the banner instead. micro-org#241. Fixed with a
+# measured spacer in normal flow.
+#
+# Also at this tag, from the owner reading the pages back: Foresight is a place
+# you BET and the copy says so now -- in the verb line, the hero, the spend
+# step, the tile and the product page. And Forge Trade leads with trading crypto
+# natively, settled on chain against a price feed with no order book and no
+# exchange account, rather than with backtesting, which is the safety step
+# rather than the product.
+#
+# -- THIS FILE NOW LIVES IN THE REPOSITORY -------------------------------------
+#
+# Until 2.3.0 it existed ONLY on the deploy host. Seventy-four image pins and
+# the entire record of what each release carried, in one unversioned file with
+# no backup, describing the environment every change is checked on before it
+# reaches anybody. It is now `deploy/compose/docker-compose.design.yml` in
+# `micro-deploy`, and the copy on the host is a copy.
+#
+# Edit it HERE and copy it there. The host is not a checkout and does not pull.
+services:
+  activity:            { image: ghcr.io/cloudsforge-online/micro-activity:2.4.0 }
+  activity-migrate:    { image: ghcr.io/cloudsforge-online/micro-activity:2.4.0 }
+  admin-api:           { image: ghcr.io/cloudsforge-online/micro-admin-api:2.4.0 }
+  admin-api-migrate:   { image: ghcr.io/cloudsforge-online/micro-admin-api:2.4.0 }
+  admin-web:           { image: ghcr.io/cloudsforge-online/micro-admin-web:2.4.0 }
+  aetherholm:          { image: ghcr.io/cloudsforge-online/micro-aetherholm:2.4.0 }
+  aetherholm-migrate:  { image: ghcr.io/cloudsforge-online/micro-aetherholm:2.4.0 }
+  aetherholm-web:      { image: ghcr.io/cloudsforge-online/micro-aetherholm-web:2.4.0 }
+  analytics:           { image: ghcr.io/cloudsforge-online/micro-analytics:2.4.0 }
+  analytics-migrate:   { image: ghcr.io/cloudsforge-online/micro-analytics:2.4.0 }
+  beacon:              { image: ghcr.io/cloudsforge-online/micro-beacon:2.4.0 }
+  beacon-migrate:      { image: ghcr.io/cloudsforge-online/micro-beacon:2.4.0 }
+  beacon-web:          { image: ghcr.io/cloudsforge-online/micro-beacon-web:2.4.0 }
+  billing:             { image: ghcr.io/cloudsforge-online/micro-billing:2.4.0 }
+  billing-migrate:     { image: ghcr.io/cloudsforge-online/micro-billing:2.4.0 }
+  community:           { image: ghcr.io/cloudsforge-online/micro-community:2.4.0 }
+  community-migrate:   { image: ghcr.io/cloudsforge-online/micro-community:2.4.0 }
+  custody:             { image: ghcr.io/cloudsforge-online/micro-custody:2.4.0 }
+  custody-migrate:     { image: ghcr.io/cloudsforge-online/micro-custody:2.4.0 }
+  devplatform:         { image: ghcr.io/cloudsforge-online/micro-devplatform:2.4.0 }
+  devplatform-migrate: { image: ghcr.io/cloudsforge-online/micro-devplatform:2.4.0 }
+  devportal-web:       { image: ghcr.io/cloudsforge-online/micro-devportal-web:2.4.0 }
+  emberkin:            { image: ghcr.io/cloudsforge-online/micro-emberkin:2.4.0 }
+  emberkin-migrate:    { image: ghcr.io/cloudsforge-online/micro-emberkin:2.4.0 }
+  emberkin-web:        { image: ghcr.io/cloudsforge-online/micro-emberkin-web:2.4.0 }
+  explorer-web:        { image: ghcr.io/cloudsforge-online/micro-explorer-web:2.4.0 }
+  faucet:              { image: ghcr.io/cloudsforge-online/micro-faucet:2.4.0 }
+  faucet-migrate:      { image: ghcr.io/cloudsforge-online/micro-faucet:2.4.0 }
+  foresight:           { image: ghcr.io/cloudsforge-online/micro-foresight:2.4.0 }
+  foresight-migrate:   { image: ghcr.io/cloudsforge-online/micro-foresight:2.4.0 }
+  foresight-web:       { image: ghcr.io/cloudsforge-online/micro-foresight-web:2.4.0 }
+  hub-api:             { image: ghcr.io/cloudsforge-online/micro-hub-api:2.4.0 }
+  hub-web:             { image: ghcr.io/cloudsforge-online/micro-hub-web:2.4.0 }
+  identity:            { image: ghcr.io/cloudsforge-online/micro-identity:2.4.0 }
+  identity-migrate:    { image: ghcr.io/cloudsforge-online/micro-identity:2.4.0 }
+  indexer:             { image: ghcr.io/cloudsforge-online/micro-indexer:2.4.0 }
+  indexer-migrate:     { image: ghcr.io/cloudsforge-online/micro-indexer:2.4.0 }
+  lantern:             { image: ghcr.io/cloudsforge-online/micro-lantern:2.4.0 }
+  lantern-migrate:     { image: ghcr.io/cloudsforge-online/micro-lantern:2.4.0 }
+  lantern-web:         { image: ghcr.io/cloudsforge-online/micro-lantern-web:2.4.0 }
+  ledger:              { image: ghcr.io/cloudsforge-online/micro-ledger:2.4.0 }
+  ledger-migrate:      { image: ghcr.io/cloudsforge-online/micro-ledger:2.4.0 }
+  market:              { image: ghcr.io/cloudsforge-online/micro-market:2.4.0 }
+  market-migrate:      { image: ghcr.io/cloudsforge-online/micro-market:2.4.0 }
+  market-web:          { image: ghcr.io/cloudsforge-online/micro-market-web:2.4.0 }
+  mint:                { image: ghcr.io/cloudsforge-online/micro-mint:2.4.0 }
+  mint-migrate:        { image: ghcr.io/cloudsforge-online/micro-mint:2.4.0 }
+  mint-web:            { image: ghcr.io/cloudsforge-online/micro-mint-web:2.4.0 }
+  nda:                 { image: ghcr.io/cloudsforge-online/micro-nda:2.4.0 }
+  nda-migrate:         { image: ghcr.io/cloudsforge-online/micro-nda:2.4.0 }
+  network-site:        { image: ghcr.io/cloudsforge-online/micro-network-site:2.4.0 }
+  notify:              { image: ghcr.io/cloudsforge-online/micro-notify:2.4.0 }
+  notify-migrate:      { image: ghcr.io/cloudsforge-online/micro-notify:2.4.0 }
+  policy:              { image: ghcr.io/cloudsforge-online/micro-policy:2.4.0 }
+  policy-migrate:      { image: ghcr.io/cloudsforge-online/micro-policy:2.4.0 }
+  pricing:             { image: ghcr.io/cloudsforge-online/micro-pricing:2.4.0 }
+  pricing-migrate:     { image: ghcr.io/cloudsforge-online/micro-pricing:2.4.0 }
+  settlement:          { image: ghcr.io/cloudsforge-online/micro-settlement:2.4.0 }
+  settlement-migrate:  { image: ghcr.io/cloudsforge-online/micro-settlement:2.4.0 }
+  site:                { image: ghcr.io/cloudsforge-online/micro-site:2.4.0 }
+  status-web:          { image: ghcr.io/cloudsforge-online/micro-status-web:2.4.0 }
+  studio:              { image: ghcr.io/cloudsforge-online/micro-studio:2.4.0 }
+  studio-migrate:      { image: ghcr.io/cloudsforge-online/micro-studio:2.4.0 }
+  tessera:             { image: ghcr.io/cloudsforge-online/micro-tessera:2.4.0 }
+  tessera-migrate:     { image: ghcr.io/cloudsforge-online/micro-tessera:2.4.0 }
+  tessera-web:         { image: ghcr.io/cloudsforge-online/micro-tessera-web:2.4.0 }
+  trade:               { image: ghcr.io/cloudsforge-online/micro-trade:2.4.0 }
+  trade-migrate:       { image: ghcr.io/cloudsforge-online/micro-trade:2.4.0 }
+  trade-web:           { image: ghcr.io/cloudsforge-online/micro-trade-web:2.4.0 }
+  wallet:              { image: ghcr.io/cloudsforge-online/micro-wallet:2.4.0 }
+  wallet-migrate:      { image: ghcr.io/cloudsforge-online/micro-wallet:2.4.0 }
+  worlds:              { image: ghcr.io/cloudsforge-online/micro-worlds:2.4.0 }
+  worlds-migrate:      { image: ghcr.io/cloudsforge-online/micro-worlds:2.4.0 }
+  worlds-web:          { image: ghcr.io/cloudsforge-online/micro-worlds-web:2.4.0 }
