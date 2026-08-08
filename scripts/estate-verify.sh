@@ -998,10 +998,120 @@ echo "── THE GRANTS ARE DERIVED, AND THE COMPOSE FILE STILL AGREES ───
 #
 # Its exit status is read directly rather than piped through `grep`, because a
 # `grep` on the output would pass when the tool crashed and printed nothing.
-if (cd "$(dirname "$0")/.." && node scripts/derive-grants.mjs --check) >/tmp/derive-grants.out 2>&1; then
-  ok "$(tail -1 /tmp/derive-grants.out)"
+#
+# ── THE DERIVATION CANNOT BE PERFORMED ON THE HOST THIS SCRIPT MOSTLY RUNS ON ─
+#
+# This was one line — run it, green or FAIL — and on the estate host it has
+# NEVER ONCE PERFORMED A DERIVATION. Every mainnet run since it was added
+# printed
+#
+#     FAIL the compose grants disagree with the services: ./scripts/estate-verify.sh: line 1001: node: command not found
+#
+# which names a disagreement between compose and the services when not one
+# service was read. Two reasons, and the second is the one that matters
+# (micro-org#259):
+#
+#   1. There is no `node` binary on the host. That much a container would fix.
+#   2. THE HOST IS NOT A FULL CHECKOUT. `derive-grants.mjs` reads every
+#      service's own `src/` from the estate root — `ESTATE = join(HERE, '..',
+#      '..')`, derive-grants.mjs:96 — and the host carries `deploy`, `org`,
+#      `contracts`, `ui`, the asset repositories and the browser surfaces, and
+#      NOT ONE of the backend services whose declarations the derivation is made
+#      of. Given node it would derive a grant map from 17 repositories, compare
+#      it against a block built from 46, and fail. That failure is a fact about
+#      the checkout, dressed as a fact about the estate.
+#
+# This repository has now paid for that shape three times — a custody drill that
+# measured a set it had failed to empty, a bootstrap that printed "subscribed to
+# 0 topic(s)" in green (both micro-deploy#6), and this. A check that reports on
+# its own environment while claiming to report on the estate.
+#
+# So the preconditions are asked FIRST, and where they do not hold this says
+# plainly that no derivation was performed here. A skip, with the reason: never
+# a pass, and never a red line about services nothing read.
+#
+# ── WHAT IS ASKED, AND WHY IT IS NOT A LIST OF SERVICE NAMES ─────────────────
+#
+# `grant-gaps.json` is the file that already names, as deploy configuration,
+# which repositories the derivation must be able to read — one entry per module
+# micro-deploy supplies a grant for, each naming its service. Counting how many
+# of those services have a `src/` here answers "is this the estate or a slice of
+# it" out of a file this repository owns and keeps current, rather than out of a
+# fourteenth hand-maintained copy of the service list. On the estate host that
+# count is zero of eight; in a developer's checkout it is eight of eight.
+#
+# It is a PRECONDITION and not the verdict on partiality. `derive-grants.mjs`
+# holds that verdict itself — `MIN_SERVICES`, derive-grants.mjs:592, "this is a
+# partial estate, and a partial derivation silently removes authority from every
+# service it missed" — and exits 2 for it, as it does for every other "this
+# checkout cannot answer" (no scope registry at :112, an unparseable registry at
+# :222, no grants block in compose at :653). Exit 1 is reserved for the estate
+# actually disagreeing. So the exit status is now read BY VALUE rather than as
+# pass/fail: 2 is this section's second skip, 1 is its only FAIL. That also
+# means the gaps ratchet emptying — which it is designed to do, one entry at a
+# time, as repositories declare for themselves — cannot silently switch the
+# precondition off: the tool still refuses the checkout in its own words.
+deploy_root=$(cd "$(dirname "$0")/.." && pwd)
+estate_root=$(cd "$deploy_root/.." && pwd)
+derive_skip=""
+if ! command -v node >/dev/null 2>&1; then
+  derive_skip="there is no node on this host, and the derivation is a node script"
+elif [ ! -f "$estate_root/contracts/packages/auth/src/index.ts" ]; then
+  derive_skip="micro-contracts is not checked out at $estate_root, so the scope registry every derived scope is validated against cannot be read here (derive-grants.mjs:112)"
 else
-  bad "the compose grants disagree with the services: $(head -c 400 /tmp/derive-grants.out)"
+  gap_want=0
+  gap_have=0
+  for gap_svc in $(sed -n 's/.*"service": *"\([a-z0-9-]*\)".*/\1/p' "$deploy_root/compose/estate/grant-gaps.json" | sort -u); do
+    gap_want=$((gap_want + 1))
+    [ -d "$estate_root/$gap_svc/src" ] && gap_have=$((gap_have + 1))
+  done
+  [ "$gap_have" -eq "$gap_want" ] || derive_skip="this is a slice of the estate and not the estate: $gap_have of the $gap_want service(s) named in compose/estate/grant-gaps.json have a src/ at $estate_root"
+fi
+
+if [ -z "$derive_skip" ]; then
+  (cd "$deploy_root" && node scripts/derive-grants.mjs --check) >/tmp/derive-grants.out 2>&1
+  derive_rc=$?
+  case "$derive_rc" in
+    0) ok "$(tail -1 /tmp/derive-grants.out)" ;;
+    2) derive_skip="derive-grants refused this checkout rather than judging the estate from it — $(head -c 300 /tmp/derive-grants.out)" ;;
+    1) bad "the compose grants disagree with the services: $(head -c 400 /tmp/derive-grants.out)" ;;
+    # Not folded into the line above. `node` itself exits 1 for a module it
+    # cannot load, and reporting that as "the services disagree" is the whole
+    # defect this section was rewritten for, one layer down.
+    *) bad "derive-grants exited $derive_rc, which is neither its agreement (0), its refusal of a checkout (2) nor a disagreement (1) — read it as a broken invocation, not as a verdict: $(head -c 400 /tmp/derive-grants.out)" ;;
+  esac
+fi
+
+# ── THE SKIP STILL HAS TO ASSERT SOMETHING ───────────────────────────────────
+#
+# A skip that also stops checking the gate is how a check becomes a switched-off
+# check: the derivation moves to CI, the CI step is deleted six weeks later in
+# somebody's unrelated cleanup, and this file goes on printing a tidy `..` about
+# a question nothing anywhere is asking. So where no derivation happened here,
+# this asserts that the job which DOES perform it still carries the step —
+# `estate-invariants` in micro-org's estate-ci.yml, the one checkout in the
+# estate that clones all forty-six services onto one disk, refuses on
+# `MIN_REPOS` and treats a failed clone as fatal (micro-org#260).
+#
+# Asserted by the STEP NAME as well as by the script's name, because
+# `derive-grants.mjs` appears in that workflow's prose too, and a grep that a
+# comment can satisfy is a grep that survives the deletion of the step it was
+# watching. A rename goes red here and is answered by reading the workflow —
+# which is the correct outcome for the one line tying these two repositories
+# together.
+if [ -n "$derive_skip" ]; then
+  echo "  ..   NO DERIVATION WAS PERFORMED HERE: $derive_skip."
+  echo "       This is not a pass. Nothing here read a single service's declarations."
+  derive_wf="$estate_root/org/.github/workflows/estate-ci.yml"
+  if [ ! -f "$derive_wf" ]; then
+    bad "no derivation here AND no micro-org checkout at $estate_root/org to show the gate that does perform it still exists — this run has said nothing whatsoever about the grant map. The estate host does carry 'org' (micro-org#259); clone it beside deploy"
+  elif ! grep -Fq 'derive-grants.mjs' "$derive_wf"; then
+    bad "estate-ci.yml does not name derive-grants.mjs — the derivation is performed NOWHERE, and this section's skip is a silence. The step is micro-org#260; if that has not merged into the checkout being read here, this red is that PR and not the estate"
+  elif ! grep -Fq 'The compose grant map still matches what the services declare' "$derive_wf"; then
+    bad "estate-ci.yml names derive-grants.mjs but carries no step called 'The compose grant map still matches what the services declare' — the gate this skip defers to has been deleted or renamed (micro-org#260)"
+  else
+    ok "…and the estate-ci step that does perform it is still there — the gate this skip defers to has not been deleted"
+  fi
 fi
 
 echo
