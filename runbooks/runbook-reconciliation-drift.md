@@ -55,13 +55,15 @@ curl -s -H "authorization: Bearer $SERVICE_TOKEN" \
 | code | Status | What to do |
 |---|---|---|
 | `chain_not_followed` | 503 | This replica has no provider for the chain. `INDEXER_CHAINS` and `INDEXER_RPC_<CHAIN>_<NETWORK>`. **This is the expected state for EMBER wherever Hearth has not launched.** |
-| `family_not_supported` | 501 | This build cannot read that family's balances. Not fixable by waiting. |
+| `family_not_supported` | 501 | This build can neither read nor derive that family's balances. Not fixable by waiting. `evm`, `ember` and `bitcoin` (which serves LTC) are supported; `solana` and `xrpl` are not. |
 | `nothing_indexed` / `depth_not_walked` | 503 | The follower has not walked back to `head - confirmations + 1`. Backfill: `POST /v1/backfills/:chain/:network`. |
 | `below_confirmation_depth` | 503 | The chain is younger than its own confirmation depth. Wait. |
 | `head_diverged` | 503 | The node serves a different block than the indexer walked, or a reorg landed mid-read. Usually transient; if it persists, `runbook-reorg-recovery.md`. |
 | `chain_halted` | 503 | An alarming reorg stopped the chain and only an operator clears it. `runbook-reorg-recovery.md`. |
 | `no_custody_addresses` | 503 | **Nothing is registered as custody's.** Not "the platform holds nothing" — see below. |
 | `custody_set_too_large` | 503 | Raise `INDEXER_CUSTODY_MAX_ADDRESSES`. It refuses rather than summing a page, because a page is a partial sum. |
+| `history_not_walked` | 503 | **UTXO chains only.** Either the walked record has a hole below the confirmed height, or an address claims a history older than the record reaches. A hole loses receipts AND loses spends, so the total would be wrong in both directions at once. Backfill the range the message names: `POST /v1/backfills/:chain/:network`. |
+| `history_unknown` | 503 | **UTXO chains only.** Nobody has stated from which height the address the message names could have had activity, and this service's record does not start at genesis — so coin it received before the record starts is invisible here. See below. |
 | `address_unreadable` / `rpc_unavailable` | 503 | One or more balances could not be read. The aggregate refuses the WHOLE total rather than returning the addresses that answered — a short total is positive drift, and positive drift freezes on the strength of an RPC blip. Check `provider_health` and `runbook-rpc-provider-failover.md`. |
 
 A 401 or 403 is a deploy fault, not a chain fault: the custody route is the one
@@ -86,6 +88,48 @@ than making it *look checked*, it is attributable in the manifest, and the freez
 it leaves behind stays until a clean observed run lifts it. Do not add a code
 exemption; an `if (asset === 'EMBER')` is a check that cannot fail on the one
 asset the whole arrangement exists for.
+
+### `history_unknown` on a UTXO chain (LTC)
+
+Litecoin has no `eth_getBalance`. Stock Core keeps no address index, so an
+address the node's own wallet does not own has **no balance the node will state,
+at any height** — the indexer derives one instead, from the outputs it walked
+that nothing has spent. That is only a balance if its record reaches back below
+anything the address could ever have received, and the indexer cannot establish
+that: it has no view below its own floor.
+
+So the registrar states it. `micro-wallet` sends `freshlyDerived: true` when it
+registers an address in the same request that minted the key, and the indexer
+stamps its own head against it. An address with no claim is treated as "no
+activity below block 0" — true of every address anywhere — which is why an
+unclaimed address is answerable on a chain walked from genesis and refuses on
+one that cold-started.
+
+This refusal therefore means one of three things, and the message names the
+address:
+
+1. **A treasury address, which never carries a claim.** It is pinned by an
+   operator and may be years old, so nothing can assert its past on its behalf.
+   Supply the height yourself, from the block that was current when the address
+   was created:
+   ```sh
+   curl -sX POST -H "authorization: Bearer $SERVICE_TOKEN" \
+     -H 'content-type: application/json' \
+     -d '{"label":"treasury:ltc:mainnet","historyFromHeight":3155209}' \
+     http://indexer:4000/v1/watch/ltc/mainnet/<address>
+   ```
+   **Understate rather than guess high.** A height that is too low only demands
+   more coverage and can be refused; a height that is too high lets the
+   derivation proceed with coin missing from it, which is positive drift and a
+   freeze on a solvent asset. Re-registration takes the *lower* of the two, so a
+   correction downwards works and one upwards is ignored.
+
+2. **A deposit address registered by the retry job rather than the mint path.**
+   Same repair, using the assignment's `assigned_at` to pick a height below it.
+
+3. **The record genuinely does not reach back far enough.** Backfill to the
+   height the addresses need — or, on a chain small enough for it, to genesis,
+   after which no claim is needed by anyone.
 
 ## `indexer` / drift != 0 — two numbers that disagree
 
