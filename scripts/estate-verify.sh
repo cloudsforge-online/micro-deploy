@@ -1672,7 +1672,65 @@ echo "── THE SIXTEEN FRONTENDS: served, and proved to be more than a 200 ─
 # No `declare -A` — bash here is 3.2, and an associative-array port map once
 # silently broke five suites in this repository.
 
+# ── THE RELEASE MARKER, WHICH COULD NOT PASS ON A RELEASED ESTATE ────────────
+#
+# This was `WEB_RELEASE=${CLOUDSFORGE_RELEASE:-estate}` and every check below
+# compared the served `<meta name="cf-release">` against it as a LITERAL. The
+# literal is right for exactly one kind of estate: a laptop that ran
+# `compose build`, where `docker-compose.estate.yml:592` passes
+# `RELEASE: ${CLOUDSFORGE_RELEASE:-estate}` as a build arg and the string
+# `estate` is genuinely what got stamped.
+#
+# A RELEASED ESTATE STAMPS THE COMMIT. CI builds each frontend with its own SHA,
+# so `hub-web:2.4.0` serves `content="5c94137e…"`, and this check therefore
+# failed all sixteen surfaces on mainnet — twice each, because the gateway
+# section below repeats it — and reported the failure as
+# "a STALE ARTEFACT is being served". Thirty-two failures, every one of them
+# describing a correctly released artefact as stale. A check that cannot pass is
+# this repository's named defect; a check that cannot pass AND accuses the
+# estate of the opposite of what is true is worse, because someone acts on it.
+#
+# ── WHAT IT COMPARES AGAINST NOW ──────────────────────────────────────────────
+#
+# The running container's own image label. Every image CI publishes carries
+# `org.opencontainers.image.revision`, and it is the same commit the build arg
+# stamped into the HTML:
+#
+#   ghcr.io/…/micro-hub-web:2.4.0  label revision = 5c94137e…
+#   https://hub.cloudsforge.online  meta cf-release = 5c94137e…
+#
+# So the assertion becomes the one the old comment claimed and could not make:
+# **the bytes a browser receives were built from the commit the running image
+# says it was built from.** That is a real stale-artefact check — it catches an
+# nginx serving a `dist/` from an older layer, a volume mount shadowing the
+# built assets, or a cache in front of the gateway holding a previous release —
+# and unlike a literal it stays true across every version without being edited.
+#
+# THE FALLBACKS, IN ORDER, AND WHY EACH EXISTS:
+#   1. `CLOUDSFORGE_RELEASE` exported in the shell. An operator saying what they
+#      expect always wins; that is what the variable was for.
+#   2. the image's `org.opencontainers.image.revision`. A released estate.
+#   3. the literal `estate`. A locally-built estate, where compose's build arg
+#      default is what was stamped and there is no label to read.
+#
+# Resolved per surface rather than once, because the sixteen are sixteen
+# repositories at sixteen commits — there is no single estate-wide SHA to read.
 WEB_RELEASE=${CLOUDSFORGE_RELEASE:-estate}
+# The expected marker for one compose service. Empty output is impossible: the
+# literal is the floor. `2>/dev/null` on both hops because a surface that is not
+# running at all is a different failure, reported by the caller as such.
+web_release_for() {
+  wr_svc=$1
+  [ -n "${CLOUDSFORGE_RELEASE:-}" ] && { printf '%s' "$CLOUDSFORGE_RELEASE"; return; }
+  wr_img=$(docker compose -f "$COMPOSE" ps -q "$wr_svc" 2>/dev/null | head -1)
+  [ -n "$wr_img" ] && wr_img=$(docker inspect "$wr_img" --format '{{.Config.Image}}' 2>/dev/null)
+  if [ -n "$wr_img" ]; then
+    wr_rev=$(docker inspect "$wr_img" \
+      --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null)
+    [ -n "$wr_rev" ] && { printf '%s' "$wr_rev"; return; }
+  fi
+  printf '%s' "$WEB_RELEASE"
+}
 # A path no surface enumerates, on purpose. If a surface ever claims it, this
 # check starts passing for the wrong reason, so it is deliberately unlovely.
 WEB_MISSING=/cf-estate-verify-no-such-page
@@ -1695,10 +1753,14 @@ web_surface() {
     bad "$name: GET / returned $status"
     return
   fi
-  if printf '%s' "$html" | grep -q "name=\"cf-release\" content=\"$WEB_RELEASE\""; then
-    notes="release=$WEB_RELEASE"
+  want=$(web_release_for "$name")
+  if printf '%s' "$html" | grep -q "name=\"cf-release\" content=\"$want\""; then
+    notes="release=$(printf '%s' "$want" | cut -c1-12)"
   else
-    bad "$name: the page does not carry release '$WEB_RELEASE' — a STALE ARTEFACT is being served, not a configuration bug"
+    # The served value is quoted back, because "it is not X" without "it is Y"
+    # sends the reader to the container to find out, and the answer is here.
+    got=$(printf '%s' "$html" | sed -n 's/.*name="cf-release" content="\([^"]*\)".*/\1/p' | head -1)
+    bad "$name: serves cf-release '${got:-<absent>}', but its running image was built from '$want' — a STALE ARTEFACT is being served, not a configuration bug"
     return
   fi
 
@@ -2040,10 +2102,15 @@ for rec in \
   # testnet — which is why that is a variable of its own and not derived here.
   if [ "$sub" = "." ]; then host="$SITE_HOST"; else host="$sub$WEB_SUFFIX"; fi
   gwc=$(gw "$host" /)
-  if [ "$gwc" = 200 ] && grep -q "name=\"cf-release\" content=\"$WEB_RELEASE\"" /tmp/estate-gw.body; then
+  # Same marker, same source of truth as the direct-port section above — the
+  # running image's `org.opencontainers.image.revision`, not the literal
+  # `estate`, which on a released estate is stamped nowhere and failed all
+  # sixteen of these a second time.
+  want=$(web_release_for "$repo")
+  if [ "$gwc" = 200 ] && grep -q "name=\"cf-release\" content=\"$want\"" /tmp/estate-gw.body; then
     ok "https://$host → $repo"
   else
-    bad "https://$host answered $gwc and did not serve $repo's shell"
+    bad "https://$host answered $gwc and did not serve $repo's shell (expected cf-release '$want')"
   fi
 done
 
