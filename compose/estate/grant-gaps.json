@@ -3,7 +3,9 @@
 
   "// three deleted, and the ratchet is what said so": "market/src/policyclient.ts, wallet/src/custodyclient.ts and wallet/src/settlement.ts were removed once micro-market and micro-wallet declared their own outbound scopes: POLICY_SCOPES is now policy:decide, CUSTODY_SCOPES is custody:address:create, and SETTLEMENT_SCOPES exists at all for the first time. derive-grants --check FAILED on all three before the deletion and passed after with the compose block BYTE-IDENTICAL, which is the proof the entries were stale rather than merely deletable: the repositories derived exactly the scopes micro-deploy had been supplying by hand, and nothing was lost with them.",
 
-  "// the three empty entries below can now go too": "An empty declaration used to be indistinguishable from no declaration — both parsed to zero scopes, so a module whose upstream needs nothing could not say so and failed the build instead. derive-grants.mjs now reads `export const FOO_SCOPES = Object.freeze([])` as the verdict it is: cleanly declared, no entry needed, no scope granted, and an entry here for such a module fails as stale. devplatform/src/membership.ts, mint/src/index.ts and foresight/src/proposer.ts can each export an empty constant and delete their entry; wallet/src/pricingclient.ts can narrow PRICING_SCOPES from pricing:read — a scope GET /rates does not gate — to []. Those are edits in repositories micro-deploy does not own, and this side of it is built and proved.",
+  "// and the three empty ones went too, the same way": "An empty declaration used to be indistinguishable from no declaration — both parsed to zero scopes, so a module whose upstream needs nothing could not say so and failed the build instead. derive-grants.mjs reads `export const FOO_SCOPES = Object.freeze([])`, and its named form `NO_SCOPES_REQUIRED`, as the verdict it is: cleanly declared, no entry needed, no scope granted. The three entries that carried `\"scopes\": []` are now gone, because the repositories that own those modules said it themselves — devplatform/src/membership.ts exports IDENTITY_SCOPES = Object.freeze([]) (contracts-auth is not a dependency there and taking one on for an empty constant would put a package in the image for no runtime effect, the call indexer/src/rpc.ts already made), mint/src/index.ts exports RPC_SCOPES = NO_SCOPES_REQUIRED, foresight/src/proposer.ts exports PROPOSER_SCOPES = NO_SCOPES_REQUIRED. derive-grants --check FAILED on all three as stale before this deletion — naming each constant and its line — and passes after with the compose block BYTE-IDENTICAL, which is the proof the same thing is now said once, by the module that knows it, instead of twice.",
+
+  "// what is still owed, and it is not a deletion from this file": "wallet/src/pricingclient.ts and trade/src/pricingclient.ts have never had entries here: both declare PRICING_SCOPES = pricing:read cleanly, and both headers say in as many words that the declaration is WIDER than the call site needs, kept only because an empty one used to be unsayable. The one route either client calls is GET /rates (pricing/src/server.ts:312), which pricing does not gate — READ_SCOPE guards :422 and nothing else those clients touch. Narrowing both to NO_SCOPES_REQUIRED is right and is AD-05, but unlike the three above it is NOT byte-identical here: it removes pricing:read from the trade and wallet grants, so it needs `node scripts/derive-grants.mjs --write` against docker-compose.estate.yml in the SAME window as the two repositories declare, or --check goes red in whichever direction lands first. That regeneration is micro-deploy's, and it has not been done.",
 
   "admin-api/src/upstreams.ts": {
     "service": "admin-api",
@@ -11,17 +13,7 @@
     "reason": "micro-admin-api owns this. Its header carries a full route-and-guard table but no exported constant. The scopes are read off that table: this service's own service token is used for LEDGER ALONE — GET /trial-balance and GET /accounts/:subject/balances (ledger:read), POST /entries and POST /entries/:id/reverse (ledger:post) — because ledger's authorise() refuses a user principal outright. It also needs identity:admin for PUT /internal/users/:id/roles (admin-api/src/upstreams.ts:464, identity/src/server.ts:1584), the route the identity.role.grant executor calls and the path by which EVERY administrator after the first is promoted; admin-api/src/actions.ts:116 names this as still owed by micro-deploy. Its market and billing calls deliberately forward THE OPERATOR'S OWN BEARER so those services record which administrator acted (SD-11), which is why market:read, market:admin and billing:read are absent here despite being in the old hand-written compose map: no service token ever carried them."
   },
 
-  "devplatform/src/membership.ts": {
-    "service": "devplatform",
-    "scopes": [],
-    "reason": "micro-devplatform owns this. It builds an HttpClient and forwards the DEVELOPER'S OWN bearer token verbatim, and its header says why in as many words: it 'needs no service token that can read anybody's membership — which is the shape of the two omnipotent tokens SD-05 exists to retire'. An empty list is the truthful derivation, not a placeholder, and granting it anything would recreate exactly what SD-05 retired."
-  },
 
-  "mint/src/index.ts": {
-    "service": "mint",
-    "scopes": [],
-    "reason": "micro-mint owns this. The HttpClient built here dials PUBLIC CHAIN NODES outside this estate, and the file says so at :92 — 'NOT given a token: they dial public chain nodes outside this estate.' No CloudsForge scope applies to an external RPC endpoint. Mint's real upstream scopes come from its three declared client modules and are derived normally."
-  },
 
   "tessera/src/studioclient.ts": {
     "service": "tessera",
@@ -53,11 +45,6 @@
     "reason": "micro-custody owns this. It posts to policy's POST /v1/decisions (custody/src/policy.ts:70) with a token-bearing client and declares no constant. custody had NO entry at all in the hand-written compose map, so this scope has never been grantable and every policy decision custody asked for would have been refused the moment it was wired up — a defect the derivation found rather than the four agents who hit grant failures by hand."
   },
 
-  "foresight/src/proposer.ts": {
-    "service": "foresight",
-    "scopes": [],
-    "reason": "micro-foresight owns this. It is the one token-bearing client in the estate whose peers are NOT CloudsForge services: it calls an external search API and an external model endpoint, both configured by URL, so no scope in @cloudsforge/contracts-auth applies and an empty list is the truthful answer rather than a placeholder. Its bearer is a third-party API key, not an identity-minted service token."
-  },
 
   "worlds/src/titleclient.ts": {
     "service": "worlds",
