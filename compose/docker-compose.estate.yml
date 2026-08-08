@@ -326,7 +326,24 @@ x-studio-secret-file: &studio-secret-file
 # reserves the user's balance, and only refunds it an hour later when
 # `SETTLEMENT_STUCK_MINUTES` expires. A loud immediate refusal beats an hour-long
 # hold every time. Add the node, measure `estimatesmartfee`, then add the entry.
-x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000"}'
+# LTC: 10,000 litoshis = 0.0001 LTC, roughly USD 0.0045 at the rate `pricing` quotes live.
+#
+# DERIVED FROM A MEASUREMENT, NOT FROM `estimatesmartfee` — and the difference is worth stating,
+# because the note above says to use that one. `estimatesmartfee` returns nothing at any target:
+# it builds its history by observing blocks and a mempool, and this node only left initial block
+# download today. Waiting for it would leave LTC withdrawals refused for no benefit.
+#
+# What the node DOES report, and what this is built on: `minrelaytxfee` = `mempoolminfee` =
+# 0.00001 LTC/kvB, with the mempool measured at 0 transactions and 0 bytes. An empty mempool is
+# not a guess about congestion — it means a transaction paying the relay minimum has nothing to
+# compete with and confirms in the next block.
+#
+# A 1-in-2-out P2WPKH spend is ~141 vB, so the true floor is ~0.0000014 LTC. This quote is ~70x
+# that, which covers a much larger transaction and a busier mempool while staying under half a
+# cent. Erring high costs the user nothing measurable; erring low leaves a withdrawal stuck.
+#
+# REVISIT once `estimatesmartfee` answers. This is a floor with headroom, not a fee market read.
+x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"}'
 
 # ── SETTLEMENT_RPC_URLS — ABSENT, SO NOTHING COULD BE BUILT OR BROADCAST ──────
 #
@@ -1477,6 +1494,10 @@ services:
       INSTANCE_ID: indexer-estate
     env_file:
       - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
+      # Chain RPC credentials: gitignored, 0600, interpolated into chain.<network>.env
+      # as ${LTC_RPC_URL}. The path is per-network so testnet — which has no Litecoin
+      # node — loads a file that does not define it, keeping env.ts's mirror check happy.
+      - secrets/chainrpc.${CF_EMBER_NETWORK:-mainnet}.env
       - *outbox-secret-file
     # Docker Desktop resolves `host.docker.internal` for free; the Linux daemon
     # does not, and there the indexer would report a healthy follower that can
