@@ -110,19 +110,40 @@ address:
 
 1. **A treasury address, which never carries a claim.** It is pinned by an
    operator and may be years old, so nothing can assert its past on its behalf.
-   Supply the height yourself, from the block that was current when the address
-   was created:
+   Supply the height yourself. Read the record floor rather than typing a
+   number — the floor moves as the follower advances, and a literal copied out
+   of a runbook is stale the day after it is written:
+   ```sh
+   docker exec cloudsforge-estate-postgres-1 psql -U cloudsforge -d indexer -Atc \
+     "select min(height), max(height), count(*) from blocks
+       where chain='ltc' and network='mainnet' and status <> 'orphaned';"
+   ```
+   `count` must equal `max - min + 1`. If it does not, the record has a hole and
+   the derivation will refuse `history_not_walked` whatever you claim — backfill
+   the gap first. Then, with `<floor>` being that `min`:
    ```sh
    curl -sX POST -H "authorization: Bearer $SERVICE_TOKEN" \
      -H 'content-type: application/json' \
-     -d '{"label":"treasury:ltc:mainnet","historyFromHeight":3155209}' \
+     -d '{"label":"treasury:ltc:mainnet","historyFromHeight":<floor>}' \
      http://indexer:4000/v1/watch/ltc/mainnet/<address>
    ```
+   The floor is the *strongest* claim the record can accept, and for an address
+   minted after the record started it is also unambiguously true. This line used
+   to carry the literal `3155209`, which was never the floor: it is where the
+   live follower took over from the `backfill:3154639-3155208` stream, so the
+   stream's name had been read as the record's start. Claiming it was harmless —
+   it is above the floor, so merely weaker — but it stated the record began 570
+   blocks later than it does.
+
    **Understate rather than guess high.** A height that is too low only demands
    more coverage and can be refused; a height that is too high lets the
    derivation proceed with coin missing from it, which is positive drift and a
    freeze on a solvent asset. Re-registration takes the *lower* of the two, so a
    correction downwards works and one upwards is ignored.
+
+   **Claim every watched row, not just the one you are chasing.** The derivation
+   refuses if *any* address in the set has a null claim, so one unclaimed
+   deposit row keeps the whole aggregate unanswerable.
 
 2. **A deposit address registered by the retry job rather than the mint path.**
    Same repair, using the assignment's `assigned_at` to pick a height below it.
