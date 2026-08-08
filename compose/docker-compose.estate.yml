@@ -1497,7 +1497,22 @@ services:
       # Chain RPC credentials: gitignored, 0600, interpolated into chain.<network>.env
       # as ${LTC_RPC_URL}. The path is per-network so testnet — which has no Litecoin
       # node — loads a file that does not define it, keeping env.ts's mirror check happy.
-      - secrets/chainrpc.${CF_EMBER_NETWORK:-mainnet}.env
+      #
+      # `required: false` because this file is gitignored BY DESIGN and therefore
+      # never exists on a CI runner. As a bare path, `docker compose config` fails
+      # outright — not a warning, an error — so `make check-restart` could not read
+      # this file at all and every deploy PR failed on a check that had nothing to
+      # do with its own contents. main was red for three runs for this reason.
+      #
+      # Making it optional does not make a missing credential survivable, which is
+      # the only thing that would make this the wrong fix. indexer/src/env.ts:19
+      # holds the real guarantee — "a configured chain must have at least one RPC
+      # endpoint" — and throws EnvError on boot if the file is genuinely absent on
+      # a host that lists ltc:mainnet in INDEXER_CHAINS. So the loud failure stays
+      # exactly where it belongs, at the service that needs the credential, rather
+      # than at a config-rendering step that was never about credentials.
+      - path: secrets/chainrpc.${CF_EMBER_NETWORK:-mainnet}.env
+        required: false
       - *outbox-secret-file
     # Docker Desktop resolves `host.docker.internal` for free; the Linux daemon
     # does not, and there the indexer would report a healthy follower that can
