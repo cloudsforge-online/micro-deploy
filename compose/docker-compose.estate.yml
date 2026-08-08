@@ -1013,33 +1013,62 @@ services:
       LEDGER_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/ledger
       # ══════════════════════════════════════════════════════════════════════
       # THE ASSETS RECONCILIATION SWEEPS — WRITTEN OUT RATHER THAN INHERITED
-      # FROM THE DEFAULT, BECAUSE THIS IS A DECISION AND EMBER WILL FREEZE.
+      # FROM THE DEFAULT, BECAUSE NAMING AN ASSET HERE IS A DECISION AND AN
+      # ASSET NAMED AGAINST A BUILD THAT CANNOT SEE IT FREEZES.
       #
-      # `SHARD,EMBER` is also ledger's default (ledger/src/env.ts). It is
-      # spelled here anyway so that the decision is attributable in the manifest
-      # instead of being an absence somebody has to know about.
+      # `SHARD,EMBER` is ledger's default (ledger/src/env.ts). LTC is the
+      # estate's addition, so the line is spelled out in full: the decision is
+      # attributable in the manifest instead of being an absence somebody has to
+      # know about, and the difference from the default is visible.
       #
-      # EMBER IS ON-CHAIN AND WILL FAIL EVERY RUN IN THIS ENVIRONMENT. That is
-      # intended. `reconcileAsset` demands a chain observation for any asset in
-      # ON_CHAIN_ASSETS and records `unavailable` / `failed` without one, which
-      # freezes EMBER withdrawals on the first sweep after boot. Here it fails
-      # because INDEXER_CHAINS is unset (see the indexer block): there is no
-      # Hearth node, the indexer follows nothing, and the custody route answers
-      # 503 `chain_not_followed`. THAT IS THE HONEST ANSWER — if Hearth has not
-      # launched then no EMBER is backed by anything, which is
-      # docs/ecosystem/00-current-state.md rather than an inconvenience on
-      # the way to fixing it. EMBER custody here is zero, so the freeze costs
-      # nothing; were it non-zero the freeze would be correct rather than
-      # regrettable. There is no third case.
+      # THE RULE THAT GOVERNS THIS LINE. `reconcileAsset` demands a chain
+      # observation for any asset in ON_CHAIN_ASSETS and records `unavailable` /
+      # `failed` without one, which freezes that asset's withdrawals on the
+      # first sweep after boot. Only an exactly-clean OBSERVED run lifts a
+      # freeze, and an unobserved run can never be clean — so naming an asset
+      # this deployment cannot observe does not schedule a check, it schedules a
+      # permanent freeze, and backing the name out afterwards does not clear the
+      # row it left. Add an asset here only once INDEXER_CHAINS follows its
+      # chain and the custody total answers 200.
       #
-      # THE ONLY LEGITIMATE EXEMPTION IS REMOVING EMBER FROM THIS LINE. It is
+      # EMBER USED TO FAIL EVERY RUN HERE, AND NO LONGER DOES. That paragraph
+      # described an INDEXER_CHAINS that was unset: no Hearth node, the indexer
+      # following nothing, and the custody route answering 503
+      # `chain_not_followed`. INDEXER_CHAINS is now `ember:mainnet,ltc:mainnet`
+      # (see the indexer block), and EMBER reconciles `observed_source=indexer`,
+      # `status=clean`, drift 0 on every sweep. The reasoning still stands for
+      # any estate where Hearth has not launched — a freeze on an EMBER custody
+      # of zero costs nothing, and on a non-zero one it is correct rather than
+      # regrettable — but it is no longer a description of THIS deployment, and
+      # a comment that predicts a failure the database does not show teaches the
+      # next reader to disbelieve the file.
+      #
+      # WHY LTC JOINS NOW, BEFORE IT HOLDS ANYTHING. Both sides were measured
+      # first, which is the whole of the argument:
+      #   - the ledger has NO LTC accounts at all, so its custody total is 0;
+      #   - `GET /v1/custody/ltc/mainnet/total` answers 200 with total 0 over
+      #     2 deposit addresses, and answers it because both watched rows now
+      #     carry a `history_from_height` — the derivation refuses if ANY
+      #     watched row's claim is null, not merely the address being asked
+      #     about, so one unclaimed deposit row kept the whole aggregate
+      #     unanswerable until it was claimed;
+      #   - LTC's tolerance is 0 by decision (ledger/src/env.ts), so 0 against 0
+      #     is clean rather than within-tolerance.
+      # An asset is cheapest to bring under the check while it is empty: the
+      # first LTC deposit is then checked from its first block, rather than
+      # being onboarded into an asset nobody is comparing. A treasury pin is NOT
+      # a prerequisite — settlement's registration measures, watches, posts and
+      # marks in one movement, so the pinned balance lands on both sides at
+      # once and cannot open a drift by arriving.
+      #
+      # THE ONLY LEGITIMATE EXEMPTION IS REMOVING AN ASSET FROM THIS LINE. It is
       # deliberately the only one: it makes the asset stop being CHECKED rather
       # than making it LOOK checked, it is attributable and reviewable here, and
       # the freeze it leaves behind stays until an exactly-clean observed run
       # lifts it — so the decision cannot be quietly forgotten. A code exemption
       # would be an `if (asset === 'EMBER')` on the one asset this whole release
       # is about, which is the defect it removed wearing a new name.
-      LEDGER_RECONCILE_ASSETS: "SHARD,EMBER"
+      LEDGER_RECONCILE_ASSETS: "SHARD,EMBER,LTC"
       # WHICH NETWORK'S CUSTODY TOTAL IS RECONCILED — and it has to be the same
       # one `indexer` follows or the call is `GET /v1/custody/ember/testnet/total`
       # against a follower that only has `ember/mainnet` rows. That reads as
@@ -1047,6 +1076,17 @@ services:
       # invisible one: nothing distinguishes "the chain is unreachable" from "the
       # deploy named two different networks". So this is the SAME variable the
       # indexer's `env_file` is keyed on, and the two cannot drift.
+      #
+      # IT IS ONE NETWORK FOR EVERY ASSET ON THE LINE ABOVE, NOT ONE PER ASSET.
+      # `CF_EMBER_NETWORK` is named for the asset it was introduced for and now
+      # governs LTC as well; the name is kept rather than churned because it is
+      # the variable the indexer's `env_file` is keyed on and splitting them is
+      # exactly the drift this block exists to prevent. The constraint it puts
+      # on INDEXER_CHAINS is therefore that every reconciled chain must be
+      # followed on THIS network — `ember:mainnet,ltc:mainnet` against a
+      # `mainnet` here. Following `ltc:testnet` while reconciling `mainnet` does
+      # not read as a misconfiguration at either end; it reads as a chain
+      # nobody can see, and freezes LTC.
       LEDGER_RECONCILE_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
       # ── the indexer call, and the one rule it must hold ───────────────────
       #
