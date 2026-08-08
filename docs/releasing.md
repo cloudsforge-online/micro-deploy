@@ -143,6 +143,21 @@ docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
 # then the same command with: up -d --remove-orphans
 ```
 
+**Both `--env-file` flags, every time, and this is not style.** `--env-file`
+*replaces* the default `.env` rather than adding to it, and `compose/.env` is a
+symlink to **mainnet's** tokens. Drop the flags and compose still runs, happily:
+`CF_PORT_BASE` falls back to `4`, so testnet's containers are recreated bound to
+**mainnet's host ports**, and every credential is read from mainnet's token
+file. What you see is `Bind for 127.0.0.1:4133 failed: port is already
+allocated` on whichever service collides first — by which point compose has
+already recreated most of the stack with the wrong environment, and it stops
+half-way, leaving testnet down.
+
+The recovery is the correct command: re-run it with both flags and compose
+recreates every container that does not match, which is all of them. Nothing
+persistent is harmed — the databases are volumes and are not touched — but it
+is several minutes of testnet being down for a flag.
+
 Then **open it in a browser.** Not `curl`. A page that returns 200 with a
 correct `<h1>` can still be scrolled to the wrong place, have its last footer
 link covered by the consent banner, or throw on line one of a module — all
