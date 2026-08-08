@@ -24,31 +24,102 @@
 # variable was read before it was captured.
 set -uo pipefail
 
+# ── WHICH ESTATE THIS RUN IS ASKING ABOUT ─────────────────────────────────────
+#
+# This file addressed MAINNET AND ONLY MAINNET, and nothing in it said so. The
+# host ports below were the literal `41xx` series, `GW_PORT` fell back to 443,
+# the hostnames fell back to `cloudsforge.localtest.me`, and every
+# `docker compose exec` resolved the project from the working directory. Point it
+# at testnet and NONE of that fails loudly, because testnet is a different value
+# for each one:
+#
+#   CF_PORT_BASE=5          debug ports are the 51xx series, not 41xx
+#   CF_GATEWAY_PORT=10443   the browser port, not 443
+#   CF_WEB_SUFFIX           `-testnet.cloudsforge.online`, not `.cloudsforge.online`
+#   CF_SITE_HOST            `testnet.cloudsforge.online`
+#   CF_EMBER_NETWORK        `testnet` — chain 7412, not mainnet's 7411
+#   CF_PROJECT=cf-testnet   a different container namespace and a different postgres
+#
+# So a run intended for testnet connected to MAINNET's ports, opened MAINNET's
+# databases through `docker compose exec -T postgres`, and reported a verdict —
+# a true one, about the wrong estate. That is worse than this repository's named
+# defect class of a check that cannot fail: it is a check that passes loudly for
+# a subject nobody asked about.
+#
+# THE FIX IS TO READ THE FILE THE DEPLOY READS, NOT TO COPY ITS VALUES.
+# `scripts/release-deploy.sh` selects an environment with `ESTATE_ENV`, and
+# `compose/mainnet.env` / `compose/testnet.env` already carry all six. Reading
+# them here means the verify cannot disagree with the deploy about which estate
+# exists. A second copy of the same six values is the hand-maintained list this
+# repository has already paid for four times.
+#
+#   ./scripts/estate-verify.sh                                   # mainnet
+#   ESTATE_ENV=compose/testnet.env ./scripts/estate-verify.sh    # testnet
+#
+# The values are EXPORTED rather than only assigned, because two consumers read
+# them from the environment and not from these variables: `docker compose` itself
+# interpolates `CF_PROJECT` for `name:` (docker-compose.estate.yml:64), which is
+# how thirty-three `exec -T postgres` calls below find the right database without
+# a single `-p` flag; and the gateway section reads `CF_WEB_SUFFIX` directly.
+#
+# NOT `source`d. These are docker-compose env files, not shell — a value holding
+# a space, a `$` or a backtick is legal there and is code here. Six anchored
+# `sed` reads instead, and nothing else in the file is even looked at.
+#
+# An explicit shell override still wins, both over the file and over the
+# defaults: every assignment here and below is still `:-`, so
+# `IDENTITY=… ./scripts/estate-verify.sh` keeps behaving exactly as it did.
+ESTATE_ENV=${ESTATE_ENV:-compose/mainnet.env}
+if [ ! -f "$ESTATE_ENV" ]; then
+  echo "estate-verify: $ESTATE_ENV does not exist." >&2
+  echo "               Without it this run falls back to mainnet's ports, mainnet's project" >&2
+  echo "               and mainnet's hostnames, and reports on whichever estate answers them." >&2
+  exit 2
+fi
+envget() { sed -n "s/^$1=//p" "$ESTATE_ENV" | tail -1 | tr -d '\r'; }
+for cf in CF_PROJECT CF_PORT_BASE CF_GATEWAY_PORT CF_WEB_APEX CF_WEB_SUFFIX CF_SITE_HOST CF_EMBER_NETWORK; do
+  # Shell first, file second. `eval` on a name from this fixed list only.
+  eval "cur=\${$cf:-}"
+  [ -n "$cur" ] || cur=$(envget "$cf")
+  [ -n "$cur" ] && eval "export $cf=\"\$cur\""
+done
+# Announced, not assumed. A run that reports 76 failures is unreadable unless the
+# first line says which estate it was asking about — that ambiguity is the whole
+# reason this block exists.
+echo "estate: ${CF_SITE_HOST:-cloudsforge.localtest.me}  env: ${ESTATE_ENV##*/}  project: ${CF_PROJECT:-cloudsforge-estate}  ports: ${CF_PORT_BASE:-4}1xx  chain: ${CF_EMBER_NETWORK:-mainnet}"
+
 # Host ports are 4100 + the service's index in micro-org's registry (portFor,
 # cfctl.ts) — derived from the one list that orders every repository rather
 # than picked, because the estate has twice lost time to a hand-chosen port that
 # already belonged to something else.
-IDENTITY=${IDENTITY:-http://127.0.0.1:4100}
-POLICY=${POLICY:-http://127.0.0.1:4101}
-LEDGER=${LEDGER:-http://127.0.0.1:4102}
-WALLET=${WALLET:-http://127.0.0.1:4103}
-SETTLEMENT=${SETTLEMENT:-http://127.0.0.1:4104}
-PRICING=${PRICING:-http://127.0.0.1:4105}
-BILLING=${BILLING:-http://127.0.0.1:4106}
-CUSTODY=${CUSTODY:-http://127.0.0.1:4107}
-ACTIVITY=${ACTIVITY:-http://127.0.0.1:4109}
-NOTIFY=${NOTIFY:-http://127.0.0.1:4110}
-STUDIO=${STUDIO:-http://127.0.0.1:4111}
-MINT=${MINT:-http://127.0.0.1:4112}
-MARKET=${MARKET:-http://127.0.0.1:4113}
-TRADE=${TRADE:-http://127.0.0.1:4114}
-WORLDS=${WORLDS:-http://127.0.0.1:4115}
-NDA=${NDA:-http://127.0.0.1:4116}
-COMMUNITY=${COMMUNITY:-http://127.0.0.1:4117}
-DEVPLATFORM=${DEVPLATFORM:-http://127.0.0.1:4118}
-HUB=${HUB:-http://127.0.0.1:4119}
-ADMIN=${ADMIN:-http://127.0.0.1:4120}
-ANALYTICS=${ANALYTICS:-http://127.0.0.1:4121}
+#
+# The LEADING DIGIT is `$PB`, not a literal `4`. It is the one character
+# `compose/testnet.env` changes to move all forty-five debug ports at once
+# (`CF_PORT_BASE=5`), and `docker-compose.estate.yml` publishes them as
+# `${CF_PORT_BASE:-4}1xx` — so this expression is the same expression, not a
+# parallel convention that has to be kept in step by hand.
+PB=${CF_PORT_BASE:-4}
+IDENTITY=${IDENTITY:-http://127.0.0.1:${PB}100}
+POLICY=${POLICY:-http://127.0.0.1:${PB}101}
+LEDGER=${LEDGER:-http://127.0.0.1:${PB}102}
+WALLET=${WALLET:-http://127.0.0.1:${PB}103}
+SETTLEMENT=${SETTLEMENT:-http://127.0.0.1:${PB}104}
+PRICING=${PRICING:-http://127.0.0.1:${PB}105}
+BILLING=${BILLING:-http://127.0.0.1:${PB}106}
+CUSTODY=${CUSTODY:-http://127.0.0.1:${PB}107}
+ACTIVITY=${ACTIVITY:-http://127.0.0.1:${PB}109}
+NOTIFY=${NOTIFY:-http://127.0.0.1:${PB}110}
+STUDIO=${STUDIO:-http://127.0.0.1:${PB}111}
+MINT=${MINT:-http://127.0.0.1:${PB}112}
+MARKET=${MARKET:-http://127.0.0.1:${PB}113}
+TRADE=${TRADE:-http://127.0.0.1:${PB}114}
+WORLDS=${WORLDS:-http://127.0.0.1:${PB}115}
+NDA=${NDA:-http://127.0.0.1:${PB}116}
+COMMUNITY=${COMMUNITY:-http://127.0.0.1:${PB}117}
+DEVPLATFORM=${DEVPLATFORM:-http://127.0.0.1:${PB}118}
+HUB=${HUB:-http://127.0.0.1:${PB}119}
+ADMIN=${ADMIN:-http://127.0.0.1:${PB}120}
+ANALYTICS=${ANALYTICS:-http://127.0.0.1:${PB}121}
 # 4125 on the host, 4022 in the container. tessera is the one service here that does not bind
 # 4000, and THAT number is argued rather than picked — 23-tessera.md §10.1. The BIND port is a
 # different question from the HOST port and is untouched.
@@ -57,19 +128,19 @@ ANALYTICS=${ANALYTICS:-http://127.0.0.1:4121}
 # a row, so this is derived (index 25) rather than chosen — and 4140 has been REASSIGNED to
 # aetherholm-web, so had this stayed at 4140 the checks below would not have failed to connect.
 # They would have driven another service's container and reported green.
-TESSERA=${TESSERA:-http://127.0.0.1:4125}
+TESSERA=${TESSERA:-http://127.0.0.1:${PB}125}
 # The bundle, not the service. Named rather than written inline at the `/world-assets/` check
 # below, because a bare literal is a port `scripts/web-check.py` cannot resolve to a repository
 # and therefore cannot recompute. It derives to 4140 — it was 4141 until the P13 fold removed
 # `foresight-admin-web` from micro-org's registry at index 39 and moved everything below it down
 # by one. `web-check.py` named all seven; this is one of them.
-TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:4140}
+TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:${PB}140}
 # The observability sink. Derived — `deployableRepos()` index 41, immediately after
 # tessera-web's 4140 — and `scripts/web-check.py` recomputes it from micro-org rather
 # than trusting this line. Until recently there was nothing on this port at all: the
 # service was absent from the estate compose file entirely while sixteen frontends
 # posted browser telemetry at it.
-LANTERN=${LANTERN:-http://127.0.0.1:4141}
+LANTERN=${LANTERN:-http://127.0.0.1:${PB}141}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 
 # WHICH CHAIN THIS ESTATE IS ON — 0x1cf3 is 7411 (`hearth`), 0x1cf4 is 7412
@@ -2336,7 +2407,7 @@ echo "── the chain-backing loop: solvency, or a refusal ──────�
 # file: chain → indexer → ledger → a reconciliation that is genuinely
 # `observed_source = 'indexer'` and genuinely clean, then deliberately broken to
 # prove it fails closed rather than silently passing.
-INDEXER=${INDEXER:-http://127.0.0.1:4108}
+INDEXER=${INDEXER:-http://127.0.0.1:${PB}108}
 
 cb_anon=$(code "$INDEXER/v1/custody/ember/$EMBER_NETWORK/total")
 [ "$cb_anon" = 401 ] && ok "the custody total refuses an anonymous caller (401)" \
