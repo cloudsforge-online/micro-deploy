@@ -1495,8 +1495,12 @@ services:
     env_file:
       - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
       # Chain RPC credentials: gitignored, 0600, interpolated into chain.<network>.env
-      # as ${LTC_RPC_URL}. The path is per-network so testnet — which has no Litecoin
-      # node — loads a file that does not define it, keeping env.ts's mirror check happy.
+      # as ${LTC_RPC_URL}. The path is per-network, and BOTH networks now define a
+      # Litecoin endpoint — mainnet the real node, testnet a `litecoind -regtest`
+      # whose outputs an operator can control (micro-org#252). They must stay in step
+      # with `INDEXER_CHAINS` in the matching `env/chain.<network>.env`: env.ts runs a
+      # mirror check and refuses to boot when an `INDEXER_RPC_*` names a scope
+      # `INDEXER_CHAINS` does not list, and equally when a listed scope has no endpoint.
       #
       # `required: false` because this file is gitignored BY DESIGN and therefore
       # never exists on a CI runner. As a bare path, `docker compose config` fails
