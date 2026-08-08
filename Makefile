@@ -137,7 +137,7 @@ GW_TESTNET := --env-file compose/testnet.env -p cftestnet \
               -f compose/docker-compose.gateway.yml \
               -f compose/docker-compose.estate-gateway.yml
 
-.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway estate-gateway-testnet estate-gateway-testnet-down check-restart check-restart-live check-client-ip check-client-ip-live check-handoff-live
+.PHONY: estate-up estate-down estate-verify estate-browser estate-ps check-gateway check-web check-surfaces check-cert estate-gateway estate-gateway-testnet estate-gateway-testnet-down check-restart check-restart-live check-client-ip check-client-ip-live check-handoff-live check-tunnel-origin check-tunnel-origin-testnet
 
 estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
@@ -147,7 +147,20 @@ estate-gateway: ## Just the gateway half, against an estate that is already up
 
 estate-gateway-testnet: ## The TESTNET gateway on 9181 — without it every *-testnet host is 502
 	@docker compose $(GW_TESTNET) up -d gateway
-	@echo "ok: cftestnet-gateway-1 on 127.0.0.1:9181 (tunnel) and 127.0.0.1:10443 (TLS)"
+	@./scripts/check-tunnel-origin.sh testnet
+
+# ── the check the two headers above should have been ─────────────────────────
+#
+# `estate-gateway-testnet` printed `ok: cftestnet-gateway-1 on 127.0.0.1:9181`
+# unconditionally — an echo, after an `up -d`, asserting a thing it had not
+# looked at. It would have printed that line during both outages. Now the target
+# proves its own claim, and the claim is available on its own for the times
+# nobody is deploying anything.
+check-tunnel-origin: ## Can a browser reach MAINNET at all? Asks the way cloudflared does
+	@./scripts/check-tunnel-origin.sh mainnet
+
+check-tunnel-origin-testnet: ## Can a browser reach TESTNET at all? The check for a 502 nobody caused
+	@./scripts/check-tunnel-origin.sh testnet
 
 estate-gateway-testnet-down: ## Stop the testnet gateway. Every *-testnet hostname goes 502
 	@docker compose $(GW_TESTNET) down

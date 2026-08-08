@@ -1,0 +1,139 @@
+# The Litecoin node TESTNET indexes. It is a REGTEST chain and it is not Litecoin.
+#
+#   docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
+#     -p cf-testnet \
+#     -f docker-compose.estate.yml \
+#     -f docker-compose.release.yml \
+#     -f docker-compose.design.yml \
+#     -f docker-compose.testnet-chain.yml \
+#     up -d
+#
+# ══════════════════════════════════════════════════════════════════════════════
+#  ⚠  THERE ARE TWO litecoind PROCESSES ON THIS HOST AND THEY ARE NOT COPIES.
+# ══════════════════════════════════════════════════════════════════════════════
+#
+#   THIS ONE          a container. `-regtest=1`. ~137 blocks. No value of any
+#                     kind. Serves testnet only. Defined by this file.
+#
+#   THE OTHER ONE     a host process started by /etc/rc.local as `malf`, with
+#                     `-datadir=/data/chains/litecoin`. THE REAL LITECOIN
+#                     MAINNET NODE, over 3.15 million blocks, RPC on
+#                     127.0.0.1/172.20.0.1/172.31.0.1:50002. The MAINNET estate
+#                     indexes it through `INDEXER_RPC_LTC_MAINNET`.
+#
+# On 2026-08-08 the reasonable inference was drawn — two litecoinds, one must be
+# a duplicate — and the proposal was to stop the host one and put this one in
+# rc.local. That would have stopped mainnet Litecoin indexing mid-backfill and
+# pointed the mainnet indexer at a 137-block chain containing none of the
+# custody addresses it reconciles. Chain-backed EMBER would have read as
+# collapsing to zero and the solvency invariant would have frozen the asset,
+# correctly, on evidence that was pure fiction.
+#
+# THE INFERENCE WAS REASONABLE BECAUSE THIS FILE DID NOT EXIST. This container
+# was created by a hand-typed `docker run` for micro-org#252, so it carried one
+# label — `maintainer` — from its base image, belonged to no compose project,
+# appeared in no `docker compose ps`, and was in no repository. Everything
+# visible about it said "somebody's leftover". That is now fixed here, which is
+# the only durable answer: a container that cannot say what it is will eventually
+# be removed by somebody being careful.
+#
+# ── WHY A REGTEST CHAIN AT ALL ────────────────────────────────────────────────
+#
+# micro-org#252 needed UTXO custody derivation proved against outputs an operator
+# CONTROLS — funded on demand, spent on demand, confirmed on demand. Litecoin
+# testnet3 cannot do that (you wait for a faucet and for strangers' miners) and
+# mainnet obviously cannot. `-regtest` mines a block when told to, so the test is
+# "fund this address, generate 1, assert the indexer sees it" rather than "wait
+# and hope". The custody arithmetic under test is identical on all three.
+#
+# ── WHY IT IS A SEPARATE FILE, NOT A BLOCK IN docker-compose.estate.yml ───────
+#
+# Same reasoning as docker-compose.design.yml: this is TESTNET-ONLY, and the
+# estate file is shared. A regtest node in the shared file would be one
+# `CF_EMBER_NETWORK` interpolation away from starting beside mainnet's real node
+# and one config slip away from mainnet indexing it. It cannot start on mainnet
+# if mainnet never passes the `-f`.
+#
+# ── THE CREDENTIAL ────────────────────────────────────────────────────────────
+#
+# Interpolated, never literal. `estate/tokens.testnet.env` is gitignored (see
+# deploy/.gitignore, whose glob has been widened four times) and is already in
+# the `--env-file` set every testnet command uses, so this needs no new flag.
+#
+# `:?` and not `:-`: an empty password is not a weaker node, it is a DIFFERENT
+# node. litecoind with `-rpcpassword=` refuses every RPC call, so the indexer
+# would report `chain_not_followed`, custody would answer with no observation,
+# and the solvency invariant would freeze EMBER on testnet — a silent
+# misconfiguration surfacing as an asset freeze three services away. Failing at
+# interpolation costs one error message instead.
+#
+# It IS on the command line, and therefore in `docker inspect` and in `ps` on the
+# host. That is acceptable HERE and would not be acceptable for the mainnet node:
+# this credential guards a chain with no value on a loopback-only network, and
+# rotating it costs a recreate. The mainnet node keeps its credential in
+# `litecoin.conf`, mode 0600, which is where a real one belongs.
+
+services:
+  litecoind-regtest:
+    image: litecoinproject/litecoin-core:0.21
+    restart: unless-stopped
+    # No `container_name`. The name is the project's to compose, and the estate's
+    # other 46 services do not claim one either — the indexer reaches this node by
+    # the compose service name `litecoind-regtest`, which is a DNS alias on the
+    # project network and survives a rename that a hardcoded name would not.
+    command:
+      - -regtest=1
+      - -server=1
+      # `txindex=1` because custody derivation asks about arbitrary historical
+      # outputs, not just the wallet's. Without it `getrawtransaction` answers
+      # only for unspent outputs and the derivation silently sees less chain
+      # than exists.
+      - -txindex=1
+      # NO PEER LISTENER. A regtest node has no peers by design, and a listening
+      # port is an invitation to a second one appearing and this chain quietly
+      # gaining a history nobody wrote.
+      - -listen=0
+      - -rpcuser=${LTC_REGTEST_RPC_USER:?tokens.testnet.env defines no LTC_REGTEST_RPC_USER}
+      - -rpcpassword=${LTC_REGTEST_RPC_PASSWORD:?tokens.testnet.env defines no LTC_REGTEST_RPC_PASSWORD}
+      # 0.0.0.0 INSIDE THE CONTAINER, which publishes nothing: no `ports:` block
+      # below, so this listener exists only on the project network. The estate
+      # file's own services bind 127.0.0.1 on the HOST for the same reason —
+      # reachable by the estate, unreachable from the LAN.
+      - -rpcbind=0.0.0.0
+      - -rpcallowip=172.31.0.0/16
+      - -rpcallowip=127.0.0.1
+      # 19443 is regtest's own default RPC port. Deliberately NOT 50002, which is
+      # the mainnet node's, so a URL aimed at the wrong one connects to nothing
+      # rather than to the wrong chain.
+      - -rpcport=19443
+      # regtest has no fee history to estimate from, so `sendtoaddress` fails with
+      # "Fee estimation failed" until a fallback exists. Funding a custody address
+      # is the whole point of this node.
+      - -fallbackfee=0.0002
+    volumes:
+      # A BIND, NOT A NAMED VOLUME, and on purpose: this path already holds the
+      # 137-block chain and the funded outputs that micro-org#252's custody proof
+      # runs against. A named volume here would start an empty chain and the
+      # proof would have nothing to derive from. `docker compose down --volumes`
+      # also cannot touch a bind, which is the property that matters for a chain.
+      - ${LTC_REGTEST_DATADIR:-/data/chains/litecoin-regtest}:/home/litecoin/.litecoin
+    healthcheck:
+      # Asks the chain its height, which is the only answer that distinguishes
+      # "the process is up" from "the RPC works AND the credential is right AND
+      # the datadir loaded". A node whose datadir failed to open still runs.
+      test: ["CMD-SHELL", "litecoin-cli -regtest -rpcport=19443 -rpcuser=$$LTC_RPC_USER -rpcpassword=$$LTC_RPC_PASSWORD getblockcount > /dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 20s
+    environment:
+      # For the healthcheck only — `litecoin-cli` takes no credential from the
+      # daemon's argv, and the alternative is a cookie file this image does not
+      # write when rpcuser is set.
+      LTC_RPC_USER: ${LTC_REGTEST_RPC_USER:?}
+      LTC_RPC_PASSWORD: ${LTC_REGTEST_RPC_PASSWORD:?}
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
