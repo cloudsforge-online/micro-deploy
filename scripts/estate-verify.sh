@@ -131,12 +131,80 @@ else
 fi
 
 echo "── a user can be created and can sign in ────────────────────────────────"
+# ── THIS DRILL WAS ASSERTING A ROUTE THAT NO LONGER EXISTS ────────────────────
+#
+# It used to read `accessToken` straight out of `POST /auth/register`. That route
+# stopped minting one deliberately: identity now answers 202 `verificationRequired`
+# and `signInRefusal` refuses the account until the link is spent, because the old
+# behaviour signed a user in on an address nobody had proved control of. The
+# owner reported both halves from the live product — *"i didn't receive any
+# registration email and i was able to login directly."*
+#
+# So `$utok` was empty, and EVERY later section that needs a signed-in user
+# inherited that emptiness: the money seam, the sign-in seam, SSO, erasure, the
+# achievement grant, tessera. Ninety-five checks failed on mainnet from this one
+# line, and each of those failures was a report about this drill rather than
+# about the estate. A harness that asserts a removed route does not fail loudly;
+# it fails everywhere, which is much harder to read.
+#
+# The registration flow is now driven the way a person drives it, one hop at a
+# time, which is also what makes the drill able to detect the real defect it was
+# blind to before: a verification link that is never issued.
 EMAIL="slice-$$@example.test"
 PASS="correct-horse-battery-staple-42"
 reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"handle\":\"slice$$\",\"password\":\"$PASS\"}")
-utok=$(printf '%s' "$reg" | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
-[ -n "$utok" ] && ok "register issues an access token" || bad "register: $(printf '%s' "$reg" | head -c 120)"
+printf '%s' "$reg" | grep -q '"verificationRequired":true' \
+  && ok "register asks for the address to be proved, and mints no session" \
+  || bad "register: $(printf '%s' "$reg" | head -c 160)"
+
+# ── PROVING THE ADDRESS WITHOUT A MAILBOX, AND WITHOUT A SHORTCUT ─────────────
+#
+# `email_verification_tokens` holds a `token_hash` and nothing else — identity
+# never keeps the plaintext, correctly — so the token cannot be read back out of
+# the table it is checked against. It is read instead from the `verifyUrl` on the
+# `identity.email.verification_requested` event identity itself emitted: the same
+# string the email would have carried, one hop earlier in the user's own flow.
+# `scripts/erasure-drill.sh` has driven it this way for some time; this is that
+# pattern, not a new one.
+#
+# The token is a CREDENTIAL. It goes from psql into curl and is never echoed,
+# never written to a file, and never interpolated into a message — including the
+# failure below, which reports only whether one was found.
+#
+# THE DRILL ADDRESS STAYS ON A RESERVED DOMAIN, and that is deliberate rather
+# than left over. `@example.test` is reserved by RFC 6761 §6, so micro-notify
+# declines to route mail to it at all (micro-org#243) — and because the link
+# above is read from the OUTBOX, this drill needs no mailbox and loses nothing by
+# that. A deliverable address here would be strictly worse: every run would send
+# a real message to a mailbox that does not exist, spend an allowance real
+# recipients share, and earn a bounce, on a schedule. Spending the mail allowance
+# on synthetic accounts is the exact defect #243 exists to have fixed; a
+# verification drill that reintroduced it would be an unusually good joke.
+vtok=$(docker compose -f "$COMPOSE" exec -T postgres \
+  psql -qtA -U cloudsforge -d identity </dev/null 2>/dev/null \
+  -c "select payload->>'verifyUrl' from outbox where topic = 'identity.email.verification_requested' and payload->>'email' = '$EMAIL' order by occurred_at desc limit 1" \
+  | tr -d ' \r' | sed 's/.*[#?&]token=//; s/&.*//')
+if [ -n "$vtok" ]; then
+  ok "registration emitted a verification link"
+else
+  bad "no verification event carried a link for the drill account"
+fi
+verified=$(curl -s -X POST "$IDENTITY/auth/email/verify" -H 'content-type: application/json' \
+  -d "{\"token\":\"$vtok\"}")
+unset vtok
+utok=$(printf '%s' "$verified" | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
+[ -n "$utok" ] && ok "the address is proved, and verification mints the first session" \
+  || bad "verification was refused: $(printf '%s' "$verified" | head -c 160)"
+
+# And the ordinary route works afterwards. `identifier`, not `email` — a handle
+# works here too, which is why the field is named for the fact rather than the type.
+login_tok=$(curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
+  -d "{\"identifier\":\"$EMAIL\",\"password\":\"$PASS\"}" \
+  | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
+[ -n "$login_tok" ] && ok "a verified account can sign in through /auth/login" \
+  || bad "login refused a verified account"
+[ -n "$utok" ] || utok="$login_tok"
 
 echo "── THE BOOTSTRAP GAP, AND THE GUARD THAT NOW CLOSES IT ──────────────────"
 # A fresh deployment cannot issue its first service token. /service-tokens
