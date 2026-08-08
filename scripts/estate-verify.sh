@@ -475,6 +475,11 @@ post=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
 [ "$post" = 201 ] && ok "a balanced deposit_credited posted (201)" \
                   || bad "balanced entry rejected with $post: $(head -c 200 /tmp/slice.body)"
 
+# Captured HERE, not later. `code` writes every response to the same
+# /tmp/slice.body, and four more calls overwrite it before the unwind below
+# needs this id.
+deposit_entry_id=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('entry',{}).get('id',''))" 2>/dev/null || true)
+
 # The same request again. Idempotency is what makes a retried deploy-time call
 # safe, and ledger answers 200-on-replay rather than posting the money twice.
 replay=$(code -X POST "$LEDGER/entries" -H "authorization: Bearer $wtok" \
@@ -520,6 +525,45 @@ bal=$(curl -s "$LEDGER/accounts/user:$uid/balances" -H "authorization: Bearer $w
 printf '%s' "$bal" | grep -q '1000' \
   && ok "the user's EMBER balance reflects the deposit" \
   || bad "the deposit did not reach the subject's balance: $(printf '%s' "$bal" | head -c 200)"
+
+# ── AND NOW PUT IT BACK ──────────────────────────────────────────────────────
+#
+# THE DRILL ABOVE FREEZES EMBER IF IT IS LEFT STANDING, and it has done, twice.
+#
+# 1000 wei of custody was credited to the ledger and no coin arrived on any
+# chain to match it. EMBER is reconciled on this estate
+# (`LEDGER_RECONCILE_ASSETS=SHARD,EMBER`) and carries NO tolerance entry, and
+# `ledger/src/env.ts:149` is explicit that "an asset absent from the map gets
+# zero tolerance, not infinity". So the drill's 1000 wei is not a rounding
+# nuisance — it is drift, the only kind there is, and the next reconciliation
+# run freezes EMBER and refuses every withdrawal in the asset estate-wide.
+#
+# That is not a hypothesis. It happened on 2026-08-05, and the incident record
+# names the cause as "synthetic deposit_credited rows posted directly to
+# POST /entries by a test harness against the live mainnet estate" — this
+# harness, this section, these postings. It was cleared by hand with
+# reconciliation_correction entries, and the harness then did it again.
+#
+# A verification run must not be able to take the estate's payouts down. So the
+# drill unwinds itself: every assertion above has already been made against a
+# real posting, and reversing it afterwards costs the section nothing it was
+# testing. `POST /entries/:id/reverse` is the ledger's own first-class unwind
+# (ledger/src/server.ts:462) rather than a hand-built mirror-image entry — it
+# writes `reverses_entry_id`, so the pair is legible afterwards as a drill and
+# not as two unrelated movements of money.
+if [ -n "${deposit_entry_id:-}" ]; then
+  rev=$(code -X POST "$LEDGER/entries/$deposit_entry_id/reverse" \
+    -H "authorization: Bearer $wtok" -H 'content-type: application/json' \
+    -d "{\"idempotencyKey\":\"$idem-reversal\",\"kind\":\"reversal\",
+         \"originatingService\":\"wallet\",\"actor\":\"service:wallet\",
+         \"description\":\"estate-verify unwinding its own deposit drill: the 1000 wei above is backed by no chain coin, and EMBER reconciles at zero tolerance\"}")
+  case "$rev" in
+    201|200) ok "…and the drill unwound itself ($rev) — custody is back where it started, so this run cannot freeze EMBER" ;;
+    *) bad "THE DEPOSIT DRILL COULD NOT BE UNWOUND ($rev): 1000 wei of unbacked EMBER custody is now standing, and the next reconciliation will freeze the asset and refuse every withdrawal. Reverse entry $deposit_entry_id by hand: $(head -c 200 /tmp/slice.body)" ;;
+  esac
+else
+  bad "the deposit drill's entry id could not be read, so its 1000 wei cannot be unwound — EMBER will freeze on the next reconciliation unless the entry with idempotency key '$idem' is reversed by hand"
+fi
 
 echo
 echo "── THE EVENT SEAM: outbox → signed HTTP → inbox ─────────────────────────"
