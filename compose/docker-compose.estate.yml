@@ -316,33 +316,50 @@ x-studio-secret-file: &studio-secret-file
 # `Number`, because an EVM fee routinely exceeds `Number.MAX_SAFE_INTEGER` and a
 # float would round the number a withdrawal is priced at.
 #
-# **LTC IS DELIBERATELY ABSENT AND MUST STAY ABSENT UNTIL AN LTC NODE EXISTS.**
-# Custody now derives Litecoin addresses and `micro-wallet` will move LTC
-# (`wallet/src/addresses.ts`), so Send offers it — and it is refused here,
-# immediately, at 503, having moved nothing. That is the honest answer: there is
-# no Litecoin node in this estate, so there is no measured LTC fee to state, and
-# stating one anyway is the guess the fail-closed rule exists to forbid. The
-# alternative is worse, not better: a stated fee makes the withdrawal ACCEPTED,
-# reserves the user's balance, and only refunds it an hour later when
-# `SETTLEMENT_STUCK_MINUTES` expires. A loud immediate refusal beats an hour-long
-# hold every time. Add the node, measure `estimatesmartfee`, then add the entry.
-# LTC: 10,000 litoshis = 0.0001 LTC, roughly USD 0.0045 at the rate `pricing` quotes live.
+# ── LTC: 10,000 litoshis = 0.0001 LTC, ~USD 0.0045 at the rate `pricing` quotes live ─────────
 #
-# DERIVED FROM A MEASUREMENT, NOT FROM `estimatesmartfee` — and the difference is worth stating,
-# because the note above says to use that one. `estimatesmartfee` returns nothing at any target:
-# it builds its history by observing blocks and a mempool, and this node only left initial block
-# download today. Waiting for it would leave LTC withdrawals refused for no benefit.
+# This entry has been through two rounds of argument and the second one overturned the first, so
+# both are kept: the paragraph that said LTC "must stay absent until an LTC node exists" was
+# written when there was no Litecoin node on this host. There is one now — `litecoind 0.21.5.6`,
+# `-datadir=/data/chains/litecoin`, started from `/etc/rc.local`, measured synced at 3,156,498
+# blocks with `initialblockdownload:false`. The fail-closed rule it invoked was right; the fact
+# it rested on stopped being true. That is the pattern worth recognising: a comment that argues
+# from a measurement outlives the measurement.
 #
-# What the node DOES report, and what this is built on: `minrelaytxfee` = `mempoolminfee` =
-# 0.00001 LTC/kvB, with the mempool measured at 0 transactions and 0 bytes. An empty mempool is
-# not a guess about congestion — it means a transaction paying the relay minimum has nothing to
-# compete with and confirms in the next block.
+# ── `estimatesmartfee` WILL NEVER ANSWER ON THIS NODE, SO NOTHING WAITS FOR IT ────────────────
 #
-# A 1-in-2-out P2WPKH spend is ~141 vB, so the true floor is ~0.0000014 LTC. This quote is ~70x
-# that, which covers a much larger transaction and a busier mempool while staying under half a
-# cent. Erring high costs the user nothing measurable; erring low leaves a withdrawal stuck.
+# This note used to close with "REVISIT once `estimatesmartfee` answers". That is a condition
+# that cannot arrive, and leaving it standing left a real number looking provisional. Measured
+# with the node synced, up three hours, ten peers:
 #
-# REVISIT once `estimatesmartfee` answers. This is a floor with headroom, not a fee market read.
+#     estimatesmartfee 2|6|12|24|144 -> {"errors":["Insufficient data or no fee rate found"]}
+#     getmempoolinfo                 -> size 0, mempoolminfee 0.00001
+#     litecoin.conf                  -> blocksonly=1
+#
+# `blocksonly=1` means the node does not accept relayed transactions into its mempool at all.
+# The fee estimator learns by watching transactions enter a mempool and later confirm, so with
+# no mempool it has nothing to learn from — and the mempool is empty because it is configured to
+# be, not because Litecoin is quiet. The same 144 blocks carried 53,590 transactions. Dropping
+# `blocksonly` is the wrong trade on a box running two chains beside sixty containers at `par=3`.
+# Filed as micro-org#268. Bitcoin's node here carries the same posture, so BTC will land in the
+# same place.
+#
+# ── SO THE QUOTE IS DERIVED FROM CONFIRMED BLOCKS, WHICH IS GROUND TRUTH ANYWAY ───────────────
+#
+# `getblockstats` reports `feerate_percentiles` per block. It is built from transactions that
+# actually confirmed rather than from a forecast, and it works fine under `blocksonly`. Measured
+# over blocks 3,156,352-3,156,495 (144 blocks, 53,590 transactions), in sat/vB:
+#
+#     block's 10th-pct feerate   median 1    p90 1     max 3
+#     block's 50th-pct feerate   median 5    p90 5     max 10
+#     block's 90th-pct feerate   median 11   p90 36    max 529
+#     block's average feerate    median 12   p90 22    max 149
+#
+# A 1-in-2-out P2WPKH spend is ~141 vB, so 10,000 litoshis buys that transaction ~70 sat/vB —
+# comfortably above the median-block-median of 5 and above the p90-of-p90 of 36, with room for a
+# multi-input sweep. Erring high costs the user under half a cent; erring low leaves a withdrawal
+# stuck. The figure is unchanged from when it was first written against `minrelaytxfee`; what
+# changed is that it is now backed by a fee market read rather than by a relay floor.
 x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"}'
 
 # ── SETTLEMENT_RPC_URLS — ABSENT, SO NOTHING COULD BE BUILT OR BROADCAST ──────
@@ -372,15 +389,31 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"
 # (`settlement/src/withdrawals.ts`) — a round trip per tick, telling nobody.
 # Absent beats wrong. Set the variable and the entry appears with no code change.
 #
-# TWO THINGS BLOCK AN LTC ENDPOINT TODAY AND BOTH ARE FILED, NOT HIDDEN:
-#   1. There is no Litecoin node on this host, and mainnet Litecoin is not a
-#      thing this ProLiant can sync beside two Hearth chains and 60 containers.
-#   2. **The transport cannot authenticate to one even if it existed.**
-#      `settlement/src/registry.ts` builds its client with
-#      `baseUrl: parsed.origin`, and `URL.origin` DISCARDS userinfo — so
-#      `http://user:pass@ltc:9332` sends no `Authorization` header and Litecoin
-#      Core answers 401. There is no cookie-auth path either. That is a defect in
-#      `micro-settlement`, which this repository does not own.
+# ── OF THE TWO BLOCKERS THIS NOTE USED TO LIST, ONE IS GONE AND ONE IS NAMED ──
+#
+# It said there was no Litecoin node on this host and that mainnet Litecoin was
+# not a thing this ProLiant could sync beside two Hearth chains and 60 containers.
+# It could and it did. `litecoind 0.21.5.6` runs from `/etc/rc.local` on
+# `-datadir=/data/chains/litecoin`, measured at 3,156,498 blocks with
+# `initialblockdownload:false`. `LTC_RPC_URL` is set in `compose/estate/tokens.env`
+# and settlement's own boot line now reports `{"chain":"ltc","endpoint":true}`.
+#
+# **The second blocker is the whole of what remains, and it is one line of
+# transport code.** `settlement/src/registry.ts` builds its client with
+# `baseUrl: parsed.origin`, and `URL.origin` DISCARDS userinfo — so an endpoint
+# written `http://user:pass@host:50002` sends no `Authorization` header and
+# Litecoin Core answers 401. There is no cookie-auth path either. Measured from
+# inside the running settlement container, against the endpoint it already holds:
+#
+#     NO-AUTH   (baseUrl = parsed.origin, what registry.ts does today) -> 401
+#     WITH-AUTH (Authorization: Basic base64(user:pass))               -> 200,
+#                                          blocks=3156498, ibd=false
+#
+# So the estate can take custody of Litecoin and cannot send it back, and the
+# reason has nothing to do with Litecoin. Filed as micro-org#267 against
+# `micro-settlement`, which owns it. It will block BTC and DOGE identically —
+# same family, same auth scheme — so it is worth fixing before those are wired
+# rather than discovering it three more times.
 x-settlement-rpc-urls: &settlement-rpc-urls
   '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}}'
 
