@@ -8,11 +8,18 @@ What is deployed right now, and the one rule that governs how it changes.
 
 | Environment | Compose project | Version | Containers | Deployed |
 | --- | --- | --- | --- | --- |
-| **Testnet** | `cf-testnet` | **2.3.0** | 46 services + `postgres:17-alpine` | 2026-08-07 |
-| **Mainnet** | `cloudsforge-estate` | **2.3.0** | 45 services + `postgres:17-alpine` | 2026-08-07 |
+| **Testnet** | `cf-testnet` | **2.5.1** | 46 services + `postgres:17-alpine` | 2026-08-07 |
+| **Mainnet** | `cloudsforge-estate` | **2.4.0** | 45 services + `postgres:17-alpine` | 2026-08-05 |
 
-Both read the same number. That is the point, and it is new — see the next
-section for what it replaced.
+Each estate reads ONE number, which is the rule below. The two numbers differ
+here, and that is the release in progress rather than the drift this rule
+exists to prevent: 2.5.x is being proved on testnet before it reaches mainnet,
+which is what the design overlay is for (`compose/docker-compose.design.yml`).
+Testnet ahead of mainnet is expected during a release and is not a finding.
+Testnet *behind* mainnet, or either estate reading two numbers at once, is.
+
+This table went stale at 2.3.0 while both estates moved to 2.4.0 and testnet to
+2.5.1, which is the argument for the command below rather than for a table.
 
 Check it, do not trust this table:
 

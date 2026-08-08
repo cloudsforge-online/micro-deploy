@@ -107,10 +107,20 @@ The sign carries the meaning:
 - **The custody set.** `addresses` and `labelPrefixes` travel with every answer.
   If the count is lower than the number of deposit addresses the platform has
   handed out, the set is incomplete and the drift is an artefact of the set
-  rather than of the money. **Known live gap: nothing writes a `treasury:` label
-  today** — `micro-settlement` sweeps deposits to a pinned treasury address and
-  holds no `indexer:write` grant, so swept coin is invisible to the aggregate and
-  shows up here as positive drift.
+  rather than of the money. **This was a known live gap until 2.5.0 and is no
+  longer** — settlement registers its pinned treasury with the indexer under a
+  `treasury:<chain>:<network>` label and books its balance as platform equity in
+  the same movement, so swept coin is now on both sides. If the aggregate carries
+  no `treasury:` label for a chain that has a pin, the registration did not
+  happen: check `POST /v1/treasuries/:chain/:network/provision` (settlement) and
+  see the note below.
+
+  **Provisioning that treasury needs 2.5.2 or later.** The route forwards the
+  operator's bearer token to custody's admin mint, and until micro-org#251 the
+  shared HTTP client overwrote it with settlement's own service token — which
+  does not carry `role:admin`, so the route answered 500 every time on 2.5.0 and
+  2.5.1. On an older tag the treasury has to be minted against custody directly
+  and pinned there.
 - **Ledger side.** Unreconciled entries by age, and reservations older than 24h.
   An entry that was never reconciled is drift by definition.
 - **Neither.** An on-chain movement nobody recorded: a manual sweep done with
