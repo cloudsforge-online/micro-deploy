@@ -330,6 +330,38 @@ echo "── deploying ───────────────────
 if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d; then
   echo
   echo "release $version is up."
+
+  # ── AND IS ANY OF IT REACHABLE? ─────────────────────────────────────────────
+  #
+  # `up -d` returning 0 means every container was created and, given the health
+  # checks in the base file, will report healthy. It says NOTHING about whether a
+  # browser can reach one, because the gateway is not in this compose project —
+  # it is a separate stack on a separate network, brought up by a separate
+  # command, and this script has never once looked at it.
+  #
+  # That gap is not hypothetical. Testnet's gateway has now been absent twice
+  # (2026-08-05 and 2026-08-08) with all 46 services healthy and every public
+  # hostname answering 502 both times. On the second occasion this script had
+  # just reported "release 2.5.4 is up" and it was true and the estate was dark.
+  #
+  # AFTER the deploy rather than before, unlike every other guard here: an
+  # unreachable origin is not a reason to refuse to ship new images, and the
+  # gateway is a running-system fact that a pre-flight cannot establish. So it
+  # runs, it prints, and it does not fail the deploy — but the last line of a
+  # deploy now states whether anything can actually be served, which is the
+  # sentence whose absence made "up" and "up and serving" look like one claim.
+  case "$ESTATE_ENV" in
+    *testnet*) tunnel_env=testnet ;;
+    *)         tunnel_env=mainnet ;;
+  esac
+  echo
+  if ! ./scripts/check-tunnel-origin.sh "$tunnel_env"; then
+    echo
+    echo "THE IMAGES ARE DEPLOYED AND THE ESTATE IS NOT PUBLICLY REACHABLE." >&2
+    echo "Fix the origin above; nothing needs redeploying." >&2
+  fi
+
+  echo
   echo "verify it:   ./scripts/estate-verify.sh"
   echo "roll it back: ./scripts/release-deploy.sh --rollback"
   exit 0

@@ -139,9 +139,36 @@ docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
   -f docker-compose.estate.yml \
   -f docker-compose.release.yml \
   -f docker-compose.design.yml \
+  -f docker-compose.testnet-chain.yml \
   pull
 # then the same command with: up -d --remove-orphans
 ```
+
+**Four overlays, and the fourth is the chain.**
+`docker-compose.testnet-chain.yml` declares the `litecoind -regtest` node this
+environment indexes. Omitting it does not fail: compose brings up the other 46
+services happily and the node — which has `restart: unless-stopped` — keeps
+running from before. What you lose is the declaration, and that is how it got
+lost the first time. It was created by a hand-typed `docker run`, belonged to no
+project, appeared in no `ps`, and on 2026-08-08 was reasonably mistaken for the
+host's **real Litecoin mainnet node**. Read that file's header before touching
+either process; the two are not copies and stopping the wrong one takes mainnet
+Litecoin indexing down.
+
+**Then check the gateway, because `up -d` does not.**
+
+```sh
+cd /home/malf/dev/cloudsforge/deploy
+./scripts/check-tunnel-origin.sh testnet
+```
+
+The testnet gateway is a **separate compose project** (`cftestnet`, no hyphen)
+from the services it serves (`cf-testnet`), so no command in this section brings
+it up, lists it, or notices its absence. It has now been missing twice —
+2026-08-05 and 2026-08-08 — with all 46 services healthy and every public
+`*-testnet` hostname answering 502 both times, because cloudflared reports an
+unreachable origin as 502. `make estate-gateway-testnet` starts it and runs the
+same check.
 
 **Both `--env-file` flags, every time, and this is not style.** `--env-file`
 *replaces* the default `.env` rather than adding to it, and `compose/.env` is a
