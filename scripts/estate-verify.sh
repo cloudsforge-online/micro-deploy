@@ -2634,6 +2634,32 @@ else
       [ "${cb_n:-0}" -gt 0 ] 2>/dev/null \
         && ok "…summed over $cb_n registered custody addresses, read at block/head/depth $cb_at" \
         || bad "the custody total answered 200 over ZERO addresses — an empty set must be refused, never summed to 0"
+
+      # ── WHICH PREFIXES THE ROUTE ACTUALLY SELECTS ON ────────────────────────
+      #
+      # Read here and used by the break in step 3 below, which used to hardcode
+      # `deposit:` and was silently wrong the day a second prefix held value.
+      #
+      # This estate has 233 `deposit:` addresses and one `treasury:`, and the
+      # treasury holds 24.1 of the 25.1 EMBER. So "break every deposit: label"
+      # emptied 15 of 16 addresses and left 96% of the balance in place, and the
+      # route then answered 200 with a perfectly TRUE total — over a custody set
+      # the drill believed it had emptied. All three assertions below failed, and
+      # every one of them was measuring a premise that was false rather than the
+      # behaviour it was written for.
+      #
+      # A hardcoded prefix in a drill about the prefix set is the same defect the
+      # release this drill guards exists to fix, one layer out: 2.5.4 made the
+      # prefix list an explicit, ordered, queryable part of the route's answer
+      # precisely so that nothing has to assume there is one of them. So the
+      # drill asks. A prefix added to the estate tomorrow is covered by this
+      # without anybody remembering it, which is the only version of this check
+      # that keeps working.
+      cb_prefixes=$(python3 -c "
+import json, re, sys
+b = json.load(open('/tmp/slice.body'))
+ps = [p for p in (b.get('labelPrefixes') or []) if re.fullmatch(r'[A-Za-z0-9:._-]{1,24}', p)]
+print('\n'.join(ps))" 2>/dev/null)
       ;;
     404)
       bad "the custody total answered 404 — a consumer files that as 'no custody here', which is a zero wearing a status code"
@@ -2848,72 +2874,103 @@ else
     || bad "EMBER is still frozen after a clean run; the 'delete from asset_freezes' in reconcile.ts did not fire"
 
   # ── 3. BROKEN, AND IT MUST FAIL CLOSED ─────────────────────────────────────
-  # Out of the `deposit:` prefix and into one nothing selects. Reversible by
+  # Out of EVERY configured prefix and into one nothing selects. Reversible by
   # construction: the label is prefixed, never rewritten, so step 4 strips it.
-  isql -c "update watched_addresses set label = 'broken-by-verify/' || label
-            where chain='ember' and network='$EMBER_NETWORK' and label like 'deposit:%'" >/dev/null
-
-  brk=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/$EMBER_NETWORK/total")
-  brk_code=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('error',{}).get('code',''))" 2>/dev/null)
-  if [ "$brk" = 200 ]; then
-    brk_total=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('total'))" 2>/dev/null)
-    bad "WITH AN EMPTY CUSTODY SET THE ROUTE ANSWERED 200 WITH total=$brk_total. That is 'we did not look' reported as 'the chain holds nothing', and it would reconcile clean against an empty ledger for ever"
+  #
+  # `cb_prefixes` comes from the route's own `labelPrefixes` (see where it is
+  # read, above). Hardcoding `deposit:` here is what made this drill test its own
+  # false premise for three releases.
+  if [ -z "${cb_prefixes:-}" ]; then
+    bad "the route named NO label prefixes, so this drill cannot empty the custody set and every assertion below it would be measuring a set that was never emptied. That is the failure mode this block was rewritten to end — refusing instead"
   else
-    # Any refusal is the right shape; the CODE is what an operator acts on, and a
-    # refusal with no code sends them nowhere. `no_custody_addresses` is the one
-    # this break should produce — a different code means something else broke too.
-    [ -n "$brk_code" ] \
-      && ok "with the custody set emptied the route refuses ($brk $brk_code) rather than answering 0" \
-      || bad "with the custody set emptied the route answered $brk with no error code — an operator reading the freeze cannot tell why"
+    cb_where=""
+    for cb_p in $cb_prefixes; do
+      cb_where="${cb_where}${cb_where:+ or }label like '${cb_p}%'"
+    done
+    isql -c "update watched_addresses set label = 'broken-by-verify/' || label
+              where chain='ember' and network='$EMBER_NETWORK' and ($cb_where)" >/dev/null
+
+    # AND IT MUST HAVE WORKED. The route is about to be asked whether it refuses an
+    # EMPTY custody set; if the set is not empty, a 200 is the correct answer and
+    # the three assertions below are all measuring the wrong thing while looking
+    # like findings. Cheap to check, and it is the check whose absence cost a
+    # release's worth of confusing red.
+    cb_left=$(isql -c "select count(*) from watched_addresses
+                        where chain='ember' and network='$EMBER_NETWORK' and ($cb_where)")
+    [ "${cb_left:-1}" = 0 ] \
+      || bad "the break left ${cb_left} address(es) still matching a configured prefix, so the custody set below is NOT empty and the refusal being tested for cannot be expected. Prefixes tried: $(printf '%s ' $cb_prefixes)"
+
+    brk=$(code -H "authorization: Bearer $cb_tok" "$INDEXER/v1/custody/ember/$EMBER_NETWORK/total")
+    brk_code=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('error',{}).get('code',''))" 2>/dev/null)
+    if [ "$brk" = 200 ]; then
+      brk_total=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('total'))" 2>/dev/null)
+      bad "WITH AN EMPTY CUSTODY SET THE ROUTE ANSWERED 200 WITH total=$brk_total. That is 'we did not look' reported as 'the chain holds nothing', and it would reconcile clean against an empty ledger for ever"
+    else
+      # Any refusal is the right shape; the CODE is what an operator acts on, and a
+      # refusal with no code sends them nowhere. `no_custody_addresses` is the one
+      # this break should produce — a different code means something else broke too.
+      [ -n "$brk_code" ] \
+        && ok "with the custody set emptied the route refuses ($brk $brk_code) rather than answering 0" \
+        || bad "with the custody set emptied the route answered $brk with no error code — an operator reading the freeze cannot tell why"
+    fi
+
+    before=$(lsql -c "select id from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+    run=$(reconcile_now "$before")
+    src=$(printf '%s' "$run" | cut -d'|' -f1)
+    st=$(printf '%s' "$run" | cut -d'|' -f2)
+    case "$src/$st" in
+      unavailable/failed)
+        ok "the ledger recorded unavailable/failed — it FAILED CLOSED on an observation it could not make" ;;
+      indexer/clean)
+        bad "THE LEDGER RECONCILED CLEAN WITH NO OBSERVABLE CUSTODY SET. A withheld observation reached reconcileAsset as a number; this is the defect the whole release removed" ;;
+      liability_sum/*)
+        bad "the ledger fell back to liability_sum on EMBER — it compared itself against itself on a chain asset, which migration 11 must refuse" ;;
+      *)
+        bad "with the observation withheld the ledger recorded $src/$st, which is neither an honest refusal nor a clean run" ;;
+    esac
+
+    # AND IT MUST SAY WHICH KIND OF FAILURE IT WAS. This is the whole point of
+    # migration 12's column and the reason it is asserted on a DRIVEN break rather
+    # than described: the failure induced here is a CHAIN failure — the custody set
+    # was emptied, ledger's credential was never touched — so the row must read
+    # `indexer_error`. If it reads `no_credential`, `unauthorized` or
+    # `not_configured` then the deployment is broken as well and the freeze above
+    # is being produced by the wrong cause while looking identical, which is
+    # precisely the confusion this release exists to end.
+    breason=$(lsql -c "select coalesce(unobserved_reason,'(null)') from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
+    case "$breason" in
+      indexer_error)
+        ok "…and it recorded unobserved_reason = 'indexer_error' — the row names the CHAIN as the cause, which is the truth here" ;;
+      no_credential|unauthorized|not_configured)
+        bad "the induced break was a CHAIN failure but the row recorded unobserved_reason = '$breason', a CREDENTIAL failure. ledger cannot authenticate to the indexer, and that defect has been hiding underneath a freeze that reads identically to the honest one" ;;
+      "(null)")
+        bad "the run failed with no unobserved_reason at all; migration 12's column is not being written on the failure path, so the two freezes are still indistinguishable" ;;
+      *)
+        bad "the failed run recorded an unrecognised unobserved_reason = '$breason'" ;;
+    esac
+
+    refroze=$(lsql -c "select count(*) from asset_freezes where asset_code='EMBER'")
+    [ "$refroze" -ge 1 ] 2>/dev/null \
+      && ok "…and EMBER is frozen again: an asset whose backing nobody can see cannot be withdrawn" \
+      || bad "the run failed and EMBER was NOT frozen — the failure was recorded and acted on by nothing"
+
+    # ── 4. RESTORED ────────────────────────────────────────────────────────────
+    isql -c "update watched_addresses set label = replace(label, 'broken-by-verify/', '')
+              where chain='ember' and network='$EMBER_NETWORK' and label like 'broken-by-verify/%'" >/dev/null
+    # Counted over EVERY prefix, like the break — this read `deposit:%` and so
+    # reported "15 addresses restored" out of 16 while calling the estate returned
+    # to how it was found. The one it never counted is the treasury holding 96% of
+    # the balance.
+    restored=$(isql -c "select count(*) from watched_addresses where chain='ember' and network='$EMBER_NETWORK' and ($cb_where)")
+    still_broken=$(isql -c "select count(*) from watched_addresses where chain='ember' and network='$EMBER_NETWORK' and label like 'broken-by-verify/%'")
+    if [ "${still_broken:-1}" != 0 ]; then
+      bad "the custody labels were NOT restored — ${still_broken} address(es) still carry the drill's prefix. EMBER will stay frozen after this verify run, and the estate has been left worse than it was found"
+    else
+      [ "${restored:-0}" -ge 1 ] 2>/dev/null \
+        && ok "the custody labels are restored ($restored addresses across $(printf '%s ' $cb_prefixes)) — this section leaves the estate as it found it" \
+        || bad "the custody labels were NOT restored; EMBER will stay frozen after this verify run"
+    fi
   fi
-
-  before=$(lsql -c "select id from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
-  run=$(reconcile_now "$before")
-  src=$(printf '%s' "$run" | cut -d'|' -f1)
-  st=$(printf '%s' "$run" | cut -d'|' -f2)
-  case "$src/$st" in
-    unavailable/failed)
-      ok "the ledger recorded unavailable/failed — it FAILED CLOSED on an observation it could not make" ;;
-    indexer/clean)
-      bad "THE LEDGER RECONCILED CLEAN WITH NO OBSERVABLE CUSTODY SET. A withheld observation reached reconcileAsset as a number; this is the defect the whole release removed" ;;
-    liability_sum/*)
-      bad "the ledger fell back to liability_sum on EMBER — it compared itself against itself on a chain asset, which migration 11 must refuse" ;;
-    *)
-      bad "with the observation withheld the ledger recorded $src/$st, which is neither an honest refusal nor a clean run" ;;
-  esac
-
-  # AND IT MUST SAY WHICH KIND OF FAILURE IT WAS. This is the whole point of
-  # migration 12's column and the reason it is asserted on a DRIVEN break rather
-  # than described: the failure induced here is a CHAIN failure — the custody set
-  # was emptied, ledger's credential was never touched — so the row must read
-  # `indexer_error`. If it reads `no_credential`, `unauthorized` or
-  # `not_configured` then the deployment is broken as well and the freeze above
-  # is being produced by the wrong cause while looking identical, which is
-  # precisely the confusion this release exists to end.
-  breason=$(lsql -c "select coalesce(unobserved_reason,'(null)') from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
-  case "$breason" in
-    indexer_error)
-      ok "…and it recorded unobserved_reason = 'indexer_error' — the row names the CHAIN as the cause, which is the truth here" ;;
-    no_credential|unauthorized|not_configured)
-      bad "the induced break was a CHAIN failure but the row recorded unobserved_reason = '$breason', a CREDENTIAL failure. ledger cannot authenticate to the indexer, and that defect has been hiding underneath a freeze that reads identically to the honest one" ;;
-    "(null)")
-      bad "the run failed with no unobserved_reason at all; migration 12's column is not being written on the failure path, so the two freezes are still indistinguishable" ;;
-    *)
-      bad "the failed run recorded an unrecognised unobserved_reason = '$breason'" ;;
-  esac
-
-  refroze=$(lsql -c "select count(*) from asset_freezes where asset_code='EMBER'")
-  [ "$refroze" -ge 1 ] 2>/dev/null \
-    && ok "…and EMBER is frozen again: an asset whose backing nobody can see cannot be withdrawn" \
-    || bad "the run failed and EMBER was NOT frozen — the failure was recorded and acted on by nothing"
-
-  # ── 4. RESTORED ────────────────────────────────────────────────────────────
-  isql -c "update watched_addresses set label = replace(label, 'broken-by-verify/', '')
-            where chain='ember' and network='$EMBER_NETWORK' and label like 'broken-by-verify/%'" >/dev/null
-  restored=$(isql -c "select count(*) from watched_addresses where chain='ember' and network='$EMBER_NETWORK' and label like 'deposit:%'")
-  [ "${restored:-0}" -ge 1 ] 2>/dev/null \
-    && ok "the custody labels are restored ($restored addresses) — this section leaves the estate as it found it" \
-    || bad "the custody labels were NOT restored; EMBER will stay frozen after this verify run"
 
   before=$(lsql -c "select id from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1")
   run=$(reconcile_now "$before")

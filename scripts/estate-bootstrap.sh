@@ -945,6 +945,14 @@ audited_count=$(printf '%s\n' "$audited" | grep -c . || true)
 # step would report a cheerful zero failures.
 if [ "${audited_count:-0}" -ge 26 ]; then
   ok "read $audited_count audited topic(s) from the contract"
+elif [ ! -f "$AUDIT_CONTRACT" ]; then
+  # NAMED SEPARATELY FROM A BAD PARSE, because they are different problems with
+  # different fixes and this one is by far the more likely on a deploy host. The
+  # host runs services from images; it has no reason to hold every source
+  # repository, and `micro-contracts` in particular is a build-time dependency
+  # that nothing at runtime needs — so the file is absent, `open()` raises, the
+  # parser prints nothing, and the old message blamed a parser that was fine.
+  bad "$AUDIT_CONTRACT DOES NOT EXIST, so no audited topic could be read and admin-api will be subscribed to nothing. This is the deploy host missing a micro-contracts checkout, not a broken parser. Clone it beside this repository, or set AUDIT_CONTRACT to a path that has it"
 else
   bad "parsed only ${audited_count:-0} audited topics from $AUDIT_CONTRACT — the parser is broken, not the contract"
 fi
@@ -961,6 +969,32 @@ subscribe_all() {
   consumer=$1; url=$2; shift 2
   count=0
   missing=""
+
+  # ── AN EMPTY TOPIC LIST IS A FAILURE, NOT A QUIET SUCCESS ──────────────────
+  #
+  # Without this, `subscribe_all admin-api <url>` with nothing after it fell
+  # straight through the loop and printed
+  #
+  #   ok: admin-api subscribed to 0 topic(s) → http://admin-api:4000/v1/events
+  #
+  # in green, and every later step agreed the estate was bootstrapped.
+  #
+  # MEASURED ON MAINNET, 2026-08-08. `micro-contracts` is not checked out on the
+  # host, so `AUDIT_CONTRACT` pointed at a path that does not exist, the parser
+  # above returned nothing, and admin-api was subscribed to none of the thirty
+  # audited topics. `ledger.entry.posted` published 48 times with zero
+  # subscribers and the operator audit log never saw a single one — `select
+  # count(*) from ledger.event_subscriptions` was 0. The mirror looked ALIVE the
+  # whole time, because identity's subscriptions are written by a different step
+  # and its rows kept arriving.
+  #
+  # The floor check on `audited_count` above already said the parse was broken.
+  # It said so and then carried on, which is the shape of every defect in this
+  # file's history: a check that reports rather than stops. This one stops.
+  if [ "$#" -eq 0 ]; then
+    bad "$consumer was given NO topics to subscribe to. Nothing will reach $url, and this step would otherwise report a cheerful zero. Almost always the contract file could not be read — check AUDIT_CONTRACT and that micro-contracts is checked out beside this repository"
+    return 1
+  fi
   for topic in "$@"; do
     db=$(printf '%s' "$topic" | cut -d. -f1)
     if dc exec -T postgres \
