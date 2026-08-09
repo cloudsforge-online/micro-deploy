@@ -57,6 +57,27 @@ for f in "$ESTATE_ENV" "$TOKENS_FILE"; do
     exit 1
   fi
 done
+
+# ── AND THE TWO OF THEM MUST NAME THE SAME ESTATE (micro-org#238) ─────────────
+#
+# They are independent variables, and until now nothing compared them. A deploy
+# given `ESTATE_ENV=compose/testnet.env` and the default mainnet tokens file was
+# accepted without a word: it renders under testnet's project name, every line
+# this script prints says testnet — including the tunnel check at the foot, which
+# derives the environment from `$ESTATE_ENV` ALONE — and the containers hold
+# MAINNET's service credentials, operator password and custody keyring selection.
+#
+# Nothing fails loudly, because the credentials are real. They are the other
+# estate's. The best case is 401s from testnet identity against callers that look
+# entirely correct; the worse case is a component that accepts them.
+#
+# Before the render rather than after, and before the apex checks below, because
+# this is the one mistake that makes every subsequent line of output a confident
+# statement about the wrong estate.
+if ! ./scripts/check-env-files-agree.sh "$ESTATE_ENV" "$TOKENS_FILE"; then
+  exit 1
+fi
+
 ENVSET=(--env-file "$ESTATE_ENV" --env-file "$TOKENS_FILE")
 
 
@@ -207,6 +228,83 @@ if ! python3 scripts/release-render.py "$manifest" --base "$BASE" "${ENVSET[@]}"
   exit 1
 fi
 
+# ── A REGISTRY FAILS IN TWO WAYS AND THIS SCRIPT TREATED THEM AS ONE ──────────
+#
+# Every registry call below used to be one attempt, and any non-zero exit refused
+# the deploy. That is right for one of the two failures and wrong for the other.
+#
+#   AN ANSWER.  `manifest unknown` means the registry looked and the tag is not
+#               there. Trying again gets the same answer more slowly. The
+#               manifest names an image that was never published and the deploy
+#               must stop — retrying that is how a wrong release gets shipped on
+#               the fifth attempt because somebody was watching the wrong line.
+#   A BLIP.     `denied`, `unauthorized`, `TOO MANY REQUESTS`, a TLS handshake
+#               that timed out, a connection reset. GHCR returns these under load
+#               and to a token that is a second away from being refreshed, and
+#               the next attempt succeeds. Refusing a whole release for one of
+#               them is refusing it for the network's mood.
+#
+# The classification is deliberately WHITELIST-BY-ANSWER: only the phrases that
+# mean "the registry looked and it is not there" abort immediately, and
+# everything else is retried. The failure modes are asymmetric. Retrying a
+# genuinely missing tag costs the backoff and then aborts anyway with the same
+# message; treating a blip as final costs a refused deploy at the moment somebody
+# is trying to ship, or — before the phase split below — half a deploy.
+#
+# `denied` deliberately sits on the retry side even though it is often the GHCR
+# visibility trap, which no amount of retrying will fix. It is indistinguishable
+# on the wire from the transient one, the trap is permanent and so survives the
+# attempts, and the abort message names both causes.
+REGISTRY_ATTEMPTS=${REGISTRY_ATTEMPTS:-5}
+REGISTRY_BACKOFF=${REGISTRY_BACKOFF:-3}
+
+registry_said_no() { # <message> -> 0 when the registry gave a definitive answer
+  case "$1" in
+  *"manifest unknown"* | *"no such manifest"* | *"not found"* | \
+    *"name unknown"* | *"repository name not known"* | \
+    *"reference does not exist"* | *"unsupported manifest media type"*)
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+# Runs a registry command until it succeeds, until the registry answers no, or
+# until the attempts run out. Exponential backoff because the two things that
+# actually produce a blip — a rate limit and a saturated link — are both made
+# worse by retrying at a fixed short interval, which is the shape of a client
+# that turns one slow moment into an outage of its own making.
+#
+# Leaves the last error in `registry_err` and why it gave up in `registry_gaveup`.
+registry_try() { # <label> <command…>
+  local label="$1"
+  shift
+  local attempt=1
+  local delay="$REGISTRY_BACKOFF"
+  registry_err=""
+  registry_gaveup=""
+  while :; do
+    # stderr captured, stdout discarded: `docker pull` writes layer progress to
+    # stdout and the reason it failed to stderr, and only the reason is wanted.
+    if registry_err=$("$@" 2>&1 >/dev/null); then return 0; fi
+    registry_err=$(printf '%s' "$registry_err" | grep -v '^[[:space:]]*$' | tail -1)
+    registry_err=${registry_err:-no error message}
+    if registry_said_no "$registry_err"; then
+      registry_gaveup="the registry answered; retrying cannot change it"
+      return 1
+    fi
+    if [ "$attempt" -ge "$REGISTRY_ATTEMPTS" ]; then
+      registry_gaveup="still failing after $REGISTRY_ATTEMPTS attempts"
+      return 1
+    fi
+    printf '  \033[33mretry\033[0m %s — %s (attempt %d of %d, waiting %ss)\n' \
+      "$label" "$registry_err" "$attempt" "$REGISTRY_ATTEMPTS" "$delay"
+    sleep "$delay"
+    delay=$((delay * 2))
+    attempt=$((attempt + 1))
+  done
+}
+
 # ── every image must exist BEFORE anything is changed ──────────────────────────
 # `cfctl release --verify` does this from the org side. It is done again here, on
 # purpose, because refusing to deploy an unpullable manifest is a property of the
@@ -228,19 +326,23 @@ fi
 # have failed every one and refused to deploy any release at all. The overlay
 # writes `image:` at exactly four spaces and nothing else in it does.
 echo "── verifying every image can be pulled ──────────────────────────────────"
+# Extracted once and reused by the pull phase further down, so the set of images
+# this deploy is ABOUT cannot drift between the thing that checks them and the
+# thing that fetches them.
+release_refs=$(grep -oE '^    image: [^ ]+' "$OVERLAY" | sed 's/^    image: //' | sort -u)
 missing=0
 checked=0
 while IFS= read -r ref; do
   [ -z "$ref" ] && continue
   checked=$((checked+1))
-  if err=$(docker manifest inspect "$ref" 2>&1 >/dev/null); then
+  if registry_try "$ref" docker manifest inspect "$ref"; then
     printf '  \033[32mok\033[0m   %s\n' "$ref"
   else
     missing=$((missing+1))
-    printf '  \033[31mFAIL\033[0m %s — %s\n' "$ref" "$(printf '%s' "$err" | head -1)"
+    printf '  \033[31mFAIL\033[0m %s — %s (%s)\n' "$ref" "$registry_err" "$registry_gaveup"
   fi
 done <<EOF
-$(grep -oE '^    image: [^ ]+' "$OVERLAY" | sed 's/^    image: //' | sort -u)
+$release_refs
 EOF
 
 if [ "$checked" -eq 0 ]; then
@@ -292,8 +394,14 @@ echo "── checking the rendered hand-off allowlist ────────�
 # `--format json` rather than the default YAML on purpose: parsing it needs only
 # the standard library, so this guard has no third-party dependency it could be
 # silently skipped for. PyYAML is absent from plenty of machines that can deploy.
-rendered=$(docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" config --format json 2>/dev/null \
-  | python3 -c '
+#
+# Held in a variable rather than piped straight through, because the pull phase
+# below reads the same document for a different question — which images this
+# project will need that are NOT in the release. Rendering it twice would let the
+# allowlist and the pull set be computed from two different resolutions of the
+# same files.
+config_json=$(docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" config --format json 2>/dev/null)
+rendered=$(printf '%s' "$config_json" | python3 -c '
 import sys, json
 try:
     doc = json.load(sys.stdin)
@@ -333,14 +441,129 @@ echo "  allowlist names hub$CF_WEB_SUFFIX and $CF_SITE_HOST ($(printf '%s' "$ren
 
 if [ "$dry_run" -eq 1 ]; then
   echo
-  echo "--dry-run: rendered $OVERLAY and verified $checked image(s). Nothing was changed."
+  echo "--dry-run: rendered $OVERLAY and confirmed $checked image(s) exist in the registry."
+  echo "Nothing was pulled, and no container was created, started or stopped."
   exit 0
 fi
+
+# ── PULL EVERYTHING, THEN SWITCH. THEY USED TO BE ONE STEP ────────────────────
+#
+# `docker compose up -d` interleaves the two: for each service in turn it pulls
+# the image and then recreates the container. One `denied` on the 30th of 48
+# images therefore aborted the deploy PARTWAY — 29 services on the new release
+# and 19 on the old one, mid-flight, with no single version anywhere.
+#
+# That is the one outcome the release mechanism exists to prevent. The whole
+# point of shipping one version across every deployable is that the estate is
+# only ever tested as a set; a half-applied release is a combination nobody has
+# ever run and that no manifest describes, so `--rollback` cannot even name what
+# to go back to for the half that moved.
+#
+# A deploy that fails before it has touched anything is recoverable. One that
+# fails halfway is an outage. So: fetch every image first, prove every one of
+# them is on this host, and only then let compose replace containers. Everything
+# above this line is a pre-flight; everything below it changes the estate.
+#
+# WHY NOT `docker compose pull`. 77 of the 81 services in the base file carry a
+# `build:` and no `image:` at all — they only get one from the release overlay —
+# so a project-wide pull asks the registry for `<project>-<service>` names that
+# were never published. The refs are taken from the overlay instead, which is
+# the same list the verify phase above just checked.
+#
+# The second list is everything compose will still need that the release does not
+# name: `postgres:17-alpine` and friends, present on a running host and absent on
+# a fresh one. A service that keeps its `build:` after the overlay is applied is
+# excluded, because compose builds those rather than pulling them.
+echo "── pulling every image before any container is replaced ─────────────────"
+pull_refs=$(
+  {
+    printf '%s\n' "$release_refs"
+    printf '%s' "$config_json" | python3 -c '
+import sys, json
+try:
+    doc = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+for spec in (doc.get("services") or {}).values():
+    if spec.get("build"):
+        continue
+    image = spec.get("image")
+    if image:
+        print(image)
+' 2>/dev/null
+  } | grep -v '^[[:space:]]*$' | sort -u
+)
+
+pulled=0
+unpullable=0
+while IFS= read -r ref; do
+  [ -z "$ref" ] && continue
+  if registry_try "$ref" docker pull --quiet "$ref"; then
+    pulled=$((pulled + 1))
+    printf '  \033[32mpulled\033[0m %s\n' "$ref"
+  else
+    unpullable=$((unpullable + 1))
+    printf '  \033[31mFAIL\033[0m   %s — %s (%s)\n' "$ref" "$registry_err" "$registry_gaveup"
+  fi
+done <<EOF
+$pull_refs
+EOF
+
+if [ "$unpullable" -gt 0 ]; then
+  echo >&2
+  echo "$unpullable of $((pulled + unpullable)) image(s) could not be pulled. NOT DEPLOYING." >&2
+  echo "       A 'denied' that survived $REGISTRY_ATTEMPTS attempts is usually the GHCR" >&2
+  echo "       visibility trap — a package that inherited a private repository's" >&2
+  echo "       visibility — rather than a busy registry." >&2
+  echo "       NO CONTAINER WAS CREATED, STARTED OR STOPPED. The estate is still running" >&2
+  echo "       the release it was running before this command, in one piece, and re-running" >&2
+  echo "       this command once the images are pullable is the whole remedy." >&2
+  exit 1
+fi
+
+# Pulled and present are different claims, and only the second one is what the
+# switch below depends on. A pull can report success for a reference this host
+# then cannot resolve — a manifest list with no entry for its platform is the
+# usual way — so the thing that is actually required is asserted directly rather
+# than inferred from the exit status of the thing that was supposed to cause it.
+absent=0
+while IFS= read -r ref; do
+  [ -z "$ref" ] && continue
+  docker image inspect "$ref" >/dev/null 2>&1 && continue
+  absent=$((absent + 1))
+  printf '  \033[31mABSENT\033[0m %s\n' "$ref"
+done <<EOF
+$pull_refs
+EOF
+
+if [ "$absent" -gt 0 ]; then
+  echo >&2
+  echo "$absent image(s) pulled without error and are not on this host. NOT DEPLOYING." >&2
+  echo "       Nothing has been changed. Most often this is an image published for another" >&2
+  echo "       platform only — check \`docker manifest inspect\` for a matching architecture." >&2
+  exit 1
+fi
+echo "  all $pulled image(s) are on this host; the switch below needs no registry"
 
 echo "── deploying ────────────────────────────────────────────────────────────"
 # The overlay is second so it wins. The base keeps owning environment, ordering,
 # health checks and ports; the release owns only which image runs.
-if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d; then
+#
+# `--pull never` is what makes the phase split above load-bearing rather than
+# merely earlier. Without it the split is a convention — compose would still be
+# free to reach for the registry mid-switch and fail on the 30th service — and
+# with it a partway abort caused by a registry cannot happen, because the switch
+# phase is no longer allowed to talk to one. Every image it needs was just
+# asserted present by name.
+#
+# Probed rather than assumed: the flag arrived in compose v2.15 and this refuses
+# to hand an older CLI an option it would reject, which would abort the deploy
+# for the guard rather than for anything wrong with the release.
+PULL_POLICY=()
+if docker compose up --help 2>&1 | grep -q -- '--pull'; then
+  PULL_POLICY=(--pull never)
+fi
+if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d ${PULL_POLICY[@]+"${PULL_POLICY[@]}"}; then
   echo
   echo "release $version is up."
 

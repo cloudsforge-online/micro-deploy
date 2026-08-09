@@ -414,8 +414,73 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"
 # `micro-settlement`, which owns it. It will block BTC and DOGE identically —
 # same family, same auth scheme — so it is worth fixing before those are wired
 # rather than discovering it three more times.
+#
+# ── `doge` AND `etc`, WIRED AND DELIBERATELY UNSET (micro-settlement#8) ───────
+#
+# micro-settlement#8 gave both chains a real adapter — DOGE reuses `bitcoin.ts`
+# with its own address kind, dust floor, relay floor and fee ceilings; ETC reuses
+# `evm.ts` unchanged because it is pre-London and that builder has only ever
+# signed legacy type-0. Both are OPTIONAL KEYS ON THIS MAP AND NOTHING ELSE.
+# `settlement/.env.example` says so in as many words: "THIS IS THE ONLY PLACE A
+# CHAIN IS TURNED ON, AND THERE IS NO PER-CHAIN VARIABLE TO ADD" — a
+# `SETTLEMENT_DOGE_RPC_URL` here would be a second answer to a question this map
+# already answers, and the two would disagree the first time somebody edited one.
+# That is rule 9 of docs/ecosystem/03 §2, which is why the service did not add
+# the variables and why this file must not add them either.
+#
+# WITHOUT THE KEYS THE CHAINS ARE NOT MERELY OFF, THEY ARE MISREPORTED. Both are
+# in `contracts-chain`, so wallet will mint a deposit address and custody will
+# hold it; settlement reports `no_endpoint` in its boot line and refuses each
+# request by name (`chainStatuses`, `settlement/src/index.ts`). That refusal is
+# the correct and permanent one, and the same argument the `ltc` note above
+# makes applies unchanged: absent beats wrong, because a key pointed at a node
+# that is not there turns a named operator-actionable classification into an
+# `unclassified` connection failure that costs a round trip per tick and tells
+# nobody.
+#
+# SO BOTH SHIP UNSET, AND THE MEASUREMENTS ARE WHY. Read on the estate host
+# 2026-08-09. The UTXO and EVM nodes here are HOST PROCESSES rather than
+# containers — `pgrep -a dogecoind` finds them, binaries under
+# `/data/docs/<coin>-<version>/bin/`, data under `/data/chains/<coin>`:
+#
+#   DOGE  `dogecoind 1.14.9` IS running, `-dbcache=450 -par=1
+#         -maxconnections=24`, RPC bound inside the docker bridges. NOT READY:
+#         5,009,958 of 5,606,914 blocks, `verificationprogress` 0.3607,
+#         `initialblockdownload: true`. A node in IBD answers
+#         `getblockchaininfo` happily and lies about everything that matters —
+#         an unspent output it has not reached yet is one it will report as
+#         absent, so a sweep would be built against a balance that is a third of
+#         a chain out of date.
+#   ETC   NO NODE RUNS ON THIS HOST. `core-geth 1.12.22` is unpacked at
+#         `/data/docs/core-geth-1.12.22`, the datadir exists at
+#         `/data/chains/ethereum-classic` -> `/data2/chains/ethereum-classic`
+#         (1.9G, plus a 1.8G `.old` beside it), and `/etc/rc.local` carries a
+#         COMMENTED-OUT launch line for it on port 8555 — 8545 belongs to the
+#         Hearth seed node. Its log stops on 2026-08-08 at `state download in
+#         progress synced=4.41%` followed by `Rewinding blockchain to block
+#         target=411,330`. So the intent is recorded, the sync is 4% done and
+#         abandoned, and no process is listening.
+#
+# Both entries therefore exist as INTERPOLATIONS and neither is set anywhere. An
+# operator who finishes either sync sets one variable in
+# `compose/estate/tokens.env` and the key appears, with no change to this file
+# and no change to the service — which is the whole property being bought here,
+# and the same one `ltc` already demonstrated.
+#
+# THE `${VAR:+,"key":"$VAR"}` FORM IS LOAD-BEARING AND IS NOT DECORATION. An
+# unset variable must contribute NOTHING — not an empty entry. `,"doge":""`
+# would parse as JSON and then be refused by `jsonMap` with
+# `SETTLEMENT_RPC_URLS.doge must be a non-empty string`, which is thrown at
+# import from an eager `env.ts`: a boot failure, on the migrator as well as the
+# service, taking settlement down for the chains that ARE configured. A stray
+# comma is worse still — the value stops being JSON at all and the same import
+# throws before anything else is read. `scripts/check-settlement-rpc-urls.py`
+# renders this anchor through real `docker compose` in all eight combinations of
+# the three optional variables and asserts every one is valid JSON with no empty
+# value, because the failure it guards is one nobody sees until a container will
+# not start.
 x-settlement-rpc-urls: &settlement-rpc-urls
-  '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}}'
+  '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}${DOGE_RPC_URL:+,"doge":"$DOGE_RPC_URL"}${ETC_RPC_URL:+,"etc":"$ETC_RPC_URL"}}'
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WHICH NETWORK THE MONEY TIER THINKS IT IS ON — AND IT WAS NOT THIS ONE.
@@ -2546,25 +2611,57 @@ services:
   # is 4100 — IDENTITY'S HOST PORT IN THIS FILE — so it is normalised to 4000 for
   # the reason argued in the aetherholm block above.
   #
-  # ── EMBERKIN_SERVICE_TOKEN IS A TOKEN AND MUST NOT BE HANDED A CREDENTIAL ───
+  # ── THE TEN-MINUTE CLIFF, AND THE REMEDY THIS BLOCK USED TO ONLY PREDICT ────
   #
-  # This is the tessera trap again, and it is worth stating per service because
-  # the variable NAME is not what settles it. `emberkin/src/index.ts` is
-  # `const token = (): string => env.serviceToken` — the value is PRESENTED as a
-  # bearer, verbatim, with no exchange. So it must be a ten-minute JWT from
-  # `POST /service-tokens`, and it is minted in `estate-bootstrap.sh`'s
-  # CREDENTIALS list. Handing it `EMBERKIN_IDENTITY_CREDENTIAL` — which section
-  # 5b already mints, and which is sitting in `tokens.env` looking like the
-  # obvious answer — would send its three upstreams a Bearer that is not a JWT
-  # and earn a 401 with nothing in either log naming the cause.
+  # What stood here said `EMBERKIN_SERVICE_TOKEN` "is a TOKEN and must not be
+  # handed a credential": `emberkin/src/index.ts` was `const token = (): string
+  # => env.serviceToken`, presenting the value verbatim as a Bearer with no
+  # exchange, so it had to be a ten-minute JWT from `POST /service-tokens` and a
+  # `cfsc_…` in that slot earned a 401 from all three upstreams with nothing in
+  # either log naming the cause. It then recorded the cliff as real and named the
+  # remedy: "micro-emberkin adopting `ServiceTokenProvider` and reading the
+  # credential instead".
   #
-  # The ten-minute expiry is therefore REAL here, and is recorded rather than
-  # hidden: this is the same cliff that froze EMBER through `ledger`, and the
-  # same remedy applies — micro-emberkin adopting `ServiceTokenProvider` and
-  # reading the credential instead. Unlike ledger's, emberkin's calls are on
-  # request paths rather than a 900-second timer, so a bootstrap is not
-  # guaranteed to outrun it; it fails when a player acts more than ten minutes
-  # after one.
+  # micro-emberkin#3 is that remedy, merged. `src/upstreams.ts` now exchanges
+  # `EMBERKIN_IDENTITY_CREDENTIAL` at `POST /service-tokens/exchange` and
+  # re-mints before expiry, the same way tessera, community, market and foresight
+  # already do. So the credential is wired below and the cliff is gone: emberkin's
+  # calls are on REQUEST paths rather than a 900-second timer, so a bootstrap was
+  # never guaranteed to outrun the expiry — it failed whenever a player acted more
+  # than ten minutes after one, which is not a state anything alerted on.
+  #
+  # ── THE ORDER OF THESE TWO LINES IS THE WHOLE DEPLOY RULE ───────────────────
+  #
+  # `env.ts` requires ONE OF the two and both slots are individually optional, so
+  # removing `EMBERKIN_SERVICE_TOKEN` before the credential is in place leaves
+  # neither satisfiable and emberkin refuses to boot at the door — `emberkin-migrate`
+  # with it, since it loads the same `env.ts`. The token therefore STAYS here for
+  # now and comes out in a later release, once every environment has run a
+  # bootstrap. Until the credential is present the service runs in `static` mode
+  # and behaves exactly as it does today, announcing the mode at boot, so there is
+  # nothing to hurry.
+  #
+  # Both slots refuse the OTHER'S value by name — `optionalMintedToken` demands a
+  # JWT, `assertServiceCredential` refuses one — so the two cannot be swapped by a
+  # deploy in a hurry, in either direction.
+  #
+  # ── AND THE PLACEHOLDER DEFAULT HAD TO GO WITH IT ───────────────────────────
+  #
+  # `${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}` was
+  # defensible while the slot was REQUIRED: it let a bootstrap-less host render.
+  # It cannot survive the slot becoming optional. That literal is 40 characters
+  # and does not match `/^ey[A-Za-z0-9_-]*\./`, so `optionalMintedToken` THROWS on
+  # it — meaning a host with a perfectly good credential and no minted token would
+  # crash-loop on the variable that is only still here for the rollout. Defaulted
+  # empty instead, which `env.ts` reads as absence ("absent and empty are the same
+  # thing here", says its own comment), leaving the credential to satisfy the
+  # check. Where neither is set the boot error now names both variables and the
+  # command that mints them, rather than complaining about the shape of a
+  # placeholder this file invented.
+  #
+  # No `IDENTITY_URL`: `env.ts` falls back to `IDENTITY_ISSUER`, which
+  # `*identity-trust` already supplies — the same reason tessera and community
+  # do not set it either.
   #
   # Its grant is DERIVED and already present: billing:read, ledger:post,
   # worlds:title, from BILLING_SCOPES, LEDGER_SCOPES and WORLDS_SCOPES in its own
@@ -2583,7 +2680,13 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       WORLDS_URL: http://worlds:4000
-      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # The credential FIRST and the token still beside it — see the ordering note
+      # in this block's header. `emberkin-migrate` needs both lines for the same
+      # reason it needs the three URLs above: it loads the same `env.ts`, which
+      # builds the whole config before it opens a connection, and it dials none
+      # of them.
+      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
       INSTANCE_ID: emberkin-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -2601,7 +2704,14 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       WORLDS_URL: http://worlds:4000
-      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # The long-lived `cfsc_…` this service exchanges for short tokens. Section 5b
+      # of `estate-bootstrap.sh` has minted it all along and nothing read it —
+      # confirmed present in the mainnet tokens file 2026-08-09, by key name.
+      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
+      # Still wired, deliberately, and it comes out in a later release. Removing it
+      # in the same change that adds the line above is the one ordering that will
+      # not boot.
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
       INSTANCE_ID: emberkin-estate
     env_file: *outbox-secrets
     ports:

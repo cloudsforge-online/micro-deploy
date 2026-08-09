@@ -482,6 +482,145 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-release-render-pins-profiles.py
 
+      # ── AND THE PROVENANCE CHECK SURVIVES THE MECHANISM IT VERIFIES ──────────
+      #
+      # The step above proves a release is pinned to a digest. This one proves the
+      # check that answers "what is running, and which git ref built it?" can still
+      # read the estate afterwards. It could not: it split the `docker ps` image
+      # reference on `:`, and a digest reference has no tag to find.
+      #
+      # 2.5.8 is the first release deployed by digest, so this is not hypothetical
+      # and the failure is not quiet. Measured 2026-08-09 against the docker CLI
+      # with `/containers/json` served by a stub, `{{.Image}}` on the estate's
+      # image store renders a digest-pinned container as
+      # `ghcr.io/cloudsforge-online/micro-identity` — the digest deleted, nothing
+      # left that parses as a version — so all 46 services would have reported
+      # MISMATCH at once, during a release, reading as a provenance emergency
+      # rather than as the check's own defect.
+      #
+      # The rows fed to it are built from the REAL renderer's output resolved by
+      # REAL `docker compose config`, so the label that carries the tag onto a
+      # digest-pinned container is exercised across the seam rather than typed
+      # twice. `node` is needed because the check reads each package.json version
+      # with `node -p`; it is already installed for micro-ui above.
+      - name: The provenance check can still read a digest-pinned estate
+        working-directory: deploy
+        run: python3 scripts/check-provenance-reads-digest-pins.py
+
+      # ── SETTLEMENT'S CHAIN MAP IS JSON IN EVERY COMBINATION, OR IT IS A LOOP ──
+      #
+      # `x-settlement-rpc-urls` builds a JSON object by string concatenation out of
+      # `${VAR:+,"key":"$VAR"}` fragments — one per optional chain, now `ltc`,
+      # `doge` and `etc` (micro-settlement#8). A comma one character outside an
+      # expansion, or a `:-` where a `:+` was meant, and the value stops being JSON
+      # or gains an empty entry.
+      #
+      # Either is FATAL rather than degraded: settlement's `env.ts` is eager and
+      # `src/migrator.ts` imports it, so a malformed map throws at import on the
+      # migrator as well as the service, under `restart: unless-stopped`. The whole
+      # point of micro-settlement#8 making an absent endpoint a `no_endpoint`
+      # STATUS was to keep one unconfigured chain off the six that are configured,
+      # and a bad render here hands that property straight back.
+      #
+      # All eight combinations of the three optional variables, rendered by real
+      # compose from the anchor READ OUT of the estate file rather than copied into
+      # the check. PyYAML installed in this step rather than relied upon from an
+      # earlier one, for the reason the step below gives: a check whose correctness
+      # depends on the order of the steps around it breaks silently when somebody
+      # reorders them.
+      - name: Settlement's RPC map is valid JSON with any set of chains configured
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-settlement-rpc-urls.py
+
+      # ── A DEPLOY THAT FAILS HALFWAY IS AN OUTAGE, SO IT MUST FAIL BEFOREHAND ──
+      #
+      # `release-deploy.sh` shipped the whole release with one `docker compose
+      # up -d`, and compose interleaves the phases: for each service in turn it
+      # pulls the image and then recreates the container. One `denied` from GHCR
+      # on the 30th of 48 images therefore aborted the deploy PARTWAY — some
+      # services on the new release and the rest on the old one, a combination no
+      # manifest describes and that `--rollback` cannot name a previous version
+      # for, because the two halves are on different releases.
+      #
+      # A registry that answers `denied` or `TOO MANY REQUESTS` under load is
+      # ordinary, and turning that into an estate-wide inconsistency is not.
+      #
+      # The behaviour under test is a MISBEHAVING REGISTRY, and no real one can be
+      # asked to fail twice and then succeed, so `docker` is a stub playing a
+      # scripted sequence per reference while `docker compose config` passes
+      # through to the real CLI — the overlay merge and the interpolation that
+      # decide which images get pulled are genuine. `compose up` is recorded and
+      # never run.
+      #
+      # The ordering is asserted by the ORDER of the recorded invocations rather
+      # than by their presence, because "it pulls and it switches" was true of the
+      # broken version too.
+      - name: A release is pulled in full before any container is replaced
+        working-directory: deploy
+        run: python3 scripts/check-release-deploy-pulls-before-switching.py
+
+      # ── A CREDENTIAL IS A SECRET, AND A MISSPELT ONE IS SILENTLY ABSENT ──────
+      #
+      # Eighteen service blocks are handed a long-lived `cfsc_…` credential they
+      # exchange for short-lived tokens, and the compose block's only job is to
+      # pass it through as `NAME: ${NAME:-}`. That line has two silent failures.
+      #
+      # Wire it to the wrong variable name and it interpolates to EMPTY on every
+      # host forever; every `env.ts` in the estate reads empty as absent, so the
+      # container boots, serves, and falls back to whatever it has left with no
+      # error anywhere. `estate-bootstrap.sh` minted `MARKET_IDENTITY_CREDENTIAL`
+      # for months and nothing read it, and `estate-verify.sh` found six testnet
+      # services running on an empty one.
+      #
+      # Paste the value instead of the interpolation and a real credential is in
+      # a public repository, which is the failure that cannot be undone — the
+      # remedy is a rotation, not a `git rm --cached`. The check never echoes a
+      # value it rejects, because a CI log is a second public place.
+      #
+      # It also holds the emberkin transition to its ORDER. micro-emberkin#3 made
+      # the credential the way it authenticates and kept `EMBERKIN_SERVICE_TOKEN`
+      # accepted for the length of a rolling deploy, so removing the token before
+      # the credential is present leaves neither variable satisfiable and the
+      # service refuses to boot — taking `emberkin-migrate` with it.
+      - name: Every service credential is an interpolation, spelt like its own variable
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-service-credential-wiring.py
+
+      # ── ONE ESTATE'S ENV FILE, THE OTHER ESTATE'S TOKENS, AND NO COMPLAINT ───
+      #
+      # Bringing an estate up takes TWO `--env-file` paths, and until micro-org#238
+      # every entry point treated them as independent values. Pair testnet's env
+      # file with the mainnet tokens file and compose merges them in order and says
+      # nothing: the stack comes up under testnet's project name, every banner in
+      # `release-deploy.sh` says testnet — it derives the environment from the
+      # estate file ALONE — and the containers hold mainnet's service credentials,
+      # operator password and custody keyring selection.
+      #
+      # Nothing fails loudly, which is the whole problem. The credentials are real;
+      # they belong to the other estate. The visible symptom is testnet identity
+      # answering 401 to callers that look entirely correct, and the invisible one
+      # is a component that does not reject them.
+      #
+      # The pairing is enforced at RUNTIME by `check-env-files-agree.sh`, because
+      # `ESTATE_ENV` and `TOKENS_FILE` are both overridable and no static check can
+      # see what an operator types. This step exercises that refusal against both
+      # crossed pairs and both correct ones rather than grepping it, then reads
+      # every tracked file that invokes compose and fails any single command whose
+      # `--env-file` arguments name both estates — the Makefile spells a pairing out
+      # four times.
+      #
+      # It also asserts both entry points still CALL the refusal. A guard nothing
+      # invokes is a guard nothing runs, and this repository has shipped exactly
+      # that before: `surface-routes.py` sat here for weeks with no CI step, which
+      # is how the thing it guards went wrong to begin with.
+      - name: No command pairs one estate's env file with the other's tokens
+        working-directory: deploy
+        run: python3 scripts/check-env-file-pairing.py
+
       # ── THE POOL'S WEBSOCKET CONFIGURATION IS COHERENT, OR IT IS A CRASH LOOP ─
       #
       # micro-org#289 gave micro-pool a Stratum transport a browser can dial, and
