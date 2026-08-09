@@ -481,3 +481,35 @@ jobs:
       - name: A release overlay pins profile-gated services too
         working-directory: deploy
         run: python3 scripts/check-release-render-pins-profiles.py
+
+      # ── THE POOL'S WEBSOCKET CONFIGURATION IS COHERENT, OR IT IS A CRASH LOOP ─
+      #
+      # micro-org#289 gave micro-pool a Stratum transport a browser can dial, and
+      # with it two boot REFUSALS: `IDENTITY_JWKS_URL` and `IDENTITY_ISSUER` are
+      # both-or-neither, and `POOL_WEBSOCKET_PUBLIC_ORIGIN` set while identity is
+      # unset refuses outright — advertising an endpoint nobody can authenticate
+      # to is micro-org#285's defect with the sign flipped.
+      #
+      # Both refusals are right in the service and both are a crash loop in a
+      # deploy, and this is the worst service in the file to ship one on. `pool`
+      # sits behind `profiles: ["pool"]` and is started BY HAND, so nothing in an
+      # ordinary `up` would touch it: the container that restarts forever is found
+      # days after the commit by whoever finally wants a miner. The same argument
+      # as the step above, about the same service, for the same reason.
+      #
+      # It reads the compose files with merge keys RESOLVED, which is the whole
+      # reason it is a script and not a grep: the identity pair reaches `pool`
+      # through the `*identity-trust` anchor, four thousand lines from the block
+      # that uses it, so a text search for the two names finds nothing on the
+      # service and would pass a compose that had genuinely dropped them.
+      #
+      # PyYAML for that reason, installed here rather than relied upon from the
+      # tunnel step above — a check whose correctness depends on the ORDER of the
+      # steps around it is one that breaks silently when somebody reorders them.
+      # The script treats a missing PyYAML as a failure, never a skip, the same
+      # call `cloudflared/gen.py --strict` makes.
+      - name: The pool advertises a WebSocket it can actually authenticate
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-pool-websocket-config.py
