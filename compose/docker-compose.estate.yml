@@ -979,6 +979,7 @@ services:
          "market":["indexer:read","ledger:post","policy:decide"],
          "mint":["custody:address:create","custody:sign:deployer","indexer:read","ledger:post"],
          "nda":["billing:read","worlds:title"],
+         "pool":["ledger:post"],
          "settlement":["custody:sign:deposit","custody:sign:treasury","custody:treasury:read","indexer:read","indexer:write","ledger:post"],
          "tessera":["ledger:post","ledger:reserve","studio:read","studio:write"],
          "trade":["ledger:post","ledger:read","ledger:reserve","pricing:read"],
