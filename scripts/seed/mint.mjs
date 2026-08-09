@@ -12,14 +12,27 @@
  * platform to say about its own tokens, so it is seeded.
  *
  * **`POST /v1/tokens/:id/pay` is NOT called, and that is the honest stopping
- * point rather than an omission.** Paying debits `MINT_DEPLOY_PRICE_SHARDS`
- * (2,500) of real SHARD from the owner's micro-ledger balance
- * (`orders.ts`). The operator has no SHARD, and the only way to get some
- * would be to post a ledger entry crediting it — money invented to make a
- * surface look busy. `21-engagement-treasury.md` §2 refuses exactly that class
- * of thing, and it does not become acceptable because the invented balance is
- * spent inside the estate rather than outside it. So the orders stop where the
- * money starts.
+ * point rather than an omission.** Paying quotes the catalogue's USD price into
+ * mint's settlement asset at micro-pricing's rate and debits that much real
+ * money from the owner's micro-ledger balance (`mint/src/orders.ts`, whose
+ * `payForDeploy` calls `deps.pricing.quote(deps.settlementAsset, cents)` and
+ * then posts the debit in `deps.settlementAsset`). The operator holds nothing
+ * to pay it with, and that is measured rather than assumed: on 2026-08-09 the
+ * mainnet ledger held 39 accounts and NOT ONE of them belonged to
+ * `user:019fcd54-…`, the estate admin — no account in any asset, so no balance
+ * in any asset. The only way to make one appear would be to post a ledger entry
+ * crediting it — money invented to make a surface look busy.
+ * `21-engagement-treasury.md` §2 refuses exactly that class of thing, and it
+ * does not become acceptable because the invented balance is spent inside the
+ * estate rather than outside it. So the orders stop where the money starts.
+ *
+ * **This paragraph said `MINT_DEPLOY_PRICE_SHARDS` (2,500) of real SHARD until
+ * 2026-08-09, and every clause of that is now false.** SHARD was retired on
+ * 2026-08-04, and mint does not merely ignore the old variable — it refuses to
+ * start with it set: "MINT_DEPLOY_PRICE_SHARDS is retired with the asset it
+ * names" (`mint/src/env.ts`). The price is `MINT_DEPLOY_PRICE_USD_CENTS` and
+ * the debit is in the settlement asset, neither of which is a Shard.
+ * micro-org #227.
  *
  * `POST /v1/tokens/:id/deploy` is not called either, and here the reason is
  * simply that it cannot work: `MINT_RPC_URLS` is unset in the estate's compose
@@ -68,6 +81,56 @@ import { api, ok, bad, skip, note, head, ROOT, MINER_DATA } from './lib.mjs'
  * skipped rather than fed a made-up address — a token order naming an address
  * nobody controls is a lie about who would own the token.
  */
+/**
+ * What one deploy costs, in the units the catalogue itself states — or `null`
+ * when it states none.
+ *
+ * ── THIS REPLACES `${catalogue.body.priceShards} SHARD`, WHICH PRINTED THE
+ *    WORD "undefined" AT AN OPERATOR ─────────────────────────────────────────
+ *
+ * Two call sites below interpolated `priceShards`. mint REMOVED that field from
+ * `GET /v1/catalogue` rather than renaming it in place, and said why at the
+ * point of removal: "A removed field is a 'undefined' a client can notice; a
+ * silently re-based one is not" (`mint/src/server.ts`). The notice was never
+ * taken here, so both sites emitted `undefined SHARD per deploy`.
+ *
+ * Measured against mainnet mint from the estate host on 2026-08-09,
+ * `GET /v1/catalogue` answers
+ *
+ *   {"priceUsdCents":"2500","settlementAsset":"EMBER","network":"mainnet",…}
+ *
+ * with no `priceShards` key at all. micro-org #227.
+ *
+ * ── THE UNIT IS READ, NEVER TYPED ──────────────────────────────────────────
+ *
+ * `settlementAsset` comes off the response instead of a literal `'EMBER'` here.
+ * A hand-typed asset code in a seeder is precisely how `SHARD` outlived its own
+ * retirement in seven repositories: the service that owns the decision changes
+ * it, and the copy that named it does not. mint types that field
+ * `IssuableAssetCode` (`mint/src/env.ts`), so whatever arrives here cannot be a
+ * retired asset — a guarantee no string in this file could offer.
+ *
+ * ── AND AN ABSENT PRICE IS `null`, NEVER `0` ───────────────────────────────
+ *
+ * `priceUsdCents` is nullable on mint's wire: `toWire` serves
+ * `token.priceUsdCents?.toString() ?? null` for any order row written before
+ * mint's migration 6 (`mint/src/tokens.ts`). A `?? 0` anywhere on this path
+ * would render a paid order as free — the one wrong answer an operator has no
+ * reason to question — so "not stated" is reported as not stated. The catalogue
+ * route always states a price today; the decoding does not depend on that
+ * staying true.
+ */
+function deployPrice(body) {
+  const cents = body?.priceUsdCents
+  // `/^\d+$/` before `BigInt`, because `BigInt('')` is `0n` and `BigInt(' 7 ')`
+  // is `7n` — an empty or padded string would otherwise print as a real price.
+  if (typeof cents !== 'string' || !/^\d+$/.test(cents)) return null
+  const n = BigInt(cents)
+  const usd = `$${(n / 100n).toString()}.${(n % 100n).toString().padStart(2, '0')}`
+  const asset = typeof body?.settlementAsset === 'string' ? body.settlementAsset : null
+  return asset ? `${usd} (${cents} US cents), settled in ${asset}` : `${usd} (${cents} US cents)`
+}
+
 function ownerAddress() {
   // `MINER_DATA` is `lib.mjs`'s, and it looks in `../miner-keys/<network>` —
   // the layout `compose/docker-compose.miners.yml` already declares — before
@@ -187,9 +250,10 @@ export async function seedMint(token) {
   // are buildable. Public, no token — a shop that needs a sign-in to show its
   // prices cannot be browsed by anybody who has not signed up.
   const catalogue = await api('mint', '/v1/catalogue', { expect: 200 })
+  const price = deployPrice(catalogue.body)
   note(
     `catalogue: ${catalogue.body.variants?.length ?? 0} variants, ` +
-      `${catalogue.body.priceShards} SHARD per deploy, network ${catalogue.body.network}`,
+      `${price ?? 'no price stated'} per deploy, network ${catalogue.body.network}`,
   )
 
   const mine = await api('mint', '/v1/tokens', { token, expect: 200 })
@@ -250,8 +314,9 @@ export async function seedMint(token) {
   }
 
   skip(
-    `no order was PAID. Paying debits ${catalogue.body.priceShards} SHARD of real ledger balance, ` +
-      'the operator holds none, and crediting some to make the surface busier would be inventing ' +
+    `no order was PAID. Paying quotes the catalogue price — ${price ?? 'which this catalogue does not state'} ` +
+      '— into that asset at micro-pricing\'s rate and debits it from real ledger balance. The ' +
+      'operator holds none, and crediting some to make the surface busier would be inventing ' +
       'money — which is the thing 21-engagement-treasury.md §2 refuses, not a smaller cousin of it.',
   )
   skip(
