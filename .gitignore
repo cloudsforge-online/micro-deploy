@@ -86,7 +86,7 @@ compose/docker-compose.release*
 # matches that exact name and nothing else, so the file an operator makes BEFORE
 # editing the real one — `.env.bak-311`, `.env.2026-08-10`, `.env.old` — was
 # untracked-and-unignored, which is the state `git add -A` sweeps up. That is not
-# hypothetical: fixing micro-org#40 on the mainnet host produced `.env.bak-311`
+# hypothetical: fixing micro-org#321 on the mainnet host produced `.env.bak-311`
 # holding every value the live `.env` holds, and `git status` listed it beside
 # the change being committed. It was moved out of the work tree at 0600 rather
 # than deleted, because a backup of a credential file is a sensible thing for an

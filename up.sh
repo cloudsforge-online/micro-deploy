@@ -26,7 +26,7 @@ mkdir -p prometheus/secrets alertmanager/secrets
 # degraded-but-honest rather than refusing to start.
 [[ -f .env ]] && set -a && . ./.env && set +a
 
-# ── WRITING A SECRET MUST NOT BE A WAY OF DESTROYING ONE (micro-org#40) ───────
+# ── WRITING A SECRET MUST NOT BE A WAY OF DESTROYING ONE (micro-org#321) ──────
 #
 # Every line below used to be a bare `printf '%s' "${VAR:-}" > file`, which turns
 # an unset variable into an ERASED credential. That is not hypothetical and it

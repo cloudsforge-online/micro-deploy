@@ -120,7 +120,7 @@ scrape_configs:
   # nobody having staged it yet, and on 2026-08-10 the host's checkout had it
   # modified with a real token in the working tree. `../up.sh` creates it
   # unconditionally now, so the path always exists and `.gitignore` can refuse
-  # it outright (micro-org#40).
+  # it outright (micro-org#321).
   - job_name: beacon
     scheme: http
     # Beacon holds live state in memory and its /metrics never touches Postgres
