@@ -1110,10 +1110,19 @@ http:
     # in this file and cannot: Traefik has no HTTP router that could carry a
     # newline-delimited JSON-RPC stream, and the Cloudflare Tunnel in front of this
     # gateway cannot forward it either. The pool container publishes that port
-    # itself, bound to loopback by default. The consequence is that
-    # `pool.<apex>` serves a page describing a connection nobody outside this
-    # host can yet make — a named hole rather than a broken promise, and it is
-    # named on the page.
+    # itself, bound to loopback by default.
+    #
+    # The consequence used to be that `pool.<apex>` described a connection nobody
+    # outside this host could make. Since micro-org#285 it is smaller and more
+    # honest than that: the page no longer describes the connection at all unless
+    # somebody has published one. `GET /v1/pool` — served from this very hostname
+    # by `cf-api-pool` below — returns the stratum endpoint only when the operator
+    # has named it in `POOL_STRATUM_PUBLIC_HOST` and `POOL_<CHAIN>_STRATUM_PUBLIC_
+    # PORT`, and returns null otherwise. It specifically does not derive one from
+    # the request `Host`, which would produce this hostname: a name that resolves
+    # to Cloudflare, on a port Cloudflare does not carry, handed to a stranger's
+    # firmware as if it were a working address. So today the page says no endpoint
+    # is published, which is true, instead of publishing one that is not.
     cf-web-pool:
       rule: 'Host(`pool{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500

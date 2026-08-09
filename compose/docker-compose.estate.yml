@@ -4068,14 +4068,23 @@ services:
   #      drift that refused every EMBER withdrawal for three days on 2026-08-05
   #      (micro-org#247, #248). A `pool` purpose is being added to custody; until
   #      it lands there is no address this can honestly hold.
-  #   2. **POOL_FEE_BASIS_POINTS — required, with no default anywhere.** 36 §7.1
-  #      records that the pool fee has NOT been chosen and that it should be
-  #      chosen "before the first miner connects rather than after". `pool/src/env.ts`
-  #      refuses to start without it for that reason: a default of 0 would answer
-  #      the question with "free" and a default of 200 with "2%", either of them in
-  #      the file least likely to be read by whoever eventually decides. This file
-  #      does not answer it either. It is passed through, empty, so the refusal
-  #      happens where the reasoning is written down.
+  #   2. **POOL_FEE_BASIS_POINTS — chosen on 2026-08-09: 1%, 100 basis points.**
+  #      36 §7.1 asked for it to be chosen "before the first miner connects rather
+  #      than after", and it now has been. Until today this line passed an empty
+  #      string through on purpose — a default of 0 would have answered the question
+  #      with "free" and a default of 200 with "2%", either of them written in the
+  #      file least likely to be read by whoever eventually decided. That is why the
+  #      number was not invented here earlier and why it took an actual decision to
+  #      put one here now: the fee is not a tuning knob, it is a term. It is
+  #      multiplied into the coinbase split of every block this pool finds and lands
+  #      in the recorded history of a public chain, where changing it later does not
+  #      restate what it already paid.
+  #
+  #      1% is the low end of what operating pools charge; the pool has no miners
+  #      yet and the first ones will compare it against pools that have been paying
+  #      out for years. `pool/src/env.ts` still uses `requiredInteger` — the default
+  #      below lives in this file, not in the service, so a deployment that unsets
+  #      it does not silently mine for free: the container refuses to start.
   #
   # So the consequence is stated rather than buried, exactly as the faucet's block
   # states its own: a plain `up` brings up NO POOL. Bringing it up is deliberate —
@@ -4103,6 +4112,23 @@ services:
   # by accident. A real miner needs it widened on purpose —
   # `POOL_STRATUM_HOST_BIND=0.0.0.0` — and that is a decision with a blast radius,
   # which is why it is a variable and not a literal.
+  #
+  # As of micro-org#285 it is a TWO-PART decision, and both parts are here. Widening
+  # the bind makes the listener reachable; it does not make the console able to say
+  # so. `GET /v1/pool` reports the endpoint a miner should dial from
+  # `POOL_STRATUM_PUBLIC_HOST` plus `POOL_<CHAIN>_STRATUM_PUBLIC_PORT`, and reports
+  # `null` when either is unset — it never infers one from the request `Host`, which
+  # is what it used to do and which produced `stratum+tcp://pool.cloudsforge.online`,
+  # a name that resolves to Cloudflare and a port Cloudflare does not carry. So a
+  # widened bind with those two unset is a pool that accepts miners while its own
+  # console tells them there is nowhere to connect, and the two variables set with a
+  # loopback bind is the reverse and worse. Set all three or none of them.
+  #
+  # The published port is `POOL_LTC_STRATUM_PUBLIC_PORT` in BOTH roles below: it is
+  # the host side of the port mapping and it is what the service reports. It used to
+  # be `POOL_LTC_STRATUM_PORT` on the mapping alone — a variable the container's own
+  # environment never received, so moving the published port moved the mapping and
+  # nothing else. One name doing both jobs cannot drift from itself.
   pool-migrate:
     profiles: ["pool"]
     <<: *migrate-defaults
@@ -4113,14 +4139,14 @@ services:
       <<: [*common-env, *identity-trust]
       POOL_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pool
       # The migrator imports the same eager `env.ts` the service does, so it needs
-      # every variable the service needs — including the fee, which is why a pool
-      # with no fee chosen does not touch the database either. A migration run for
-      # a service that cannot start is a schema created for nothing.
+      # every variable the service needs — which is why the fee default is repeated
+      # here rather than left to the service. A migration run for a service that
+      # cannot start is a schema created for nothing.
       POOL_NETWORK: *money-network
       POOL_CHAINS: ${POOL_CHAINS:-ltc}
       POOL_LTC_NODE_URL: ${LTC_RPC_URL:-}
       POOL_LTC_PAYOUT_ADDRESS: ${POOL_LTC_PAYOUT_ADDRESS:-}
-      POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-}
+      POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
       INSTANCE_ID: pool-migrate
     depends_on:
       postgres:
@@ -4149,7 +4175,16 @@ services:
       # neither does anything here.
       POOL_LTC_NODE_URL: ${LTC_RPC_URL:-}
       POOL_LTC_PAYOUT_ADDRESS: ${POOL_LTC_PAYOUT_ADDRESS:-}
-      POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-}
+      POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
+      # The endpoint the console hands a stranger, and the second half of the bind
+      # decision described above. Empty by default and empty is a real answer here:
+      # `GET /v1/pool` then reports no stratum endpoint at all rather than guessing
+      # one, which is the whole of micro-org#285. `env.ts` refuses to start if one
+      # of the pair is set without the other, so a half-configured endpoint is
+      # caught while the operator who typed it is still watching — not by a miner
+      # whose firmware silently fails to connect.
+      POOL_STRATUM_PUBLIC_HOST: ${POOL_STRATUM_PUBLIC_HOST:-}
+      POOL_LTC_STRATUM_PUBLIC_PORT: ${POOL_LTC_STRATUM_PUBLIC_PORT:-}
       # Written into every coinbase this pool builds. Capped at 32 bytes here and
       # refused at boot above that: the scriptSig it lives in is capped at 100 by
       # consensus and shares that space with the BIP34 height and the extranonce,
@@ -4160,9 +4195,12 @@ services:
       # 4146 — `deployableRepos()` index 46, immediately after beacon-web's 4145.
       # Derived, not chosen; `make check-web` re-derives it from micro-org.
       - "127.0.0.1:${CF_PORT_BASE:-4}146:4000"
-      # Stratum. See the note above on why this is not behind the gateway and why
-      # the default bind is loopback.
-      - "${POOL_STRATUM_HOST_BIND:-127.0.0.1}:${POOL_LTC_STRATUM_PORT:-3334}:3334"
+      # Stratum. See the note above on why this is not behind the gateway, why the
+      # default bind is loopback, and why the host side reads the PUBLIC port —
+      # the same variable the service reports, so the two cannot disagree. The
+      # container side is the literal 3334 because `POOL_LTC_STRATUM_PORT` is not
+      # passed in and the listener therefore always binds its own default.
+      - "${POOL_STRATUM_HOST_BIND:-127.0.0.1}:${POOL_LTC_STRATUM_PUBLIC_PORT:-3334}:3334"
     depends_on:
       pool-migrate:
         condition: service_completed_successfully
