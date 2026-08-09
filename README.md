@@ -665,7 +665,7 @@ exists in the corresponding container's own environment on the estate.
 **`up.sh` will not empty a file it has nothing to fill it with.** A variable
 missing from `.env` leaves the existing credential alone and says so on stderr;
 this used to be a bare redirect, so a run with `CF_ANALYTICS_TOKEN` unset erased
-a token an operator had written by hand and took the scrape down (micro-org#40).
+a token an operator had written by hand and took the scrape down (micro-org#321).
 Putting the value in `.env` rather than in the file is therefore the durable
 form, and writing the file by hand still works.
 
