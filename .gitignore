@@ -81,7 +81,26 @@ compose/docker-compose.release*
 # `.env.local` below already covers the convention this repository documents. This
 # line covers the one the operator actually used, which is the point: an ignore
 # file is only worth what it stops in practice.
-/.env
+#
+# THE GLOB, AND WHY IT IS NOT JUST `/.env` (2026-08-10). An anchored `/.env`
+# matches that exact name and nothing else, so the file an operator makes BEFORE
+# editing the real one — `.env.bak-311`, `.env.2026-08-10`, `.env.old` — was
+# untracked-and-unignored, which is the state `git add -A` sweeps up. That is not
+# hypothetical: fixing micro-org#40 on the mainnet host produced `.env.bak-311`
+# holding every value the live `.env` holds, and `git status` listed it beside
+# the change being committed. It was moved out of the work tree at 0600 rather
+# than deleted, because a backup of a credential file is a sensible thing for an
+# operator to make and a terrible thing for an ignore rule to be silent about.
+#
+# This is the same near-miss the `tokens*.env` block at the top of this file
+# already records, made a second time in a second place: a rule fixed on the
+# suffix, and a backup whose name grows a new tail. Widening the glob and then
+# naming the one exception is the shape that survives the next script.
+/.env*
+# ...except the template, which is tracked and carries no value. It is exempted
+# by name rather than by pattern: an exemption that is itself a glob is how the
+# next `.env.example.local` becomes legal without anybody deciding it should be.
+!/.env.example
 
 # ── ANYTHING LOCAL, AND ESPECIALLY ANYTHING WITH A KEY IN IT ──────────────────
 #
