@@ -11,9 +11,10 @@
 #   2. It is delivered to a human, as a page or as a ticket. Page = user-visible
 #      failure or irreversible money risk. Ticket = everything else.
 #
-# No secret appears in this file. Receiver URLs that carry a token in the path
-# are read from files under /etc/alertmanager/secrets, written by ../up.sh from
-# ../.env. Unconfigured is a SUPPORTED MODE: with no delivery URL set, both
+# No secret appears in this file. Receiver URLs that carry a token in the path,
+# and the bearer credential the Beacon receiver presents, are read from files
+# under /etc/alertmanager/secrets, written by ../up.sh from ../.env.
+# Unconfigured is a SUPPORTED MODE: with no delivery URL set, both
 # receivers fall back to the Beacon incident record, which is a degradation
 # (no acknowledgement, no escalation) rather than a failure. The estate's single
 # fire-and-forget BEACON_WEBHOOK_URL is kept as the chat receiver and is
@@ -130,16 +131,39 @@ receivers:
   # could fire correctly and continuously from 2026-08-05T21:07:58Z and reach
   # nobody: the rule was right and the delivery path was pointed at a closed port.
   #
-  # IT STILL 401s. Beacon gates this route on an `x-beacon-token` header and
-  # Alertmanager v0.27 has no `http_headers` in `http_config`, so the credential
-  # cannot be attached here at all. That is a real remaining gap, it is filed as
-  # its own issue, and it is NOT this line's fault — but a connection refused and
-  # a 401 are different findings, and only the second one appears in a log.
+  # ── AND THE CREDENTIAL, WHICH WAS THE OTHER HALF (micro-org#311) ────────────
+  #
+  # Correcting the port turned `connection refused` into `401 Unauthorized`, and
+  # a 401 on every alert is the same silence with a better error message. Beacon
+  # gated this route on an `x-beacon-token` header, and Alertmanager's
+  # `http_config` has `basic_auth`, `authorization` and `oauth2` and NO way to
+  # set an arbitrary header — Prometheus has `http_headers`, Alertmanager does
+  # not. So the credential could not be attached here at all, at any version.
+  #
+  # Beacon now accepts the same break-glass token in either `x-beacon-token` or
+  # `Authorization: Bearer` (micro-beacon#10). That is the same secret and the
+  # same scopes — the token is still not an administrator, which Beacon's own
+  # suite pins by POSTing an adminOnly route with it as a bearer and asserting
+  # 403 — so this line grants Alertmanager nothing it did not already have on
+  # the header it could not send.
+  #
+  # `credentials_file` and not `credentials`: a token in a config file is a token
+  # in a backup and in a screenshot, which is the same reason the two delivery
+  # receivers below use `url_file`. The file is written by ../up.sh and is
+  # gitignored. An EMPTY file is the supported unconfigured mode — the header
+  # goes out as a bare `Authorization: Bearer`, Beacon refuses the empty string
+  # explicitly rather than matching it against an unset `BEACON_TOKEN`, and the
+  # 401 is visible in a log. What is NOT supported is the file being absent;
+  # up.sh creates it unconditionally for exactly that reason.
   - name: beacon-incident
     webhook_configs:
       - url: http://beacon:4000/api/alerts/webhook
         send_resolved: true
         max_alerts: 0
+        http_config:
+          authorization:
+            type: Bearer
+            credentials_file: /etc/alertmanager/secrets/beacon_token
 
   - name: page-money
     webhook_configs:

@@ -178,3 +178,25 @@ __pycache__/
 # because that rule records being written for one filename twice and meeting a
 # second environment both times.
 prometheus/targets/*.yaml
+
+# The credential FILES the telemetry plane mounts. Written by ./up.sh, never
+# committed.
+#
+# These four were tracked, committed empty, because Prometheus refuses to start
+# when an `http_headers: files:` path is absent and Alertmanager fails its
+# `credentials_file` the same way — so a committed empty file was how the plane
+# was kept startable. It also made "no secret is in any committed file" a
+# property of nobody having run `git add` yet: on the mainnet host on 2026-08-10
+# `git status` in this checkout showed FIVE tracked files modified, and the
+# modification was four real 44-byte service tokens and two webhook URLs. One
+# `git add -A` away from a public repository, which is the exact hazard the
+# `compose/secrets/` and `tokens*.env` rules above were each written for after
+# the fact.
+#
+# `up.sh` now creates every one of these unconditionally, so the startability
+# that the tracked-empty files bought is bought by the script instead — and a
+# credential can no longer be staged at all. `.gitkeep` keeps the directories.
+prometheus/secrets/*
+alertmanager/secrets/*
+!prometheus/secrets/.gitkeep
+!alertmanager/secrets/.gitkeep
