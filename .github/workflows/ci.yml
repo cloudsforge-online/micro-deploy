@@ -534,6 +534,33 @@ jobs:
           python3 -m pip install --quiet pyyaml
           python3 scripts/check-settlement-rpc-urls.py
 
+      # ── A DEPLOY THAT FAILS HALFWAY IS AN OUTAGE, SO IT MUST FAIL BEFOREHAND ──
+      #
+      # `release-deploy.sh` shipped the whole release with one `docker compose
+      # up -d`, and compose interleaves the phases: for each service in turn it
+      # pulls the image and then recreates the container. One `denied` from GHCR
+      # on the 30th of 48 images therefore aborted the deploy PARTWAY — some
+      # services on the new release and the rest on the old one, a combination no
+      # manifest describes and that `--rollback` cannot name a previous version
+      # for, because the two halves are on different releases.
+      #
+      # A registry that answers `denied` or `TOO MANY REQUESTS` under load is
+      # ordinary, and turning that into an estate-wide inconsistency is not.
+      #
+      # The behaviour under test is a MISBEHAVING REGISTRY, and no real one can be
+      # asked to fail twice and then succeed, so `docker` is a stub playing a
+      # scripted sequence per reference while `docker compose config` passes
+      # through to the real CLI — the overlay merge and the interpolation that
+      # decide which images get pulled are genuine. `compose up` is recorded and
+      # never run.
+      #
+      # The ordering is asserted by the ORDER of the recorded invocations rather
+      # than by their presence, because "it pulls and it switches" was true of the
+      # broken version too.
+      - name: A release is pulled in full before any container is replaced
+        working-directory: deploy
+        run: python3 scripts/check-release-deploy-pulls-before-switching.py
+
       # ── THE POOL'S WEBSOCKET CONFIGURATION IS COHERENT, OR IT IS A CRASH LOOP ─
       #
       # micro-org#289 gave micro-pool a Stratum transport a browser can dial, and
