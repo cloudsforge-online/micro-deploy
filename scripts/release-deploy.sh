@@ -214,6 +214,19 @@ fi
 #
 # A 'denied' here is usually the GHCR visibility trap — a package that inherited
 # a private repository's visibility — rather than a missing image. Say both.
+#
+# `docker manifest inspect` takes a digest reference as happily as a tagged one,
+# so this reads the same whichever form the manifest produced (micro-org#295).
+#
+# ANCHORED, because `grep -o` matches anywhere in a line. The overlay now emits
+# `online.cloudsforge.release.tag: "ghcr.io/…:2.5.7"` beside each digest-pinned
+# image so the tag survives `docker compose config`, and an unanchored
+# `image: [^ ]+` matched every YAML KEY ending in `image` as well as the key
+# itself. Measured 2026-08-09, rendering 2.5.7 re-cut with digests against the
+# mainnet base while the label was briefly called `…release.image`: 96 references
+# where the manifest names 48, half of them quoted strings, and this loop would
+# have failed every one and refused to deploy any release at all. The overlay
+# writes `image:` at exactly four spaces and nothing else in it does.
 echo "── verifying every image can be pulled ──────────────────────────────────"
 missing=0
 checked=0
@@ -227,7 +240,7 @@ while IFS= read -r ref; do
     printf '  \033[31mFAIL\033[0m %s — %s\n' "$ref" "$(printf '%s' "$err" | head -1)"
   fi
 done <<EOF
-$(grep -oE 'image: [^ ]+' "$OVERLAY" | sed 's/image: //' | sort -u)
+$(grep -oE '^    image: [^ ]+' "$OVERLAY" | sed 's/^    image: //' | sort -u)
 EOF
 
 if [ "$checked" -eq 0 ]; then

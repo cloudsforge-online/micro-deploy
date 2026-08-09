@@ -331,6 +331,37 @@ cannot silently fall back to building from a working tree. Migrators are pinned
 to the same image as their service — a migrator running a different build from
 the service that then asserts its schema is the oldest way to brick a deploy.
 
+**By digest when the manifest has one** (micro-org#295). A tag is a mutable
+pointer and this estate moves it: `publish-image.yml` republishes the
+package.json version on every push to `main` or `release/**`, so an unmerged
+release branch leaves `main` on the previous version and the next merge
+republishes the *previous* release's tag from a different commit — measured on
+six repositories on 2026-08-09 (micro-org#288). `cfctl release` records the GHCR
+index digest each tag resolved to at cut time, and an entry that carries one is
+rendered as `image@sha256:…` rather than `image:tag`. `--verify` and
+`docker compose up` are two separate resolutions of the same mutable name and
+only the first was ever checked; pinning by digest is a property the *file* has,
+which is what holds at 3am during a rollback.
+
+Three consequences, all deliberate:
+
+- **An entry with no digest is still rendered by tag, unchanged.** Every manifest
+  cut before 2026-08-09 has none, and those files *are* the rollback path. Their
+  render is byte-identical to what it was before digests existed.
+- **A mixed manifest renders.** `cfctl release` warns and succeeds with a partial
+  digest set when a release is cut minutes before some images publish, so the
+  overlay names, in its footer, exactly which entries are still pinned by a
+  mutable name.
+- **A digest-pinned entry can never fall back to a local build.** `docker compose`
+  pulls a digest and `docker compose build` cannot use one — which agrees with the
+  `build: !reset null` already on every entry rather than fighting it. The
+  rendered file says so in its own header.
+
+`micro-identity@sha256:d82f87dc…` does not say `2.5.7`, so each digest-pinned
+entry carries the tag twice: in a comment for whoever opens the file, and in the
+label `online.cloudsforge.release.image` for `docker compose config`, which
+re-emits from a parsed model and drops every comment in it.
+
 Deploy and rollback are the same code path with a different manifest, which is
 the point: a rollback that is a different procedure from a deploy is a procedure
 nobody has practised.

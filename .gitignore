@@ -157,3 +157,9 @@ gateway/certs/
 # committed in that script; the ~50MB of extracted binaries are not, and are
 # reproducible from the version and digest that are.
 .tools/
+
+# Byte-compiled output of the python guards under scripts/. `python3 -m py_compile`
+# on any of them writes here, and a .pyc in a repository is a build artifact that
+# goes stale silently against the source beside it.
+__pycache__/
+*.pyc
