@@ -723,7 +723,7 @@ def deposits_withdrawals():
 
     p.append(stat(
         "Stuck withdrawals",
-        [target("sum(withdrawal_stuck_total)", "stuck")],
+        [target("sum(withdrawal_stuck)", "stuck")],
         "none", {"h": 6, "w": 6, "x": 0, "y": y}, decimals=0, graph=False,
         text_size={"valueSize": 48},
         steps=[{"color": STATUS["good"], "value": None}, {"color": STATUS["crit"], "value": 1}],
@@ -740,14 +740,23 @@ def deposits_withdrawals():
                     "bar and the reading is where the drop is. Detected-but-not-credited "
                     "is a user staring at a wallet that has not changed."))
 
+    # Was "Frozen deposit addresses" on `sum(wallet_deposit_address_frozen)`, a
+    # metric no service has ever published and a STATE micro-wallet cannot be in
+    # — its status check admits active/rotated/retired and nothing else. The
+    # panel therefore read "0" forever, which on a stat panel is indistinguish-
+    # able from a measured all-clear. See the DepositAddressUnwatched comment in
+    # prometheus/rules/alerts.yaml for the full history.
     p.append(stat(
-        "Frozen deposit addresses",
-        [target("sum(wallet_deposit_address_frozen)", "frozen")],
+        "Deposit addresses the indexer is not watching",
+        [target("sum(wallet_deposit_addresses_unwatched - wallet_deposit_addresses_unobservable)",
+                "unwatched")],
         "none", {"h": 6, "w": 4, "x": 16, "y": y}, decimals=0, graph=False,
         steps=[{"color": STATUS["good"], "value": None}, {"color": STATUS["warn"], "value": 1}],
-        description="Crediting has stopped on these addresses; the only fix is a recorded "
-                    "manual sweep. This metric exists so it is visible before the user "
-                    f"complains. Runbook: {RUNBOOK}/runbook-frozen-deposit-address.md"))
+        description="Assigned to users, and the indexer has not been told to watch them — a "
+                    "deposit to one is never seen and is credited to nobody. `unobservable` "
+                    "is subtracted deliberately: a chain the indexer follows no source for "
+                    "is an owner's decision, and today that is seven of eight chains. "
+                    f"Runbook: {RUNBOOK}/runbook-deposit-address-unwatched.md"))
 
     p.append(stat(
         "Sweep backlog",

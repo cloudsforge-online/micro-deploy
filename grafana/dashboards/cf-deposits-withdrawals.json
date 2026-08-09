@@ -75,7 +75,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(withdrawal_stuck_total)",
+          "expr": "sum(withdrawal_stuck)",
           "legendFormat": "stuck",
           "range": true,
           "instant": false,
@@ -195,8 +195,8 @@
     {
       "id": 38,
       "type": "stat",
-      "title": "Frozen deposit addresses",
-      "description": "Crediting has stopped on these addresses; the only fix is a recorded manual sweep. This metric exists so it is visible before the user complains. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-frozen-deposit-address.md",
+      "title": "Deposit addresses the indexer is not watching",
+      "description": "Assigned to users, and the indexer has not been told to watch them \u2014 a deposit to one is never seen and is credited to nobody. `unobservable` is subtracted deliberately: a chain the indexer follows no source for is an owner's decision, and today that is seven of eight chains. Runbook: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-deposit-address-unwatched.md",
       "datasource": {
         "type": "prometheus",
         "uid": "cf-prometheus"
@@ -214,8 +214,8 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(wallet_deposit_address_frozen)",
-          "legendFormat": "frozen",
+          "expr": "sum(wallet_deposit_addresses_unwatched - wallet_deposit_addresses_unobservable)",
+          "legendFormat": "unwatched",
           "range": true,
           "instant": false,
           "format": "time_series",
