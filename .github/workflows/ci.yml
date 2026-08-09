@@ -456,3 +456,28 @@ jobs:
           print(f"ok — {len(mp)} mainnet ports, {len(tp)} testnet ports, no overlap; "
                 f"projects {mn['name']} / {tn['name']}")
           PY
+
+      # ── A RELEASE PINS WHAT IT NAMES, INCLUDING WHAT SITS BEHIND A PROFILE ──
+      #
+      # `release-render.py` asks `docker compose config --services` which services
+      # this environment defines. That command reports only ACTIVE profiles, so
+      # with no `--profile` flag it reports only the unprofiled ones — and a
+      # profiled service was read as "not in this environment", lost its pin, and
+      # kept the base file's `build:`. A release deploy then builds it from
+      # whatever is checked out on the host while the manifest records a tag.
+      #
+      # Measured on the mainnet host on 2026-08-09 while cutting 2.5.7: 46 of 48
+      # manifest entries rendered, the two missing being `faucet` and `pool` —
+      # every profiled deployable in the file. The overlay reported it, in a
+      # comment on its own last line, and nothing failed.
+      #
+      # `pool` is why this is a check and not a note. It ships behind a profile
+      # and is started by hand, so it is the one service whose pin nobody would
+      # see drop until it was already running the wrong code.
+      #
+      # The fixture is two services, one profiled, because the estate file needs
+      # the gitignored keyring to interpolate. Real renderer, real compose, small
+      # input.
+      - name: A release overlay pins profile-gated services too
+        working-directory: deploy
+        run: python3 scripts/check-release-render-pins-profiles.py
