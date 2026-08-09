@@ -94,7 +94,16 @@ const IDENTITY = process.env.IDENTITY || 'http://127.0.0.1:4100';
 const INDEXER = process.env.INDEXER || 'http://127.0.0.1:4108';
 const LEDGER = process.env.LEDGER || 'http://127.0.0.1:4102';
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test';
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correct-horse-battery-staple-42';
+// No default. The one this line used to carry is published in this repository and was the
+// operator's real password on mainnet until 2026-08-09; see the operator block in
+// `estate-bootstrap.sh`. `ESTATE_ADMIN_PASSWORD` is the name it is stored under in
+// `compose/estate/tokens.env` — source that file rather than typing a secret at a prompt.
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.ESTATE_ADMIN_PASSWORD;
+if (!ADMIN_PASSWORD) {
+  console.error('ADMIN_PASSWORD (or ESTATE_ADMIN_PASSWORD) is not set, and it has no default.');
+  console.error('Source compose/estate/tokens.env first:  set -a; . compose/estate/tokens.env; set +a');
+  process.exit(2);
+}
 
 const WEI = 10n ** 18n;
 /** The published seed. Its keys are public; that is the point, and it is why
@@ -274,7 +283,24 @@ async function walletToken() {
 /** The subject of the liability side. One dedicated account, not a real person. */
 async function seedUser() {
   const email = 'ember-seed@example.test';
-  const password = 'correct-horse-battery-staple-42';
+  // NOT A LITERAL ANY MORE, AND NOT A RANDOM ONE EITHER.
+  //
+  // Until 2026-08-09 this was a constant in a PUBLIC file, so anyone could sign in
+  // as an account that exists on the real estate and holds the liability side of
+  // every seeded EMBER balance. It cannot simply become `randomBytes()`, though:
+  // the account is FIXED — `register` below is allowed to answer "already taken"
+  // and the sign-in is what has to succeed — so a fresh secret each run would lock
+  // the seeder out of its own subject on the second run. It has to be a value the
+  // estate keeps, which is what `compose/estate/tokens.env` is for:
+  //
+  //     set -a; . compose/estate/tokens.env; set +a
+  const password = process.env.EMBER_SEED_PASSWORD;
+  if (!password) {
+    console.error('EMBER_SEED_PASSWORD is not set, and it has no default — the one it used to');
+    console.error('have is published in this repository. Add it to compose/estate/tokens.env');
+    console.error('(any fresh 32+ char secret on a new estate) and source that file.');
+    process.exit(2);
+  }
   await http(`${IDENTITY}/auth/register`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

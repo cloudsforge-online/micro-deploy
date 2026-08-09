@@ -176,7 +176,15 @@ fi
 echo "── the subject ──────────────────────────────────────────────────────────"
 # `$$` keeps concurrent runs from colliding on the handle's unique index.
 EMAIL="erasure-drill-$$@example.test"
-PASS="correct-horse-battery-staple-42"
+# A FRESH SECRET PER RUN, for the same reason `$$` is in the address above: this
+# is a real account on a real estate. It was a constant in a PUBLIC file until
+# 2026-08-09. The drill erases this subject at the end, but it exists for the
+# length of the run, and nothing here needs the password after the sign-in below.
+#
+# `od -N24` and not `tr -dc … | head -c 32`: `tr` reading /dev/urandom never ends,
+# so `head` closing the pipe kills it with SIGPIPE and `set -o pipefail`
+# hands the assignment a non-zero status. `od` reads exactly 24 bytes and exits.
+PASS=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
 reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"handle\":\"erasure$$\",\"password\":\"$PASS\"}")
 printf '%s' "$reg" | grep -q '"verificationRequired":true' \

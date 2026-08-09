@@ -125,11 +125,64 @@ if [ ! -f "$TOKENS_FILE" ]; then
   chmod 600 "$TOKENS_FILE"
 fi
 
-# A throwaway operator for a throwaway environment. Overridable so a developer
-# can bootstrap an account they will actually sign in as.
+# ── THE OPERATOR, AND WHY THERE IS NO DEFAULT PASSWORD ANY MORE ──────────────
+#
+# This line used to read
+#
+#     ADMIN_PASSWORD=${ADMIN_PASSWORD:-correct-horse-battery-staple-42}
+#
+# described as "a throwaway operator for a throwaway environment". Mainnet was
+# bootstrapped without setting the variable, so the estate's only administrator
+# held that password — the literal string above, in this file, in a repository
+# that is PUBLIC — while `https://api.cloudsforge.online/v1/auth/login` answers
+# from the open internet. Measured 2026-08-09: that request returned 200 with an
+# access token carrying `roles: ["player","admin"]`. Anyone who read this file
+# was an estate administrator. It has been rotated and the new value lives in
+# `compose/estate/tokens.env`, which is gitignored and never leaves the host.
+#
+# The word "throwaway" is what made it survive review: it describes the account's
+# INTENT and says nothing about the environment it would actually be run in, and
+# the same script bootstraps a laptop and mainnet. A default that is safe in one
+# and catastrophic in the other is not a default, it is a trap with a comment on
+# it.
+#
+# So there is no default. `ADMIN_PASSWORD` must be set, and it must not be the
+# value that was published. The check refuses BOTH the old constant and a short
+# password, and it refuses before `/auth/register` is called — a bootstrap that
+# creates the account and then fails has left the weak credential behind, which
+# is the failure mode this whole block exists to prevent.
+#
+# `ADMIN_EMAIL` and `ADMIN_HANDLE` keep their defaults. Neither is a secret, and
+# a wrong guess at either is a visibly wrong account rather than a silent one.
 ADMIN_EMAIL=${ADMIN_EMAIL:-estate-admin@example.test}
 ADMIN_HANDLE=${ADMIN_HANDLE:-estateadmin}
-ADMIN_PASSWORD=${ADMIN_PASSWORD:-correct-horse-battery-staple-42}
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-}
+
+# The one value this script may never accept, quoted here so that a search for
+# the published string finds the refusal rather than only the history.
+PUBLISHED_DEFAULT='correct-horse-battery-staple-42'
+
+if [ -z "$ADMIN_PASSWORD" ]; then
+  printf '\033[31mrefusing to bootstrap: ADMIN_PASSWORD is not set.\033[0m\n' >&2
+  printf 'Generate one and keep it — nothing else in the estate can recover it:\n\n' >&2
+  printf "  ADMIN_PASSWORD=\$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-40) \\\\\n" >&2
+  printf '    %s\n\n' "$0" >&2
+  printf 'Then record it in compose/estate/tokens.env as ESTATE_ADMIN_PASSWORD.\n' >&2
+  exit 2
+fi
+
+if [ "$ADMIN_PASSWORD" = "$PUBLISHED_DEFAULT" ]; then
+  printf '\033[31mrefusing to bootstrap: that password is published in this file.\033[0m\n' >&2
+  printf 'It was this script default until 2026-08-09 and is in the public git history.\n' >&2
+  exit 2
+fi
+
+# 16 is not a considered opinion about entropy; it is a floor below which a
+# value is obviously a placeholder. Identity applies the real rules at register.
+if [ "${#ADMIN_PASSWORD}" -lt 16 ]; then
+  printf '\033[31mrefusing to bootstrap: ADMIN_PASSWORD is shorter than 16 characters.\033[0m\n' >&2
+  exit 2
+fi
 
 fails=0
 ok()  { printf '  \033[32mok\033[0m   %s\n' "$1"; }
@@ -636,6 +689,42 @@ done
 # line out and left every EMBER withdrawal failing to build with
 # `TypeError: fetch failed`, on a chain whose node is healthy and one hop away.
 #
+# ── THE TWO HUMAN PASSWORDS, WRITTEN HERE SO NOBODY HAS TO REMEMBER TO ────────
+#
+# Both are written into `$tmp` BEFORE the carry-forward below rather than
+# appended after the `mv`. The carry-forward copies any key the old file has and
+# the new one lacks, so appending afterwards would leave the old value carried
+# AND the new value appended — two lines, same key, correct only because compose
+# happens to take the last. Written here, they are simply fresh keys.
+#
+#   ESTATE_ADMIN_PASSWORD  the operator this script creates, checked at the head
+#     of this file. Recorded because the estate cannot recover it: identity
+#     stores a scrypt hash, and every script that acts as the operator
+#     (`estate-verify.sh`, `scripts/seed/lib.mjs`, `foresight-market-journey.mjs`)
+#     now reads this name and refuses to guess.
+#
+#   EMBER_SEED_PASSWORD  the fixed non-operator subject `ember-seed.js` holds the
+#     EMBER liability against. PRESERVED IF IT ALREADY EXISTS, and that is the
+#     whole reason it is minted here rather than randomly per run: the account is
+#     fixed, so a new secret each run locks the seeder out of its own subject.
+#     `openssl rand -base64` then stripped of `=+/`, which leaves base62 — no
+#     shell metacharacter can reach the JSON body the seeder builds by hand.
+{
+  echo ""
+  echo "# Passwords for real accounts. Not tokens: these do not expire, and the"
+  echo "# estate cannot recover them — identity keeps only a scrypt hash."
+  echo "ESTATE_ADMIN_PASSWORD=$ADMIN_PASSWORD"
+} >> "$tmp"
+
+ember_seed_password=$(sed -n 's/^EMBER_SEED_PASSWORD=//p' "$TOKENS_FILE" 2>/dev/null | tail -n 1)
+if [ -z "$ember_seed_password" ]; then
+  ember_seed_password=$(openssl rand -base64 32 | tr -d '=+/' | cut -c1-40)
+  ok "minted a password for the EMBER seed subject"
+else
+  ok "kept the existing EMBER seed subject password"
+fi
+echo "EMBER_SEED_PASSWORD=$ember_seed_password" >> "$tmp"
+
 # So: any key present in the old file and absent from the new one is carried
 # forward, and the NAMES are printed. Names only — a value is a secret until
 # proven otherwise, and this script's output is read over somebody's shoulder.

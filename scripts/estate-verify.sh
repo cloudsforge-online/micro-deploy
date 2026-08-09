@@ -222,7 +222,18 @@ echo "── a user can be created and can sign in ─────────�
 # time, which is also what makes the drill able to detect the real defect it was
 # blind to before: a verification link that is never issued.
 EMAIL="slice-$$@example.test"
-PASS="correct-horse-battery-staple-42"
+# A FRESH SECRET PER RUN. This was a constant in a PUBLIC file until 2026-08-09,
+# and this account is registered on the REAL estate and is not deleted afterwards —
+# so every verification run left behind a real account whose password anyone could
+# read. Nothing needs it to be stable: it is spent on the sign-in below and the run
+# never signs in as this user again. `$$` already makes the account per-run.
+#
+# `od -N24` and not `tr -dc … | head -c 32`: `tr` reading /dev/urandom never ends,
+# so `head` closing the pipe kills it with SIGPIPE and `set -o pipefail`
+# hands the assignment a non-zero status. `od` reads exactly 24 bytes and exits.
+# 48 hex characters clears identity's minimum with room to spare, and hex needs no
+# shell quoting anywhere it is interpolated into JSON below.
+PASS=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
 reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"handle\":\"slice$$\",\"password\":\"$PASS\"}")
 printf '%s' "$reg" | grep -q '"verificationRequired":true' \
@@ -306,7 +317,24 @@ mint=$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $utok" 
 # The two identities are kept strictly apart from here on: `atok` mints, `utok` is
 # the subject of the user-facing flows.
 ADMIN_EMAIL=${ADMIN_EMAIL:-estate-admin@example.test}
-ADMIN_PASSWORD=${ADMIN_PASSWORD:-correct-horse-battery-staple-42}
+
+# NO DEFAULT, AND THIS LINE USED TO HAVE ONE. The literal it carried was the same
+# string `estate-bootstrap.sh` defaulted to, and on mainnet that made it the
+# operator's REAL password — published, in a public repository, against an estate
+# whose /v1/auth/login answers from the open internet. Read that file's operator
+# block for the measurement. It is rotated; the value now lives only in the host's
+# untracked `compose/estate/tokens.env`, under ESTATE_ADMIN_PASSWORD:
+#
+#     set -a; . compose/estate/tokens.env; set +a
+#
+# Refusing to run beats guessing. A verification that signs in with a stale password
+# reports a red estate, and the red is this line rather than anything it verifies.
+ADMIN_PASSWORD=${ADMIN_PASSWORD:-${ESTATE_ADMIN_PASSWORD:-}}
+if [ -z "$ADMIN_PASSWORD" ]; then
+  echo "ADMIN_PASSWORD (or ESTATE_ADMIN_PASSWORD) is not set, and it has no default." >&2
+  echo "Source compose/estate/tokens.env first, then re-run." >&2
+  exit 2
+fi
 
 # ── MIGRATION 12'S CONTROLS, EXERCISED RATHER THAN TRUSTED ────────────────────
 #

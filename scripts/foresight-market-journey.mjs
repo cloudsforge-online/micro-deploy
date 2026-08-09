@@ -122,7 +122,18 @@ const HEARTH = process.env.HEARTH_REPO || path.resolve(ROOT, '../hearth')
 const EMBER_HOME = process.env.EMBER_HOME || path.join(process.env.HOME, '.cloudsforge/ember-testnet')
 const MINER_DATA = process.env.EMBER_MINER_DATA || path.join(EMBER_HOME, 'miner')
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test'
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correct-horse-battery-staple-42'
+// NO DEFAULT. The literal that used to sit here was the operator's real password on
+// mainnet until 2026-08-09, in a PUBLIC repository, against an estate whose
+// /v1/auth/login answers from the internet — the measurement is in the operator block
+// of `estate-bootstrap.sh`. It is rotated, and `ESTATE_ADMIN_PASSWORD` is the name it
+// is stored under in `compose/estate/tokens.env`:
+//     set -a; . compose/estate/tokens.env; set +a
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || process.env.ESTATE_ADMIN_PASSWORD
+if (!ADMIN_PASSWORD) {
+  console.error('ADMIN_PASSWORD (or ESTATE_ADMIN_PASSWORD) is not set, and it has no default.')
+  console.error('Source compose/estate/tokens.env first.')
+  process.exit(2)
+}
 // THE CHAIN THIS JOURNEY SIGNS FOR, and it must be derived rather than written.
 //
 // This was the literal 7412. `CHAIN_ID` reaches `TX.sign(..., { chainId })` at
