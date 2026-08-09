@@ -507,6 +507,33 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-provenance-reads-digest-pins.py
 
+      # ── SETTLEMENT'S CHAIN MAP IS JSON IN EVERY COMBINATION, OR IT IS A LOOP ──
+      #
+      # `x-settlement-rpc-urls` builds a JSON object by string concatenation out of
+      # `${VAR:+,"key":"$VAR"}` fragments — one per optional chain, now `ltc`,
+      # `doge` and `etc` (micro-settlement#8). A comma one character outside an
+      # expansion, or a `:-` where a `:+` was meant, and the value stops being JSON
+      # or gains an empty entry.
+      #
+      # Either is FATAL rather than degraded: settlement's `env.ts` is eager and
+      # `src/migrator.ts` imports it, so a malformed map throws at import on the
+      # migrator as well as the service, under `restart: unless-stopped`. The whole
+      # point of micro-settlement#8 making an absent endpoint a `no_endpoint`
+      # STATUS was to keep one unconfigured chain off the six that are configured,
+      # and a bad render here hands that property straight back.
+      #
+      # All eight combinations of the three optional variables, rendered by real
+      # compose from the anchor READ OUT of the estate file rather than copied into
+      # the check. PyYAML installed in this step rather than relied upon from an
+      # earlier one, for the reason the step below gives: a check whose correctness
+      # depends on the order of the steps around it breaks silently when somebody
+      # reorders them.
+      - name: Settlement's RPC map is valid JSON with any set of chains configured
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-settlement-rpc-urls.py
+
       # ── THE POOL'S WEBSOCKET CONFIGURATION IS COHERENT, OR IT IS A CRASH LOOP ─
       #
       # micro-org#289 gave micro-pool a Stratum transport a browser can dial, and

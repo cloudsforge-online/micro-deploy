@@ -414,8 +414,73 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"
 # `micro-settlement`, which owns it. It will block BTC and DOGE identically —
 # same family, same auth scheme — so it is worth fixing before those are wired
 # rather than discovering it three more times.
+#
+# ── `doge` AND `etc`, WIRED AND DELIBERATELY UNSET (micro-settlement#8) ───────
+#
+# micro-settlement#8 gave both chains a real adapter — DOGE reuses `bitcoin.ts`
+# with its own address kind, dust floor, relay floor and fee ceilings; ETC reuses
+# `evm.ts` unchanged because it is pre-London and that builder has only ever
+# signed legacy type-0. Both are OPTIONAL KEYS ON THIS MAP AND NOTHING ELSE.
+# `settlement/.env.example` says so in as many words: "THIS IS THE ONLY PLACE A
+# CHAIN IS TURNED ON, AND THERE IS NO PER-CHAIN VARIABLE TO ADD" — a
+# `SETTLEMENT_DOGE_RPC_URL` here would be a second answer to a question this map
+# already answers, and the two would disagree the first time somebody edited one.
+# That is rule 9 of docs/ecosystem/03 §2, which is why the service did not add
+# the variables and why this file must not add them either.
+#
+# WITHOUT THE KEYS THE CHAINS ARE NOT MERELY OFF, THEY ARE MISREPORTED. Both are
+# in `contracts-chain`, so wallet will mint a deposit address and custody will
+# hold it; settlement reports `no_endpoint` in its boot line and refuses each
+# request by name (`chainStatuses`, `settlement/src/index.ts`). That refusal is
+# the correct and permanent one, and the same argument the `ltc` note above
+# makes applies unchanged: absent beats wrong, because a key pointed at a node
+# that is not there turns a named operator-actionable classification into an
+# `unclassified` connection failure that costs a round trip per tick and tells
+# nobody.
+#
+# SO BOTH SHIP UNSET, AND THE MEASUREMENTS ARE WHY. Read on the estate host
+# 2026-08-09. The UTXO and EVM nodes here are HOST PROCESSES rather than
+# containers — `pgrep -a dogecoind` finds them, binaries under
+# `/data/docs/<coin>-<version>/bin/`, data under `/data/chains/<coin>`:
+#
+#   DOGE  `dogecoind 1.14.9` IS running, `-dbcache=450 -par=1
+#         -maxconnections=24`, RPC bound inside the docker bridges. NOT READY:
+#         5,009,958 of 5,606,914 blocks, `verificationprogress` 0.3607,
+#         `initialblockdownload: true`. A node in IBD answers
+#         `getblockchaininfo` happily and lies about everything that matters —
+#         an unspent output it has not reached yet is one it will report as
+#         absent, so a sweep would be built against a balance that is a third of
+#         a chain out of date.
+#   ETC   NO NODE RUNS ON THIS HOST. `core-geth 1.12.22` is unpacked at
+#         `/data/docs/core-geth-1.12.22`, the datadir exists at
+#         `/data/chains/ethereum-classic` -> `/data2/chains/ethereum-classic`
+#         (1.9G, plus a 1.8G `.old` beside it), and `/etc/rc.local` carries a
+#         COMMENTED-OUT launch line for it on port 8555 — 8545 belongs to the
+#         Hearth seed node. Its log stops on 2026-08-08 at `state download in
+#         progress synced=4.41%` followed by `Rewinding blockchain to block
+#         target=411,330`. So the intent is recorded, the sync is 4% done and
+#         abandoned, and no process is listening.
+#
+# Both entries therefore exist as INTERPOLATIONS and neither is set anywhere. An
+# operator who finishes either sync sets one variable in
+# `compose/estate/tokens.env` and the key appears, with no change to this file
+# and no change to the service — which is the whole property being bought here,
+# and the same one `ltc` already demonstrated.
+#
+# THE `${VAR:+,"key":"$VAR"}` FORM IS LOAD-BEARING AND IS NOT DECORATION. An
+# unset variable must contribute NOTHING — not an empty entry. `,"doge":""`
+# would parse as JSON and then be refused by `jsonMap` with
+# `SETTLEMENT_RPC_URLS.doge must be a non-empty string`, which is thrown at
+# import from an eager `env.ts`: a boot failure, on the migrator as well as the
+# service, taking settlement down for the chains that ARE configured. A stray
+# comma is worse still — the value stops being JSON at all and the same import
+# throws before anything else is read. `scripts/check-settlement-rpc-urls.py`
+# renders this anchor through real `docker compose` in all eight combinations of
+# the three optional variables and asserts every one is valid JSON with no empty
+# value, because the failure it guards is one nobody sees until a container will
+# not start.
 x-settlement-rpc-urls: &settlement-rpc-urls
-  '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}}'
+  '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}${DOGE_RPC_URL:+,"doge":"$DOGE_RPC_URL"}${ETC_RPC_URL:+,"etc":"$ETC_RPC_URL"}}'
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WHICH NETWORK THE MONEY TIER THINKS IT IS ON — AND IT WAS NOT THIS ONE.
