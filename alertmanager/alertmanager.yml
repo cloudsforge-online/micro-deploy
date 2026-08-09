@@ -113,9 +113,31 @@ inhibit_rules:
 receivers:
   # Beacon's Alertmanager receiver (13-operational-model.md §3). Not a secret:
   # a compose-network address, unreachable from outside the estate.
+  #
+  # ── 4000, AND IT WAS 4011 (micro-org#308) ──────────────────────────────────
+  #
+  # EVERY alert in this file routes here as well as to its own receiver, so this
+  # one line is the estate's whole incident path. It named 4011 — Beacon's
+  # default bind port in its own source — and the estate's compose normalises
+  # every service to `PORT: 4000` via the `x-common-env` anchor, so nothing has
+  # ever bound 4011. Measured from inside this container on 2026-08-09:
+  #
+  #   http://beacon:4011/api/alerts/webhook  can't connect: Connection refused
+  #   http://beacon:4000/api/alerts/webhook  HTTP/1.1 401 Unauthorized
+  #
+  # The same wrong port was in prometheus.yml's Beacon scrape and in up.sh's
+  # fallback URL; all three are corrected. This one is why `BeaconScrapeFailing`
+  # could fire correctly and continuously from 2026-08-05T21:07:58Z and reach
+  # nobody: the rule was right and the delivery path was pointed at a closed port.
+  #
+  # IT STILL 401s. Beacon gates this route on an `x-beacon-token` header and
+  # Alertmanager v0.27 has no `http_headers` in `http_config`, so the credential
+  # cannot be attached here at all. That is a real remaining gap, it is filed as
+  # its own issue, and it is NOT this line's fault — but a connection refused and
+  # a 401 are different findings, and only the second one appears in a log.
   - name: beacon-incident
     webhook_configs:
-      - url: http://beacon:4011/api/alerts/webhook
+      - url: http://beacon:4000/api/alerts/webhook
         send_resolved: true
         max_alerts: 0
 

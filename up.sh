@@ -34,16 +34,59 @@ mkdir -p prometheus/secrets alertmanager/secrets
 # An EMPTY file is the honest default: the scrape then 401s and
 # `BeaconScrapeFailing` fires, which is a visible, actionable state. Writing a
 # guessed token would produce the same 401 with no explanation.
+#
+# ── 0644 AND NOT 0600, WHICH IS NOT A RELAXATION (micro-org#308) ──────────────
+#
+# This was `chmod 600`, and 0600 is unreadable by the process that has to read
+# it. Prometheus and Alertmanager both run as the image default `nobody`
+# (uid 65534, verified with `docker exec … id` on 2026-08-09); these files are
+# written by the operator (uid 1000) and mounted read-only, so owner-only means
+# owner-only for a user that is not in the container. Setting the token then
+# produced the SAME dead scrape as not setting it, with a different message:
+#
+#   unable to read headers file /etc/prometheus/secrets/beacon_token
+#
+# Measured here on 2026-08-09 while fixing the Beacon target: the token was
+# written, and the scrape stayed down until the mode changed. A permission that
+# silently converts a configured credential into an unconfigured one is worse
+# than a mode that a second Unix account on a single-operator deploy host could
+# read — and no such account exists. The real containment is that none of these
+# files is ever committed, which `.gitignore` enforces.
+#
+# Prometheus cannot be told to run as another uid without also owning
+# `/prometheus`, and chown to 65534 needs root the deploy does not have.
 printf '%s' "${CF_BEACON_TOKEN:-}" > prometheus/secrets/beacon_token
-chmod 600 prometheus/secrets/beacon_token
+chmod 644 prometheus/secrets/beacon_token
+
+# `analytics` and `lantern` gate /metrics the same way and for the same reason,
+# each with its own header and its own job in prometheus.yml — Prometheus
+# attaches credentials per job and not per target, so three gated services are
+# three jobs. Empty is the honest default here too.
+printf '%s' "${CF_ANALYTICS_TOKEN:-}" > prometheus/secrets/analytics_token
+printf '%s' "${CF_LANTERN_TOKEN:-}"   > prometheus/secrets/lantern_token
+chmod 644 prometheus/secrets/analytics_token prometheus/secrets/lantern_token
 
 # Alert delivery. Unconfigured falls back to the Beacon incident receiver, which
 # is a degradation (no acknowledgement, no escalation) and not a failure —
 # alerts still land where incidents already live.
-BEACON_FALLBACK="http://beacon:4011/api/alerts/webhook"
+#
+# 4000, NOT 4011. This said 4011 — Beacon's own default bind port in its source —
+# and the estate's compose normalises every service to `PORT: 4000` through the
+# `x-common-env` anchor. From inside the Alertmanager container on 2026-08-09:
+#
+#   http://beacon:4011/api/alerts/webhook  can't connect: Connection refused
+#   http://beacon:4000/api/alerts/webhook  HTTP/1.1 401 Unauthorized
+#
+# So the fallback every unconfigured alert has ever taken went to a port nothing
+# binds. 4000 reaches the route; it still 401s, because the webhook presents no
+# `x-beacon-token` and Alertmanager v0.27's `http_config` has no way to set an
+# arbitrary header. That half is filed separately and is not a scrape-config
+# problem — but a refused connection and an authentication failure are not the
+# same finding, and only one of them is visible in a log.
+BEACON_FALLBACK="http://beacon:4000/api/alerts/webhook"
 printf '%s' "${CF_PAGE_WEBHOOK_URL:-$BEACON_FALLBACK}"   > alertmanager/secrets/page_webhook_url
 printf '%s' "${CF_TICKET_WEBHOOK_URL:-$BEACON_FALLBACK}" > alertmanager/secrets/ticket_webhook_url
-chmod 600 alertmanager/secrets/*_webhook_url
+chmod 644 alertmanager/secrets/*_webhook_url
 
 # ------------------------------------------------------------- dashboards ---
 # Regenerated from the validated palette every time, so a hand-edit to the JSON

@@ -681,10 +681,18 @@ of it that the token could never have been reached through.
   every service through the `x-common-env` anchor, and the container's
   `printenv PORT` reads 4000. The scrape config was written against the service's
   documented default rather than against the environment it runs in.
-- **Empty credential file.** `prometheus/secrets/beacon_token` is 0 bytes on the
+- **Empty credential file.** `prometheus/secrets/beacon_token` was 0 bytes on the
   host. Even at the right port the scrape would have returned 401 — which is why
   fixing the port alone would have moved the target from `down` to `down` with a
   different reason.
+
+And a third, found while fixing the second: **`up.sh` wrote that file `chmod
+600`**, and Prometheus runs as the image default `nobody` (uid 65534, verified
+with `docker exec cfmicro-prometheus-1 id`). Owner-only, for an owner that is not
+in the container. An operator who did set `CF_BEACON_TOKEN` got the same dead
+scrape as one who did not, reading `unable to read headers file
+/etc/prometheus/secrets/beacon_token`. It is 0644 now, with the reasoning at the
+line.
 
 The port is fixed here. Writing the file is an operator step, because the value
 must not pass through a commit:
@@ -692,20 +700,42 @@ must not pass through a commit:
 ```sh
 # on the deploy host; the value is never printed
 docker exec cloudsforge-estate-beacon-1 printenv BEACON_TOKEN \
-  > prometheus/secrets/beacon_token
-chmod 600 prometheus/secrets/beacon_token
-docker exec cfmicro-prometheus-1 kill -HUP 1
+  | tr -d '\n' > prometheus/secrets/beacon_token
+chmod 644 prometheus/secrets/beacon_token
 ```
 
-`analytics` and `lantern` gate `/metrics` the same way and take the same
-treatment with `ANALYTICS_METRICS_TOKEN` and `LANTERN_METRICS_TOKEN`.
+`analytics` and `lantern` gate `/metrics` the same way, with `ANALYTICS_TOKEN`
+and `LANTERN_TOKEN` into `analytics_token` and `lantern_token`.
+
+Then **restart Prometheus rather than reloading it**, if `prometheus.yml` itself
+changed. It is a single-*file* bind mount, and `git checkout` replaces the file
+rather than writing through it, so the container keeps the inode it started with
+and `POST /-/reload` re-reads the old config from the operator's point of view
+while reporting success. Measured on 2026-08-09: after checking the branch out,
+`docker exec cfmicro-prometheus-1 grep -c 'beacon:4000' /etc/prometheus/prometheus.yml`
+returned 0 and the target list was unchanged; `docker restart cfmicro-prometheus-1`
+returned 1 and applied it. `prometheus/targets/` and `prometheus/rules/` are
+*directory* mounts and have no such problem, which is why a deploy re-rendering
+the scrape list needs no restart at all.
 
 **The rule was right; the estate had no path from a right rule to a person.**
 `BeaconScrapeFailing` had been firing continuously since 2026-08-05T21:07:58Z,
-which `/api/v1/alerts` shows. It reached an Alertmanager whose only configured
-receiver is a fire-and-forget webhook, so a correct alert about a broken scrape
-fired for four days into nothing. That half is not fixed here and is not a
-scrape-config problem.
+which `/api/v1/alerts` shows, and it resolved at 15:53 on 2026-08-09 when the
+port was corrected. It had been reaching an Alertmanager whose `beacon-incident`
+receiver — the one every alert in the file routes to — pointed at
+`http://beacon:4011/api/alerts/webhook`, **the same wrong port**. From inside the
+Alertmanager container:
+
+```
+http://beacon:4011/api/alerts/webhook   can't connect: Connection refused
+http://beacon:4000/api/alerts/webhook   HTTP/1.1 401 Unauthorized
+```
+
+The port is corrected in all three places. The 401 is not: Beacon gates that
+route on an `x-beacon-token` header and Alertmanager v0.27's `http_config` has no
+way to set an arbitrary header, so the credential cannot be attached without
+either an Alertmanager upgrade or a bearer Beacon would accept. That is filed as
+its own issue and is not a scrape-config problem.
 
 ---
 
@@ -730,19 +760,39 @@ not for a deploy directory: renaming the library's metrics is a P2 change to one
 package, while amending the document is free. The library is what these
 dashboards and rules reference either way.
 
-### Metrics that do not exist yet
+### Metrics that do not exist yet — now measured rather than assumed
 
-The money and chain rules reference metrics that `ledger`, `wallet`,
-`settlement`, `custody` and `indexer` must emit. Those services are P4/P5 and are
-not written. Those rules are the **contract**: a service that does not emit
-`ledger_trial_balance_delta` fails an alert that is already deployed and already
-has a runbook, rather than shipping and being instrumented afterwards.
+This said the money and chain metrics were missing because `ledger`, `wallet`,
+`settlement`, `custody` and `indexer` "are P4/P5 and are not written". All five
+are written, deployed and scraped, and 1,307 distinct metric names are in
+Prometheus as of 2026-08-09. The contract is still not met, and now it can be
+checked instead of predicted. Against the live label catalogue:
 
-`MoneyMetricContractMissing` is the rule that stops this being a silent gap.
-`absent()` inverts the default: not publishing the metric is itself the alert.
-Without it, a missing metric and a healthy ledger look identical — which is
-precisely the estate's current condition, where no metrics scraped anywhere
-presents as no alerts firing.
+| Rule | Metric it reads | In Prometheus |
+| --- | --- | --- |
+| `LedgerTrialBalanceNonZero` | `ledger_trial_balance_delta` | **yes**, 1 series, value 0 |
+| `IndexerLagPastConfirmationDepth` | `indexer_lag_blocks` | **yes**, 2 series (`ltc`, `ember`) |
+| `IndexerLagPastConfirmationDepth` | `indexer_confirmation_depth` | no — no metric name contains `confirmation` |
+| `WithdrawalStuck`, `MoneyMetricContractMissing` | `withdrawal_stuck_total` | no — no metric name contains `stuck` |
+| `LedgerReconciliationDrift` | `ledger_reconciliation_drift_native` | no — the exported name is `ledger_reconciliation_drift{asset}` |
+| `DepositAddressFrozen` | `wallet_deposit_address_frozen` | no — nearest is `wallet_deposit_addresses_unwatched` |
+| `BackupAgeExceeded` | `backup_last_success_timestamp_seconds` | no — no metric name contains `backup` |
+| `JobDeadLetterGrowth` | `jobs_dead_total` | no — services export `community_jobs_dead`, `notify_deliveries_dead` |
+| `ChainHeightSpreadSustained` | `beacon_chain_height_spread` | no, and Beacon **is** scraped now |
+| `HearthConformanceVectorsFailing` | `beacon_conformance_vectors` | no, likewise |
+
+Nothing here was rewritten to match. `ledger_reconciliation_drift` is per-asset
+and the rule expects one native-denominated number; `wallet_deposit_addresses_unwatched`
+counts a different condition from frozen. Silently repointing a money alert at a
+near-neighbour is how an alert comes to mean something nobody has agreed to. The
+list is filed as an issue against micro-org, service by service, with the
+measurement beside each one.
+
+`MoneyMetricContractMissing` is the rule that stops this being a silent gap, and
+it is now doing exactly that: it is firing on `absent(withdrawal_stuck_total)`
+while the other two names in its expression have data. Before the scrape list
+existed it fired on all three at once and meant nothing, because a rule with no
+series and a rule with a real gap were the same alert.
 
 ---
 
