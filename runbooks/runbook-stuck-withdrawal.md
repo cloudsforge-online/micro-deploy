@@ -1,6 +1,6 @@
 # A withdrawal is stuck
 
-**Triggered by** `WithdrawalStuck - withdrawal_stuck_total >= 1 for 5m`
+**Triggered by** `WithdrawalStuck - withdrawal_stuck >= 1 for 5m`
 **Severity** SEV1 - page · **Owner** settlement
 
 ## What it means

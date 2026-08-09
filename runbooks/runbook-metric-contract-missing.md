@@ -5,7 +5,7 @@
 
 ## What it means
 
-One of `ledger_trial_balance_delta`, `withdrawal_stuck_total` or
+One of `ledger_trial_balance_delta`, `withdrawal_stuck` or
 `indexer_lag_blocks` is not being published by anything. Every alert that depends
 on it is deployed and **cannot fire**.
 
