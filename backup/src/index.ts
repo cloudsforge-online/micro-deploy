@@ -49,6 +49,7 @@ try {
 // that reads the environment has to be loaded after it.
 const { env, SERVICE } = await import('./env.ts')
 const { registerHandlers, RecurringSchedule, rescheduleRecurring, seedRecurring, leaseKeyFor } = await import('./jobs.ts')
+const { lastSucceededAt } = await import('./catalogue.ts')
 const { assertClientMatchesServer, parseDsn, readClusterFacts } = await import('./pg.ts')
 const { assertDestinationIsReal, freeBytesAt } = await import('./disk.ts')
 
@@ -67,6 +68,13 @@ const metrics = registerJobMetrics(new Metrics())
   })
   .register({ name: 'backup_verifications_failed_total', help: 'Periodic verifications that found a bad set', kind: 'counter' })
   .register({ name: 'backup_last_success_bytes', help: 'Size of the last successful set', kind: 'gauge' })
+  // `_unixtime`, deliberately, and NOT the Prometheus-idiomatic `_timestamp_seconds`. The
+  // convention would be right in a greenfield exporter; here it would mean this one process
+  // publishes two spellings for the same kind of value, one line apart from
+  // `backup_last_verified_unixtime` below. Local consistency inside a single exporter beats a
+  // convention that is only half-applied, because the cost of the half-application is a reader
+  // having to know which of the two spellings any future gauge here follows.
+  .register({ name: 'backup_last_success_unixtime', help: 'When the last successful run finished', kind: 'gauge' })
   .register({ name: 'backup_last_verified_unixtime', help: 'When a restore last proved a set', kind: 'gauge' })
   .register({ name: 'backup_retained_bytes', help: 'Bytes retained after the last prune', kind: 'gauge' })
   .register({ name: 'backup_destination_free_bytes', help: 'Free space at the destination', kind: 'gauge' })
@@ -146,6 +154,42 @@ registerHandlers(runner, { admin, cluster, connection, env, logger, metrics }, s
 await seedRecurring(admin, queue, env.env, logger).catch((err: unknown) =>
   logger.error('could not seed the recurring jobs', { err }),
 )
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// SEED `backup_last_success_unixtime` FROM THE CATALOGUE, AND DO IT BEFORE ANYTHING CAN CLAIM.
+//
+// A gauge written only on the success path is erased by a container restart, and `Metrics.render`
+// drops a gauge that has never been set out of the exposition entirely — it emits the HELP and TYPE
+// lines and no sample. So without this read, every restart would leave
+// `time() - backup_last_success_unixtime > 129600` evaluating over an EMPTY VECTOR, which produces
+// no series and therefore never crosses the threshold: the page reads as satisfied because there is
+// nothing to compare. That silent green is the defect micro-org#310 is about, and a redeploy is not
+// an exotic event — it is how every release lands.
+//
+// Before `runner.start()` for an ordering reason, not for tidiness: a run that completed while this
+// process was booting would otherwise be overwritten by the older value read here.
+//
+// NOTHING IS PUBLISHED WHEN THERE IS NO SUCCEEDED RUN. Not a zero and not a sentinel — see
+// `lastSucceededAt`. An absent series says "nothing has ever backed this estate up", which is a
+// different fact from "the last backup is old", and `BackupNeverRun` is the rule that reads it.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+const lastSuccess = await lastSucceededAt(admin, env.env).catch((err: unknown) => {
+  // Not fatal. A catalogue read that failed is a reason to leave the gauge absent, which the ticket
+  // rule notices; refusing to start over it would stop the estate taking backups to protect a
+  // metric about backups.
+  logger.error('could not read the last successful backup from the catalogue', { err })
+  return null
+})
+if (lastSuccess) {
+  metrics.set('backup_last_success_unixtime', Math.floor(lastSuccess.getTime() / 1000))
+}
+logger.info('last successful backup', {
+  environment: env.env,
+  // The absence is logged as loudly as a value would be. On mainnet as of 2026-08-10 this is the
+  // line an operator will see, because `/data/cloudsforge-backups` is empty and `backup_runs` has
+  // never held a succeeded row for this estate.
+  lastSuccessAt: lastSuccess?.toISOString() ?? '(never — this estate has no backup)',
+})
 
 runner.start()
 

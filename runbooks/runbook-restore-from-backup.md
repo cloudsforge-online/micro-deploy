@@ -1,13 +1,18 @@
 # Restore from backup
 
-**Triggered by** `BackupAgeExceeded - no successful backup in 36h; and the quarterly drill`
+**Triggered by** `BackupAgeExceeded - time() - backup_last_success_unixtime > 129600 (36h); and the quarterly drill`
 **Severity** SEV2 for the alert; scheduled for the drill · **Owner** platform
 
 ## The alert is on AGE, not on failure
 
 A backup job that silently stops firing produces no failure to alert on. If
-`backup_last_success_timestamp_seconds` is stale, the first question is whether
-the job ran at all - not whether it errored.
+`backup_last_success_unixtime` is stale, the first question is whether the job
+ran at all - not whether it errored.
+
+The metric was `backup_last_success_timestamp_seconds` in this runbook and in
+the rule until 2026-08-10, and nothing had ever exported it (micro-org#310). The
+gauge that exists is `backup_last_success_unixtime`, published by the backup
+runner and seeded at boot from `backup_runs`.
 
 ## NONE OF THE BELOW EXISTS YET, AND SAYING SO IS THE POINT
 
@@ -17,6 +22,14 @@ and `lsblk` shows one 447G root disk carrying every Docker volume. There is no
 snapshot, no WAL archive, no off-host copy, and **no restore has ever been
 performed**. The `BackupAgeExceeded` alert this runbook is triggered by has
 nothing to fire on because nothing has ever succeeded.
+
+Still true on 2026-08-10, and now stated by an alert rather than by a paragraph:
+`deploy/backup` is built and `compose/docker-compose.backup.yml` is a complete
+overlay, but no `backup-runner` container has ever been started and the
+destination directory is empty. `BackupNeverRun` is the rule that says so, and
+`runbook-backup-never-run.md` is what to do about it. **Read that one first if
+this alert is not firing** — an absent series cannot page, so silence here is not
+evidence of a backup.
 
 Everything from here down is the TARGET. Read it as the design, and read the
 paragraph above as the state. A runbook that describes a regime the estate does

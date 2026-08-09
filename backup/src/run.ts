@@ -404,6 +404,17 @@ export async function performBackup(deps: RunnerDeps, options: BackupOptions): P
   })
 
   deps.metrics.set('backup_last_success_bytes', Number(totalBytes))
+  // How big is not when. `backup_last_success_bytes` alone cannot answer "did a backup run
+  // today", which is the only question `BackupAgeExceeded` asks.
+  //
+  // SECONDS, matching `backup_last_verified_unixtime` and matching Prometheus's `time()`, which
+  // the rule subtracts this from. Milliseconds here would put the last success in the year 57000
+  // and the age would be permanently negative — a page that can never fire, published by a
+  // process that is working.
+  //
+  // Set AFTER `completeRun`, so the gauge cannot claim a success the catalogue has not recorded.
+  // The reverse order would publish a number that a boot-time reseed then contradicts.
+  deps.metrics.set('backup_last_success_unixtime', Math.floor(now().getTime() / 1000))
   deps.logger.info('backup complete', {
     backupRunId: options.backupRunId,
     directory,

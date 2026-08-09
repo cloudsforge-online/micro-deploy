@@ -329,6 +329,40 @@ export async function listSucceededRuns(sql: Sql, environment: Environment): Pro
 }
 
 /**
+ * When the newest succeeded run for this environment FINISHED — or **null if there has never been
+ * one**.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **NULL, NOT ZERO, AND THAT IS THE WHOLE POINT OF THE FUNCTION.**
+ *
+ * Its one caller seeds `backup_last_success_unixtime` at boot. A zero or an epoch sentinel would
+ * publish a series saying the estate was last backed up in 1970, which reads as "very old" — and
+ * "very old" is a claim that a backup once happened. It did not. Absent is the honest answer, and
+ * the alert plane distinguishes the two deliberately: `BackupAgeExceeded` pages on an old series,
+ * `BackupNeverRun` tickets on no series at all.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `finished_at` and not `queued_at`, because the question is when a set finished being written and
+ * a run that started yesterday and finished this morning is this morning's copy.
+ * `backup_runs_terminal_is_finished` makes `finished_at is not null` equal to being in
+ * ('succeeded','failed'), so a succeeded row always carries one; the `is not null` in the predicate
+ * is what lets the index-ordered read be sure of it rather than assume it.
+ *
+ * `state = 'succeeded'` also excludes `pruned`, which is correct twice over: a pruned set's files
+ * are gone, and `markPruned` has to clear `finished_at` to satisfy that same constraint — so a
+ * pruned run could not answer this question even if it should.
+ */
+export async function lastSucceededAt(sql: Sql, environment: Environment): Promise<Date | null> {
+  const [row] = await sql<{ finished_at: Date }[]>`
+    select finished_at from backup_runs
+      where environment = ${environment} and state = 'succeeded' and finished_at is not null
+      order by finished_at desc
+      limit 1
+  `
+  return row?.finished_at ?? null
+}
+
+/**
  * Record that a set was actually restored, and by which restore.
  *
  * `backup_runs_verification_is_attributed` refuses a `verified_at` with nothing to point at.
