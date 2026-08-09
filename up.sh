@@ -26,6 +26,35 @@ mkdir -p prometheus/secrets alertmanager/secrets
 # degraded-but-honest rather than refusing to start.
 [[ -f .env ]] && set -a && . ./.env && set +a
 
+# ── WRITING A SECRET MUST NOT BE A WAY OF DESTROYING ONE (micro-org#40) ───────
+#
+# Every line below used to be a bare `printf '%s' "${VAR:-}" > file`, which turns
+# an unset variable into an ERASED credential. That is not hypothetical and it
+# was not the token this script was written for: measured on the mainnet host on
+# 2026-08-10, `.env` sets CF_BEACON_TOKEN and does NOT set CF_ANALYTICS_TOKEN or
+# CF_LANTERN_TOKEN, while `prometheus/secrets/analytics_token` and
+# `lantern_token` both held a real 44-byte value that an operator had put there
+# by hand, exactly as README §Secrets tells them to. The next run of this
+# idempotent, safe-to-repeat script would have emptied both and taken two scrapes
+# down — and the failure would have looked like Prometheus's fault.
+#
+# So: a value in the environment wins, absence keeps what is already there, and
+# a missing file is always created. The last part matters as much as the first —
+# Prometheus refuses to start when a `files:` path is absent and Alertmanager
+# fails its `credentials_file` the same way, so "create it empty" is what keeps
+# unconfigured a supported mode rather than a plane that will not come up.
+#
+# 0644 and not 0600 for the reason spelled out at the Beacon token below.
+write_secret() {
+  local path="$1" value="${2:-}"
+  if [[ -z "$value" && -s "$path" ]]; then
+    echo "up.sh: keeping the existing $(basename "$path") — nothing in .env to replace it with" >&2
+  else
+    printf '%s' "$value" > "$path"
+  fi
+  chmod 644 "$path"
+}
+
 # Beacon gates /metrics behind auth, deliberately — an open /metrics publishes
 # the shape of the estate to anyone who can reach the port. Prometheus reads the
 # token from this file via `http_headers: files:` rather than from its config,
@@ -55,16 +84,31 @@ mkdir -p prometheus/secrets alertmanager/secrets
 #
 # Prometheus cannot be told to run as another uid without also owning
 # `/prometheus`, and chown to 65534 needs root the deploy does not have.
-printf '%s' "${CF_BEACON_TOKEN:-}" > prometheus/secrets/beacon_token
-chmod 644 prometheus/secrets/beacon_token
+write_secret prometheus/secrets/beacon_token "${CF_BEACON_TOKEN:-}"
+
+# The SAME token, in a second file, for Alertmanager (micro-org#311). Beacon's
+# `/api/alerts/webhook` is gated exactly like its `/metrics`, and every alert in
+# alertmanager.yml routes to it, so an alert that cannot authenticate is an
+# incident that is never opened — the alerting plane wired end to end and silent.
+#
+# Alertmanager cannot send `x-beacon-token`: its `http_config` offers
+# `basic_auth`, `authorization` and `oauth2` and no arbitrary header. Beacon
+# therefore accepts the same credential as `Authorization: Bearer`
+# (micro-beacon#10), and this is the file that `authorization.credentials_file`
+# reads. Same secret, same scopes, still not an administrator.
+#
+# A SECOND FILE AND NOT A SHARED ONE, because the two directories are two
+# read-only mounts into two containers, and mounting Prometheus's secrets
+# directory into Alertmanager to save a copy would hand Alertmanager the
+# analytics and lantern tokens as well — three credentials to deliver one.
+write_secret alertmanager/secrets/beacon_token "${CF_BEACON_TOKEN:-}"
 
 # `analytics` and `lantern` gate /metrics the same way and for the same reason,
 # each with its own header and its own job in prometheus.yml — Prometheus
 # attaches credentials per job and not per target, so three gated services are
 # three jobs. Empty is the honest default here too.
-printf '%s' "${CF_ANALYTICS_TOKEN:-}" > prometheus/secrets/analytics_token
-printf '%s' "${CF_LANTERN_TOKEN:-}"   > prometheus/secrets/lantern_token
-chmod 644 prometheus/secrets/analytics_token prometheus/secrets/lantern_token
+write_secret prometheus/secrets/analytics_token "${CF_ANALYTICS_TOKEN:-}"
+write_secret prometheus/secrets/lantern_token "${CF_LANTERN_TOKEN:-}"
 
 # Alert delivery. Unconfigured falls back to the Beacon incident receiver, which
 # is a degradation (no acknowledgement, no escalation) and not a failure —
@@ -83,10 +127,16 @@ chmod 644 prometheus/secrets/analytics_token prometheus/secrets/lantern_token
 # arbitrary header. That half is filed separately and is not a scrape-config
 # problem — but a refused connection and an authentication failure are not the
 # same finding, and only one of them is visible in a log.
+#
+# The fallback POST carries NO credential — a `url_file` receiver has no
+# `http_config` here on purpose, because when these ARE configured they point at
+# Slack or PagerDuty and Beacon's token must not be sent to either. So the
+# fallback still 401s at Beacon. It loses nothing: every alert already reaches
+# Beacon through the `beacon-incident` receiver, which now does authenticate, and
+# the fallback was only ever a second copy of the same POST.
 BEACON_FALLBACK="http://beacon:4000/api/alerts/webhook"
-printf '%s' "${CF_PAGE_WEBHOOK_URL:-$BEACON_FALLBACK}"   > alertmanager/secrets/page_webhook_url
-printf '%s' "${CF_TICKET_WEBHOOK_URL:-$BEACON_FALLBACK}" > alertmanager/secrets/ticket_webhook_url
-chmod 644 alertmanager/secrets/*_webhook_url
+write_secret alertmanager/secrets/page_webhook_url   "${CF_PAGE_WEBHOOK_URL:-$BEACON_FALLBACK}"
+write_secret alertmanager/secrets/ticket_webhook_url "${CF_TICKET_WEBHOOK_URL:-$BEACON_FALLBACK}"
 
 # ------------------------------------------------------------- dashboards ---
 # Regenerated from the validated palette every time, so a hand-edit to the JSON

@@ -109,12 +109,18 @@ scrape_configs:
   # ── AND THE TOKEN, WHICH IS THE SECOND HALF ────────────────────────────────
   #
   # Fixing the port alone moves this target from `connection refused` to `401`.
-  # `secrets/beacon_token` is 0 bytes in the checkout and was 0 bytes on the
-  # mainnet host, while the running Beacon container has had a real BEACON_TOKEN
-  # set throughout (measured 2026-08-09: set, 44 characters). The file is
-  # gitignored-by-emptiness rather than by rule — it is committed empty on
-  # purpose so Prometheus can start — and filling it is an operator step, in
-  # README §Beacon, not a thing this file can do.
+  # `secrets/beacon_token` was 0 bytes on the mainnet host while the running
+  # Beacon container had a real BEACON_TOKEN set throughout (measured 2026-08-09:
+  # set, 44 characters). Filling it is an operator step, in README §Beacon, not a
+  # thing this file can do.
+  #
+  # The file is no longer tracked. It was committed empty so Prometheus could
+  # start — which is a real constraint, this scrape config will not load without
+  # the path existing — but "gitignored by emptiness" is a rule enforced by
+  # nobody having staged it yet, and on 2026-08-10 the host's checkout had it
+  # modified with a real token in the working tree. `../up.sh` creates it
+  # unconditionally now, so the path always exists and `.gitignore` can refuse
+  # it outright (micro-org#40).
   - job_name: beacon
     scheme: http
     # Beacon holds live state in memory and its /metrics never touches Postgres

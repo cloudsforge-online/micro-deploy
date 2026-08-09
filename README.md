@@ -633,20 +633,41 @@ and AD-20 as built.
 ## Secrets
 
 No secret is in any committed file. `.env` is gitignored; `up.sh` reads it and
-writes two credential *files* which are mounted:
+writes the credential *files* which are mounted:
 
 | File | Read by | Mechanism |
 | --- | --- | --- |
 | `prometheus/secrets/beacon_token` | Prometheus | `http_headers: files:` on the Beacon scrape |
 | `prometheus/secrets/analytics_token` | Prometheus | `http_headers: files:` on the analytics scrape |
 | `prometheus/secrets/lantern_token` | Prometheus | `http_headers: files:` on the lantern scrape |
+| `alertmanager/secrets/beacon_token` | Alertmanager | `authorization: credentials_file:` on the Beacon incident receiver |
 | `alertmanager/secrets/{page,ticket}_webhook_url` | Alertmanager | `url_file:` on each receiver |
 
-The three token files are committed **empty**, at mode 0600, because Prometheus
-refuses to start when a `files:` path does not exist and a plane that will not
-start is a worse failure than three targets that 401. Filling them is an operator
-step: each value already exists in the corresponding container's own environment
-on the estate.
+Both `beacon_token` files hold the same value, and they are two files because
+they are two read-only mounts into two containers — mounting Prometheus's secrets
+directory into Alertmanager to save the copy would hand Alertmanager the
+analytics and lantern tokens as well, three credentials to deliver one.
+
+**None of these files is tracked, and `up.sh` creates every one of them.** They
+used to be committed empty, because Prometheus refuses to start when a `files:`
+path is absent and Alertmanager fails a `credentials_file` the same way, so a
+tracked empty file was how the plane was kept startable. It also made "no secret
+is in any committed file" a property of nobody having run `git add` yet: on
+2026-08-10, `git status` in the mainnet host's checkout listed five *tracked,
+modified* files, and the modification was three real service tokens. One
+`git add -A` from a public repository. `up.sh` buys the startability instead, and
+`.gitignore` now refuses the paths outright, so a credential cannot be staged.
+
+Filling them is an operator step — put the value in `.env` as `CF_BEACON_TOKEN`,
+`CF_ANALYTICS_TOKEN` or `CF_LANTERN_TOKEN` and run `./up.sh`. Each value already
+exists in the corresponding container's own environment on the estate.
+
+**`up.sh` will not empty a file it has nothing to fill it with.** A variable
+missing from `.env` leaves the existing credential alone and says so on stderr;
+this used to be a bare redirect, so a run with `CF_ANALYTICS_TOKEN` unset erased
+a token an operator had written by hand and took the scrape down (micro-org#40).
+Putting the value in `.env` rather than in the file is therefore the durable
+form, and writing the file by hand still works.
 
 Files rather than environment variables, because a credential in an environment
 variable is a credential in `docker inspect`, in every crash dump and in the
@@ -694,18 +715,21 @@ scrape as one who did not, reading `unable to read headers file
 /etc/prometheus/secrets/beacon_token`. It is 0644 now, with the reasoning at the
 line.
 
-The port is fixed here. Writing the file is an operator step, because the value
-must not pass through a commit:
+The port is fixed here. Supplying the value is an operator step, because it must
+not pass through a commit — put it in `.env`, which is gitignored, and let
+`up.sh` write both files:
 
 ```sh
 # on the deploy host; the value is never printed
-docker exec cloudsforge-estate-beacon-1 printenv BEACON_TOKEN \
-  | tr -d '\n' > prometheus/secrets/beacon_token
-chmod 644 prometheus/secrets/beacon_token
+printf 'CF_BEACON_TOKEN=%s\n' \
+  "$(docker exec cloudsforge-estate-beacon-1 printenv BEACON_TOKEN)" >> .env
+./up.sh
 ```
 
 `analytics` and `lantern` gate `/metrics` the same way, with `ANALYTICS_TOKEN`
-and `LANTERN_TOKEN` into `analytics_token` and `lantern_token`.
+and `LANTERN_TOKEN` into `CF_ANALYTICS_TOKEN` and `CF_LANTERN_TOKEN`. Writing the
+secret file directly still works and survives the next `up.sh` — but only `.env`
+survives a fresh clone.
 
 Then **restart Prometheus rather than reloading it**, if `prometheus.yml` itself
 changed. It is a single-*file* bind mount, and `git checkout` replaces the file
@@ -731,11 +755,27 @@ http://beacon:4011/api/alerts/webhook   can't connect: Connection refused
 http://beacon:4000/api/alerts/webhook   HTTP/1.1 401 Unauthorized
 ```
 
-The port is corrected in all three places. The 401 is not: Beacon gates that
-route on an `x-beacon-token` header and Alertmanager v0.27's `http_config` has no
-way to set an arbitrary header, so the credential cannot be attached without
-either an Alertmanager upgrade or a bearer Beacon would accept. That is filed as
-its own issue and is not a scrape-config problem.
+The port is corrected in all three places. The 401 was not, and a 401 on every
+alert is the same silence with a better error message: Beacon gated that route on
+an `x-beacon-token` header, and Alertmanager's `http_config` offers `basic_auth`,
+`authorization` and `oauth2` and no way to set an arbitrary header — at any
+version, so the upgrade to v0.28.1 did not help and could not have. The
+credential could not be attached here at all.
+
+That half is fixed too (micro-org#311). Beacon accepts the same break-glass token
+in either `x-beacon-token` or `Authorization: Bearer` (micro-beacon#10), so the
+`beacon-incident` receiver presents it with
+`authorization: { type: Bearer, credentials_file: … }` and `up.sh` writes the
+file. It is the same secret with the same scopes, and it is still not an
+administrator — Beacon's suite pins that by POSTing an adminOnly route with the
+token as a bearer and asserting 403.
+
+The alternatives were minting a service principal for Alertmanager — a second
+credential with the same power, and one that expires during exactly the outage it
+exists for — and putting a proxy in front of the route, a new component whose
+failure mode is silence, in the plane whose job is to end silence. The cost of
+what was chosen is that an `Authorization` header is copied into more places than
+a custom one: proxy logs, client libraries, curl transcripts.
 
 ---
 
