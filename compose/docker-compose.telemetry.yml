@@ -154,7 +154,33 @@ services:
   # ----------------------------------------------------------- alertmanager ---
   alertmanager:
     <<: *obs
-    image: prom/alertmanager:v0.27.0
+    # ── v0.28.1 AND NOT v0.27.0, BECAUSE v0.27.0 CRASHES ON A 4xx ─────────────
+    #
+    # prometheus/alertmanager#3798: a `webhook_configs` entry configured with
+    # `url_file` rather than `url` dereferences a nil `conf.URL` when it builds
+    # the retry-failure message, so ANY non-2xx response from that webhook is a
+    # segfault. Fixed by #3800, merged 2024-04-12, and there is no v0.27.1 — the
+    # first release carrying it is v0.28.0.
+    #
+    # Both delivery receivers here (`page`, `ticket`) use `url_file`, because a
+    # webhook URL is a credential and belongs in a file rather than in a config
+    # that ends up in backups and screenshots. So the estate's entire alert
+    # delivery path was one 4xx away from a crash loop.
+    #
+    # Measured on 2026-08-09, on mainnet, and not from the changelog: correcting
+    # Beacon's incident URL from the port nothing binds (4011) to the port it
+    # listens on (4000) turned a `connection refused` — a transport error, which
+    # never reaches the retrier — into a `401`, and Alertmanager panicked on
+    # every alert notification thereafter, three times in three minutes:
+    #
+    #   panic: runtime error: invalid memory address or nil pointer dereference
+    #   notify/webhook.New.func1  /app/notify/webhook/webhook.go:60
+    #   notify.(*Retrier).Check   /app/notify/util.go:239
+    #
+    # This bug could not be found while nothing was ever delivered, which is the
+    # same reason micro-org#308 lasted as long as it did. `amtool check-config`
+    # on v0.28.1 accepts this configuration unchanged.
+    image: prom/alertmanager:v0.28.1
     command:
       - --config.file=/etc/alertmanager/alertmanager.yml
       - --storage.path=/alertmanager

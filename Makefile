@@ -5,7 +5,11 @@ COMPOSE_PROJECT_NAME ?= cfmicro
 TELEMETRY := -f compose/docker-compose.telemetry.yml
 GATEWAY   := -f compose/docker-compose.gateway.yml
 PROM_IMG  := prom/prometheus:v2.55.1
-AM_IMG    := prom/alertmanager:v0.27.0
+# v0.28.1: v0.27.0 segfaults on any non-2xx from a `url_file` webhook
+# (prometheus/alertmanager#3798). Kept equal to the image in
+# compose/docker-compose.telemetry.yml — a check that validates a config against
+# a different build from the one that runs it is a check that can pass wrongly.
+AM_IMG    := prom/alertmanager:v0.28.1
 OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
 
 .DEFAULT_GOAL := help
