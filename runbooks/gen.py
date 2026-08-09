@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
 """Write the runbook set that the alert rules link to.
 
+── DO NOT RUN THIS. IT IS NO LONGER THE SOURCE (2026-08-10) ──────────────────
+
+This wrote the first version of every runbook beside it and has not been the
+source of truth since. The .md files are edited by hand now — as they must be,
+because a runbook is written during an incident by the person who just worked
+it — and several have grown far past what is in the table below.
+`runbook-reconciliation-drift.md` is over a hundred lines of measured UTXO
+refusals; its entry here is twenty-nine lines from before any of that existed.
+Running `python3 gen.py` would overwrite it, and the runbooks it destroys are the
+ones that took an outage each to learn.
+
+Nothing invokes it: the Makefile's `check-runbooks` target runs
+`scripts/check-runbooks.py`, which asserts every alert's `runbook_url` resolves
+to a file that EXISTS, and says nothing about what wrote it. A new runbook is a
+new .md next to these, following the header shape below — trigger, severity,
+owner — and no entry here.
+
+It is kept rather than deleted because the header shape it defines is the reason
+an operator reading one under pressure knows where the next thing is, and that
+convention is easier to follow from the program that established it than from a
+paragraph asserting it.
+
 Kept as a generator for one reason: every runbook must carry the same header
 shape (trigger, severity, owner) so an operator reading one under pressure knows
 where the next thing is. A header that varies is a header that gets skimmed.

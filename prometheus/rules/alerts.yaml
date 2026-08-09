@@ -69,6 +69,47 @@ groups:
             reversible, a duplicated payout is not.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-stuck-withdrawal.md
 
+      - alert: AssetWithdrawalsFrozen
+        # Reconciliation freezes an asset when it cannot PROVE the chain backs
+        # the liability, and a frozen asset is a user who cannot withdraw. That
+        # is the same user-visible money failure WithdrawalStuck names, arriving
+        # by the opposite route: nothing is stuck, because nothing was accepted.
+        #
+        # THIS IS THE RULE THAT WOULD HAVE CAUGHT micro-org#307. On 2026-08-09
+        # litecoind stopped answering its own RPC — "work queue depth exceeded",
+        # with idle workers and no connections — reconciliation could not observe
+        # LTC, and LTC withdrawals were frozen for about thirty minutes. Every
+        # deployed rule stayed green for all of it: the indexer was up, the
+        # ledger was up, and `indexer_lag_blocks` was zero because a chain nobody
+        # can read produces no lag. The money consequence was the only honest
+        # signal in the estate and nothing was watching it.
+        #
+        # `for: 20m` is deliberate and not a round number. The reconciliation
+        # sweep runs every 15 minutes and ONLY an exactly-clean observed run
+        # lifts a freeze, so 20m rides out one full self-healing cycle and fires
+        # on the second — while still firing inside a thirty-minute outage.
+        #
+        # No `by (asset)`: the gauge carries no labels, because it is the length
+        # of `listFreezes(...)`. The runbook opens with the query that names
+        # them, which is where that belongs — the answer is a row in
+        # `asset_freezes`, not a label Prometheus would carry for every asset
+        # the platform will ever list.
+        expr: ledger_assets_frozen > 0
+        for: 20m
+        labels:
+          severity: page
+          team: ledger
+          service: ledger
+          sev: "2"
+        annotations:
+          summary: "{{ $value }} asset(s) have withdrawals frozen by reconciliation"
+          description: >-
+            Withdrawals are stopped on at least one asset because reconciliation
+            could not prove the chain backs it. Read the reason before touching
+            anything: an unobservable chain and a real drift are different
+            mornings, and only one of them is about the money.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-reconciliation-drift.md
+
   # ====================================================== PAGE — custody ====
   - name: cf.page.custody
     rules:
@@ -137,6 +178,92 @@ groups:
             Sustained non-zero height spread is a partition or a fork, not a slow
             node. Do not restart nodes until you know which chain is the chain.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-hearth-fork.md
+
+      - alert: ChainNodeTemplateStale
+        # A CHAIN NODE THAT HAS STOPPED ANSWERING, MEASURED WHERE IT COSTS
+        # SOMETHING (micro-org#307).
+        #
+        # The pool asks its node for a block template every ten seconds. When the
+        # node stops answering, this age climbs and every miner pointed at the
+        # estate is burning electricity on work that can no longer win — which is
+        # the first place an unreachable node becomes visible to a person.
+        #
+        # 120 IS NOT A THRESHOLD CHOSEN HERE. It is the pool's own
+        # `TEMPLATE_STALE_AFTER_MS` (pool/src/template.ts), documented there as
+        # the staleness at which /readyz stops claiming the chain works. Copying
+        # the constant into this file would be a second answer to one question;
+        # comparing against the pool's own line is the same number by
+        # construction, and if the pool changes its mind this rule follows.
+        #
+        # `for: 5m` comes from the 5.7h of mainnet history Prometheus held on
+        # 2026-08-10: 2.87% of samples above 120s, p99 206s, mean 38s, max 359s,
+        # and the longest single unbroken run above 120s about 240s. Five minutes
+        # clears every benign excursion measured, and the 2026-08-09 wedge
+        # produced no template at all for roughly twenty minutes.
+        expr: pool_template_age_seconds > 120
+        for: 5m
+        labels:
+          severity: page
+          team: pool
+          service: pool
+          sev: "2"
+        annotations:
+          summary: "No fresh {{ $labels.chain }} block template for {{ $value | humanizeDuration }}"
+          description: >-
+            The pool's {{ $labels.chain }} node has stopped serving templates.
+            Miners are hashing on work that cannot win. Ask the node directly
+            before restarting the pool — a wedged RPC answers the CLI instantly
+            and refuses HTTP, which looks identical to a pool bug from here.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-chain-node-unreachable.md
+
+      - alert: IndexerChainHalted
+        # A HALT IS NOT UNREACHABILITY, and the distinction is the whole reason
+        # this rule is not the one above. `indexer_chain_halted` is set when a
+        # reorg deeper than the chain's policy allows stopped the follower on
+        # purpose; it is cleared by an operator and never by waiting. A node that
+        # is merely unreachable leaves this at 0 forever.
+        #
+        # It pages because crediting has stopped on that chain and the ledger
+        # will freeze the asset behind it within two sweeps, so the alternative
+        # is discovering it from AssetWithdrawalsFrozen forty minutes later with
+        # the cause already scrolled off.
+        #
+        # `for: 5m` and not shorter: the gauge is set by the follower loop, and a
+        # halt that clears inside one loop was a read the follower retried.
+        expr: indexer_chain_halted > 0
+        for: 5m
+        labels:
+          severity: page
+          team: indexer
+          service: indexer
+          sev: "2"
+        annotations:
+          summary: "Indexer has halted {{ $labels.chain }} on {{ $labels.network }}"
+          description: >-
+            A reorg past the policy depth stopped the follower deliberately.
+            Deposits on {{ $labels.chain }} are not being credited and only an
+            operator clears this. Do not restart the indexer to make it go away —
+            establish the common ancestor first.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-reorg-recovery.md
+
+      # ── AND DELIBERATELY NO RULE ON indexer_provider_failures_total ──────────
+      #
+      # The obvious alert for "a chain node is unreachable" is a rate of RPC
+      # failures, and on this estate it cannot be written honestly. Measured on
+      # mainnet on 2026-08-10 over the 5.7h Prometheus held:
+      #
+      #   increase(indexer_provider_failures_total[5m])   p99 56, max 76
+      #   the same window on 2026-08-09, mid-wedge        about 78
+      #
+      # Routine and outage are the same number. 285 failures accrued in 24h
+      # against a node that answers `litecoin-cli` instantly, so the counter is
+      # measuring the indexer's own retry behaviour rather than the node's
+      # reachability, and every threshold above the noise is also above the
+      # signal. A rule written on it today would page hourly and be silenced by
+      # Friday, which is worse than the absence it appears to fix. Making the
+      # counter mean something is a change in micro-indexer, not a threshold
+      # here; the three rules that carry #307 are the ones above, which measure
+      # the consequence instead of the plumbing.
 
   # ===================================================== PAGE — journeys ====
   - name: cf.page.journeys
