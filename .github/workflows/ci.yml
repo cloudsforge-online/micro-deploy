@@ -561,6 +561,35 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-release-deploy-pulls-before-switching.py
 
+      # ── A CREDENTIAL IS A SECRET, AND A MISSPELT ONE IS SILENTLY ABSENT ──────
+      #
+      # Eighteen service blocks are handed a long-lived `cfsc_…` credential they
+      # exchange for short-lived tokens, and the compose block's only job is to
+      # pass it through as `NAME: ${NAME:-}`. That line has two silent failures.
+      #
+      # Wire it to the wrong variable name and it interpolates to EMPTY on every
+      # host forever; every `env.ts` in the estate reads empty as absent, so the
+      # container boots, serves, and falls back to whatever it has left with no
+      # error anywhere. `estate-bootstrap.sh` minted `MARKET_IDENTITY_CREDENTIAL`
+      # for months and nothing read it, and `estate-verify.sh` found six testnet
+      # services running on an empty one.
+      #
+      # Paste the value instead of the interpolation and a real credential is in
+      # a public repository, which is the failure that cannot be undone — the
+      # remedy is a rotation, not a `git rm --cached`. The check never echoes a
+      # value it rejects, because a CI log is a second public place.
+      #
+      # It also holds the emberkin transition to its ORDER. micro-emberkin#3 made
+      # the credential the way it authenticates and kept `EMBERKIN_SERVICE_TOKEN`
+      # accepted for the length of a rolling deploy, so removing the token before
+      # the credential is present leaves neither variable satisfiable and the
+      # service refuses to boot — taking `emberkin-migrate` with it.
+      - name: Every service credential is an interpolation, spelt like its own variable
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-service-credential-wiring.py
+
       # ── THE POOL'S WEBSOCKET CONFIGURATION IS COHERENT, OR IT IS A CRASH LOOP ─
       #
       # micro-org#289 gave micro-pool a Stratum transport a browser can dial, and

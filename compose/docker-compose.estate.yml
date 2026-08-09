@@ -2611,25 +2611,57 @@ services:
   # is 4100 — IDENTITY'S HOST PORT IN THIS FILE — so it is normalised to 4000 for
   # the reason argued in the aetherholm block above.
   #
-  # ── EMBERKIN_SERVICE_TOKEN IS A TOKEN AND MUST NOT BE HANDED A CREDENTIAL ───
+  # ── THE TEN-MINUTE CLIFF, AND THE REMEDY THIS BLOCK USED TO ONLY PREDICT ────
   #
-  # This is the tessera trap again, and it is worth stating per service because
-  # the variable NAME is not what settles it. `emberkin/src/index.ts` is
-  # `const token = (): string => env.serviceToken` — the value is PRESENTED as a
-  # bearer, verbatim, with no exchange. So it must be a ten-minute JWT from
-  # `POST /service-tokens`, and it is minted in `estate-bootstrap.sh`'s
-  # CREDENTIALS list. Handing it `EMBERKIN_IDENTITY_CREDENTIAL` — which section
-  # 5b already mints, and which is sitting in `tokens.env` looking like the
-  # obvious answer — would send its three upstreams a Bearer that is not a JWT
-  # and earn a 401 with nothing in either log naming the cause.
+  # What stood here said `EMBERKIN_SERVICE_TOKEN` "is a TOKEN and must not be
+  # handed a credential": `emberkin/src/index.ts` was `const token = (): string
+  # => env.serviceToken`, presenting the value verbatim as a Bearer with no
+  # exchange, so it had to be a ten-minute JWT from `POST /service-tokens` and a
+  # `cfsc_…` in that slot earned a 401 from all three upstreams with nothing in
+  # either log naming the cause. It then recorded the cliff as real and named the
+  # remedy: "micro-emberkin adopting `ServiceTokenProvider` and reading the
+  # credential instead".
   #
-  # The ten-minute expiry is therefore REAL here, and is recorded rather than
-  # hidden: this is the same cliff that froze EMBER through `ledger`, and the
-  # same remedy applies — micro-emberkin adopting `ServiceTokenProvider` and
-  # reading the credential instead. Unlike ledger's, emberkin's calls are on
-  # request paths rather than a 900-second timer, so a bootstrap is not
-  # guaranteed to outrun it; it fails when a player acts more than ten minutes
-  # after one.
+  # micro-emberkin#3 is that remedy, merged. `src/upstreams.ts` now exchanges
+  # `EMBERKIN_IDENTITY_CREDENTIAL` at `POST /service-tokens/exchange` and
+  # re-mints before expiry, the same way tessera, community, market and foresight
+  # already do. So the credential is wired below and the cliff is gone: emberkin's
+  # calls are on REQUEST paths rather than a 900-second timer, so a bootstrap was
+  # never guaranteed to outrun the expiry — it failed whenever a player acted more
+  # than ten minutes after one, which is not a state anything alerted on.
+  #
+  # ── THE ORDER OF THESE TWO LINES IS THE WHOLE DEPLOY RULE ───────────────────
+  #
+  # `env.ts` requires ONE OF the two and both slots are individually optional, so
+  # removing `EMBERKIN_SERVICE_TOKEN` before the credential is in place leaves
+  # neither satisfiable and emberkin refuses to boot at the door — `emberkin-migrate`
+  # with it, since it loads the same `env.ts`. The token therefore STAYS here for
+  # now and comes out in a later release, once every environment has run a
+  # bootstrap. Until the credential is present the service runs in `static` mode
+  # and behaves exactly as it does today, announcing the mode at boot, so there is
+  # nothing to hurry.
+  #
+  # Both slots refuse the OTHER'S value by name — `optionalMintedToken` demands a
+  # JWT, `assertServiceCredential` refuses one — so the two cannot be swapped by a
+  # deploy in a hurry, in either direction.
+  #
+  # ── AND THE PLACEHOLDER DEFAULT HAD TO GO WITH IT ───────────────────────────
+  #
+  # `${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}` was
+  # defensible while the slot was REQUIRED: it let a bootstrap-less host render.
+  # It cannot survive the slot becoming optional. That literal is 40 characters
+  # and does not match `/^ey[A-Za-z0-9_-]*\./`, so `optionalMintedToken` THROWS on
+  # it — meaning a host with a perfectly good credential and no minted token would
+  # crash-loop on the variable that is only still here for the rollout. Defaulted
+  # empty instead, which `env.ts` reads as absence ("absent and empty are the same
+  # thing here", says its own comment), leaving the credential to satisfy the
+  # check. Where neither is set the boot error now names both variables and the
+  # command that mints them, rather than complaining about the shape of a
+  # placeholder this file invented.
+  #
+  # No `IDENTITY_URL`: `env.ts` falls back to `IDENTITY_ISSUER`, which
+  # `*identity-trust` already supplies — the same reason tessera and community
+  # do not set it either.
   #
   # Its grant is DERIVED and already present: billing:read, ledger:post,
   # worlds:title, from BILLING_SCOPES, LEDGER_SCOPES and WORLDS_SCOPES in its own
@@ -2648,7 +2680,13 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       WORLDS_URL: http://worlds:4000
-      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # The credential FIRST and the token still beside it — see the ordering note
+      # in this block's header. `emberkin-migrate` needs both lines for the same
+      # reason it needs the three URLs above: it loads the same `env.ts`, which
+      # builds the whole config before it opens a connection, and it dials none
+      # of them.
+      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
       INSTANCE_ID: emberkin-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -2666,7 +2704,14 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       WORLDS_URL: http://worlds:4000
-      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # The long-lived `cfsc_…` this service exchanges for short tokens. Section 5b
+      # of `estate-bootstrap.sh` has minted it all along and nothing read it —
+      # confirmed present in the mainnet tokens file 2026-08-09, by key name.
+      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
+      # Still wired, deliberately, and it comes out in a later release. Removing it
+      # in the same change that adds the line above is the one ordering that will
+      # not boot.
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
       INSTANCE_ID: emberkin-estate
     env_file: *outbox-secrets
     ports:
