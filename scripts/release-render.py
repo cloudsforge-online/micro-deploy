@@ -167,12 +167,61 @@ if not services:
 base = pathlib.Path(args.base)
 if not base.exists():
     sys.exit(f"FAIL: no base compose file at {base}")
-config_cmd = ["docker", "compose"]
-for env_file in args.env_file:
-    config_cmd += ["--env-file", env_file]
-config_cmd += ["-f", str(base), "config", "--services"]
+
+
+def compose(subcommand, *flags, profiles=()):
+    """`docker compose` with this environment's env files, and optionally its profiles.
+
+    Every flag here belongs BEFORE the subcommand — `--env-file`, `--profile` and
+    `-f` are all options of `docker compose` itself, not of `config`.
+    """
+    cmd = ["docker", "compose"]
+    for env_file in args.env_file:
+        cmd += ["--env-file", env_file]
+    for profile in profiles:
+        cmd += ["--profile", profile]
+    cmd += ["-f", str(base), subcommand]
+    return cmd + list(flags)
+
+
+# ── EVERY PROFILE, BECAUSE A PROFILE IS THE SECOND WAY TO BE "NOT DEFINED" ────
+#
+# `config --services` reports only services in ACTIVE profiles, and with no
+# `--profile` flag that means only the unprofiled ones. So a profile-gated
+# service was reported as not defined in this environment, its pin was dropped,
+# and the base file's `build:` survived — the exact failure the note above the
+# --env-file flag describes, arriving by a second route that fix did not cover.
+#
+# That note is worth re-reading, because it says the faucet pin was being
+# dropped and that passing the environment's own env file restored it. Only half
+# of that was true. `faucet` carries `profiles: ["ember-testnet"]`, so it was
+# omitted from `--services` on TESTNET too, for this reason rather than that
+# one, and had stayed unpinned ever since. Measured on the host on 2026-08-09
+# while cutting 2.5.7: 46 of 48 manifest entries rendered, the two missing being
+# `faucet` and `pool` — every profiled deployable in the file and nothing else.
+#
+# Asking for every profile is right because THIS SCRIPT DOES NOT START ANYTHING.
+# It decides what a service would run AS, not whether it runs. Profile selection
+# stays entirely with the `up` that consumes the overlay, and a service whose
+# profile is not activated there still does not start — it merely now has an
+# image pinned for when somebody activates it. Which is the whole point: `pool`
+# ships behind a profile and will be started by hand, and a hand-started service
+# that silently builds from a working tree is worse than one nobody pinned,
+# because the release manifest claims it is pinned.
+#
+# Enumerated rather than `--profile "*"`: the wildcard is newer than the flag,
+# and this asks compose for the list rather than reading the YAML for it, which
+# is the same reason `--services` is asked for below instead of parsed.
 try:
-    proc = subprocess.run(config_cmd, capture_output=True, text=True, check=True)
+    proc = subprocess.run(compose("config", "--profiles"), capture_output=True, text=True, check=True)
+except FileNotFoundError:
+    sys.exit("FAIL: docker is not available, so the base service list cannot be read. Refusing to guess it.")
+except subprocess.CalledProcessError as exc:
+    sys.exit(f"FAIL: `docker compose config --profiles` failed:\n{exc.stderr}")
+profiles = [p.strip() for p in proc.stdout.split("\n") if p.strip()]
+
+try:
+    proc = subprocess.run(compose("config", "--services", profiles=profiles), capture_output=True, text=True, check=True)
 except FileNotFoundError:
     sys.exit("FAIL: docker is not available, so the base service list cannot be read. Refusing to guess it.")
 except subprocess.CalledProcessError as exc:
