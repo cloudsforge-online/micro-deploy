@@ -46,6 +46,12 @@
   },
 
 
+  "settlement/src/registry.ts": {
+    "service": "settlement",
+    "scopes": [],
+    "reason": "micro-settlement owns this. THE CREDENTIAL IT PRESENTS IS NOT AN ESTATE ONE — it is a chain node's HTTP Basic, built by `basicAuthorization` from the userinfo of `SETTLEMENT_RPC_<CHAIN>_URL` and set as a static `authorization` header on the per-chain `HttpClient`, deliberately not as `token`, which would emit a Bearer. Bitcoin Core, Litecoin Core and Dogecoin Core have no other way in: stock Core authenticates with Basic and nothing else, so a UTXO chain is unreachable without one. Identity mints none of it, no scope on any estate service would be consulted, and a grant here would be a credential able to do exactly nothing. An empty list is the derivation and not a placeholder. Delete this entry the day micro-settlement exports RPC_SCOPES = NO_SCOPES_REQUIRED from that module, which is now expressible and is the same declaration mint/src/index.ts and indexer/src/rpc.ts already make for their own node clients."
+  },
+
   "worlds/src/titleclient.ts": {
     "service": "worlds",
     "scopes": ["aetherholm:provision", "tessera:provision"],
