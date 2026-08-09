@@ -482,6 +482,31 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-release-render-pins-profiles.py
 
+      # ── AND THE PROVENANCE CHECK SURVIVES THE MECHANISM IT VERIFIES ──────────
+      #
+      # The step above proves a release is pinned to a digest. This one proves the
+      # check that answers "what is running, and which git ref built it?" can still
+      # read the estate afterwards. It could not: it split the `docker ps` image
+      # reference on `:`, and a digest reference has no tag to find.
+      #
+      # 2.5.8 is the first release deployed by digest, so this is not hypothetical
+      # and the failure is not quiet. Measured 2026-08-09 against the docker CLI
+      # with `/containers/json` served by a stub, `{{.Image}}` on the estate's
+      # image store renders a digest-pinned container as
+      # `ghcr.io/cloudsforge-online/micro-identity` — the digest deleted, nothing
+      # left that parses as a version — so all 46 services would have reported
+      # MISMATCH at once, during a release, reading as a provenance emergency
+      # rather than as the check's own defect.
+      #
+      # The rows fed to it are built from the REAL renderer's output resolved by
+      # REAL `docker compose config`, so the label that carries the tag onto a
+      # digest-pinned container is exercised across the seam rather than typed
+      # twice. `node` is needed because the check reads each package.json version
+      # with `node -p`; it is already installed for micro-ui above.
+      - name: The provenance check can still read a digest-pinned estate
+        working-directory: deploy
+        run: python3 scripts/check-provenance-reads-digest-pins.py
+
       # ── THE POOL'S WEBSOCKET CONFIGURATION IS COHERENT, OR IT IS A CRASH LOOP ─
       #
       # micro-org#289 gave micro-pool a Stratum transport a browser can dial, and
