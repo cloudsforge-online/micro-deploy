@@ -4042,6 +4042,191 @@ services:
         echo "           To serve a set:  CF_WORLD_ASSETS=<dir> ./scripts/estate-up.sh"
         exit 0
 
+  # ══════════════════════════════════════════════════════════════════════════════
+  # THE MINING POOL — BEHIND A PROFILE, AND THE PROFILE IS THE POINT.
+  #
+  # `micro-pool` is a Stratum v1 server for the Bitcoin-family chains this host
+  # already runs nodes for (docs/ecosystem/36-multi-chain-and-mining-pool.md §5).
+  # It builds templates with `getblocktemplate`, hands work to real hardware over
+  # raw TCP, judges shares, submits blocks, and records who is owed what.
+  #
+  # ── WHY IT DOES NOT START BY DEFAULT ──────────────────────────────────────────
+  #
+  # Two of its variables have no value yet, and both are decisions rather than
+  # oversights. `profiles:` is the faucet's precedent, applied for the faucet's
+  # reason: compose can add a service for a profile but cannot remove one for an
+  # environment, and a service that crash-loops takes `--wait` down with it.
+  #
+  #   1. **POOL_LTC_PAYOUT_ADDRESS — the coinbase output.** 36 §5.3 says found
+  #      blocks are "the pool's revenue AND THE MINERS' CLAIM ON IT", so this
+  #      address holds coin that is owed to people and its key belongs in custody.
+  #      Custody has four purposes today — deposit, treasury, deployer, user — and
+  #      none of them is this one. `treasury` in particular must never be used:
+  #      a treasury-purpose key on ltc/mainnet is a ROTATION CANDIDATE for
+  #      settlement's pinned treasury, and if it were ever pinned every block this
+  #      pool had mined to it would become unbooked custody inflow — the exact
+  #      drift that refused every EMBER withdrawal for three days on 2026-08-05
+  #      (micro-org#247, #248). A `pool` purpose is being added to custody; until
+  #      it lands there is no address this can honestly hold.
+  #   2. **POOL_FEE_BASIS_POINTS — chosen on 2026-08-09: 1%, 100 basis points.**
+  #      36 §7.1 asked for it to be chosen "before the first miner connects rather
+  #      than after", and it now has been. Until today this line passed an empty
+  #      string through on purpose — a default of 0 would have answered the question
+  #      with "free" and a default of 200 with "2%", either of them written in the
+  #      file least likely to be read by whoever eventually decided. That is why the
+  #      number was not invented here earlier and why it took an actual decision to
+  #      put one here now: the fee is not a tuning knob, it is a term. It is
+  #      multiplied into the coinbase split of every block this pool finds and lands
+  #      in the recorded history of a public chain, where changing it later does not
+  #      restate what it already paid.
+  #
+  #      1% is the low end of what operating pools charge; the pool has no miners
+  #      yet and the first ones will compare it against pools that have been paying
+  #      out for years. `pool/src/env.ts` still uses `requiredInteger` — the default
+  #      below lives in this file, not in the service, so a deployment that unsets
+  #      it does not silently mine for free: the container refuses to start.
+  #
+  # So the consequence is stated rather than buried, exactly as the faucet's block
+  # states its own: a plain `up` brings up NO POOL. Bringing it up is deliberate —
+  #
+  #   COMPOSE_PROFILES=pool ./scripts/estate-up.sh
+  #
+  # ── ONLY LTC, AND THAT IS A MEASUREMENT ───────────────────────────────────────
+  #
+  # `POOL_CHAINS` defaults to `ltc` alone. Measured on this host 2026-08-09:
+  # litecoind is at height 3,156,603 with `initialblockdownload: false`, and
+  # bitcoind is at 876,858 of 961,659 headers — `verificationprogress` 0.773,
+  # `initialblockdownload: true`. `getblocktemplate` on a node still in initial
+  # block download returns work for a chain tip that is eighty thousand blocks
+  # behind the network, so every share against it would be judged against a
+  # template no other miner has ever seen. Add `btc` when bitcoind reports
+  # `initialblockdownload: false`, and not before.
+  #
+  # ── THE STRATUM PORT IS RAW TCP AND TRAEFIK CANNOT CARRY IT ───────────────────
+  #
+  # Every other ingress in this estate is HTTP through the gateway. Stratum is a
+  # newline-delimited JSON-RPC stream over a plain socket, so the gateway has no
+  # router that could serve it and the Cloudflare Tunnel cannot forward it either.
+  # It is published directly, and the bind defaults to LOOPBACK: an unauthenticated
+  # TCP listener on a box that also serves public traffic is not something to widen
+  # by accident. A real miner needs it widened on purpose —
+  # `POOL_STRATUM_HOST_BIND=0.0.0.0` — and that is a decision with a blast radius,
+  # which is why it is a variable and not a literal.
+  #
+  # As of micro-org#285 it is a TWO-PART decision, and both parts are here. Widening
+  # the bind makes the listener reachable; it does not make the console able to say
+  # so. `GET /v1/pool` reports the endpoint a miner should dial from
+  # `POOL_STRATUM_PUBLIC_HOST` plus `POOL_<CHAIN>_STRATUM_PUBLIC_PORT`, and reports
+  # `null` when either is unset — it never infers one from the request `Host`, which
+  # is what it used to do and which produced `stratum+tcp://pool.cloudsforge.online`,
+  # a name that resolves to Cloudflare and a port Cloudflare does not carry. So a
+  # widened bind with those two unset is a pool that accepts miners while its own
+  # console tells them there is nowhere to connect, and the two variables set with a
+  # loopback bind is the reverse and worse. Set all three or none of them.
+  #
+  # The published port is `POOL_LTC_STRATUM_PUBLIC_PORT` in BOTH roles below: it is
+  # the host side of the port mapping and it is what the service reports. It used to
+  # be `POOL_LTC_STRATUM_PORT` on the mapping alone — a variable the container's own
+  # environment never received, so moving the published port moved the mapping and
+  # nothing else. One name doing both jobs cannot drift from itself.
+  pool-migrate:
+    profiles: ["pool"]
+    <<: *migrate-defaults
+    build:
+      context: ../../pool
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      POOL_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pool
+      # The migrator imports the same eager `env.ts` the service does, so it needs
+      # every variable the service needs — which is why the fee default is repeated
+      # here rather than left to the service. A migration run for a service that
+      # cannot start is a schema created for nothing.
+      POOL_NETWORK: *money-network
+      POOL_CHAINS: ${POOL_CHAINS:-ltc}
+      POOL_LTC_NODE_URL: ${LTC_RPC_URL:-}
+      POOL_LTC_PAYOUT_ADDRESS: ${POOL_LTC_PAYOUT_ADDRESS:-}
+      POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
+      INSTANCE_ID: pool-migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pool:
+    profiles: ["pool"]
+    <<: *service-defaults
+    build:
+      context: ../../pool
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      POOL_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pool
+      # The same anchor the money tier reads, and for the same reason: one answer
+      # to "which network is this". It is load-bearing here in a way it is not
+      # elsewhere — `pool/src/template.ts` asks the node `getblockchaininfo` and
+      # REFUSES to mine if the chain it reports does not match, because a mainnet
+      # template mined towards a testnet payout address pays the reward to nobody.
+      # On a testnet estate this service therefore refuses the mainnet litecoind
+      # rather than quietly mining to an address on the wrong network.
+      POOL_NETWORK: *money-network
+      POOL_CHAINS: ${POOL_CHAINS:-ltc}
+      # Carries HTTP Basic userinfo. `pool/src/env.ts` never echoes it — a node URL
+      # in an error message is the most reliably logged string in any process — and
+      # neither does anything here.
+      POOL_LTC_NODE_URL: ${LTC_RPC_URL:-}
+      POOL_LTC_PAYOUT_ADDRESS: ${POOL_LTC_PAYOUT_ADDRESS:-}
+      POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
+      # The endpoint the console hands a stranger, and the second half of the bind
+      # decision described above. Empty by default and empty is a real answer here:
+      # `GET /v1/pool` then reports no stratum endpoint at all rather than guessing
+      # one, which is the whole of micro-org#285. `env.ts` refuses to start if one
+      # of the pair is set without the other, so a half-configured endpoint is
+      # caught while the operator who typed it is still watching — not by a miner
+      # whose firmware silently fails to connect.
+      POOL_STRATUM_PUBLIC_HOST: ${POOL_STRATUM_PUBLIC_HOST:-}
+      POOL_LTC_STRATUM_PUBLIC_PORT: ${POOL_LTC_STRATUM_PUBLIC_PORT:-}
+      # Written into every coinbase this pool builds. Capped at 32 bytes here and
+      # refused at boot above that: the scriptSig it lives in is capped at 100 by
+      # consensus and shares that space with the BIP34 height and the extranonce,
+      # so an over-long tag does not truncate — it makes the coinbase invalid.
+      POOL_COINBASE_TAG: ${POOL_COINBASE_TAG:-/cloudsforge/}
+      INSTANCE_ID: pool-estate
+    ports:
+      # 4146 — `deployableRepos()` index 46, immediately after beacon-web's 4145.
+      # Derived, not chosen; `make check-web` re-derives it from micro-org.
+      - "127.0.0.1:${CF_PORT_BASE:-4}146:4000"
+      # Stratum. See the note above on why this is not behind the gateway, why the
+      # default bind is loopback, and why the host side reads the PUBLIC port —
+      # the same variable the service reports, so the two cannot disagree. The
+      # container side is the literal 3334 because `POOL_LTC_STRATUM_PORT` is not
+      # passed in and the listener therefore always binds its own default.
+      - "${POOL_STRATUM_HOST_BIND:-127.0.0.1}:${POOL_LTC_STRATUM_PUBLIC_PORT:-3334}:3334"
+    depends_on:
+      pool-migrate:
+        condition: service_completed_successfully
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------ pool-web (pool.<apex>)
+  # Shares `pool.<apex>` with micro-pool, the arrangement lantern and beacon use:
+  # the bundle resolves its API base to the empty string and issues relative
+  # `/v1/...`, and estate-web.yml splits the hostname by path. It carries NO
+  # published host port and NO environment at all — micro-pool-web has no
+  # configuration surface and a CI grep in that repository fails the build if one
+  # appears, because a static bundle's "configuration" is baked at build time and
+  # a runtime variable on one is a promise nothing keeps.
+  #
+  # No profile. A bundle with nothing behind it renders its own named holes rather
+  # than crashing, which is what that repository was built to do, and a console
+  # that is reachable before the service is is how an operator finds out the
+  # service is not there. It is the pool container that must not start half
+  # configured, not the page that describes it.
+  pool-web:
+    <<: *web-defaults
+    build:
+      context: ../../pool-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+
 # ── named volumes ──────────────────────────────────────────────────────────────
 #
 # The first one in this file, and the reason is worth stating: everything else

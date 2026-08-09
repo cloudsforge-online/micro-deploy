@@ -535,7 +535,29 @@ PUBLIC_NOTE = """\
 # browser on `hub.<apex>` and needs the app CORS allowlist, which `api.<apex>`
 # deliberately does not carry. `gateway/dynamic/estate-web.yml` argues this
 # at length. Their protection is the token, the CORS allowlist, and the
-# `/internal` refusal above — not obscurity."""
+# `/internal` refusal above — not obscurity.
+#
+# `pool` IS THE THIRD ENTRY WHOSE REAL PROTOCOL THIS TUNNEL CANNOT CARRY, and the
+# most misleading of the three, because unlike `p2p` it does not say so in its
+# name. Stratum v1 is newline-delimited JSON-RPC over a raw TCP socket on 3334; a
+# tunnel forwards HTTP and Traefik has no router for a stream with no requests in
+# it. So `pool.<apex>` serves the CONSOLE — the page that describes a connection —
+# and never the connection itself. A miner reaches the pool over the LAN, on the
+# port micro-pool publishes itself (`POOL_STRATUM_HOST_BIND`, loopback by
+# default), or not at all until somebody decides to expose it on purpose.
+#
+# The hostname is on the PUBLIC tunnel and not the operator one because the
+# console is public: its registry row is `inSwitcher: false` and NOT `adminOnly`,
+# on the argument that a page telling a stranger how to point hardware at this
+# estate is worth nothing behind an operator login. It carries no session at all —
+# micro-pool takes no bearer token on any route, and the console mounts no account
+# control.
+#
+# ON TESTNET THE SERVICE BEHIND IT MAY NEVER COME UP. `pool/src/template.ts` asks
+# the node `getblockchaininfo` and refuses to mine when the reported chain does not
+# match `POOL_NETWORK`; the only litecoind on this host is mainnet. The entry
+# exists so the console is reachable and can say so, which is the same reason its
+# compose service carries no profile while the pool's does."""
 
 OPERATOR_NOTE = """\
 # THE OPERATOR TUNNEL — A SEPARATE TUNNEL, AND THE REASON IS THE SEPARATION.

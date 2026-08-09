@@ -132,3 +132,17 @@ CREATE DATABASE faucet;
 -- proposal queue and the settlement record for each.
 CREATE DATABASE foresight;
 
+
+-- The mining pool. Shares, jobs, blocks found and the PPLNS window each was
+-- decided against — a DEBT RECORD, not money: `pool/src/payouts.ts` is a typed
+-- seam that throws, and there is deliberately no payouts table, because an empty
+-- `pool_payout_credits` would read to the next person as a feature that exists
+-- and is not firing.
+--
+-- Created here even though the service is behind the `pool` profile and does not
+-- start by default. This file only ever runs on an EMPTY data directory, so a
+-- database left out now is one that has to be created by hand on every estate
+-- that already exists — which is the manual step this file exists to remove. On
+-- the estates already running, it was created by hand once, deliberately, and
+-- that is recorded rather than assumed.
+CREATE DATABASE pool;

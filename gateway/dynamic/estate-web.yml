@@ -1074,6 +1074,67 @@ http:
       entryPoints: [websecure, tunnel]
       service: cf-svc-lantern
 
+    # ── pool — the mining pool, and the ONE HOSTNAME WHOSE MOST IMPORTANT PORT
+    #    THIS FILE CANNOT CARRY ─────────────────────────────────────────────────
+    #
+    # Same split as lantern and beacon: `micro-pool-web` resolves its API base to
+    # the EMPTY STRING and issues relative `/v1/...`, so bundle and service must
+    # share `pool.<apex>` or the console cannot read the pool at all. The bundle
+    # takes the host at 500 and the API takes the paths at 600.
+    #
+    # THE PREFIXES ARE READ OFF `pool/src/server.ts`, ROUTE BY ROUTE: `/livez`,
+    # `/readyz`, `/metrics`, `/v1/pool`, `/v1/pool/blocks`, `/v1/pool/workers`,
+    # `/v1/pool/shares`. And checked the other way: the bundle's own routes are
+    # `/`, `/workers`, `/workers/*` and `/blocks` (`pool-web/src/lib/routes.ts`).
+    # `/blocks` and `/workers` look like collisions with the API's own words and
+    # are not — every API path is under `/v1`, so the two vocabularies never meet.
+    # That is a coincidence of naming worth writing down, because the obvious
+    # "simplification" here is a `PathPrefix(`/blocks`)` that would take the
+    # console's own page away from it.
+    #
+    # ── `/metrics` IS DELIBERATELY NOT ROUTED ─────────────────────────────────
+    #
+    # lantern and beacon publish theirs because each checks a token INSIDE the
+    # service. This pool has no auth at all, on purpose: the only identity a miner
+    # has here is the stratum username they chose, and 36 §6 makes "a miner can
+    # check their own share history" a product requirement, so gating the read API
+    # behind an estate login would exclude every miner who has no account — which
+    # is all of them. That argument covers `/v1`; it does not cover `/metrics`,
+    # which is process internals and per-worker cardinality rather than anything a
+    # miner asked for. Prometheus reaches it on the container port, inside the
+    # estate network, where it already reaches every other service's.
+    #
+    # ── AND THE PART THAT IS NOT HERE ────────────────────────────────────────
+    #
+    # Stratum is raw TCP, so the thing miners actually connect to does not appear
+    # in this file and cannot: Traefik has no HTTP router that could carry a
+    # newline-delimited JSON-RPC stream, and the Cloudflare Tunnel in front of this
+    # gateway cannot forward it either. The pool container publishes that port
+    # itself, bound to loopback by default.
+    #
+    # The consequence used to be that `pool.<apex>` described a connection nobody
+    # outside this host could make. Since micro-org#285 it is smaller and more
+    # honest than that: the page no longer describes the connection at all unless
+    # somebody has published one. `GET /v1/pool` — served from this very hostname
+    # by `cf-api-pool` below — returns the stratum endpoint only when the operator
+    # has named it in `POOL_STRATUM_PUBLIC_HOST` and `POOL_<CHAIN>_STRATUM_PUBLIC_
+    # PORT`, and returns null otherwise. It specifically does not derive one from
+    # the request `Host`, which would produce this hostname: a name that resolves
+    # to Cloudflare, on a port Cloudflare does not carry, handed to a stranger's
+    # firmware as if it were a working address. So today the page says no endpoint
+    # is published, which is true, instead of publishing one that is not.
+    cf-web-pool:
+      rule: 'Host(`pool{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-pool
+    cf-api-pool:
+      rule: 'Host(`pool{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      service: cf-svc-pool
+
     # ── rpc — THE CHAIN, AND THE LAST INGRESS RULE THAT SKIPPED THIS FILE ─────
     #
     # `rpc.<apex>` went STRAIGHT FROM THE TUNNEL TO THE NODE. Every other hostname
@@ -1347,6 +1408,16 @@ http:
     cf-web-beacon:
       loadBalancer:
         servers: [{ url: "http://beacon-web:8080" }]
+    # The pool console. 8080 for the same reason, read from micro-pool-web's
+    # Dockerfile `EXPOSE` — it runs `nginx-unprivileged`, which cannot bind 80.
+    # Like the two above it this container publishes no host port; unlike them it
+    # now has a registry row and therefore a derived one (4147), and it still does
+    # not use it, because the gateway needs the container name and nothing else.
+    # A published port here would be a second address for the same bundle and the
+    # one nobody tests.
+    cf-web-pool:
+      loadBalancer:
+        servers: [{ url: "http://pool-web:8080" }]
 
     # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
     # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are
@@ -1423,6 +1494,20 @@ http:
     cf-svc-lantern:
       loadBalancer:
         servers: [{ url: "http://lantern:4000" }]
+    # 4000, through `*common-env`'s `PORT: "4000"`, like everything else here.
+    # micro-pool's own default is 4146 (`pool/src/env.ts`) — the number the
+    # registry derives and `pnpm dev` binds — and the compose file normalises the
+    # CONTAINER port on top of it. Writing 4146 here would be a connection refused
+    # that looks exactly like a container that has not started.
+    #
+    # This upstream is absent from a default `up`: micro-pool is behind the `pool`
+    # compose profile until its coinbase payout address and its fee exist. Traefik
+    # answers 502 on `/v1` until then, which is the honest answer and the one the
+    # console is built to render — `pool-web` has no profile precisely so the page
+    # that explains the hole is reachable before the service is.
+    cf-svc-pool:
+      loadBalancer:
+        servers: [{ url: "http://pool:4000" }]
 
     # ── the backends that arrived tonight ────────────────────────────────────
     #
