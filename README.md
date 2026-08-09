@@ -380,6 +380,81 @@ The overlay also **warns about services this environment runs that the release
 does not name**. That is the silent hole the manifest format calls out by name:
 it is how a service gets left on an old image while everything around it moves.
 
+### The scrape list is rendered from the same file, at the same moment
+
+`prometheus/targets/services.yaml` was the literal `[]` from the telemetry
+plane's first deploy until 2026-08-09. Prometheus reported **8 active targets**
+on mainnet — seven of them the monitoring stack watching itself, plus Beacon,
+which was `down` — while the estate ran 48 services. Every rule that reads an
+estate metric therefore evaluated against no data, money rules included, and a
+rule with no series is indistinguishable from a rule that is satisfied. Two
+incidents this month were found by a person while a rule for exactly that
+condition sat deployed and unfireable (micro-org#308).
+
+`render-prometheus-targets.py` now renders that file from the release manifest,
+called twice by `release-deploy.sh`: once in pre-flight with `--check`, which
+refuses the deploy if the release cannot be described to Prometheus, and once
+after `up -d`, which writes it. **A release that cannot be monitored does not
+ship.** The second call warns rather than fails — by then the containers are
+already running, and refusing to write a file is not a reason to leave an
+operator staring at a half-deployed estate; it prints
+`make prometheus-targets RELEASE=<version>` instead.
+
+It costs no restart. `file_sd` is re-read every 30s, so the new list is live
+within half a minute of being written and Prometheus is never bounced during a
+deploy.
+
+The rule for **who gets scraped** is: *a service is scraped at the port its own
+health check probes `/readyz` on.* Rule 4 of `docs/ecosystem/03` §2 makes
+`/livez`, `/readyz` and `/metrics` a single obligation, so a service that has one
+has all three, on the same listener. Three alternatives were rejected against
+measurements taken on the live estate on 2026-08-09:
+
+- **`kind: service` from the manifest** is wrong in both directions: `lantern`
+  and `beacon` are `kind: ops` and do serve metrics, and `analytics` is
+  `kind: service` and answers 401.
+- **A uniform in-container port 4000** is wrong for `foresight` (4021) and
+  `tessera` (4022), which would have been two permanently red targets for two
+  healthy services.
+- **Probing `/metrics` at render time** makes the target list depend on
+  liveness: a service that happens to be restarting during a deploy is silently
+  dropped from monitoring, and a service that has never come up correctly is
+  never added. The list must describe what *should* be scraped.
+
+The result was verified end to end rather than reasoned about: all 26 emitted
+services answered `/metrics` with 200 and a Prometheus body, and all 18 web
+deployables answered nothing on any port.
+
+Nothing in `prometheus/targets/` is committed — see the README in that directory.
+A generated file in git is a second answer to "what is running", and the estate
+already lost that argument once with the `API_PREFIXES` array.
+
+### The `tier` label, and where the mapping lives
+
+`rules/slo.yaml` holds Tier 1 to 99.95% and Tier 2 to 99.5%, and it used to pick
+Tier 1 out with `service=~"ledger|wallet|settlement|custody|indexer|pricing|billing"`.
+That regex had **already drifted**: `13-operational-model.md` §8 lists `billing`
+as Tier 2. Nobody noticed, because the expression it filtered had no series in it
+to filter. Selecting on a hardcoded list of names was the exact failure the
+`tier` label exists to prevent, in the file that defines the label's meaning.
+
+The map is `prometheus/tiers.yaml`, and the renderer **fails the deploy** on a
+scrapable service missing from it rather than defaulting it to Tier 2 — a money
+service quietly held to an objective ten times looser than its own is worse than
+a deploy that stops. Three reasons for that location:
+
+- **`docs/` is not checked out on the deploy host.** Measured 2026-08-09:
+  `/home/malf/dev/cloudsforge` contains `org` and `deploy` and nothing else. §8
+  cannot be the runtime source of a value the renderer needs.
+- **A tier is a property of a service, not of a release.** Putting it in the
+  manifest would make it a property of the release, and manifests are generated,
+  say "do not hand-edit", and are the rollback path.
+- **It sits beside its only consumer.** `rules/slo.yaml`, `prometheus.yml` and
+  the renderer are all in this repository.
+
+§8 stays authoritative for what a tier *means* and what each one is held to;
+this file is the membership, in the one place that can read it.
+
 ---
 
 ## Port allocation
@@ -454,7 +529,11 @@ than in every service.
 
 **`prometheus`** — metrics, recording rules and alert evaluation. Exemplar
 storage is on, which is what makes "p99 spiked" one click from the trace that was
-slow.
+slow. Its estate targets are **generated from the release manifest** at deploy
+time and re-read from `file_sd` every 30s; three services whose `/metrics` is
+gated behind a header token (`beacon`, `analytics`, `lantern`) have jobs of their
+own instead, because Prometheus attaches credentials per **job** and not per
+target.
 
 **`tempo`** — traces. Object-storage-backed with no index to operate. Its
 metrics generator remote-writes span metrics and service graphs back into
@@ -559,7 +638,15 @@ writes two credential *files* which are mounted:
 | File | Read by | Mechanism |
 | --- | --- | --- |
 | `prometheus/secrets/beacon_token` | Prometheus | `http_headers: files:` on the Beacon scrape |
+| `prometheus/secrets/analytics_token` | Prometheus | `http_headers: files:` on the analytics scrape |
+| `prometheus/secrets/lantern_token` | Prometheus | `http_headers: files:` on the lantern scrape |
 | `alertmanager/secrets/{page,ticket}_webhook_url` | Alertmanager | `url_file:` on each receiver |
+
+The three token files are committed **empty**, at mode 0600, because Prometheus
+refuses to start when a `files:` path does not exist and a plane that will not
+start is a worse failure than three targets that 401. Filling them is an operator
+step: each value already exists in the corresponding container's own environment
+on the estate.
 
 Files rather than environment variables, because a credential in an environment
 variable is a credential in `docker inspect`, in every crash dump and in the
@@ -580,14 +667,75 @@ credential**: Beacon gates `/metrics` behind the same auth as every other route
 publishes the shape of the estate to anyone who can reach the port — but it is a
 step the decision record does not mention.
 
-`BEACON_TOKEN` is **empty on the running estate**, so the scrape returns 401
-until an operator sets it in the estate's `.env` *and* sets the same value as
-`CF_BEACON_TOKEN` here. `BeaconScrapeFailing` fires on exactly this, and its
-runbook lists the four causes in likelihood order.
+### Why Beacon was the one red target, and it was two faults
 
-This was verified rather than assumed: with a token set on both sides, the target
-scrapes green and `beacon_up` lands in Prometheus. The configuration is right;
-the estate is missing one variable.
+This section used to say `BEACON_TOKEN` was "empty on the running estate". It is
+not, and has not been for some time: `docker exec cloudsforge-estate-beacon-1
+printenv BEACON_TOKEN` on 2026-08-09 returns a 44-character value. The estate was
+not missing a variable. **This** side was, and there was a second fault in front
+of it that the token could never have been reached through.
+
+- **Wrong port.** The scrape config named `beacon:4011`, and the connection was
+  refused: `dial tcp 172.20.0.51:4011: connect: connection refused`. 4011 is
+  Beacon's own default bind port, but the estate's compose sets `PORT: 4000` on
+  every service through the `x-common-env` anchor, and the container's
+  `printenv PORT` reads 4000. The scrape config was written against the service's
+  documented default rather than against the environment it runs in.
+- **Empty credential file.** `prometheus/secrets/beacon_token` was 0 bytes on the
+  host. Even at the right port the scrape would have returned 401 — which is why
+  fixing the port alone would have moved the target from `down` to `down` with a
+  different reason.
+
+And a third, found while fixing the second: **`up.sh` wrote that file `chmod
+600`**, and Prometheus runs as the image default `nobody` (uid 65534, verified
+with `docker exec cfmicro-prometheus-1 id`). Owner-only, for an owner that is not
+in the container. An operator who did set `CF_BEACON_TOKEN` got the same dead
+scrape as one who did not, reading `unable to read headers file
+/etc/prometheus/secrets/beacon_token`. It is 0644 now, with the reasoning at the
+line.
+
+The port is fixed here. Writing the file is an operator step, because the value
+must not pass through a commit:
+
+```sh
+# on the deploy host; the value is never printed
+docker exec cloudsforge-estate-beacon-1 printenv BEACON_TOKEN \
+  | tr -d '\n' > prometheus/secrets/beacon_token
+chmod 644 prometheus/secrets/beacon_token
+```
+
+`analytics` and `lantern` gate `/metrics` the same way, with `ANALYTICS_TOKEN`
+and `LANTERN_TOKEN` into `analytics_token` and `lantern_token`.
+
+Then **restart Prometheus rather than reloading it**, if `prometheus.yml` itself
+changed. It is a single-*file* bind mount, and `git checkout` replaces the file
+rather than writing through it, so the container keeps the inode it started with
+and `POST /-/reload` re-reads the old config from the operator's point of view
+while reporting success. Measured on 2026-08-09: after checking the branch out,
+`docker exec cfmicro-prometheus-1 grep -c 'beacon:4000' /etc/prometheus/prometheus.yml`
+returned 0 and the target list was unchanged; `docker restart cfmicro-prometheus-1`
+returned 1 and applied it. `prometheus/targets/` and `prometheus/rules/` are
+*directory* mounts and have no such problem, which is why a deploy re-rendering
+the scrape list needs no restart at all.
+
+**The rule was right; the estate had no path from a right rule to a person.**
+`BeaconScrapeFailing` had been firing continuously since 2026-08-05T21:07:58Z,
+which `/api/v1/alerts` shows, and it resolved at 15:53 on 2026-08-09 when the
+port was corrected. It had been reaching an Alertmanager whose `beacon-incident`
+receiver — the one every alert in the file routes to — pointed at
+`http://beacon:4011/api/alerts/webhook`, **the same wrong port**. From inside the
+Alertmanager container:
+
+```
+http://beacon:4011/api/alerts/webhook   can't connect: Connection refused
+http://beacon:4000/api/alerts/webhook   HTTP/1.1 401 Unauthorized
+```
+
+The port is corrected in all three places. The 401 is not: Beacon gates that
+route on an `x-beacon-token` header and Alertmanager v0.27's `http_config` has no
+way to set an arbitrary header, so the credential cannot be attached without
+either an Alertmanager upgrade or a bearer Beacon would accept. That is filed as
+its own issue and is not a scrape-config problem.
 
 ---
 
@@ -612,19 +760,39 @@ not for a deploy directory: renaming the library's metrics is a P2 change to one
 package, while amending the document is free. The library is what these
 dashboards and rules reference either way.
 
-### Metrics that do not exist yet
+### Metrics that do not exist yet — now measured rather than assumed
 
-The money and chain rules reference metrics that `ledger`, `wallet`,
-`settlement`, `custody` and `indexer` must emit. Those services are P4/P5 and are
-not written. Those rules are the **contract**: a service that does not emit
-`ledger_trial_balance_delta` fails an alert that is already deployed and already
-has a runbook, rather than shipping and being instrumented afterwards.
+This said the money and chain metrics were missing because `ledger`, `wallet`,
+`settlement`, `custody` and `indexer` "are P4/P5 and are not written". All five
+are written, deployed and scraped, and 1,307 distinct metric names are in
+Prometheus as of 2026-08-09. The contract is still not met, and now it can be
+checked instead of predicted. Against the live label catalogue:
 
-`MoneyMetricContractMissing` is the rule that stops this being a silent gap.
-`absent()` inverts the default: not publishing the metric is itself the alert.
-Without it, a missing metric and a healthy ledger look identical — which is
-precisely the estate's current condition, where no metrics scraped anywhere
-presents as no alerts firing.
+| Rule | Metric it reads | In Prometheus |
+| --- | --- | --- |
+| `LedgerTrialBalanceNonZero` | `ledger_trial_balance_delta` | **yes**, 1 series, value 0 |
+| `IndexerLagPastConfirmationDepth` | `indexer_lag_blocks` | **yes**, 2 series (`ltc`, `ember`) |
+| `IndexerLagPastConfirmationDepth` | `indexer_confirmation_depth` | no — no metric name contains `confirmation` |
+| `WithdrawalStuck`, `MoneyMetricContractMissing` | `withdrawal_stuck_total` | no — no metric name contains `stuck` |
+| `LedgerReconciliationDrift` | `ledger_reconciliation_drift_native` | no — the exported name is `ledger_reconciliation_drift{asset}` |
+| `DepositAddressFrozen` | `wallet_deposit_address_frozen` | no — nearest is `wallet_deposit_addresses_unwatched` |
+| `BackupAgeExceeded` | `backup_last_success_timestamp_seconds` | no — no metric name contains `backup` |
+| `JobDeadLetterGrowth` | `jobs_dead_total` | no — services export `community_jobs_dead`, `notify_deliveries_dead` |
+| `ChainHeightSpreadSustained` | `beacon_chain_height_spread` | no, and Beacon **is** scraped now |
+| `HearthConformanceVectorsFailing` | `beacon_conformance_vectors` | no, likewise |
+
+Nothing here was rewritten to match. `ledger_reconciliation_drift` is per-asset
+and the rule expects one native-denominated number; `wallet_deposit_addresses_unwatched`
+counts a different condition from frozen. Silently repointing a money alert at a
+near-neighbour is how an alert comes to mean something nobody has agreed to. The
+list is filed as an issue against micro-org, service by service, with the
+measurement beside each one.
+
+`MoneyMetricContractMissing` is the rule that stops this being a silent gap, and
+it is now doing exactly that: it is firing on `absent(withdrawal_stuck_total)`
+while the other two names in its expression have data. Before the scrape list
+existed it fired on all three at once and meant nothing, because a rule with no
+series and a rule with a real gap were the same alert.
 
 ---
 
@@ -708,10 +876,11 @@ compose/
   env/*.env                      one file per service, no secrets, no fan-out
 otel/collector.yaml              redaction, truncation, tail sampling, three exporters
 prometheus/
-  prometheus.yml                 scrape config, incl. Beacon
+  prometheus.yml                 scrape config; the plane, and the 3 gated services
   rules/slo.yaml                 SLIs, burn rates, 5m rollups
   rules/alerts.yaml              20 rules, every one with a runbook
-  targets/services.yaml          file_sd, generated from the release manifest
+  tiers.yaml                     which services are Tier 1; the only copy
+  targets/services.yaml          file_sd; GENERATED at deploy, gitignored
 tempo/tempo.yaml                 7d, metrics generator
 loki/loki.yaml                   30d, label cardinality bounded
 alertmanager/alertmanager.yml    routing, grouping, 3 inhibit rules
@@ -723,6 +892,8 @@ grafana/
   provisioning/                  datasources with trace<->log<->metric links
 runbooks/*.md                    17, one per alert that needs one
 scripts/check-runbooks.py        the runbook rule, as a build failure
+scripts/render-prometheus-targets.py    release manifest -> file_sd
+scripts/check-prometheus-targets-render.py   and the check on that
 ```
 
 ### Per-service env files, and why the fan-out had to go

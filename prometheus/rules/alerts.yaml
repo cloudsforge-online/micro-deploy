@@ -306,7 +306,19 @@ groups:
   - name: cf.ticket.slo
     rules:
       - alert: SLOErrorBudgetBurnSlow
-        expr: cf:slo_burn_rate:6h > 6
+        # BOTH TIERS, EXPLICITLY. `cf:slo_burn_rate:6h` used to cover every
+        # service because it was unfiltered, and it is now `{tier="2"}` — the
+        # Tier-2 objective applied to Tier-2 services, which is what it always
+        # claimed to be (micro-org#308). Without the second half of this
+        # expression, that change would have silently removed the slow-burn
+        # ticket from ledger, wallet, settlement, custody, indexer, pricing and
+        # policy: a monitoring change that reduces coverage of the money path
+        # and reports nothing is the failure this whole issue is about.
+        #
+        # `or` and not a single series, because the two are divided by different
+        # budgets. 6x of a 99.95% budget and 6x of a 99.5% one are different
+        # absolute error rates, and that is the point of having two tiers.
+        expr: cf:slo_burn_rate:6h > 6 or cf:slo_burn_rate_tier1:6h > 6
         for: 30m
         labels:
           severity: ticket

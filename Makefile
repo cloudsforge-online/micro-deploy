@@ -5,12 +5,17 @@ COMPOSE_PROJECT_NAME ?= cfmicro
 TELEMETRY := -f compose/docker-compose.telemetry.yml
 GATEWAY   := -f compose/docker-compose.gateway.yml
 PROM_IMG  := prom/prometheus:v2.55.1
-AM_IMG    := prom/alertmanager:v0.27.0
+# v0.28.1: v0.27.0 segfaults on any non-2xx from a `url_file` webhook
+# (prometheus/alertmanager#3798). Kept equal to the image in
+# compose/docker-compose.telemetry.yml — a check that validates a config against
+# a different build from the one that runs it is a check that can pass wrongly.
+AM_IMG    := prom/alertmanager:v0.28.1
 OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
 
 .DEFAULT_GOAL := help
 .PHONY: help up down gateway logs ps config check check-rules check-alertmanager \
-        check-collector check-runbooks dashboards estate clean
+        check-collector check-runbooks check-prometheus-targets prometheus-targets \
+        dashboards estate clean
 
 help:
 	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "  %-18s %s\n", $$1, $$2}'
@@ -43,7 +48,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-alertmanager check-collector check-runbooks ## Run every check
+check: config check-rules check-alertmanager check-collector check-runbooks check-prometheus-targets ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -71,6 +76,25 @@ check-runbooks: ## THE RUNBOOK RULE — every alert carries a link, and it resol
 	@# unactionable page teaches the on-call to ignore pages. This is the check
 	@# that makes that a property rather than an intention.
 	@python3 scripts/check-runbooks.py
+
+check-prometheus-targets: ## The scrape list is generated from the release, and excludes what cannot be scraped
+	@# `prometheus/targets/services.yaml` was the literal `[]` from the telemetry
+	@# plane's first deploy until 2026-08-09, so Prometheus scraped none of the 48
+	@# deployed services and all twenty alert rules evaluated against no data
+	@# (micro-org#308). It is generated now. This is the check that keeps the
+	@# generator right in BOTH directions — a partial list means nothing is
+	@# watched, and a target that cannot be scraped sits down for ever and teaches
+	@# the on-call that some of the red is normal.
+	@python3 scripts/check-prometheus-targets-render.py
+
+prometheus-targets: ## Re-render the scrape list from a release by hand. RELEASE=2.5.8
+	@# release-deploy.sh does this on every deploy and every rollback. This target
+	@# is for the case that step is reported as having failed, and for looking at
+	@# what a release WOULD scrape without deploying it.
+	@test -n "$(RELEASE)" || { echo "usage: make prometheus-targets RELEASE=<version>"; exit 2; }
+	@python3 scripts/render-prometheus-targets.py "../org/releases/$(RELEASE).yaml" \
+		--env-file compose/mainnet.env --env-file compose/estate/tokens.env \
+		--out prometheus/targets/services.yaml
 
 check-secrets: ## No secret is a placeholder, too short, or already in a transcript
 	@# CI guards a secret that is COMMITTED. Neither failure this catches is a

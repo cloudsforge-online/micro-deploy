@@ -136,6 +136,24 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-client-ip-logging.py
 
+      # ── SOMETHING IS ACTUALLY SCRAPED (micro-org#308) ───────────────────────
+      #
+      # `prometheus/targets/services.yaml` held the literal `[]` from the day the
+      # telemetry plane was deployed until 2026-08-09. Prometheus reported 8
+      # active targets on mainnet, 7 of which were the monitoring stack watching
+      # itself, while 48 services ran — so every alert rule that reads an estate
+      # metric evaluated against no data, including every money alert. Two real
+      # incidents this month (#247/#248, #307) were found by a person while a
+      # rule for exactly that condition sat deployed and unfireable.
+      #
+      # The file is generated from the release manifest now. This is the check on
+      # the generator, and it needs neither Docker nor the estate's gitignored
+      # env files: it feeds the real renderer a fixture compose model, so it can
+      # only go red for the thing it is about.
+      - name: The scrape list is rendered from the release
+        working-directory: deploy
+        run: python3 scripts/check-prometheus-targets-render.py
+
       # ── The two projects stay renderable, and mainnet stays unchanged ────────
       #
       # `compose/testnet.env` is six variables that turn these files into a second

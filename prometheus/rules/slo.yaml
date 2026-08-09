@@ -58,28 +58,36 @@ groups:
       # Good events over total, per service. The SLI, not the SLO: the objective
       # it is measured against is a label on the rules below, because one query
       # serving Tier 1 at 99.95% and Tier 2 at 99.5% is one query to maintain.
+      #
+      # `by (service, tier)` AND NOT `by (service)`. `tier` is a target label
+      # attached by prometheus/targets/services.yaml, which is generated from the
+      # release manifest and prometheus/tiers.yaml — so carrying it through the
+      # aggregation is what lets the burn-rate rules below select a tier from the
+      # data instead of from a regex of service names. Dropping it here is what
+      # forced that regex to exist. It adds no cardinality: `tier` is functionally
+      # dependent on `service`, so the series count is unchanged.
       - record: cf:slo_availability:ratio_rate5m
         expr: |
           1 - (
-            sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+            sum by (service, tier) (rate(http_requests_total{status=~"5.."}[5m]))
               /
-            clamp_min(sum by (service) (rate(http_requests_total[5m])), 1e-9)
+            clamp_min(sum by (service, tier) (rate(http_requests_total[5m])), 1e-9)
           )
 
       - record: cf:slo_availability:ratio_rate1h
         expr: |
           1 - (
-            sum by (service) (rate(http_requests_total{status=~"5.."}[1h]))
+            sum by (service, tier) (rate(http_requests_total{status=~"5.."}[1h]))
               /
-            clamp_min(sum by (service) (rate(http_requests_total[1h])), 1e-9)
+            clamp_min(sum by (service, tier) (rate(http_requests_total[1h])), 1e-9)
           )
 
       - record: cf:slo_availability:ratio_rate6h
         expr: |
           1 - (
-            sum by (service) (rate(http_requests_total{status=~"5.."}[6h]))
+            sum by (service, tier) (rate(http_requests_total{status=~"5.."}[6h]))
               /
-            clamp_min(sum by (service) (rate(http_requests_total[6h])), 1e-9)
+            clamp_min(sum by (service, tier) (rate(http_requests_total[6h])), 1e-9)
           )
 
   # ------------------------------------------------------------ burn rate ---
@@ -90,40 +98,56 @@ groups:
   #
   # Target 99.5% is the Tier-2 default; Tier 1 is computed separately below,
   # because dividing by the wrong budget is how an SLO stops meaning anything.
+  #
+  # ── SELECTED ON THE LABEL, NOT ON A LIST OF NAMES (micro-org#308) ───────────
+  #
+  # Tier 1 used to be
+  # `{service=~"ledger|wallet|settlement|custody|indexer|pricing|billing"}`,
+  # written twice, in a file whose other job is arithmetic. The comment above
+  # `targets/services.yaml` had already argued against exactly that — the label
+  # exists "rather than a hardcoded list of service names that would drift the
+  # day a service is added" — and the regex drifted anyway: 13-operational-model
+  # §8 puts `billing` under Tier 2 in as many words, and that regex held it to
+  # 99.95%, twenty-one minutes of budget a month instead of three hours.
+  #
+  # Nobody caught it because nothing ever matched it. The estate scraped no
+  # service at all until 2026-08-09, so every expression on this page evaluated
+  # to nothing and a wrong regex and a right one produced identical output.
+  #
+  # `tier` is now a target label, generated from the release manifest and
+  # `prometheus/tiers.yaml`, and that file is the only place in the estate that
+  # says which service is Tier 1. `{tier="2"}` is explicit here for the same
+  # reason: an unfiltered Tier-2 rule computed a 99.5% burn rate for money
+  # services too and stamped `tier: "2"` on the result, so `cf:slo_burn_rate`
+  # for `ledger` claimed a tier the target label contradicted.
+  #
+  # The static `tier:` label is gone from all four rules. It is carried by the
+  # series now, and a rule that overwrites a label it is also selecting on can
+  # only ever lie.
   - name: cf.slo.burn
     interval: 30s
     rules:
       - record: cf:slo_burn_rate:1h
         labels:
-          tier: "2"
           objective: "0.995"
-        expr: (1 - cf:slo_availability:ratio_rate1h) / (1 - 0.995)
+        expr: (1 - cf:slo_availability:ratio_rate1h{tier="2"}) / (1 - 0.995)
 
       - record: cf:slo_burn_rate:6h
         labels:
-          tier: "2"
           objective: "0.995"
-        expr: (1 - cf:slo_availability:ratio_rate6h) / (1 - 0.995)
+        expr: (1 - cf:slo_availability:ratio_rate6h{tier="2"}) / (1 - 0.995)
 
       # Tier 1 — money services, 99.95%. Twenty-one minutes of budget over 28
       # days, which is why the same absolute error rate burns ten times faster.
       - record: cf:slo_burn_rate_tier1:1h
         labels:
-          tier: "1"
           objective: "0.9995"
-        expr: |
-          (
-            1 - cf:slo_availability:ratio_rate1h{service=~"ledger|wallet|settlement|custody|indexer|pricing|billing"}
-          ) / (1 - 0.9995)
+        expr: (1 - cf:slo_availability:ratio_rate1h{tier="1"}) / (1 - 0.9995)
 
       - record: cf:slo_burn_rate_tier1:6h
         labels:
-          tier: "1"
           objective: "0.9995"
-        expr: |
-          (
-            1 - cf:slo_availability:ratio_rate6h{service=~"ledger|wallet|settlement|custody|indexer|pricing|billing"}
-          ) / (1 - 0.9995)
+        expr: (1 - cf:slo_availability:ratio_rate6h{tier="1"}) / (1 - 0.9995)
 
   # ------------------------------------------------------------- journeys ---
   # A metric says "p99 is high"; a journey says "a user cannot withdraw".

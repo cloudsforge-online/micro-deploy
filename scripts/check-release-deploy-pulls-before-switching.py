@@ -74,6 +74,7 @@ import tempfile
 HERE = pathlib.Path(__file__).resolve().parent
 DEPLOY = HERE / "release-deploy.sh"
 RENDER = HERE / "release-render.py"
+TARGETS = HERE / "render-prometheus-targets.py"
 
 REGISTRY = "ghcr.io/cloudsforge-online/micro-"
 VERSION = "1.0.0"
@@ -92,6 +93,12 @@ LEDGER = f"{REGISTRY}ledger:{VERSION}"
 # incomplete. A fresh host has neither.
 THIRD_PARTY = "postgres:17-alpine"
 
+# The health checks are load-bearing rather than decorative. Since micro-org#308
+# the deploy renders Prometheus's scrape list in pre-flight, and it decides what
+# is scrapable from the port each service's own health check probes `/readyz` on.
+# Without them this fixture renders an empty target list, the renderer refuses —
+# correctly — and every assertion below fails for a reason that is not the pull
+# order. With them, this check also exercises the new gate.
 COMPOSE = """\
 services:
   identity:
@@ -99,14 +106,37 @@ services:
     build:
       context: .
     environment:
+      PORT: "4000"
       IDENTITY_HANDOFF_ORIGINS: "https://hub${CF_WEB_SUFFIX},https://${CF_SITE_HOST}"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \\"fetch('http://127.0.0.1:4000/readyz')\\""]
   ledger:
     image: %sledger:old
     build:
       context: .
+    environment:
+      PORT: "4000"
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \\"fetch('http://127.0.0.1:4000/readyz')\\""]
   postgres:
     image: %s
 """ % (REGISTRY, REGISTRY, THIRD_PARTY)
+
+# The renderer reads both of these from the deploy root, so the sandbox needs its
+# own. They are the smallest documents that satisfy it: one static target so the
+# "which services already have their own job" parse has something to find, and a
+# tier for each manifest entry so the render is not refused for being untiered.
+PROMETHEUS_YML = """\
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+"""
+
+TIERS = """\
+identity: "2"
+ledger: "1"
+"""
 
 MANIFEST = f"""\
 version: "{VERSION}"
@@ -221,6 +251,7 @@ if real_docker is None:
 with tempfile.TemporaryDirectory() as tmp:
     root = pathlib.Path(tmp)
     (root / "scripts").mkdir()
+    (root / "prometheus").mkdir()
     (root / "compose" / "env").mkdir(parents=True)
     (root / "releases").mkdir()
     (root / "bin").mkdir()
@@ -229,6 +260,11 @@ with tempfile.TemporaryDirectory() as tmp:
     # files relative to its own location.
     shutil.copy(DEPLOY, root / "scripts" / "release-deploy.sh")
     shutil.copy(RENDER, root / "scripts" / "release-render.py")
+    # Also the real thing, for the same reason: `release-deploy.sh` runs it in
+    # pre-flight and refuses the deploy if the release cannot be described to
+    # Prometheus (micro-org#308), so a sandbox without it aborts before it
+    # reaches the pull ordering this file is about.
+    shutil.copy(TARGETS, root / "scripts" / "render-prometheus-targets.py")
     # Not a stub: `release-deploy.sh` refuses a crossed env-file pair through it
     # (micro-org#238), so the fixture needs the real thing or every run below
     # would abort before it reached a registry. The fixture's own file names
@@ -243,6 +279,8 @@ with tempfile.TemporaryDirectory() as tmp:
     (root / "compose" / "fixture.env").write_text("CF_PROJECT=release-deploy-fixture\n")
     (root / "compose" / "tokens.fixture.env").write_text(TOKENS_ENV)
     (root / "releases" / f"{VERSION}.yaml").write_text(MANIFEST)
+    (root / "prometheus" / "prometheus.yml").write_text(PROMETHEUS_YML)
+    (root / "prometheus" / "tiers.yaml").write_text(TIERS)
 
     (root / "bin" / "docker").write_text(DOCKER_STUB)
     (root / "bin" / "docker").chmod(0o755)

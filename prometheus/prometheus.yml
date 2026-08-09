@@ -75,11 +75,46 @@ scrape_configs:
   # server.js) — deliberately, because an open /metrics publishes the shape
   # of the estate to anyone who can reach the port. Beacon accepts a static
   # break-glass token in an `x-beacon-token` header, so the cost is a scrape
-  # config plus BEACON_TOKEN being set. It is EMPTY in the running estate today,
-  # which means this target 401s until an operator sets it. See README §Beacon.
+  # config plus BEACON_TOKEN being set.
   #
   # The token is read from a file, never written into this config: a token in a
   # config file is a token in a backup, in a diff and in a screenshot.
+  #
+  # ── THE PORT, WHICH WAS 4011 AND IS NOT (micro-org#308) ────────────────────
+  #
+  # This target was `beacon:4011` from the day it was written and had never once
+  # succeeded. Measured on the mainnet Prometheus on 2026-08-09:
+  #
+  #   http://beacon:4011/metrics  down  dial tcp 172.20.0.51:4011: connect:
+  #                                     connection refused
+  #
+  # 4011 is Beacon's own default bind port in its source, and nothing in this
+  # estate uses it. `x-common-env` in docker-compose.estate.yml sets `PORT: 4000`
+  # on every service so that ONE health-check anchor covers them all, and the
+  # compose file publishes Beacon as `4142:4000`. `printenv PORT` inside the
+  # running container reads 4000. The scrape was aimed at the port Beacon binds
+  # when nobody configures it, on an estate that configures it.
+  #
+  # This is the target four alert rules stand on — BeaconCriticalJourneyFailing,
+  # BeaconJourneyStale, BeaconTargetDown and HearthConformanceVectorsFailing.
+  # BeaconScrapeFailing, the rule that says so, WAS working the whole time: a
+  # refused connection still produces `up{job="beacon"} == 0`, and on 2026-08-09
+  # `/api/v1/alerts` showed it firing continuously since 2026-08-05T21:07:58Z.
+  # It went to an Alertmanager whose only receiver is a fire-and-forget webhook
+  # with no acknowledgement and no escalation (13-operational-model.md §9), so
+  # four days of a correct alert changed nothing. It is worth being precise about
+  # which half failed: the rule was right, and the estate had no path from a
+  # right rule to a person.
+  #
+  # ── AND THE TOKEN, WHICH IS THE SECOND HALF ────────────────────────────────
+  #
+  # Fixing the port alone moves this target from `connection refused` to `401`.
+  # `secrets/beacon_token` is 0 bytes in the checkout and was 0 bytes on the
+  # mainnet host, while the running Beacon container has had a real BEACON_TOKEN
+  # set throughout (measured 2026-08-09: set, 44 characters). The file is
+  # gitignored-by-emptiness rather than by rule — it is committed empty on
+  # purpose so Prometheus can start — and filling it is an operator step, in
+  # README §Beacon, not a thing this file can do.
   - job_name: beacon
     scheme: http
     # Beacon holds live state in memory and its /metrics never touches Postgres
@@ -95,22 +130,88 @@ scrape_configs:
       # Reached over the estate's own network, which Prometheus joins as an
       # external network. The estate's compose file is not modified and does not
       # know this exists.
-      - targets: ["beacon:4011"]
+      - targets: ["beacon:4000"]
         labels:
           team: platform
           service: beacon
+          tier: "2"
+
+  # ------------------------------------------- the other two gated /metrics ---
+  # `analytics` and `lantern` gate /metrics behind a static header token for the
+  # same reason Beacon does, and each argues it in its own source rather than
+  # inheriting it:
+  #
+  #   lantern/src/server.ts — "an open /metrics here publishes which services are
+  #   failing and how fast — the shape of where the estate is weakest"
+  #   analytics/src/server.ts — "this surface publishes which producers are being
+  #   refused and at what rate, which is a map of where the estate's privacy
+  #   discipline is weakest. A static token rather than a JWT, because Prometheus
+  #   cannot mint one and identity being down is exactly when somebody wants this."
+  #
+  # Both were written FOR a scraper — they name Prometheus and they chose a
+  # static token so that Prometheus could present it — and neither had ever been
+  # scraped. Measured from inside the Prometheus container on 2026-08-09:
+  # `analytics:4000/metrics` and `lantern:4000/metrics` both 401.
+  #
+  # THEY CANNOT RIDE IN THE GENERATED file_sd LIST BELOW. Prometheus attaches
+  # credentials per scrape JOB, not per target, so a target that needs a header
+  # needs a job. That is the whole reason these three are static blocks beside a
+  # generated list rather than an inconsistency in it — and
+  # `render-prometheus-targets.py` reads THIS FILE to decide what to leave out,
+  # so the fact is stated once here and nowhere else.
+  #
+  # Each token file is 0 bytes in a fresh checkout, which means these targets 401
+  # until an operator writes the service's own token into them. See README §Beacon.
+  - job_name: analytics
+    scheme: http
+    http_headers:
+      x-analytics-token:
+        files:
+          - /etc/prometheus/secrets/analytics_token
+    static_configs:
+      - targets: ["analytics:4000"]
+        labels:
+          team: platform
+          service: analytics
+          tier: "2"
+
+  - job_name: lantern
+    scheme: http
+    http_headers:
+      x-lantern-token:
+        files:
+          - /etc/prometheus/secrets/lantern_token
+    static_configs:
+      - targets: ["lantern:4000"]
+        labels:
+          team: platform
+          service: lantern
+          tier: "2"
 
   # -------------------------------------------------- new estate services ---
-  # The twenty-five backend deployables of AD-01. Each exposes the RED and job
-  # metrics that @cloudsforge/telemetry registers (registerHttpMetrics,
-  # registerJobMetrics) on /metrics.
+  # The estate's backend deployables. Each exposes the RED and job metrics that
+  # @cloudsforge/telemetry registers (registerHttpMetrics, registerJobMetrics)
+  # on /metrics.
   #
   # Static targets, not Docker service discovery. Docker SD reads the host's
   # Docker socket, which is precisely the collection method AD-20 demotes
   # Lantern away from because it survives neither a second host nor Kubernetes.
   # Building the new stack's scraper on the mechanism we are retiring would be
-  # a decision to redo this work. These become file_sd fed by the release
-  # manifest (AD-03) — one generated file, one reload, no socket.
+  # a decision to redo this work.
+  #
+  # ── THE FILE IS NOW ACTUALLY GENERATED (micro-org#308) ─────────────────────
+  #
+  # `targets/services.yaml` was the literal `[]` from this file's first deploy
+  # until 2026-08-09 — 8 active targets on mainnet, 7 of them this stack watching
+  # itself — and its header said it would eventually be rendered from the release
+  # manifest. It is: `scripts/render-prometheus-targets.py`, run by
+  # `release-deploy.sh` from the same manifest that renders the pinned compose
+  # overlay, on every deploy and every rollback. One generated file, one reload,
+  # no socket, and one answer to "what is running".
+  #
+  # The count is deliberately not written down here. It is whatever the release
+  # names that answers /readyz, and a number in this comment would be the second
+  # answer all over again.
   - job_name: cf-services
     file_sd_configs:
       - files:

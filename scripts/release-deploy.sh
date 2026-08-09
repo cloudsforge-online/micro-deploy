@@ -442,6 +442,47 @@ for required in "https://hub$CF_WEB_SUFFIX" "https://$CF_SITE_HOST"; do
 done
 echo "  allowlist names hub$CF_WEB_SUFFIX and $CF_SITE_HOST ($(printf '%s' "$rendered" | tr ',' '\n' | grep -c .) origins)"
 
+# ── AND WHETHER ANY OF IT WILL BE WATCHED (micro-org#308) ─────────────────────
+#
+# The scrape list is the same question the overlay answers — "what is running" —
+# so it is rendered here, from the same manifest, by the same command. It was not
+# rendered at all until now, and the cost of that was total: `prometheus/targets/
+# services.yaml` held the literal `[]` from the telemetry plane's first deploy
+# until 2026-08-09, so Prometheus scraped 8 targets on mainnet, 7 of which were
+# the monitoring stack watching itself, while 48 services ran.
+#
+# Every money alert the estate has — LedgerTrialBalanceNonZero,
+# LedgerReconciliationDrift, WithdrawalStuck, CustodyUnreachable,
+# IndexerLagPastConfirmationDepth — was deployed, had a runbook, and evaluated
+# against no data. #247/#248 (three days of frozen withdrawals) and #307 (every
+# LTC function down for twenty minutes) were both found by a person, with a rule
+# for exactly that condition sitting in alerts.yaml.
+#
+# TWO PHASES, AND THE SPLIT IS THE POINT.
+#
+#   Here, `--check`: validate and write nothing. The one thing that can fail is
+#   a service the tier map does not name, and failing THERE means failing before
+#   any container has been touched. A deploy stopped by this is fixed by one line
+#   in prometheus/tiers.yaml and re-run; a deploy that had already switched and
+#   then could not describe itself is an estate running a release nothing is
+#   watching.
+#
+#   After `up -d`, the write. The file then describes what IS running rather than
+#   what is about to. Written before the switch, it would name containers that do
+#   not exist yet for the length of the deploy and Prometheus would report them
+#   down — which is a page for the deploy rather than for a fault.
+#
+# --dry-run runs the check and not the write, like every other guard here: a
+# guard only exercised on the real path is a guard nobody rehearses.
+echo "── checking the scrape list this release implies ────────────────────────"
+if ! printf '%s' "$config_json" | python3 scripts/render-prometheus-targets.py \
+  "$manifest" --compose-json - --check; then
+  echo >&2
+  echo "The release cannot be described to Prometheus, so nothing was deployed." >&2
+  echo "Fix the above and re-run. No container was created, started or stopped." >&2
+  exit 1
+fi
+
 if [ "$dry_run" -eq 1 ]; then
   echo
   echo "--dry-run: rendered $OVERLAY and confirmed $checked image(s) exist in the registry."
@@ -569,6 +610,27 @@ fi
 if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d ${PULL_POLICY[@]+"${PULL_POLICY[@]}"}; then
   echo
   echo "release $version is up."
+
+  # ── AND NOW SOMETHING IS WATCHING IT ────────────────────────────────────────
+  #
+  # The write half of the pre-flight check above. `prometheus/targets/` is a
+  # read-only bind mount into the Prometheus container and the `cf-services` job
+  # re-reads it every 30s, so this is live within half a minute with no restart,
+  # no reload signal and no gap — which is why it is safe to do it here, after
+  # the switch, rather than before it.
+  #
+  # It does NOT fail the deploy. The images are already running and refusing to
+  # exit 0 would not un-run them; the check that CAN fail already ran, before
+  # anything moved. But it says so loudly, because an estate nothing is scraping
+  # is the state micro-org#308 exists about and it lasted as long as it did by
+  # being quiet.
+  if ! printf '%s' "$config_json" | python3 scripts/render-prometheus-targets.py \
+    "$manifest" --compose-json - --out prometheus/targets/services.yaml; then
+    echo >&2
+    echo "THE RELEASE IS DEPLOYED AND PROMETHEUS'S TARGET LIST WAS NOT UPDATED." >&2
+    echo "It is still describing the previous release. Re-run the renderer by hand:" >&2
+    echo "  make prometheus-targets RELEASE=$version" >&2
+  fi
 
   # ── AND IS ANY OF IT REACHABLE? ─────────────────────────────────────────────
   #
