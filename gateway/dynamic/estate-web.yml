@@ -1129,6 +1129,61 @@ http:
       entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-pool
+    # ── THIS ROUTER NOW CARRIES A WEBSOCKET AS WELL AS REST, AND NO LINE OF IT
+    #    CHANGED — micro-org#289 ────────────────────────────────────────────────
+    #
+    # micro-pool gained a Stratum-over-WebSocket transport at
+    # `/v1/pool/stratum/<chain>`, attached to its EXISTING HTTP server on the same
+    # container port `cf-svc-pool` already names. `PathPrefix(`/v1`)` below
+    # therefore already matched it, and adding a router for that path would be a
+    # second rule competing on priority with this one for no gain. So the change
+    # here is a comment, and the comment is the point: the next reader has to know
+    # that a long-lived upgraded connection now depends on this block, because
+    # nothing in the four lines below says so.
+    #
+    # ── THE UPGRADE WAS VERIFIED TO SURVIVE THE CHAIN, NOT ASSUMED TO ─────────
+    #
+    # Checked against `cf-api-p2p` in this file, which is this estate's existing
+    # WebSocket precedent and the only other router that carries one. What that
+    # block was deliberately kept clear of, this one is clear of too, and the
+    # comparison was made rather than presumed on 2026-08-09:
+    #
+    #   * NO PER-ROUTER MIDDLEWARE AT ALL. `cf-api-p2p` carries exactly one
+    #     (`cf-p2p-dial-throttle`); this router carries none. Both therefore run
+    #     only the entryPoint chain — `cf-request-id`, `cf-security-headers`,
+    #     `cf-cors`, from `compose/docker-compose.gateway.yml` — which is header
+    #     work on the handshake and nothing that touches the socket after the 101.
+    #   * NO `cf-web-headers`. That middleware sets a bundle's frame policy and
+    #     belongs on `cf-web-pool` above, where it is; every `cf-api-*` router
+    #     omits it, and it must stay omitted here.
+    #   * NOTHING BUFFERS OR COMPRESSES. There is no `buffering` or `compress`
+    #     middleware defined anywhere in `gateway/dynamic/`, and no
+    #     `serversTransport` or `flushInterval` on `cf-svc-pool`, so the upgrade
+    #     and the frames after it pass through untouched — including the
+    #     `Upgrade`, `Connection`, `Sec-WebSocket-Key` and `Sec-WebSocket-Version`
+    #     headers, none of which anything in this directory rewrites. Nothing here
+    #     injects a `Sec-WebSocket-Protocol` either, which matters: the server
+    #     sends none back, and a client handed one it never asked for closes the
+    #     socket.
+    #
+    # ── NO PER-ROUTER IDLE TIMEOUT MAY BE ADDED TO THIS ROUTER ────────────────
+    #
+    # For the same reasons the `cf-api-p2p` block below sets out at length — Go
+    # clears every read deadline on a hijacked connection, the only knobs are the
+    # entrypoint's and this gateway sets none, and Cloudflare's edge close is
+    # answered by application keepalive rather than by gateway configuration.
+    # Read that block before touching this one. micro-pool pings every 20s and
+    # closes after 70s of silence, which is inside the same edge window Hearth's
+    # numbers were chosen for; a timeout added here would cut a healthy miner off
+    # mid-share and would show up weeks later as "the browser miner is flaky".
+    #
+    # THE HANDSHAKE IS UNAUTHENTICATED AND THAT IS NOT THIS FILE'S PROBLEM TO
+    # SOLVE. The gate is a single-use ticket redeemed in `mining.authorize` over
+    # the socket, minted by `POST /v1/pool/ticket` against a bearer token. No
+    # token appears in the URL, in a header or in a subprotocol, so there is
+    # nothing here for a router rule to check and nothing for an access log to
+    # leak — which is the reason the design puts the credential in a message
+    # rather than in the request line.
     cf-api-pool:
       rule: 'Host(`pool{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
       priority: 600

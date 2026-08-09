@@ -4159,6 +4159,23 @@ services:
       context: ../../pool
       additional_contexts: *build-contexts
     environment:
+      # `*identity-trust` was already on this line and is now LOAD-BEARING rather
+      # than incidental. micro-org#289 gives the pool a user-facing route for the
+      # first time — `POST /v1/pool/ticket`, which verifies an estate access token
+      # against `IDENTITY_JWKS_URL` and `IDENTITY_ISSUER` — and micro-pool reads
+      # that pair as both-or-neither, refusing to start on half of it.
+      #
+      # NOTHING IS ADDED HERE, DELIBERATELY. The anchor is this estate's one
+      # answer to "which JWKS", shared with the 55 other services that verify a
+      # token, and writing the two URLs out again on this block would be a second
+      # copy that drifts from it the first time identity moves. The `x-identity-
+      # trust` block near the top of this file is where they are decided.
+      #
+      # Identity unset stays a SUPPORTED mode in the service — the WebSocket
+      # transport is simply not attached and the ticket route answers 503 — but it
+      # is not a mode this estate is ever in, and it is not a mode that may be
+      # combined with the advertised origin below. See
+      # `scripts/check-pool-websocket-config.py`.
       <<: [*common-env, *identity-trust]
       POOL_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pool
       # The same anchor the money tier reads, and for the same reason: one answer
@@ -4176,6 +4193,75 @@ services:
       POOL_LTC_NODE_URL: ${LTC_RPC_URL:-}
       POOL_LTC_PAYOUT_ADDRESS: ${POOL_LTC_PAYOUT_ADDRESS:-}
       POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
+      # ══════════════════════════════════════════════════════════════════════════
+      # TWO STRATUM TRANSPORTS, CONFIGURED NOTHING ALIKE, AND THE ASYMMETRY IS THE
+      # DESIGN — micro-org#289
+      # ══════════════════════════════════════════════════════════════════════════
+      #
+      # From here to the end of `ports:` below, one pool is published over two
+      # transports, and the two halves look so unlike each other that the natural
+      # reading is that one of them is half-finished. Neither is. They differ
+      # because the protocols differ, and the difference is worth a page because
+      # the obvious "tidy-up" is the one thing that must not be done.
+      #
+      # ── RAW TCP ON 3334 CANNOT BE PUBLISHED FROM THIS ESTATE AT ALL ───────────
+      #
+      # Stratum v1 is newline-delimited JSON-RPC over a plain socket. It is not
+      # HTTP. Traefik therefore has no router that could carry it — every router in
+      # `gateway/dynamic/` matches a `Host()` and usually a path, and this protocol
+      # offers neither — and the Cloudflare Tunnel in front of the gateway forwards
+      # HTTP and nothing else. So the container publishes that port itself and the
+      # bind defaults to LOOPBACK, which leaves exactly one population able to
+      # reach it: somebody already on this host, or on this LAN once an operator
+      # sets `POOL_STRATUM_HOST_BIND` on purpose. That ceiling is a decision, not
+      # an omission, and it is not lifted by anything in micro-org#289.
+      #
+      # ── THE WEBSOCKET TRANSPORT NEEDS NONE OF IT, BECAUSE IT IS HTTP ──────────
+      #
+      # `/v1/pool/stratum/<chain>` is an ordinary HTTPS request until the 101, so
+      # it rides the router this estate already had: `cf-api-pool` in
+      # `gateway/dynamic/estate-web.yml` matches `PathPrefix(/v1)` on
+      # `pool{CF_WEB_SUFFIX}` and was carrying that path before anyone asked it to.
+      # The listener attaches to micro-pool's EXISTING HTTP server via the
+      # `upgrade` event, on the same `PORT` that already answers /livez, /readyz
+      # and /v1 — so there is no new port, no new mapping, no second listener and
+      # no bind to widen. The whole of what it costs this file is the one
+      # advertisement variable below.
+      #
+      # ── SO THE FAST TRANSPORT IS THE PRIVATE ONE. READ THAT TWICE ─────────────
+      #
+      # An ASIC or a GPU rig speaks raw TCP and can reach this pool only from the
+      # LAN. A browser tab — the slowest miner that exists, by orders of magnitude
+      # — is the one a stranger anywhere on the internet can use. That is the
+      # INVERSE of what a reader expects, and it is the trap in this block: the
+      # instinctive repair is to publish 3334 so that "real" miners get the public
+      # path too. Publishing 3334 is precisely what must not happen by reflex. An
+      # unauthenticated TCP listener on the box that serves every public surface in
+      # this estate is not a port to open because a comment read oddly, and the
+      # WebSocket path does not need it opened — it is not a workaround for the
+      # loopback bind, it is a different transport for a different client.
+      #
+      # ── WHAT PUBLISHING RAW TCP WOULD ACTUALLY TAKE, IF IT IS EVER DECIDED ────
+      #
+      # Both of these, and neither on its own:
+      #
+      #   1. A TCP entryPoint on Traefik plus a `tcp:` router with a `HostSNI`
+      #      rule. This gateway defines four entryPoints — `web`, `websecure`,
+      #      `tunnel`, `metrics` (`compose/docker-compose.gateway.yml`) — and all
+      #      four are HTTP. There is no `tcp:` section in `gateway/dynamic/` at
+      #      all. And SNI is not free here either: Stratum firmware dials a bare
+      #      host and port with no TLS, so a `HostSNI` rule has nothing to match.
+      #   2. A path from the internet that carries arbitrary TCP. On Cloudflare
+      #      that means Spectrum — a paid, Enterprise-tier product for arbitrary
+      #      ports — and NOT the free `cloudflared` tunnel this estate runs, which
+      #      is what `cloudflared/gen.py` generates ingress for.
+      #
+      # Neither exists here as of 2026-08-09, and the second is a billing decision
+      # rather than a configuration one. Until both do, the loopback bind is not a
+      # limitation to route around; it is an accurate statement of what this host
+      # can offer, which is what `GET /v1/pool` reports.
+      # ══════════════════════════════════════════════════════════════════════════
+
       # The endpoint the console hands a stranger, and the second half of the bind
       # decision described above. Empty by default and empty is a real answer here:
       # `GET /v1/pool` then reports no stratum endpoint at all rather than guessing
@@ -4185,6 +4271,34 @@ services:
       # whose firmware silently fails to connect.
       POOL_STRATUM_PUBLIC_HOST: ${POOL_STRATUM_PUBLIC_HOST:-}
       POOL_LTC_STRATUM_PUBLIC_PORT: ${POOL_LTC_STRATUM_PUBLIC_PORT:-}
+      # The other transport's advertisement, and the same rule as the pair above:
+      # `GET /v1/pool` composes each chain's `websocketEndpoint` from this origin
+      # plus the served path, and reports `null` when it is unset. It is NEVER
+      # derived from the request `Host`, the bind address or the container port —
+      # micro-org#285 again, applied to the transport that did not exist when #285
+      # was written.
+      #
+      # DERIVED FROM `CF_WEB_SUFFIX`, NOT TYPED, which is how every other public
+      # URL in this file is written (`IDENTITY_ACCOUNT_URL`, `STUDIO_PUBLIC_URL`,
+      # `BEACON_HANDOFF_ORIGIN`). Each environment then advertises its own
+      # hostname and neither can be handed the other's — the failure that took
+      # cross-surface sign-in down for eleven hours on 2026-08-05 was one
+      # hostname carried in shell state, and this variable is exactly that shape.
+      # `wss:`, not `ws:`, because the only way in is the tunnel and the tunnel is
+      # TLS at the edge; micro-pool validates the scheme at boot and refuses a
+      # path, query, fragment or userinfo on it.
+      #
+      # ADVERTISEMENT ONLY. It binds nothing, routes nothing and appears in no
+      # port mapping — the listener is already up on `PORT` and `cf-api-pool`
+      # already carries the path. Its one hazard is the combination it must never
+      # be in: set here with the identity pair unset is a BOOT REFUSAL, not a
+      # warning, because advertising an endpoint nobody can authenticate to is
+      # micro-org#285's defect with the sign flipped. On this estate the pair
+      # arrives through `*identity-trust` above and cannot be absent — but a
+      # compose file is exactly where that combination would be shipped, and a
+      # shipped crash loop on a profile-gated service is one nobody sees until
+      # they start it by hand. `scripts/check-pool-websocket-config.py` refuses it.
+      POOL_WEBSOCKET_PUBLIC_ORIGIN: wss://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # Written into every coinbase this pool builds. Capped at 32 bytes here and
       # refused at boot above that: the scriptSig it lives in is capped at 100 by
       # consensus and shares that space with the BIP34 height and the extranonce,
@@ -4194,6 +4308,12 @@ services:
     ports:
       # 4146 — `deployableRepos()` index 46, immediately after beacon-web's 4145.
       # Derived, not chosen; `make check-web` re-derives it from micro-org.
+      #
+      # AND THIS IS THE WHOLE OF WHAT THE WEBSOCKET TRANSPORT PUBLISHES. It
+      # upgrades on this same container port 4000, so there is no line for it in
+      # this block and there must not be one: a second mapping would be a second
+      # address for a listener that only ever had one, and the one nobody tests.
+      # See the asymmetry note above.
       - "127.0.0.1:${CF_PORT_BASE:-4}146:4000"
       # Stratum. See the note above on why this is not behind the gateway, why the
       # default bind is loopback, and why the host side reads the PUBLIC port —
