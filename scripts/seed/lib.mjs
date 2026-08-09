@@ -293,7 +293,41 @@ export const TOKENS_FILE = process.env.TOKENS_FILE || 'compose/estate/tokens.env
 export const ENV_FILES = ['--env-file', ESTATE_ENV, '--env-file', TOKENS_FILE]
 
 export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test'
-export const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'correct-horse-battery-staple-42'
+
+/**
+ * NO DEFAULT, DELIBERATELY, AND THIS USED TO CARRY ONE.
+ *
+ * The fallback here was the same literal that `estate-bootstrap.sh` defaulted to
+ * until 2026-08-09 — a string committed to a public repository, against an
+ * estate whose `/v1/auth/login` answers from the internet. Read that file's
+ * operator block for the measurement. The password is rotated, and every script
+ * that signs in as the operator now has to be given the real one.
+ *
+ * `ESTATE_ADMIN_PASSWORD` is the name it is stored under in
+ * `compose/estate/tokens.env`, so the usual invocation is to source that file
+ * rather than to type a secret at a prompt where the shell will keep it:
+ *
+ *     set -a; . compose/estate/tokens.env; set +a
+ *
+ * Throwing beats falling back. A seed that silently uses the wrong credential
+ * fails later, somewhere else, as a 401 nobody attributes to this line.
+ *
+ * A FUNCTION rather than a constant, and that is not a style choice. Eleven
+ * modules import this file, and most of them never sign in as the operator —
+ * `check.mjs` and `images.mjs` among them. A constant that throws does so at
+ * IMPORT, so it would take down every one of those too, for a credential they
+ * were never going to send. Evaluated where it is spent instead: at `login()`.
+ */
+export function adminPassword() {
+  const value = process.env.ADMIN_PASSWORD || process.env.ESTATE_ADMIN_PASSWORD
+  if (!value) {
+    throw new Error(
+      'ADMIN_PASSWORD (or ESTATE_ADMIN_PASSWORD) is not set. It has no default: the one it used ' +
+        'to have is published in this repository. Source compose/estate/tokens.env first.',
+    )
+  }
+  return value
+}
 
 /* ── saying what happened ──────────────────────────────────────────────────── */
 
@@ -383,7 +417,7 @@ export async function api(service, path_, opts = {}) {
 export async function login() {
   const { body } = await api('identity', '/auth/login', {
     method: 'POST',
-    body: { identifier: ADMIN_EMAIL, password: ADMIN_PASSWORD },
+    body: { identifier: ADMIN_EMAIL, password: adminPassword() },
     expect: 200,
   })
   if (!body.accessToken) throw new Error('identity returned no accessToken')
