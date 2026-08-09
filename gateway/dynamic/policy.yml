@@ -161,6 +161,30 @@ http:
           # it: there is one list now, and it names what THIS environment serves.
           - https://lantern{{ env "CF_WEB_SUFFIX" }}
           - https://beacon{{ env "CF_WEB_SUFFIX" }}
+          # ── the mining pool console, and the one entry here that nothing calls yet ──
+          #
+          # `pool.<apex>` serves micro-pool-web. Every other origin above is here because
+          # `consumeAuthCallback` POSTs to `nimbus.<apex>/auth/handoff/redeem` from the page's own
+          # origin, and this one does not: `pool-web/src/components/shell.tsx` deliberately mounts
+          # neither `CloudsForgeBar` nor `AccountMenu`, on the argument that the only identity a
+          # miner has here is the stratum username in their own firmware — micro-pool takes no
+          # bearer token on any route, so a "Sign in" button would lead nowhere. Its own API is
+          # same-origin, split by path on this same hostname (`cf-web-pool`/`cf-api-pool` in
+          # estate-web.yml), exactly like lantern and beacon.
+          #
+          # SO WHY IS IT HERE. `scripts/surface-routes.py` check 5 keys on `servesUi`, with no
+          # exemption table, and that is the right predicate rather than an approximation: the four
+          # drifts recorded above were all found by a human noticing a broken page, because a
+          # missing origin fails closed and SILENTLY. Carving out the one surface that happens not
+          # to sign in today would trade a caught defect for an uncaught one the day it does — the
+          # bar's absence is a product decision that a future session may reverse in ten minutes,
+          # and nothing would connect that edit to this file.
+          #
+          # This entry alone would NOT be enough for a sign-in. `IDENTITY_HANDOFF_ORIGINS` in
+          # docker-compose.estate.yml is a second, independent allowlist that identity checks
+          # against the browser's own `Origin` header, and `pool` is deliberately absent from it.
+          # Whoever mounts the bar here must add it there too.
+          - https://pool{{ env "CF_WEB_SUFFIX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:
