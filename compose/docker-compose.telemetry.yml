@@ -188,12 +188,27 @@ services:
       - env/grafana.env
     environment:
       # The one credential this stack holds. It is NOT in a committed file: it
-      # comes from ../.env (gitignored, made from ../.env.example). The default
-      # exists so `docker compose config` works on a clean checkout, and it is
-      # only ever reachable on loopback — every published port in this file is
-      # bound to 127.0.0.1, following the estate's own treatment of pay,
-      # keyvault and postgres. An operator plane is not a public surface.
-      GF_SECURITY_ADMIN_PASSWORD: ${CF_GRAFANA_ADMIN_PASSWORD:-local-dev-only}
+      # comes from ../.env (gitignored, made from ../.env.example).
+      #
+      # `:?` RATHER THAN A DEFAULT, since 2026-08-09. The default used to be the
+      # literal `local-dev-only`, defended here on two grounds — that it made
+      # `docker compose config` work on a clean checkout, and that every port in
+      # this file is bound to 127.0.0.1 so the operator plane is not public.
+      # Both are true and neither is the point. A committed default IS the
+      # password on any host where nobody set the variable, and this file cannot
+      # see whether anybody did; loopback binding decides who can reach the
+      # login form, not what the password is. The estate learned that argument
+      # the expensive way with the administrator account (micro-org#276), where
+      # "a throwaway operator for a throwaway environment" is exactly the
+      # reasoning that put a real credential in a public repository.
+      #
+      # So the render now FAILS when it is unset, which is the same treatment
+      # `docker-compose.estate.yml` already gives CF_POSTGRES_PASSWORD, and for
+      # the same reason: a stack that comes up with a credential nobody chose is
+      # worse than one that refuses to come up. Nothing in CI renders this file,
+      # so the clean-checkout argument costs a person one line in ../.env and
+      # buys back a password that only exists where someone typed it.
+      GF_SECURITY_ADMIN_PASSWORD: ${CF_GRAFANA_ADMIN_PASSWORD:?set it in ../.env (see ../.env.example); there is deliberately no default, because a default is the password on every host that did not set one}
     volumes:
       - ../grafana/provisioning:/etc/grafana/provisioning:ro
       - ../grafana/dashboards:/var/lib/grafana/dashboards:ro
