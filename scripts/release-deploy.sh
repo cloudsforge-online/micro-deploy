@@ -205,9 +205,12 @@ echo "── rendering $manifest ───────────────�
 # reached the tool and not the caller, which is the same shape as the four
 # frontend fixes this release is carrying.
 #
-# Mainnet is unaffected and that was checked rather than assumed: `mainnet.env`
-# sets no `COMPOSE_PROFILES`, so the rendered service list is byte-identical
-# with the flag and without it.
+# Mainnet was unaffected when this was written, and is now affected the same way
+# testnet was: as of 2026-08-09 `mainnet.env` sets `COMPOSE_PROFILES=pool`, so
+# the render sees `pool` and `pool-migrate` and pins them, and without the flag it
+# would not — the same missing pin that made a deploy host try to BUILD faucet
+# from a source tree it does not have. Neither environment renders its full
+# service list without both env files any more.
 # BOTH env files, via the same `ENVSET` the deploy below uses. The render used to
 # be passed `$ESTATE_ENV` alone, and because `--env-file` REPLACES the default
 # rather than adding to it, that one file WAS the renderer's whole environment.

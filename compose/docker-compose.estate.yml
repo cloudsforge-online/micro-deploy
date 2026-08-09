@@ -4160,12 +4160,19 @@ services:
   # It builds templates with `getblocktemplate`, hands work to real hardware over
   # raw TCP, judges shares, submits blocks, and records who is owed what.
   #
-  # ── WHY IT DOES NOT START BY DEFAULT ──────────────────────────────────────────
+  # ── WHY IT IS BEHIND A PROFILE, AND WHAT ADMITTED IT ON 2026-08-09 ────────────
   #
-  # Two of its variables have no value yet, and both are decisions rather than
+  # Two of its variables had no value, and both were decisions rather than
   # oversights. `profiles:` is the faucet's precedent, applied for the faucet's
   # reason: compose can add a service for a profile but cannot remove one for an
   # environment, and a service that crash-loops takes `--wait` down with it.
+  #
+  # BOTH ARE NOW ANSWERED and `compose/mainnet.env` sets `COMPOSE_PROFILES=pool`,
+  # so the mainnet estate brings the pool up as part of a release like any other
+  # service. The profile stays because it is what keeps the pool OFF a testnet
+  # estate, whose litecoind this service would refuse anyway (`POOL_NETWORK`), and
+  # off any host where the two variables below are unset — where the container
+  # would refuse to start and take the deploy's `--wait` with it.
   #
   #   1. **POOL_LTC_PAYOUT_ADDRESS — the coinbase output.** 36 §5.3 says found
   #      blocks are "the pool's revenue AND THE MINERS' CLAIM ON IT", so this
@@ -4176,8 +4183,15 @@ services:
   #      settlement's pinned treasury, and if it were ever pinned every block this
   #      pool had mined to it would become unbooked custody inflow — the exact
   #      drift that refused every EMBER withdrawal for three days on 2026-08-05
-  #      (micro-org#247, #248). A `pool` purpose is being added to custody; until
-  #      it lands there is no address this can honestly hold.
+  #      (micro-org#247, #248).
+  #
+  #      SETTLED 2026-08-09: custody grew a `pool` purpose and an operator route,
+  #      `POST /v1/admin/pool-payouts/:chain/:network/mint` (micro-org#293), and
+  #      the mainnet address was minted through it under an operator's own name —
+  #      not a service's. It is set in `estate/tokens.env`, which is untracked and
+  #      0600, so this line still reads it from the environment and still defaults
+  #      to empty: a host that has not minted one gets a refusal to start rather
+  #      than a pool mining to nowhere.
   #   2. **POOL_FEE_BASIS_POINTS — chosen on 2026-08-09: 1%, 100 basis points.**
   #      36 §7.1 asked for it to be chosen "before the first miner connects rather
   #      than after", and it now has been. Until today this line passed an empty
@@ -4197,7 +4211,8 @@ services:
   #      it does not silently mine for free: the container refuses to start.
   #
   # So the consequence is stated rather than buried, exactly as the faucet's block
-  # states its own: a plain `up` brings up NO POOL. Bringing it up is deliberate —
+  # states its own: on an estate whose env file does not name the profile, a plain
+  # `up` brings up NO POOL, and bringing it up is deliberate —
   #
   #   COMPOSE_PROFILES=pool ./scripts/estate-up.sh
   #
