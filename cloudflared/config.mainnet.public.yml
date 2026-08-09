@@ -93,6 +93,14 @@ ingress:
     service: http://127.0.0.1:9081
   - hostname: pay.cloudsforge.online
     service: http://127.0.0.1:9081
+  # The mining pool console and its read API, split by path inside the gateway.
+  # WHAT THIS HOSTNAME CANNOT CARRY, stated here as well as beside the router:
+  # stratum is raw TCP on 3334 and a Cloudflare Tunnel forwards HTTP. So this
+  # entry serves the page that describes the connection and never the connection
+  # itself; a miner reaches the pool over the LAN or not at all, until somebody
+  # decides to expose that port on purpose. Alphabetical, like every line here.
+  - hostname: pool.cloudsforge.online
+    service: http://127.0.0.1:9081
   - hostname: rpc.cloudsforge.online
     service: http://127.0.0.1:9081
   - hostname: status.cloudsforge.online

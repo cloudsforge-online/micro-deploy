@@ -91,6 +91,14 @@ ingress:
     service: http://127.0.0.1:9181
   - hostname: pay-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
+  # The pool console. The service behind it is behind a compose profile on both
+  # networks and on THIS one it may never come up at all: `pool/src/template.ts`
+  # asks the node `getblockchaininfo` and refuses to mine when the chain it
+  # reports does not match `POOL_NETWORK`, and the only litecoind on this host is
+  # mainnet. The entry exists so the console is reachable and can say so, which is
+  # the same reason the bundle carries no profile.
+  - hostname: pool-testnet.cloudsforge.online
+    service: http://127.0.0.1:9181
   - hostname: rpc-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
   - hostname: status-testnet.cloudsforge.online
