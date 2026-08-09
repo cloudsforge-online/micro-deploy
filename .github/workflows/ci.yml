@@ -590,6 +590,37 @@ jobs:
           python3 -m pip install --quiet pyyaml
           python3 scripts/check-service-credential-wiring.py
 
+      # ── ONE ESTATE'S ENV FILE, THE OTHER ESTATE'S TOKENS, AND NO COMPLAINT ───
+      #
+      # Bringing an estate up takes TWO `--env-file` paths, and until micro-org#238
+      # every entry point treated them as independent values. Pair testnet's env
+      # file with the mainnet tokens file and compose merges them in order and says
+      # nothing: the stack comes up under testnet's project name, every banner in
+      # `release-deploy.sh` says testnet — it derives the environment from the
+      # estate file ALONE — and the containers hold mainnet's service credentials,
+      # operator password and custody keyring selection.
+      #
+      # Nothing fails loudly, which is the whole problem. The credentials are real;
+      # they belong to the other estate. The visible symptom is testnet identity
+      # answering 401 to callers that look entirely correct, and the invisible one
+      # is a component that does not reject them.
+      #
+      # The pairing is enforced at RUNTIME by `check-env-files-agree.sh`, because
+      # `ESTATE_ENV` and `TOKENS_FILE` are both overridable and no static check can
+      # see what an operator types. This step exercises that refusal against both
+      # crossed pairs and both correct ones rather than grepping it, then reads
+      # every tracked file that invokes compose and fails any single command whose
+      # `--env-file` arguments name both estates — the Makefile spells a pairing out
+      # four times.
+      #
+      # It also asserts both entry points still CALL the refusal. A guard nothing
+      # invokes is a guard nothing runs, and this repository has shipped exactly
+      # that before: `surface-routes.py` sat here for weeks with no CI step, which
+      # is how the thing it guards went wrong to begin with.
+      - name: No command pairs one estate's env file with the other's tokens
+        working-directory: deploy
+        run: python3 scripts/check-env-file-pairing.py
+
       # ── THE POOL'S WEBSOCKET CONFIGURATION IS COHERENT, OR IT IS A CRASH LOOP ─
       #
       # micro-org#289 gave micro-pool a Stratum transport a browser can dial, and

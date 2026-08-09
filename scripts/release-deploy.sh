@@ -57,6 +57,27 @@ for f in "$ESTATE_ENV" "$TOKENS_FILE"; do
     exit 1
   fi
 done
+
+# ── AND THE TWO OF THEM MUST NAME THE SAME ESTATE (micro-org#238) ─────────────
+#
+# They are independent variables, and until now nothing compared them. A deploy
+# given `ESTATE_ENV=compose/testnet.env` and the default mainnet tokens file was
+# accepted without a word: it renders under testnet's project name, every line
+# this script prints says testnet — including the tunnel check at the foot, which
+# derives the environment from `$ESTATE_ENV` ALONE — and the containers hold
+# MAINNET's service credentials, operator password and custody keyring selection.
+#
+# Nothing fails loudly, because the credentials are real. They are the other
+# estate's. The best case is 401s from testnet identity against callers that look
+# entirely correct; the worse case is a component that accepts them.
+#
+# Before the render rather than after, and before the apex checks below, because
+# this is the one mistake that makes every subsequent line of output a confident
+# statement about the wrong estate.
+if ! ./scripts/check-env-files-agree.sh "$ESTATE_ENV" "$TOKENS_FILE"; then
+  exit 1
+fi
+
 ENVSET=(--env-file "$ESTATE_ENV" --env-file "$TOKENS_FILE")
 
 

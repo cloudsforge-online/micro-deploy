@@ -102,6 +102,24 @@ TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 ENV_FILE=${ENV_FILE:-}
 OVERLAY=${OVERLAY:-}
 
+# ── AND THE TWO FILES MUST NAME THE SAME ESTATE (micro-org#238) ───────────────
+#
+# The block above explains what a HALF-retargeted bootstrap does: "it writes one
+# estate's admin row and credentials into the other's database". That was about
+# forgetting the project name. The same outcome is one variable away in the other
+# direction, and nothing checked it either — `ENV_FILE` and `TOKENS_FILE` are
+# independent, so `TOKENS_FILE=compose/estate/tokens.testnet.env` with no
+# `ENV_FILE` mints testnet's credentials while every `docker compose exec
+# postgres` below lands in MAINNET's container.
+#
+# AN ABSENT `ENV_FILE` IS MAINNET, not "unknown". `docker-compose.estate.yml`
+# names the project `${CF_PROJECT:-cloudsforge-estate}` and `CF_PROJECT` is set
+# only in `compose/testnet.env`, so no env file at all resolves to the mainnet
+# project — which is exactly the pairing that must then be enforced.
+if ! ./scripts/check-env-files-agree.sh "${ENV_FILE:-compose/mainnet.env}" "$TOKENS_FILE"; then
+  exit 1
+fi
+
 # One definition of "talk to this estate", used by every invocation below.
 # Previously each site spelled out `docker compose -f "$COMPOSE"` and each was a
 # separate opportunity to forget a flag — which is exactly how the project name

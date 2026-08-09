@@ -229,6 +229,12 @@ with tempfile.TemporaryDirectory() as tmp:
     # files relative to its own location.
     shutil.copy(DEPLOY, root / "scripts" / "release-deploy.sh")
     shutil.copy(RENDER, root / "scripts" / "release-render.py")
+    # Not a stub: `release-deploy.sh` refuses a crossed env-file pair through it
+    # (micro-org#238), so the fixture needs the real thing or every run below
+    # would abort before it reached a registry. The fixture's own file names
+    # belong to neither environment, which that check passes over deliberately.
+    shutil.copy(HERE / "check-env-files-agree.sh", root / "scripts")
+    (root / "scripts" / "check-env-files-agree.sh").chmod(0o755)
     (root / "scripts" / "check-tunnel-origin.sh").write_text(TUNNEL_STUB)
     (root / "scripts" / "check-tunnel-origin.sh").chmod(0o755)
 
