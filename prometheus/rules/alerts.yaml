@@ -359,16 +359,54 @@ groups:
     rules:
       - alert: BackupAgeExceeded
         # Alerting on AGE rather than on failure is the whole point. A backup job
-        # that silently stops firing produces no failure to alert on, and the
-        # estate's backup.sh is unscheduled today — so the first thing to watch
-        # is that it ran at all.
-        expr: time() - backup_last_success_timestamp_seconds > 129600
+        # that silently stops firing produces no failure to alert on, so the
+        # first thing to watch is that it ran at all.
+        #
+        # ── `backup_last_success_unixtime`, AND IT READ A NAME NOTHING EXPORTS ─
+        #
+        # This was `time() - backup_last_success_timestamp_seconds > 129600`.
+        # Measured against the mainnet Prometheus on 2026-08-10: of 1,329 metric
+        # names in the estate, ZERO contain the substring `backup`. So this sev2
+        # page had never evaluated against a series and could not fire, for two
+        # separate reasons that each had to be fixed (micro-org#310):
+        #
+        #   1. The runner has never been started. `deploy/backup` is complete —
+        #      four job handlers, a per-artefact manifest, `age` encryption of
+        #      the miner coinbase key, a cross-environment restore refusal — and
+        #      `compose/docker-compose.backup.yml` is a complete overlay, but
+        #      `docker ps -a` on the host shows no backup-runner container and
+        #      the destination directory holds nothing. The estate has zero
+        #      backups against a stated RPO of zero.
+        #   2. Even once it runs, the OLD NAME would still have been absent. The
+        #      runner registers `backup_last_success_bytes` — how big — and had
+        #      no gauge at all for WHEN. It now exports
+        #      `backup_last_success_unixtime`, spelled to match the
+        #      `backup_last_verified_unixtime` beside it in the same exporter
+        #      rather than to match Prometheus's `_timestamp_seconds`.
+        #
+        # THE GAUGE IS SEEDED AT BOOT from `backup_runs.finished_at`, and that is
+        # what makes this expression trustworthy rather than merely correct. A
+        # gauge set only when a run completes is erased by a restart, and
+        # `time() - <absent> > 129600` evaluates over an EMPTY VECTOR — no
+        # series, no alert, a page that reads as satisfied because there is
+        # nothing to compare. That is the same silent green this rule spent its
+        # whole life in.
+        #
+        # No `{{ $labels.target }}` in the summary any more: the gauge carries no
+        # labels, because it is one estate's one backup destination. The old
+        # summary interpolated a label nothing publishes and would have rendered
+        # "No successful backup of  for 4d".
+        #
+        # 129600s is 36h — one missed daily sweep plus half a day, so a run that
+        # started late or a redeploy that skipped a night does not page.
+        expr: time() - backup_last_success_unixtime > 129600
         labels:
           severity: page
           team: platform
+          service: backup-runner
           sev: "2"
         annotations:
-          summary: "No successful backup of {{ $labels.target }} for {{ $value | humanizeDuration }}"
+          summary: "The estate's last successful backup finished {{ $value | humanizeDuration }} ago"
           description: >-
             The ledger's RPO is zero. A backup nobody has restored is a
             hypothesis; a backup that has not run is not even that.
@@ -520,6 +558,69 @@ groups:
             Either nothing is claiming, or a worker died holding a lease. Check
             jobs_claimed_total before assuming the queue is idle.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-lease-expiry-storm.md
+
+  # =================================================== TICKET — backup ======
+  - name: cf.ticket.backup
+    rules:
+      - alert: BackupNeverRun
+        # THE PAGE ABOVE CANNOT TELL "THE BACKUP IS OLD" FROM "THERE IS NO
+        # BACKUP", AND ON THIS ESTATE IT IS THE SECOND ONE.
+        #
+        # `time() - backup_last_success_unixtime > 129600` needs a series to
+        # subtract. With none it produces an empty vector, which never crosses a
+        # threshold, so the worst possible state — nothing has ever been backed
+        # up — is the one state that page is guaranteed to stay green through.
+        # Measured on the mainnet Prometheus on 2026-08-10: zero of 1,329 metric
+        # names contain `backup`, `docker ps -a` on the host lists no
+        # backup-runner container, and the backup destination holds nothing.
+        #
+        # `absent()` and NOT `== 0`, which is where this differs from
+        # `ConformanceCorpusNeverReplayed` further down. Beacon seeds its suite
+        # counters at zero on every scrape, so a `sum() == 0` there means "no
+        # suite has run". The backup runner deliberately publishes NO SAMPLE for
+        # this gauge until a run has actually succeeded — a zero would be a
+        # series claiming the estate was last backed up in 1970, and "very old"
+        # is a claim that a backup once happened. Absent is the honest encoding,
+        # so `absent()` is the only expression that can read it.
+        #
+        # THE THREE CAUSES THIS COVERS ARE ALL REAL AND THE RUNBOOK SEPARATES
+        # THEM: the runner has never been deployed (today's state); it is
+        # deployed and Prometheus is not scraping it — which was itself the case
+        # until this release, because `backup-runner` lives in the overlay
+        # `compose/docker-compose.backup.yml`, is named by no release manifest,
+        # and therefore cannot appear in the file_sd list
+        # `render-prometheus-targets.py` generates from the release; or it is
+        # running and no run has ever succeeded.
+        #
+        # A TICKET AND NOT A PAGE, at sev3. It is a standing data-loss exposure
+        # rather than an outage, and every fix for it — deploying a container,
+        # correcting a scrape, reading a failed run — is a daylight change. A
+        # page nobody can act on at three in the morning is how an on-call learns
+        # to silence the group, and the group this would be silenced with
+        # contains the money pages.
+        #
+        # `for: 30m` matches `MoneyMetricContractMissing`, which is the same
+        # shape: absence, meaning the alert beside it cannot fire. It is long
+        # enough to ride out a redeploy of the runner and short enough that a
+        # container which failed to come back is noticed the same morning. The
+        # boot-time seed is what makes 30m safe — the gauge is repopulated from
+        # `backup_runs` as the process starts, not on the next successful run.
+        expr: absent(backup_last_success_unixtime)
+        for: 30m
+        labels:
+          severity: ticket
+          team: platform
+          service: backup-runner
+          sev: "3"
+        annotations:
+          summary: "Nothing has ever backed this estate up, and the backup page cannot say so"
+          description: >-
+            No series exists for backup_last_success_unixtime, so
+            BackupAgeExceeded is green because there is nothing to compare rather
+            than because a backup is recent. Establish which of the three states
+            this is — no runner, no scrape, or no successful run — before
+            touching anything.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-never-run.md
 
   # ====================================================== TICKET — SLO ======
   - name: cf.ticket.slo

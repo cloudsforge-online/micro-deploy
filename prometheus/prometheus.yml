@@ -232,6 +232,51 @@ scrape_configs:
       - source_labels: [__meta_cf_team]
         target_label: team
 
+  # ------------------------------------------------------- backup runner ---
+  # THE ONE ESTATE CONTAINER THE GENERATED LIST BELOW CANNOT SEE, AND THEREFORE
+  # THE ONE THAT NEEDS A JOB HERE (micro-org#310).
+  #
+  # `render-prometheus-targets.py` renders `targets/services.yaml` by walking the
+  # RELEASE MANIFEST and looking each entry up in the compose model that
+  # `release-deploy.sh` computes from `docker-compose.estate.yml` plus the pinned
+  # release overlay. `backup-runner` is in neither: it is defined only in
+  # `compose/docker-compose.backup.yml`, it is `build:`-ed rather than pinned to
+  # a digest, and it is brought up by hand per that file's own header. Grepped
+  # across every manifest in `org/releases` on 2026-08-10 — no entry names it.
+  #
+  # That is not a bug in the renderer and it must not be forced into it. The
+  # renderer's contract is "what this release deploys", and the honest answer is
+  # that the release does not deploy this. Its docstring refuses a second
+  # hand-maintained answer to "what is running"; this is not one, for the same
+  # reason the three credentialed jobs above are not — a target the generator
+  # cannot derive gets a job, and the generator READS this file and skips
+  # anything already named here, so if `backup-runner` ever enters a manifest it
+  # will not be emitted twice.
+  #
+  # WITHOUT THIS BLOCK, `BackupAgeExceeded` IS SILENT-GREEN EVEN WHEN THE RUNNER
+  # IS WORKING PERFECTLY: an unscraped exporter and a nonexistent metric are the
+  # same empty vector to `time() - backup_last_success_unixtime`.
+  #
+  # It reads `down` until the runner is started, and today it will: measured on
+  # mainnet 2026-08-10, `docker ps -a` lists no backup-runner container. That is
+  # the same trade the `traefik` block below makes, and it is the right one here
+  # — a target that is honestly red about an estate with no backups is not the
+  # false red that trains an operator to skim the target page. `BackupNeverRun`
+  # is what says it in the alert plane; nothing pages on `up` for this job.
+  #
+  # 4130 is the port the overlay's own health check probes `/readyz` on, which is
+  # the same rule the generator applies to everything else. No credential: this
+  # exporter publishes byte counts and timestamps, never a path, a DSN or an
+  # address. No `tier` label either — it serves no user traffic and registers no
+  # request metrics, so an SLO objective on it would be a burn rate computed over
+  # an empty vector.
+  - job_name: backup-runner
+    static_configs:
+      - targets: ["backup-runner:4130"]
+        labels:
+          team: platform
+          service: backup-runner
+
   # ------------------------------------------------------------- gateway ---
   # Traefik, from the gateway overlay. Absent until that stack is up, and a
   # target that is absent rather than down is exactly what `absent()` alerts on.
