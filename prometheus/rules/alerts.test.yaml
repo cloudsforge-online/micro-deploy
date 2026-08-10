@@ -11,9 +11,9 @@
 # This file is the other half: promtool feeds the rules a synthetic series and
 # asserts what comes out. `make check-rule-tests` runs it, and so does CI.
 #
-# It covers one alert today. That is not the intended end state — every rule in
-# alerts.yaml belongs here eventually — but a test file with one honest case in
-# it is worth more than a plan for twenty-six.
+# It covers three alerts today. That is not the intended end state — every rule
+# in alerts.yaml belongs here eventually — but a test file with three honest
+# cases in it is worth more than a plan for twenty-eight.
 #
 # The `rule_files` path is relative to THIS file, which is why the test lives
 # beside the rules rather than under a tests/ directory. `prometheus.yml` names
@@ -129,3 +129,288 @@ tests:
                 health signal it has. Establish whether the existing sets are
                 still readable before writing another one to the same volume.
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-destination-fs-errors.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # EmberTipNotAdvancing — micro-org#363.
+  #
+  # The rule's whole content is a pair of numbers: the `[10m]` range and the
+  # `for: 5m`, which together mean "fires on a 15-minute gap and on nothing
+  # shorter". `check rules` cannot see either. The tip stops at 19m, so the
+  # expression turns true around 28m and the alert fires around 33m, and the
+  # silent-then-firing cases below straddle that.
+  #
+  # ── WHY THE ASSERTIONS SIT THREE MINUTES OFF THE BOUNDARIES ──────────────
+  #
+  # Not squeamishness — measured harness behaviour. On promtool 3.5.0,
+  # 2026-08-10, an `alert_rule_test` result in ONE test group moves by one
+  # evaluation interval depending on what OTHER groups are in the same file:
+  # written with four groups this rule reported no alert at 33m, with three it
+  # fired at 33m, and adding a single `promql_expr_test` entry to this group
+  # flipped it back again. The storage is not the cause — `count(indexer_tip
+  # _height)` inside this group returns 1, so the groups are isolated, and the
+  # expression itself evaluates true at 28m either way. It is how the harness
+  # loads samples around each evaluation.
+  #
+  # An assertion pinned to the exact turnover minute would therefore be a test
+  # that goes red when somebody adds an unrelated case to this file, and the fix
+  # for that would be to loosen it in a hurry. Three minutes of margin is enough
+  # to absorb one interval and still discriminate every mutation that matters.
+  # Each was applied to alerts.yaml and the target re-run, and the failing case
+  # recorded: `[5m]` and a deleted `for:` each redden the 31m silence, `[15m]`
+  # and `for: 30m` each redden the 36m firing, and `== 0` inverted to `> 0`
+  # reddens all five.
+  #
+  # The label set is the one measured on the mainnet Prometheus on 2026-08-10
+  # (`instance="indexer:4000"`, `job="cf-services"`, `tier="1"`), not an invented
+  # one — the summary interpolates `{{ $labels.network }}`, and a template
+  # referencing a label the series does not carry renders EMPTY rather than
+  # failing, which is exactly how the `{{ $labels.chain }}` defect survived. Note
+  # the scrape target already carries `team="indexer"`; the rule's own
+  # `team: chain` must win, and the expected labels below assert that it does,
+  # because Alertmanager routes on it.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # One block a minute for twenty minutes, then a half-hour flat stretch,
+      # then blocks again. Slower than EMBER's 15 s target on purpose: at the difficulty
+      # floor the chain's honest steady state IS slower than target (median 24 s,
+      # mean 39.2 s over blocks 8249-11249 on 2026-08-10), and a rule that fired
+      # on the healthy stretches of this series would be the rule that fires all
+      # day. The first assertion below is that it does not.
+      - series: 'indexer_tip_height{chain="ember",network="mainnet",instance="indexer:4000",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "100+1x19 119+0x30 120+1x20"
+
+    alert_rule_test:
+      # Blocks arriving. Silent.
+      - eval_time: 15m
+        alertname: EmberTipNotAdvancing
+        exp_alerts: []
+
+      # The tip froze at 19m. At 26m the `[10m]` window still reaches back to
+      # the last change, so the expression is FALSE — not pending, false.
+      - eval_time: 26m
+        alertname: EmberTipNotAdvancing
+        exp_alerts: []
+
+      # The expression goes true around 28m and `for: 5m` has not elapsed. This
+      # is the case that pins the range AND the `for:`: written `[5m]`, or with
+      # no `for:` at all, the alert is already firing here.
+      - eval_time: 31m
+        alertname: EmberTipNotAdvancing
+        exp_alerts: []
+
+      # Firing: 10m of range plus 5m of `for:` after the last block at 19m, so
+      # on a 15-minute gap, which is the number alerts.yaml derives from the
+      # measured distribution. This is the case that pins the OTHER side —
+      # `[15m]` would not have fired yet and `for: 30m` never fires here at all.
+      # Every label and annotation is spelled out: Alertmanager routes on
+      # `severity` and `team`, the paging tier reads `sev`, and the runbook rule
+      # needs `runbook_url` to survive as far as the alert.
+      - eval_time: 36m
+        alertname: EmberTipNotAdvancing
+        exp_alerts:
+          - exp_labels:
+              alertname: EmberTipNotAdvancing
+              chain: ember
+              network: mainnet
+              instance: indexer:4000
+              job: cf-services
+              tier: "1"
+              severity: ticket
+              team: chain
+              service: indexer
+              sev: "3"
+            exp_annotations:
+              summary: "EMBER mainnet tip has not advanced in at least 15 minutes"
+              description: >-
+                No new EMBER block has been indexed for fifteen minutes against a
+                fifteen second target. This series freezes for a stalled chain and
+                for a stalled indexer alike — ask the node for its own height before
+                concluding anything, the runbook has the call. If the node agrees
+                the tip is stuck, the usual cause is difficulty left high by
+                hashrate that has since gone away, and it resolves itself as the
+                retarget walks down; the runbook says how long that has taken
+                before, and when to stop waiting.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-tip-not-advancing.md
+
+      # Still stuck at 45m, still firing.
+      - eval_time: 45m
+        alertname: EmberTipNotAdvancing
+        exp_alerts:
+          - exp_labels:
+              alertname: EmberTipNotAdvancing
+              chain: ember
+              network: mainnet
+              instance: indexer:4000
+              job: cf-services
+              tier: "1"
+              severity: ticket
+              team: chain
+              service: indexer
+              sev: "3"
+            exp_annotations:
+              summary: "EMBER mainnet tip has not advanced in at least 15 minutes"
+              description: >-
+                No new EMBER block has been indexed for fifteen minutes against a
+                fifteen second target. This series freezes for a stalled chain and
+                for a stalled indexer alike — ask the node for its own height before
+                concluding anything, the runbook has the call. If the node agrees
+                the tip is stuck, the usual cause is difficulty left high by
+                hashrate that has since gone away, and it resolves itself as the
+                retarget walks down; the runbook says how long that has taken
+                before, and when to stop waiting.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-tip-not-advancing.md
+
+      # Blocks resume at 51m and the alert RESOLVES. Every EMBER stall measured
+      # on 2026-08-10 ended without anybody doing anything, so a rule that could
+      # not clear itself would leave a permanent open ticket for a chain that had
+      # already recovered — and the on-call response to that is to stop reading
+      # the ticket queue.
+      - eval_time: 56m
+        alertname: EmberTipNotAdvancing
+        exp_alerts: []
+
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # EmberDifficultyAtFloor — micro-org#363.
+  #
+  # This rule is a CONJUNCTION and both halves are load-bearing, for opposite
+  # reasons: at the floor with hashrate to spare is HEALTHY, and slow with
+  # difficulty above the floor is a transient the chain heals from by itself.
+  # A test that only exercised the defect would pass for either single-clause
+  # version of the rule, which is the "check that cannot fail" this repository
+  # keeps re-inventing.
+  #
+  # So the defect and its two controls run TOGETHER, in one group, as three
+  # scrape targets. `exp_alerts` below is an exact set: if either control ever
+  # fired, the expected list would have two entries instead of one and the
+  # assertion would go red. Deleting either clause from alerts.yaml turns this
+  # block red, which was checked rather than assumed.
+  #
+  # ── WHY ONE GROUP AND NOT THREE, WHICH IS NOT COSMETIC ───────────────────
+  #
+  # Measured on promtool 3.5.0, 2026-08-10: `alert_rule_test` results in one
+  # test group CHANGE when unrelated test groups are added to the same file.
+  # Written as four groups, with distinct label sets and verified-isolated
+  # storage (`count(indexer_tip_height)` inside the EmberTipNotAdvancing group
+  # returns 1, and its expression evaluates true at 33m), the EmberTipNotAdvancing
+  # firing assertion above nonetheless reported no alerts — and adding a single
+  # `promql_expr_test` entry to that group made the whole file pass again. Three
+  # groups behave; four did not. That is a property of the harness, not of the
+  # rules, and the way not to depend on it is to not write a group per scenario.
+  #
+  # Everything below runs over three simulated hours, which is forced: the
+  # right-hand clause reads `offset 1h` and the rule carries `for: 1h`, so
+  # nothing at all can be observed before the 120-minute mark.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # ── THE DEFECT: at the floor, and still slower than target. ──────────
+      # 256 is `MAX_TARGET`, pinned to `GENESIS_TARGET`, in
+      # hearth/node/src/params.js. Held flat because that is the shape the real
+      # series has — 2,830 of the 3,001 blocks measured on mainnet on 2026-08-10
+      # sat at exactly this value, one run of them for 28.99 hours.
+      - series: 'indexer_chain_difficulty{chain="ember",network="mainnet",instance="indexer:4001",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "256+0x200"
+      # One block a minute — 60 an hour against a target of 240. The real chain
+      # managed a median of 94 an hour over the same window, so this is the
+      # defect, drawn slightly worse than life.
+      - series: 'indexer_tip_height{chain="ember",network="mainnet",instance="indexer:4001",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "1000+1x200"
+
+      # ── CONTROL 1: at the floor, but FAST ENOUGH. Must stay silent. ──────
+      # The floor is the easiest the chain is allowed to be, not a fault. Five
+      # blocks a minute is 300 an hour against a target of 240 — the state
+      # micro-deploy#53's second miner is meant to produce. The obvious way to
+      # write "at the floor", `indexer_chain_difficulty{chain="ember"} <= 256`
+      # alone, fires here for ever on a chain that is working perfectly.
+      - series: 'indexer_chain_difficulty{chain="ember",network="mainnet",instance="indexer:4002",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "256+0x200"
+      - series: 'indexer_tip_height{chain="ember",network="mainnet",instance="indexer:4002",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "1000+5x200"
+
+      # ── CONTROL 2: slow, but NOT at the floor. Must stay silent. ─────────
+      # 8417 is the real peak difficulty measured on mainnet at block 11243 on
+      # 2026-08-10 19:20:51Z — 33x the floor, reached after a few minutes of
+      # browser hashrate and then abandoned. The chain crawls there, and that is
+      # `EmberTipNotAdvancing`'s business; the retarget is not saturated, it is
+      # working. If this rule fired here the two alerts would arrive together
+      # saying opposite things about the same minute.
+      - series: 'indexer_chain_difficulty{chain="ember",network="mainnet",instance="indexer:4003",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "8417+0x200"
+      - series: 'indexer_tip_height{chain="ember",network="mainnet",instance="indexer:4003",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "1000+1x200"
+
+    alert_rule_test:
+      # THE FIRST HOUR IS BLIND, AND THAT IS ASSERTED RATHER THAN DISCOVERED.
+      # `offset 1h` has no samples to read yet, so the whole expression is empty
+      # and this rule is silent no matter what the chain is doing. alerts.yaml
+      # says so and the runbook says so; this is the third place, and the one
+      # that cannot quietly go stale.
+      - eval_time: 30m
+        alertname: EmberDifficultyAtFloor
+        exp_alerts: []
+
+      # The expression goes true at 60m. `for: 1h` means still pending at 119m.
+      # Without this case a rule with no `for:` at all would pass.
+      - eval_time: 115m
+        alertname: EmberDifficultyAtFloor
+        exp_alerts: []
+
+      # 120m: one alert, and one only. `and on (...)` keeps the LEFT
+      # side's labels, so these are the difficulty series' — asserted explicitly,
+      # because a rule whose output lost `network` would render its summary with
+      # a hole in it and would collide with the testnet series if one appeared.
+      - eval_time: 125m
+        alertname: EmberDifficultyAtFloor
+        exp_alerts:
+          - exp_labels:
+              alertname: EmberDifficultyAtFloor
+              chain: ember
+              network: mainnet
+              instance: indexer:4001
+              job: cf-services
+              tier: "1"
+              severity: ticket
+              team: chain
+              service: indexer
+              sev: "4"
+            exp_annotations:
+              summary: "EMBER mainnet is at its difficulty floor and still below target block rate"
+              description: >-
+                EMBER difficulty is at 256, the lowest value the chain's parameters
+                permit, and it has still produced fewer than 240 blocks in the last
+                hour against a 15 s target. The retarget is saturated: it cannot make
+                the chain any easier, so blocks stay slow until hashrate arrives.
+                This is a capacity decision, not an incident — nothing is broken and
+                nothing needs restarting. The runbook has the two levers and what each
+                one costs.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-at-floor.md
+
+      # An hour later, still exactly one. A standing condition stays open — the
+      # real one stood for 28.99 hours — and the two controls are still quiet.
+      - eval_time: 170m
+        alertname: EmberDifficultyAtFloor
+        exp_alerts:
+          - exp_labels:
+              alertname: EmberDifficultyAtFloor
+              chain: ember
+              network: mainnet
+              instance: indexer:4001
+              job: cf-services
+              tier: "1"
+              severity: ticket
+              team: chain
+              service: indexer
+              sev: "4"
+            exp_annotations:
+              summary: "EMBER mainnet is at its difficulty floor and still below target block rate"
+              description: >-
+                EMBER difficulty is at 256, the lowest value the chain's parameters
+                permit, and it has still produced fewer than 240 blocks in the last
+                hour against a 15 s target. The retarget is saturated: it cannot make
+                the chain any easier, so blocks stay slow until hashrate arrives.
+                This is a capacity decision, not an incident — nothing is broken and
+                nothing needs restarting. The runbook has the two levers and what each
+                one costs.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-at-floor.md
