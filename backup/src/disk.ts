@@ -196,9 +196,13 @@ export function majorMinorOf(dev: bigint): string {
  * asserts nothing about the gauge and would stay green if the whole read were replaced by
  * `return null`. The alert on this metric is `> 0`; if the rising path is never exercised, the
  * estate is left with exactly the thing micro-org#207 objects to — a green light that means
- * nothing was asked. Measured 2026-08-10: the four hosts this suite runs on (macOS dev machines
- * and the CI runner's container) have no `/sys/fs/ext4` between them, and the estate's own disk
- * reads 0, so there is no host anywhere that can produce a non-zero from the real sysfs.
+ * nothing was asked.
+ *
+ * And no host available to this suite can drive it above zero, because a non-zero `errors_count`
+ * requires a filesystem that has ACTUALLY suffered an ext4 error. Measured 2026-08-10: macOS has
+ * no `/sys` at all (`ls /sys` -> No such file or directory), and the estate's own `sdb1` reads 0
+ * and always has. A healthy CI runner is in the same position by definition — if its root
+ * filesystem were logging ext4 errors that would be the runner's problem, not a test fixture.
  *
  * The one thing the fake CANNOT fake is `st_dev`, and it is not asked to: the tests stat a real
  * temporary directory and key the fake `dev/block` entry off `majorMinorOf` of that real device

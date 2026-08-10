@@ -136,12 +136,13 @@ test('a minor past eight bits is not truncated — the high halves of both field
 // ── A SYSFS THIS TEST BUILT, BECAUSE THE ONE ON THIS HOST CANNOT ANSWER THE QUESTION ──────────
 //
 // The whole point of `backup_destination_fs_errors` is that it goes ABOVE ZERO, and the alert on it
-// is `> 0`. Nothing that reads the real `/sys` can demonstrate that: measured 2026-08-10,
-// `/sys/fs/ext4/sdb1/errors_count` on the estate host is 0 and has always been 0, and the machines
-// this suite runs on (macOS, and the CI runner's container) have no `/sys/fs/ext4` at all — every
-// one of them can only produce the `null` branch. A suite built only from those would stay green if
-// the entire read were replaced by `return null`, which is the same unearned green light this issue
-// exists to complain about.
+// is `> 0`. Nothing that reads the real `/sys` can demonstrate that, because a non-zero
+// `errors_count` requires a filesystem that has ACTUALLY suffered an ext4 error. Measured
+// 2026-08-10: macOS has no `/sys` at all, so this suite's usual host reaches only the `null`
+// branch; the estate's own `sdb1` reads 0 and always has; and a CI runner healthy enough to trust
+// is by definition one whose disk is not logging ext4 errors. A suite built only from those would
+// stay green if the entire read were replaced by `return null` — which is the same unearned green
+// light this issue exists to complain about, one level up from the disk.
 //
 // So the sysfs is built here: an ordinary temporary directory shaped the way Linux shapes `/sys`.
 // The one thing it does NOT fake is the device number — the tests stat a real directory on a real
