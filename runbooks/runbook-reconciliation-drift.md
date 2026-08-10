@@ -1,9 +1,97 @@
 # Reconciliation drift
 
-**Triggered by** `LedgerReconciliationDrift - ledger_reconciliation_drift_native != 0`
-**Severity** SEV3 - ticket; page above the chain's dust threshold · **Owner** ledger
+**Triggered by** `LedgerReconciliationDrift - ledger_reconciliation_drift != 0 and on (asset) ledger_reconciliation_observed == 1` — SEV3 ticket
+**And by** `AssetWithdrawalsFrozen - ledger_assets_frozen > 0` — **SEV2 page**, and this runbook is its only instruction
+**Owner** ledger
 
-## READ THIS FIRST: there are now two different pages, and they are not the same morning
+The header used to name `ledger_reconciliation_drift_native`, a series nothing
+has ever published, and it named only the ticket. The page that wakes somebody
+points here too, and step 0 below is the step it needs.
+
+## STEP 0: NAME THE FROZEN ASSETS. The page is a count and nothing else.
+
+`ledger_assets_frozen` is the length of `listFreezes(...)` and carries **no
+labels**. That is deliberate: the answer is a row in `asset_freezes`, not a label
+Prometheus would carry for every asset the platform will ever list. This section
+is the other half of that bargain — the query that turns the count into a list.
+Run it before you read anything else on this page, because which assets are
+frozen and **why** decides every step after it.
+
+**Ask the ledger.** `GET /reconciliation` returns `{ runs, freezes }`, and the
+freezes are the current state:
+
+```sh
+curl -s -H "authorization: Bearer $SERVICE_TOKEN" \
+  http://ledger:4000/reconciliation | jq '.freezes'
+```
+
+```json
+[
+  {
+    "assetCode": "LTC",
+    "frozenAt": "2026-08-09T22:14:07.512Z",
+    "reason": "reconciliation failed: no indexer observation for on-chain asset LTC (custody 41000000; chain holdings UNKNOWN, not zero; reason indexer_refused)",
+    "runId": "0198f0c2-…"
+  }
+]
+```
+
+The route requires `ledger:read`. A 401 or 403 here is a token problem and not a
+money problem — use the SQL below and deal with the token afterwards.
+
+**When the ledger is the thing that is down,** which is one of the ways this
+alert fires, go straight to the table:
+
+```sh
+docker exec cloudsforge-estate-postgres-1 psql -U cloudsforge -d ledger -c \
+  "select asset_code, frozen_at, reason, run_id from asset_freezes order by asset_code;"
+```
+
+### `reason` is the field that decides the morning
+
+It is written by reconciliation at the moment of the freeze and it is the string
+`GET /reconciliation` and the console both show first. It comes in exactly two
+shapes, and they are the same split the table in the next section makes:
+
+| `reason` begins | What happened |
+|---|---|
+| `reconciliation failed: no indexer observation for on-chain asset …` | **Nobody could look.** No drift was measured, so there is no second number and there is nothing to hunt. The string ends `reason <code>`; the codes are below. |
+| `reconciliation drift_exceeded: drift <n> (custody <a>, observed <b> …)` | **A real drift.** Two numbers were measured and they disagree, and the arithmetic that froze the asset is in the string — including, since the observed breakdown landed, which custody buckets the observed side came from. |
+
+The trailing `reason <code>` is one of eight values, and they are about **this
+platform's ability to ask**, not about what the chain said:
+
+| code | Where the failure is |
+|---|---|
+| `no_credential`, `unauthorized` | Authentication in this estate. `no_credential` is micro-org#275's signature: a sweep that landed inside an identity restart. Both are a deploy fault, not a money fault. |
+| `timeout`, `unreachable` | The path to the indexer. A refused connection, DNS, a socket hang-up, an open circuit breaker. |
+| `indexer_refused`, `indexer_error` | The indexer answered and the answer was a refusal (4xx) or a server error (5xx). **This is the one that continues into the indexer's own code table further down** — ask it directly, as that section shows, and its refusal names the chain-level cause. |
+| `not_configured` | This deployment has no indexer URL for the asset at all. Structural; it will not clear on its own. |
+| `unusable_answer` | A 200 whose body is not a decimal-string total. A version skew, or something that is not the indexer on the far end of that URL. |
+
+Do not confuse these eight with the indexer's own codes (`chain_not_followed`,
+`history_unknown`, `address_unreadable` and the rest). Those are what the indexer
+says when it *can* be asked, and they are reached through `indexer_refused` /
+`indexer_error`. The table further down this page is theirs.
+
+### Do NOT use `reconciliation_runs` for this
+
+A freeze **outlives the run that wrote it.** It is lifted only by a later
+*exactly-clean observed* run, so "the twenty most recent runs" and "what is
+frozen right now" are different questions — and at 3am the plausible-looking one
+is the wrong one. `asset_freezes` is the current-state answer; the runs table is
+the history behind it. Two consequences worth knowing before you read a
+timestamp:
+
+- **`frozen_at` is not the onset.** Every freezing run re-upserts the row with
+  `frozen_at = now()`, so it is when the freeze was last *reconfirmed*. To date
+  the onset, take `run_id` into `reconciliation_runs` and walk backwards.
+- **A frozen asset can be carrying an older run's reason.** A run whose
+  unobservability is transient is *deferred* — it writes neither a freeze nor a
+  lift — so an asset already frozen keeps the reason and `run_id` of the run
+  that established it rather than being relabelled on the strength of a blip.
+
+## STEP 1: there are two different mornings, and the `reason` you just read says which
 
 Reconciliation compares the ledger's custody total against what the chain says
 the custody addresses hold. Since the chain-backing release there are **two**
