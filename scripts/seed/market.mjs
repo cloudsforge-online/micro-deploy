@@ -43,11 +43,16 @@
  *      indefensible for the same reason whether the asset is money or an item.
  *
  *   2. **Fund the seller honestly** — mine EMBER, deposit it through the front
- *      door, let the indexer confirm it, convert to Shards, and acquire or issue
- *      the item against something real. That is the path §3 already describes,
- *      and it is currently blocked anyway: EMBER is frozen. A seeder that
- *      retried around a freeze would be defeating the control that exists to
- *      catch exactly this.
+ *      door, let the indexer confirm it, and acquire or issue the item against
+ *      something real. That is the path §3 already describes. This bullet said
+ *      "convert to Shards" as its third step until 2026-08-10; there is no such
+ *      step and there is nothing to convert. 21 §3's own bullet dropped its
+ *      "→ conversion to Shards" on 2026-08-07, mined EMBER now arrives as an
+ *      ordinary deposit, and SHARD is retired (`RETIRED_ASSETS`,
+ *      `contracts/packages/chain`) so a conversion INTO it could not be made
+ *      anyway. micro-org#226. The path is blocked for its own reason regardless:
+ *      EMBER is frozen. A seeder that retried around a freeze would be defeating
+ *      the control that exists to catch exactly this.
  *
  * So the drafts are real, they are correct, and they are one ledger posting away
  * from being live. That posting is not this script's to invent. `market-web`'s
@@ -140,14 +145,54 @@ const COLLECTION = {
  * status check fails closed with 503.
  *
  * Amounts cross the wire as decimal strings (`money.ts` refuses a JSON
- * number outright); bps are JSON numbers. Prices are in SHARD.
+ * number outright); bps are JSON numbers.
+ *
+ * ── PRICES ARE EMBER WEI, AND THEY WERE SHARD UNTIL 2026-08-10 ───────────────
+ *
+ * micro-org#226. SHARD is retired — `RETIRED_ASSETS`, and
+ * `assertIssuable('SHARD')` throws "SHARD is retired and may not denominate
+ * anything new" (`contracts/packages/chain`). A listing created today is
+ * something new, and `assetCode` here is a free string on micro-market
+ * (`listings.ts` calls it "what the price is denominated in", distinct from
+ * `itemAssetCode`), so nothing refused it on the way in. Four such listings sit
+ * on mainnet right now, created by this script on 2026-08-04 and measured again
+ * on 2026-08-10: `select status, asset_code, count(*) from listings` returns
+ * 5 draft SHARD (these four plus one probe) and 3 draft EMBER. Zero active, in
+ * any asset — which is why `GET /v1/listings` still answers `{"listings":[]}`:
+ * the route defaults to `status=active`, not because the listings are missing.
+ *
+ * CONVERTED AT THE FROZEN RATE, NOT RELABELLED. SHARD has 0 decimals and EMBER
+ * has 18. Setting `assetCode: 'EMBER'` and keeping '250000' would have priced
+ * the identity suite at 250,000 wei — 2.5e-13 EMBER, about six hundredths of a
+ * nanocent — i.e. free, which is a worse lie than the retired asset was. One
+ * Shard is one US cent (`SHARDS_PER_USD`) and one EMBER is the administered
+ * 0.25 USD (`pricing.administered_prices`, `usd_scaled` 250000 against
+ * `RATE_SCALE` 1e6 — read on mainnet 2026-08-10, unchanged since 2026-08-04),
+ * so one Shard is 4e16 wei and every price below is its old figure x 4e16.
+ *
+ * The USD each item asks for is therefore UNCHANGED: 2,500 / 1,400 / 900 / 600.
+ * That is deliberate and not laziness. These are prices for real brand assets
+ * the platform actually owns; retiring the currency they were quoted in does
+ * not make the art cheaper. Re-choosing the figures to look tidier in EMBER
+ * would be this script inventing prices, which it refuses to do a few lines up
+ * ("Empty rather than a made-up split ... inventing a recipient would be
+ * inventing a party"), and it is the same discipline admin-api's migration 13
+ * applied when it converted the engagement cap and noted the result "is still
+ * exactly the USD 10,000,000 per transfer version 8 chose".
+ *
+ * Yes, 10,000 EMBER is more EMBER than the whole estate holds (50.200042 EMBER
+ * across 31 ledger accounts, 2026-08-10). It was equally more than the estate
+ * held when it read USD 2,500 of Shards, and it changes nothing: these listings
+ * are `draft` and cannot activate for a reason that has nothing to do with the
+ * price asset. See the seam note below.
  */
 const LISTINGS = [
   {
     itemUrn: 'cf:brand:cloudsforge:identity-suite-v1',
     label: 'CloudsForge identity suite',
     quantity: '1',
-    price: '250000',
+    // 250,000 Shards = USD 2,500 = 10,000 EMBER.
+    price: '10000000000000000000000',
     note: 'Wordmark, favicon, social and og sheets from micro-brand.',
     cover: 'brand/review/sheet-og.png',
   },
@@ -155,7 +200,8 @@ const LISTINGS = [
     itemUrn: 'cf:brand:emberkin:species-sheet-v1',
     label: 'Emberkin species sheet',
     quantity: '3',
-    price: '90000',
+    // 90,000 Shards = USD 900 = 3,600 EMBER.
+    price: '3600000000000000000000',
     note: 'Species and biome sheets from micro-emberkin-assets.',
     cover: 'emberkin-assets/review/sheet-species.png',
   },
@@ -163,7 +209,8 @@ const LISTINGS = [
     itemUrn: 'cf:brand:aetherholm:keyart-v1',
     label: 'Aetherholm key art',
     quantity: '2',
-    price: '140000',
+    // 140,000 Shards = USD 1,400 = 5,600 EMBER.
+    price: '5600000000000000000000',
     note: 'Key art, island and ship-icon sheets from micro-aetherholm-assets.',
     cover: 'aetherholm-assets/review/sheet-keyart.png',
   },
@@ -171,11 +218,30 @@ const LISTINGS = [
     itemUrn: 'cf:brand:tessera:terrain-set-v1',
     label: 'Tessera terrain set',
     quantity: '5',
-    price: '60000',
+    // 60,000 Shards = USD 600 = 2,400 EMBER.
+    price: '2400000000000000000000',
     note: 'Terrain, chrome and object sheets from micro-tessera-assets (FLUX 2 Pro).',
     cover: 'tessera-assets/review/flux-2-pro/sheet-objects.png',
   },
 ]
+
+/**
+ * Wei for the wire, EMBER for the human reading the run.
+ *
+ * The report line printed a bare price string when prices were Shards and that
+ * was legible; a 23-digit wei figure is not, and an operator skimming it cannot
+ * tell 1e22 from 1e21 at a glance — which is exactly the class of mistake
+ * micro-org#226 is about. Every price above is a whole number of EMBER, so this
+ * divides exactly; the `%` guard means a price that is not stays honest and
+ * shows its wei rather than being silently rounded into a lie.
+ */
+const WEI_PER_EMBER = 10n ** 18n
+const inEmber = (wei) => {
+  const n = BigInt(wei)
+  return n % WEI_PER_EMBER === 0n
+    ? `${(n / WEI_PER_EMBER).toLocaleString('en-US')} EMBER`
+    : `${n.toString()} wei`
+}
 
 const key = (...parts) => ['estate-seed', ...parts].join(':').slice(0, 200)
 
@@ -287,7 +353,7 @@ export async function seedMarket(token) {
         // What the LEDGER would call the item, as distinct from what the price
         // is denominated in. Both are free strings on this service.
         itemAssetCode: `TOKEN:${spec.itemUrn}`,
-        assetCode: 'SHARD',
+        assetCode: 'EMBER',
         price: spec.price,
         quantity: spec.quantity,
         royaltyBps: 0,
@@ -301,7 +367,7 @@ export async function seedMarket(token) {
     const listing = res.body.listing
     made.push(listing)
     ok(
-      `listing ${listing.id.slice(0, 8)} ${spec.label} — ${spec.quantity} x ${spec.price} SHARD, ` +
+      `listing ${listing.id.slice(0, 8)} ${spec.label} — ${spec.quantity} x ${inEmber(spec.price)}, ` +
         `${listing.status}${res.body.replayed ? ' (replayed)' : ''}`,
     )
     note(`    ${spec.note}`)

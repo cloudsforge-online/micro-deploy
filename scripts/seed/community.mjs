@@ -73,8 +73,36 @@ const COMMUNITY = {
  * generated column pinned to `'community:' || id` (`community/README.md`).
  * Declaring one moves nothing and claims nothing about a balance, which is
  * exactly why it is safe to seed and a purchase is not.
+ *
+ * ── THIS WAS `['SHARD', 'EMBER']` UNTIL 2026-08-10. micro-org#226 ────────────
+ *
+ * SHARD is retired: `RETIRED_ASSETS` freezes it and `assertIssuable('SHARD')`
+ * throws "SHARD is retired and may not denominate anything new"
+ * (`contracts/packages/chain`). A treasury account IS something new — it is a
+ * `(subject, asset, purpose)` triple that did not exist before this script asks
+ * for it — so seeding one in SHARD is the retirement being ignored by a
+ * hand-typed string, which is the exact failure `mint.mjs` already names in this
+ * directory: "a hand-typed asset code in a seeder is precisely how SHARD
+ * outlived its own retirement".
+ *
+ * Dropped rather than converted, because a declaration has no amount to convert
+ * and no history to preserve. A community created by this script today can
+ * never hold a Shard: none can be issued, and the 26,000 that survive on mainnet
+ * (14 accounts, measured 2026-08-10 — 13,000 in `custody`, 13 x 1,000 in user
+ * liability accounts) are pre-retirement residue belonging to individual users,
+ * with no path from there to a community treasury.
+ *
+ * EMBER alone is also what the treasury this council proposes to spend from is
+ * denominated in, since admin-api's migration 13 (`engagement-in-ember-wei`,
+ * 2026-08-10). Two declared assets, one of which nothing can ever put money
+ * into, is a treasury page with a permanently empty row on it.
+ *
+ * The estate's existing council already has both accounts declared — the seed
+ * ran on 2026-08-04 — and this change does NOT remove the SHARD one. Removing a
+ * declaration is not seeding's job and it names an account holding nothing.
+ * A fresh estate gets EMBER only.
  */
-const TREASURY_ASSETS = ['SHARD', 'EMBER']
+const TREASURY_ASSETS = ['EMBER']
 
 /** Asset shape is `^[A-Z][A-Z0-9:_-]{0,120}$` (`migrations.ts`). */
 const ROLES = [
@@ -125,7 +153,8 @@ function proposals(communityId) {
         'disclosed on the page as the platform\'s — the one form of platform money in a market ' +
         'that docs/ecosystem/21-engagement-treasury.md permits. The estate cannot do it today: ' +
         'FORESIGHT_HOUSE_ADDRESS is unset and the engagement treasury holds nothing, because it is ' +
-        'funded by mined EMBER converted through the front door and no conversion has been made.\n\n' +
+        'funded by mined EMBER arriving through the front door as an ordinary deposit and no ' +
+        'deposit has been made.\n\n' +
         'This proposes the first transfer, so that the seed is authorised by a vote rather than by ' +
         'whoever holds a database connection. The amount is deliberately small: the point is to ' +
         'establish the path, not to fund a programme.',
@@ -134,9 +163,40 @@ function proposals(communityId) {
       opensAt: inDays(1),
       closesAt: inDays(15),
       timelockUntil: inDays(16),
+      // ── EMBER wei, and this was `SHARD` / `'100000'` until 2026-08-10 ───────
+      //
+      // micro-org#226: this proposal IS the issue, reproduced in seeded content.
+      // It proposed spending a retired asset (`RETIRED_ASSETS`,
+      // contracts/packages/chain) to fund a house seed that is EMBER wei — the
+      // two legs of one programme in two assets, one of which may not denominate
+      // anything new. Nothing refuses it on the way in: `spend_asset_code` is
+      // free text on `proposals` (community/migrations.ts), and had it ever
+      // executed, micro-ledger's retired-asset gate is scoped to
+      // ACQUISITION_KINDS and leaves `transfer` legal on purpose, so it would
+      // have POSTED rather than raised.
+      //
+      // CONVERTED, NOT RELABELLED, which is the whole point. SHARD has 0
+      // decimals and EMBER has 18, so carrying '100000' across to EMBER would
+      // have proposed 1e5 wei — 0.0000000000001 EMBER, four billionths of a US
+      // cent — a rounding error wearing the same digits. At the frozen rate
+      // 1 Shard = 4e16 wei (1 Shard = 1 US cent, `SHARDS_PER_USD`; 1 EMBER =
+      // the administered 0.25 USD, `pricing.administered_prices` `usd_scaled`
+      // 250000 against `RATE_SCALE` 1e6, read on mainnet 2026-08-10 and
+      // unchanged since 2026-08-04), 100,000 Shards is 4e21 wei = 4,000 EMBER.
+      // The value the proposal asks for is identical either way: USD 1,000.
+      // Converting keeps the ask the council already made; picking a new figure
+      // would be this script inventing a number, which it refuses to do
+      // elsewhere for the same reason.
+      //
+      // 4,000 EMBER is far more than the estate holds — 50.200042 EMBER across
+      // 31 ledger accounts, measured 2026-08-10 — and that is not a defect in
+      // this seed. A `treasury_spend` PROPOSES; nothing moves without a real
+      // membership voting it through and the execution job running, and the body
+      // above already says the treasury holds nothing. It was equally
+      // unaffordable as USD 1,000 of Shards.
       spend: {
-        assetCode: 'SHARD',
-        amount: '100000',
+        assetCode: 'EMBER',
+        amount: '4000000000000000000000',
         recipient: `community:${communityId}`,
       },
     },

@@ -53,11 +53,21 @@ and a funded external key (§2).
 > `0x3d90B21ED45944BEcC6299573D5A12DB85C70220`.
 
 **One thing this document will tell you that you may not expect:** the ledger leg of
-the engagement treasury is denominated in **SHARD**, a *retired* asset
-(`admin-api/src/actions.ts`; `contracts/packages/chain/src/index.ts` lists
-`SHARD` in `RETIRED_ASSETS`). The house seed itself is EMBER wei and is clean. The two
-do not meet. See §9 — it changes what "fund the treasury" means, and it is why the
-answer to the owner's literal question is what it is.
+the engagement treasury *was* denominated in **SHARD**, a *retired* asset
+(`contracts/packages/chain/src/index.ts` lists `SHARD` in `RETIRED_ASSETS`). The house
+seed itself is EMBER wei and is clean. The two did not meet. See §9 — it changes what
+"fund the treasury" means, and it is why the answer to the owner's literal question is
+what it is.
+
+> **Fixed on 2026-08-10 — micro-org#226.** `micro-admin-api` migration 13
+> (`engagement-in-ember-wei`) moved both legs to `assetCode: 'EMBER'` and both columns
+> to EMBER wei. **§1 through §8 below are unaffected and remain the procedure**: the
+> ledger leg was, and still is, bookkeeping that does not fund the on-chain stake, so
+> the EMBER still moves from the miner coinbase to the house address directly. What
+> changed is only that the bookkeeping is now in the same unit as the money, so §9.2's
+> "do not read a Shards figure there" no longer applies — the admin panel says EMBER
+> and means it. §9.2 is kept as written, in the past tense it deserves, because the
+> reasoning is why the fix took the shape it did.
 
 ---
 
@@ -662,9 +672,38 @@ page.
 Do not confuse this with **Sparks** — 10⁻⁶ EMBER, a legitimate *display denomination*,
 explicitly *"not a second asset code"* (`contracts/packages/chain/src/index.ts`).
 
-### 9.2 But the engagement treasury's ledger leg genuinely is SHARD-denominated
+### 9.2 But the engagement treasury's ledger leg genuinely was SHARD-denominated
 
-This is the real one, and it is a defect rather than a wording problem.
+This is the real one, and it was a defect rather than a wording problem.
+
+> **RESOLVED 2026-08-10 — cloudsforge-online/micro-org#226.** Everything below is
+> recorded as it stood when this runbook was written on 2026-08-06, because the
+> argument is what decided the shape of the fix. What shipped:
+> `micro-admin-api` migration 13 `engagement-in-ember-wei` renamed
+> `transfer_cap_shards` → `transfer_cap_wei` and `amount_shards` → `amount_wei`,
+> converted both at the frozen rate **1 Shard = 4e16 wei** (1 Shard = 1 US cent,
+> `SHARDS_PER_USD`; 1 EMBER = the administered 0.25 USD — `pricing.administered_prices`
+> `usd_scaled` 250000 against `RATE_SCALE` 1e6, re-read on mainnet 2026-08-10 and
+> unchanged since 2026-08-04), widened them to `numeric(78,0)`, and posts both legs with
+> `ENGAGEMENT_ASSET: IssuableAssetCode = 'EMBER'` — a type that will not compile if the
+> retired spelling comes back. `micro-worlds` migration 11, `micro-admin-web` and
+> `micro-contracts` moved in the same release; the admin console's labels now follow the
+> data. The seeded `treasury_spend` proposal and the seeded market listings in
+> `deploy/scripts/seed/` were converted in the same change as this note.
+>
+> **It changes nothing in §1–§8.** The paragraph below beginning "The operational
+> consequence" is still exactly true: the ledger leg is a parallel record and does not
+> fund the on-chain stake. The one sentence that no longer applies is the last one — the
+> admin panel's engagement figures now *are* EMBER, so read them as such.
+>
+> Two facts below were true on 2026-08-06 and have moved since; both are left in place
+> so the record is honest, and here are the 2026-08-10 mainnet numbers. "69,000 SHARD
+> sit in live accounts" is now **26,000 across 14 accounts** (13,000 in
+> `custody|SHARD|available`, 13 × 1,000 in user liability accounts) — the argument it
+> supports, that `micro-ledger` must keep `transfer` legal for SHARD so the residue can
+> be drained, is unchanged and is precisely why this posted cleanly instead of raising.
+> "Neither account exists" still holds: **zero** ledger accounts whose subject matches
+> `engagement`, in any asset.
 
 `engagement.transfer` posts both sides of its ledger entry with
 **`assetCode: 'SHARD'`** (`admin-api/src/actions.ts`), the
