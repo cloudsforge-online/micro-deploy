@@ -164,6 +164,78 @@ keyring would put B and C in one place on every run.
 Cadence: A and B nightly, and **always immediately before a rotation**. C only
 changes when it is rotated.
 
+### 2.1 Getting A and B off the host — `scripts/pull-custody-backup.sh`
+
+The script above writes to `~/custody-backup` **on the estate host**. That is a
+staging directory, not a backup: it is on the machine whose loss it exists to
+survive. Measured 2026-08-10, before this section existed, the entire custody
+backup estate was one directory — `~/custody-backup/20260805T091142Z` — on that
+host, which is why micro-org#25 item 3's sentence was literally true.
+
+```bash
+# From the operator's workstation, NOT from the host.
+scripts/pull-custody-backup.sh                     # defaults: mainnet, keep 14
+scripts/pull-custody-backup.sh --project cf-testnet --dest ~/testnet-custody-backup
+```
+
+It runs §2 on the host, pulls the result, re-verifies `SHA256SUMS` **on the
+destination** (a checksum only ever checked on the host proves the host can hash
+its own files), asserts blobs = keys + seeds, and prunes both ends to `--keep`.
+
+**It pulls; it is never pushed, and that is the point.** The host holds no
+credential for the destination, no path on it and no route to it. Someone who
+owns the estate host can delete `~/custody-backup` there and cannot touch the
+off-host copies — which is exactly what a push-based backup does not survive,
+because a push needs a writable destination and a credential for it, and both sit
+on the machine being encrypted.
+
+**It will not carry artefact C, and it refuses rather than trusting itself.**
+`scripts/custody-backup-guard.sh` holds the §4.1 rule as one function, applied
+twice — on the host before a byte is transferred, and here against what arrived.
+The remote copy is not typed out again; it is shipped over ssh with `declare -f`,
+because micro-org#238 was a duplicated predicate that drifted until CI was
+verifying the copy rather than the one that ran. `make check-custody-backup-guard`
+exercises it against fixtures including a keyring planted **inside the compressed
+tarball**, which is the one case a `grep` over the directory cannot see.
+
+Proven refusing over the real ssh path on 2026-08-10, not merely proven passing:
+a set whose tarball contained a keyring-shaped member returned `LEAK` from the
+host's own bash, and a clean set returned `CLEAN`.
+
+**What this does NOT do, and cannot.** It does not back up the keyring, so on its
+own it recovers nothing. §4 is still the owner's job and still has to happen at
+the machine's console rather than over SSH — see §7 for why that sentence is
+there. An off-host A + B with no artefact C anywhere is a list of addresses
+nobody can spend.
+
+#### Running it nightly
+
+A backup somebody has to remember is a backup that stops the week it is needed.
+On the operator's macOS workstation it is a LaunchAgent, installed 2026-08-10 at
+`~/Library/LaunchAgents/online.cloudsforge.custody-backup.plist`, 03:30 daily,
+logging to `~/Library/Logs/cloudsforge-custody-backup.log`:
+
+```bash
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/online.cloudsforge.custody-backup.plist
+launchctl kickstart -k gui/$(id -u)/online.cloudsforge.custody-backup   # prove it, don't assume it
+launchctl bootout   gui/$(id -u)/online.cloudsforge.custody-backup      # to remove it
+```
+
+**Kickstart it once after installing.** A scheduled job runs in a login context
+that is not the shell you tested in, and the way this one would fail is `ssh`
+finding no key and no agent — silently, at 03:30, for months. It was kickstarted
+on install and the log shows a completed pull, which is the only evidence that
+matters.
+
+`RunAtLoad` is deliberately false: the workstation opening its lid is not a
+reason to dump a database on the estate host.
+
+The residual risk, stated because it is the owner's to accept or spend money on:
+the host and the workstation are **in the same building**. This survives disk
+failure, host compromise and operator error; it does not survive fire or theft of
+the premises. The §4.1 answer to that is disk 3, off-site — and on its own it is
+ciphertext, so it may live anywhere, including a cloud bucket.
+
 ---
 
 ## 3. Disaster restore from cold media

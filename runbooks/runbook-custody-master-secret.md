@@ -10,11 +10,26 @@
 
 ## Read this first
 
-**The estate is one home server. Nothing on it is backed up, and no restore has
-ever been performed.** Measured on 2026-08-05: no crontab, no backup systemd
-timer, one 447G root disk carrying every Docker volume. Everything below is
-written so that the first restore is not attempted for the first time during the
-incident that needs it.
+**The estate is one home server.** Measured 2026-08-05: no crontab, no backup
+systemd timer, one 447G root disk carrying every Docker volume. Everything below
+is written so that the first restore is not attempted for the first time during
+the incident that needs it.
+
+What has changed since that measurement, and what has not — read both halves
+before you rely on either:
+
+- **Artefacts A and B are now copied off the host, nightly.** From 2026-08-10,
+  `scripts/pull-custody-backup.sh` runs at 03:30 from the operator's workstation
+  and pulls the database dump and the vault tarball. It pulls rather than being
+  pushed, so the host holds no credential for the destination and cannot reach
+  it. See `../docs/custody-backup-restore.md` §2.1.
+- **A restore HAS been performed** — end to end, against a throwaway custody,
+  database dropped and vault deleted, recovered from cold artefacts alone. See
+  Appendix A of the same document.
+- **Artefact C, the keyring, is still not backed up anywhere.** That is the
+  owner's job, at the machine's console, by §4 — and until it is done, the
+  nightly off-host copy recovers **nothing**. A + B without C is a list of
+  addresses nobody can spend. This is the live gap; it is micro-org#25 item 3.
 
 ## What the keyring is, and what it is not
 
@@ -36,8 +51,15 @@ stored like any other blob. So:
   private key to anyone who ALSO obtains the blobs - a disk, a volume backup, a
   stray `docker cp`, a container escape. Treat exposure as loss of the coins.
 
-As of 2026-08-05 the mainnet estate holds **198 addresses and 189 seeds**; the
-testnet estate holds none.
+As of 2026-08-10 the mainnet estate holds **261 addresses and 246 seeds**, every
+one on `key_version` 3 with 507 of 507 vault blobs stamped `v3:`; the testnet
+estate holds none. (It held 198 and 189 on 2026-08-05 — this number grows, so
+check it rather than quoting it.)
+
+The V1 secret that was published in this repository's history is unloadable here
+and decrypts nothing that exists. The disposition of that disclosure — accept and
+document, not rewrite history — is recorded in `../docs/custody-v1-disclosure.md`
+with the measurements behind it.
 
 ## Where it lives
 

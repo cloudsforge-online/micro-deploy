@@ -15,7 +15,7 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
 .DEFAULT_GOAL := help
 .PHONY: help up down gateway logs ps config check check-rules check-alertmanager \
         check-collector check-runbooks check-prometheus-targets check-compose-ports \
-        check-token-resolution \
+        check-token-resolution check-custody-backup-guard \
         prometheus-targets \
         dashboards estate clean
 
@@ -50,7 +50,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution ## Run every check
+check: config check-rules check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -89,6 +89,9 @@ check-compose-ports: ## No two containers composed onto one host publish the sam
 
 check-token-resolution: ## up.sh resolves each token to ONE home, and refuses two that disagree (micro-org#156)
 	@./scripts/check-token-resolution.sh
+
+check-custody-backup-guard: ## a backup set never carries the keyring beside the vault (micro-org#25)
+	@./scripts/check-custody-backup-guard.sh
 
 check-prometheus-targets: ## The scrape list is generated from the release, and excludes what cannot be scraped
 	@# `prometheus/targets/services.yaml` was the literal `[]` from the telemetry
