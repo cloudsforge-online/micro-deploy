@@ -670,3 +670,28 @@ jobs:
         run: |
           python3 -m pip install --quiet pyyaml
           python3 scripts/check-pool-websocket-config.py
+
+      # ── TWO CONTAINERS, ONE HOST PORT, AND NO FILE COULD SEE THE OTHER ───────
+      #
+      # The backup overlay published `${CF_PORT_BASE:-4}130` and `trade-web` in
+      # the estate file had owned it since trade-web shipped. The first attempt to
+      # start the runner on mainnet built the image, created the container, and
+      # died at the last step on `Bind for 127.0.0.1:4130 failed: port is already
+      # allocated` (micro-org#328).
+      #
+      # It survived because the backup overlay is the ONE compose file here that
+      # no deploy path renders: no release manifest names it, `release-deploy.sh`
+      # never composes it, and its own header says to bring it up by hand. The two
+      # files had never been in one model. `make config` already does this for the
+      # telemetry and gateway overlays; the estate set had no equivalent.
+      #
+      # NOT `docker compose config`, which is the obvious answer and cannot run
+      # here: the estate file needs `compose/estate/tokens.env` — untracked, mode
+      # 0600, present on two hosts — and `CF_BACKUP_ENVIRONMENT` is a `:?`
+      # variable, so the render fails outright without it. A check that only runs
+      # where the mistake has already been made is not a check.
+      - name: No two estate containers claim the same host port
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-compose-host-ports.py
