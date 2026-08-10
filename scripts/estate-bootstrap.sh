@@ -522,16 +522,20 @@ echo "── 5. mint one service token per credential ────────�
 # very next run of this script would have overwritten that hand-edit with a
 # fresh JWT and taken mainnet down the same way.
 #
-# ── WHY 5b WRITES THE ALIAS, AND WHEN TO DELETE IT ────────────────────────────
+# ── 5b USED TO WRITE AN ALIAS BESIDE IT. IT NO LONGER DOES ────────────────────
 #
-# `SETTLEMENT_IDENTITY_CREDENTIAL` is minted by 5b like every other service's
-# and has been all along, but **no compose block references it** — the
-# `settlement` and `settlement-migrate` blocks pass only
-# `SETTLEMENT_SERVICE_TOKEN`. So 5b writes the credential under BOTH names,
-# which is exactly the case `settlement/src/env.ts` documents accepting. That
-# alias is a workaround for a deploy gap, not the design: micro-org#191 carries
-# the compose change that passes `SETTLEMENT_IDENTITY_CREDENTIAL` through, and
-# the alias in 5b should be deleted in the same commit that lands it.
+# `SETTLEMENT_IDENTITY_CREDENTIAL` was minted by 5b like every other service's
+# and, for months, **no compose block referenced it** — the `settlement` and
+# `settlement-migrate` blocks passed only `SETTLEMENT_SERVICE_TOKEN`. So 5b
+# wrote the credential under BOTH names, which is exactly the case
+# `settlement/src/env.ts` documents accepting.
+#
+# micro-org#191 has now landed the compose passthrough: both blocks pass
+# `SETTLEMENT_IDENTITY_CREDENTIAL: ${SETTLEMENT_IDENTITY_CREDENTIAL:-}` and
+# neither mentions the token. The alias in 5b is deleted with it, in the order
+# that made the transition survivable — the block learned the new name first,
+# and only then did the mint stop writing the old one. Reversing those two steps
+# is what micro-org#197 was.
 # THREE ENTRIES REMOVED, because the services that read them no longer do.
 #
 # `COMMUNITY_SERVICE_CREDENTIAL`, `ADMIN_API_SERVICE_TOKEN` and `TESSERA_SERVICE_CREDENTIAL` minted
@@ -668,23 +672,30 @@ for service in $SERVICES; do
   if [ -n "$secret" ]; then
     echo "$var=$secret" >> "$tmp"
     credentialled=$((credentialled+1))
-    # ── ONE ALIAS, BECAUSE ONE COMPOSE BLOCK NEVER LEARNED THE NEW NAME ───────
+    # ── THE SETTLEMENT ALIAS WAS HERE, AND IT IS DELETED WITH ITS REASON ──────
     #
-    # settlement's compose block passes only `SETTLEMENT_SERVICE_TOKEN`, so the
-    # credential written on the line above reaches no container under its own
-    # name. `settlement/src/env.ts` accepts the credential under the
-    # OLD name precisely so this repair does not have to wait on a deploy edit
-    # — the prefix disambiguates it (credentials are `cfsc_…`, tokens are JWTs
-    # beginning `eyJ`), and a JWT under that name is now ignored rather than
-    # presented.
+    # For as long as micro-org#191 was open this loop wrote settlement's
+    # credential a SECOND time under `SETTLEMENT_SERVICE_TOKEN`, because
+    # settlement's compose blocks passed only that name and the credential on
+    # the line above therefore reached no container under its own. It was a
+    # workaround with a named owner and the owner has now paid: the `settlement`
+    # and `settlement-migrate` blocks pass
+    # `SETTLEMENT_IDENTITY_CREDENTIAL: ${SETTLEMENT_IDENTITY_CREDENTIAL:-}`, so
+    # the line above is enough and a second copy of a live secret in the tokens
+    # file buys nothing.
     #
-    # This is a workaround with a named owner: micro-org#191 lands the compose
-    # passthrough, and these three lines are deleted in that same commit. Until
-    # then, removing them re-breaks settlement on the next bootstrap — which is
-    # what micro-org#197 was.
-    if [ "$service" = settlement ]; then
-      echo "SETTLEMENT_SERVICE_TOKEN=$secret" >> "$tmp"
-    fi
+    # WHY IT IS SAFE TO REMOVE ONLY NOW, AND NOT BEFORE. Deleting these lines
+    # while compose still read the old name re-broke settlement on the very next
+    # bootstrap — that is micro-org#197, where `cf-testnet-settlement-1` was the
+    # only unhealthy container in either estate. The ordering that makes the
+    # transition survivable is the one `check-service-credential-wiring.py`
+    # documents: ADD the credential to the block before REMOVING the token from
+    # the mint, never the reverse.
+    #
+    # An existing tokens file keeps its `SETTLEMENT_SERVICE_TOKEN` line — the
+    # carry-forward below preserves any key this script does not itself write —
+    # and that is harmless because nothing references the name any more. It is a
+    # stale row an operator may delete; it is not load-bearing.
   else
     bad "$var ($service): $(printf '%s' "$response" | head -c 160)"
   fi
@@ -700,12 +711,24 @@ done
 #
 # Every run above builds the file from scratch in `$tmp` and moves it over the
 # old one, so any such override was silently destroyed by the next bootstrap.
-# That is not hypothetical: `EMBER_RPC_URL=http://172.17.0.1:8545` is in
-# mainnet's tokens file right now and is the only reason settlement can reach
-# the chain at all — settlement has no `extra_hosts`, so `host.docker.internal`
-# does not resolve inside it (micro-org#191). A bootstrap would have taken that
-# line out and left every EMBER withdrawal failing to build with
-# `TypeError: fetch failed`, on a chain whose node is healthy and one hop away.
+# That is not hypothetical: `EMBER_RPC_URL=http://172.17.0.1:8545` was put into
+# BOTH tokens files by hand and was the only reason settlement could reach the
+# chain at all, because settlement's compose blocks carried no `extra_hosts` and
+# `host.docker.internal` therefore did not resolve inside them (micro-org#191).
+# A bootstrap would have taken that line out and left every EMBER withdrawal
+# failing to build with `TypeError: fetch failed`, on a chain whose node is
+# healthy and one hop away.
+#
+# BOTH HALVES OF THAT ARE NOW SETTLED, AND IN THE RIGHT ORDER. The carry-forward
+# below is what stops a bootstrap destroying an operator override, and the
+# `extra_hosts` lines on `settlement` and `settlement-migrate` are what mean no
+# override is needed: the anchor's `host.docker.internal` default resolves on
+# this daemon like it always did on Docker Desktop. The two hand-set
+# `EMBER_RPC_URL` lines are now redundant rather than load-bearing, and pinning a
+# literal 172.17.0.1 is wrong on any host whose bridge is not 172.17.0.0/16 — so
+# they are an operator deletion, on both estates, and `/readyz` green afterwards
+# is the run that tells the repair from the workaround. Until somebody deletes
+# them the carry-forward keeps them for ever, which is why they are named here.
 #
 # ── THE TWO HUMAN PASSWORDS, WRITTEN HERE SO NOBODY HAS TO REMEMBER TO ────────
 #
