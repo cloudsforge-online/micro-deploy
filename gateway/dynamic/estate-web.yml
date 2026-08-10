@@ -235,6 +235,47 @@ http:
         sourceCriterion:
           requestHeaderName: Cf-Connecting-Ip
 
+    # ── THE STREAM LIMIT, WHICH IS A DIFFERENT PRIMITIVE ON PURPOSE ───────────
+    #
+    # `GET /events` is a server-sent-event stream that is answered once and then
+    # held open for as long as the miner is mining. Every other middleware in
+    # this file is a `rateLimit`, and a `rateLimit` IS THE WRONG TOOL HERE:
+    # it bounds requests per second, and this endpoint's cost is not a rate. One
+    # subscriber is ONE request, ever, that never completes. 500 browsers opening
+    # one stream each over ten minutes is 0.83 requests/second — under
+    # `cf-mining-throttle`'s average of 2 without ever touching the burst — and
+    # 500 sockets held on a single-threaded node.
+    #
+    # `inFlightReq` is the primitive that counts CONCURRENT requests, which for a
+    # stream is the same thing as concurrent subscribers. 4 per client IP: a
+    # browser opens one per mining tab, the fallback path already tolerates
+    # losing it, and four is more tabs than anyone mines from while still being
+    # 1/64th of Hearth's own `SSE_MAX_CLIENTS = 256` — so no single address can
+    # spend a meaningful fraction of the node's ceiling.
+    #
+    # KEYED ON `Cf-Connecting-Ip` FOR THE REASON THE RPC BLOCK GIVES AT LENGTH:
+    # every request in the world reaches the node from cloudflared's address, so
+    # the node's own cap can only ever be a total. This gateway is the only place
+    # the individual client is visible, and a total with no per-client share lets
+    # one caller take all of it.
+    #
+    # BOTH HALVES ARE NEEDED AND NEITHER SUBSTITUTES. This one cannot know what
+    # else is already attached to the node (a second gateway, the CLI miner, an
+    # operator on the LAN); Hearth's cannot know who is asking. hearth's
+    # `node/src/sse.js` carries the mirror of this comment.
+    #
+    # THE REFUSAL IS FATAL TO AN `EventSource` — Traefik answers `inFlightReq`
+    # overflow with 429, and any non-200 sets `readyState` to CLOSED with no
+    # browser retry. That is the intended behaviour, not a wart: network-site's
+    # miner wires `onerror` to a visible notice and falls back to polling, so a
+    # refused client degrades loudly instead of hanging on a stream that is never
+    # written to.
+    cf-sse-inflight:
+      inFlightReq:
+        amount: 4
+        sourceCriterion:
+          requestHeaderName: Cf-Connecting-Ip
+
   routers:
     # ─────────────────────────────────────────────────────── hub — AND SIGN-IN ──
     #
@@ -1342,6 +1383,50 @@ http:
       priority: 600
       entryPoints: [websecure, tunnel]
       middlewares: [cf-mining-throttle]
+      service: cf-svc-hearth-mining
+
+    # ── AND THE THIRD ENDPOINT THE MINER NEEDS: `GET /events` (micro-org#236) ──
+    #
+    # WHAT WAS BROKEN. The two paths above are everything the browser miner could
+    # reach, and they are not everything it asks for. `network-site/src/mining/
+    # miner.js` opens `new EventSource(`${rpc}/events`)` to learn the tip moved,
+    # with a 45-second `setInterval` behind it as a fallback. The stream was
+    # never published, so `rpc.<apex>/events` fell through to `cf-api-rpc` and was
+    # answered by the JSON-RPC port — which serves POST and nothing else, so a
+    # 405. Measured on mainnet before this was written, with a `Host:` header
+    # against the origin rather than the public name:
+    #
+    #     $ curl -s -o /dev/null -w '%{http_code}\n' \
+    #         -H 'Host: rpc.cloudsforge.online' http://127.0.0.1:9081/events
+    #     405
+    #     $ curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8645/events
+    #     200      # the node itself, content-type: text/event-stream
+    #
+    # The node was serving it the whole time. The refusal was purely ingress.
+    #
+    # AND THE CONSEQUENCE WAS NOT "NO LIVE UPDATES", IT WAS WORSE. A non-200
+    # KILLS an `EventSource` — `readyState` goes to CLOSED and the browser does
+    # not retry — and the miner set no `onerror`, so the failure was silent. Every
+    # browser miner ran on the 45-second timer alone: up to 45 seconds of hashing
+    # against a template whose parent is no longer the tip, every block. hub-web
+    # went further and VENDORED a copy of the miner with the `EventSource` deleted
+    # outright, which is the shape a permanent 405 leaves behind.
+    #
+    # A SEPARATE ROUTER RATHER THAN A THIRD `Path()` ON THE ONE ABOVE, because the
+    # two need DIFFERENT middlewares and a router carries one list. `/mining/*` is
+    # rate-limited because its cost is per request; `/events` is in-flight-limited
+    # because its cost is per held socket (see `cf-sse-inflight`). It still gets
+    # `cf-mining-throttle` too — dial churn is a real cost on top of the socket,
+    # and re-opening a stream in a loop should be bounded like any other request.
+    #
+    # Same priority, same hostname, same upstream: 8645 is the REST port that
+    # serves `/mining/*` and `/events` alike, and the long note above about why
+    # this is NOT `CF_RPC_UPSTREAM` applies unchanged.
+    cf-api-mining-events:
+      rule: 'Host(`rpc{{ env "CF_WEB_SUFFIX" }}`) && Path(`/events`)'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-mining-throttle, cf-sse-inflight]
       service: cf-svc-hearth-mining
 {{ end }}
 
