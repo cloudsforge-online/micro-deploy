@@ -120,6 +120,12 @@ DEVPLATFORM=${DEVPLATFORM:-http://127.0.0.1:${PB}118}
 HUB=${HUB:-http://127.0.0.1:${PB}119}
 ADMIN=${ADMIN:-http://127.0.0.1:${PB}120}
 ANALYTICS=${ANALYTICS:-http://127.0.0.1:${PB}121}
+# The title service, not its frontend. Derived (registry index 24, immediately
+# before tessera's 4125) and measured on the app host on 2026-08-10, where
+# `cloudsforge-estate-aetherholm-1` publishes 4124 and reports healthy. Named here
+# because the worlds/aetherholm section below stopped being able to claim this
+# service is absent from the estate.
+AETHERHOLM=${AETHERHOLM:-http://127.0.0.1:${PB}124}
 # 4125 on the host, 4022 in the container. tessera is the one service here that does not bind
 # 4000, and THAT number is argued rather than picked — 23-tessera.md §10.1. The BIND port is a
 # different question from the HOST port and is untouched.
@@ -1338,20 +1344,61 @@ fi
   || bad "identity minted a scope outside community's grant"
 
 # `worlds` gained `aetherholm:provision`, the provisioning bridge's authority.
-# The aetherholm SERVICE is not deployed in this estate — only its frontend — so
-# the call it authorises cannot be driven here, and this asserts the half that
-# can be: identity mints it for worlds and for nobody else. Said plainly rather
-# than dressed up as an end-to-end proof it is not.
 wtok2=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
   -H 'content-type: application/json' -d '{"service":"worlds","scopes":["aetherholm:provision"]}' \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
-[ -n "$wtok2" ] && ok "identity mints aetherholm:provision for worlds (the call itself needs the aetherholm service, which this estate does not run)" \
+[ -n "$wtok2" ] && ok "identity mints aetherholm:provision for worlds" \
   || bad "worlds cannot be minted aetherholm:provision"
 [ "$(code -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $atok" \
      -H 'content-type: application/json' \
      -d '{"service":"nda","scopes":["aetherholm:provision"]}')" = 403 ] \
   && ok "nda is refused aetherholm:provision — the registry says worlds alone holds it" \
   || bad "a service other than worlds was minted aetherholm:provision"
+
+# ── AND THE SCOPE IS NOW SPENT, NOT ONLY MINTED ──────────────────────────────
+#
+# This section used to say "the aetherholm SERVICE is not deployed in this estate
+# — only its frontend — so the call it authorises cannot be driven here". That
+# stopped being true and the comment outlived it: measured on the app host on
+# 2026-08-10, `cloudsforge-estate-aetherholm-1` is running, healthy, and publishes
+# 4124 like every other service in the registry.
+#
+# A mint that is never spent proves identity's allowlist and NOTHING about whether
+# the door it unlocks opens. Those are two different failures, and this estate has
+# already shipped the second one: two title clients POSTed `/internal/achievements`
+# for months while worlds served no such route, and every credential involved was
+# minted perfectly the whole time.
+#
+# THE SKU IS DELIBERATELY ONE THAT DOES NOT EXIST, AND THAT IS WHAT MAKES THIS
+# SAFE TO RUN ON MAINNET. `provisioning.ts` tests `PROVISIONABLE_SKUS` FIRST —
+# before it looks for a replay, before it opens a transaction, before the outbox —
+# so an unrecognised SKU is refused without writing a row. The real route is driven
+# with the real credential and no world is raised.
+#
+# 422 IS THE ASSERTION, and each of the other answers is a distinct defect this
+# would otherwise miss: 401/403 means the minted scope did not open the door,
+# 404 means the route is not served at all, 400 means the contract's own parser
+# rejected a body built from its own field list, and 201 would mean aetherholm
+# provisioned something it does not sell. Only 422 means it read the request as
+# authorised and declined the catalogue entry — the answer `worlds/src/titleclient.ts`
+# treats as terminal.
+prov_body='{"entitlementId":"estate-verify-unsupported-sku","subject":"estate-verify","userId":"'"$uid"'","sku":"cf.aetherholm.no-such-sku","scope":"skerry","metadata":{}}'
+prov=$(code -X POST "$AETHERHOLM/v1/provision" -H "authorization: Bearer $wtok2" \
+  -H 'content-type: application/json' -d "$prov_body")
+[ "$prov" = 422 ] \
+  && ok "worlds' aetherholm:provision token is ACCEPTED by aetherholm and an unknown SKU is refused 422 — the scope is spent, not just minted" \
+  || bad "aetherholm answered $prov to an authorised provision of an unsupported SKU, expected 422 (401/403 = the scope does not open the door, 404 = the route is not served, 201 = it provisioned something it does not sell)"
+
+# THE SAME BODY, THE SAME ROUTE, AN ADMIN'S USER TOKEN. `server.ts` refuses any
+# principal whose kind is not `service` BEFORE it checks scopes, in its own words:
+# "a user token here is someone trying to raise a world without buying one". The
+# operator's own token is the strongest form of that test — if administrator rights
+# were enough to provision a world, every paid entitlement in the catalogue would be
+# optional for anyone who could reach this route.
+[ "$(code -X POST "$AETHERHOLM/v1/provision" -H "authorization: Bearer $atok" \
+     -H 'content-type: application/json' -d "$prov_body")" = 403 ] \
+  && ok "a user token is refused at /v1/provision even when it is the administrator's — provisioning is a service act" \
+  || bad "aetherholm accepted a USER token at /v1/provision; a paid entitlement is not required to raise a world"
 
 echo
 echo "── STUDIO ACTUALLY WRITES: the check this file did not have ─────────────"
@@ -2964,10 +3011,91 @@ echo "── the EMBER chain, driven: clean, then deliberately broken ───�
 # branch above is the correct verdict for it. What must never happen is this
 # section quietly passing while proving nothing, so the skip says so out loud.
 # ══════════════════════════════════════════════════════════════════════════════
-EMBER_RPC_HOST=${EMBER_HOST_RPC:-http://127.0.0.1:8545}
-ember_chain=$(curl -s --max-time 5 -X POST -H 'content-type: application/json' \
-  --data-binary '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$EMBER_RPC_HOST" 2>/dev/null \
-  | sed -n 's/.*"result":"\(0x[0-9a-f]*\)".*/\1/p')
+# ── THE CHAIN IS NOT ON THIS MACHINE ANY MORE ────────────────────────────────
+#
+# The app stack moved to a second host on 2026-08-10 (micro-org#338); the chains
+# stayed behind. `127.0.0.1:8545` was true when one box ran both, and on the app
+# host it is now the address of nothing. Measured there on 2026-08-10: this
+# section SKIPPED with "chain id read: none" while the seed was healthy, answering
+# 0x1cf3 to the same call over the link, and being reconciled against by the
+# indexer in the very next section of this file. A skip is loud, but it is still
+# not evidence — and this one reported the absence of a chain that three other
+# checks in this run were provably talking to.
+#
+# `CF_CHAIN_HOST` is the SAME variable `compose/env/traefik.env` resolves the
+# gateway's three `CF_*_UPSTREAM`s from, so the verifier and the estate cannot
+# disagree about where the chain is. The fallback stays `127.0.0.1` rather than
+# traefik's `host.docker.internal`: this script runs on the host, not in a
+# container, and on a single-box estate loopback is still the right answer.
+EMBER_RPC_HOST=${EMBER_HOST_RPC:-http://${CF_CHAIN_HOST:-127.0.0.1}:8545}
+
+# ── BUT THE HOST IS THE WRONG PLACE TO ASK FROM, AND CF_CHAIN_HOST ALONE DID
+#    NOT FIX THIS ───────────────────────────────────────────────────────────
+#
+# Pointing the curl above at `CF_CHAIN_HOST` was necessary and NOT sufficient.
+# Measured on the app host on 2026-08-10, after that change: this section still
+# skipped, now reading "no EMBER mainnet at http://10.10.0.1:8545", and the curl
+# timed out at exit 28.
+#
+# The reason is specific to how this host reaches the chain. The link is a
+# WireGuard interface created by a `--network host --cap-add NET_ADMIN` container,
+# which puts `wg0` in the DOCKER ENGINE's network namespace — not in the Linux
+# distribution's. `ip addr show wg0` from this shell says the device does not
+# exist, while every container on a docker bridge routes over it perfectly well.
+# So a probe run from the host is testing a path no service in this estate uses,
+# and its failure says nothing about the chain.
+#
+# ASK THE INDEXER, FROM INSIDE, WITH ITS OWN SETTING. `INDEXER_RPC_EMBER_<NET>`
+# is the exact URL the service whose reconciliation this section is about will
+# use, so a disagreement between what that URL answers and what this file expects
+# IS the defect, rather than a fact about the operator's shell. There is no curl
+# in the service images — node is the one dependency every one of them is
+# guaranteed to have, the same reasoning `docker-compose.hearth-seed.yml` gives
+# for writing its healthcheck in node.
+#
+# The host curl is kept as the FALLBACK, not deleted: on a single-box estate the
+# indexer may legitimately not be running, and loopback is then the right and only
+# answer. Whichever path replied is named in every message below, because "no
+# chain" and "no route from here to the chain" are different findings and this
+# section spent a run reporting the first when it meant the second.
+#
+# THE PROGRAM ARRIVES ON STDIN rather than as `node -e '…'`. `docker compose exec`
+# parses flags anywhere on its command line, so a `-e` meant for node is a coin
+# toss over which program reads it; feeding the script to a bare `node` leaves no
+# flag after the service name for compose to claim.
+#
+# AND THE VARIABLE IS NOT A URL. Measured in the running indexer on 2026-08-10,
+# `INDEXER_RPC_EMBER_MAINNET` is `hearth-seed=http://10.10.0.1:8545` — the
+# `<name>=<url>` form `INDEXER_CHAINS` pairs with, one entry per comma. The first
+# revision of this helper passed the whole string to `new URL()`, which threw, and
+# the throw was swallowed by `2>/dev/null` — so it reported the chain unreachable
+# for exactly the reason this section already had a bad history of: an empty
+# answer that looked like an absent chain and was really a broken probe.
+ember_chain_id() {
+  printf '%s' '
+      const h=require("http");
+      const raw=process.env["INDEXER_RPC_EMBER_"+process.env.CF_VERIFY_NET]||"";
+      const first=raw.split(",")[0].trim();
+      const spec=first.includes("=")?first.slice(first.indexOf("=")+1):first;
+      if(!spec) process.exit(3);
+      let u; try{u=new URL(spec)}catch(e){process.exit(4)}
+      const q=h.request({host:u.hostname,port:u.port||80,path:u.pathname||"/",method:"POST",
+        headers:{"content-type":"application/json"}},r=>{let d="";r.on("data",c=>d+=c);
+        r.on("end",()=>{try{process.stdout.write(String(JSON.parse(d).result||""))}catch(e){}})});
+      q.on("error",()=>{});q.setTimeout(5000,()=>q.destroy());
+      q.end("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]}");
+  ' | docker compose -f "$COMPOSE" exec -T \
+      -e CF_VERIFY_NET="$(printf '%s' "$EMBER_NETWORK" | tr '[:lower:]' '[:upper:]')" \
+      indexer node 2>/dev/null | tr -d '\r\n'
+}
+ember_chain=$(ember_chain_id)
+ember_probe_via="the indexer container, on its own INDEXER_RPC_EMBER_$(printf '%s' "$EMBER_NETWORK" | tr '[:lower:]' '[:upper:]')"
+if [ -z "$ember_chain" ]; then
+  ember_chain=$(curl -s --max-time 5 -X POST -H 'content-type: application/json' \
+    --data-binary '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$EMBER_RPC_HOST" 2>/dev/null \
+    | sed -n 's/.*"result":"\(0x[0-9a-f]*\)".*/\1/p')
+  ember_probe_via="$EMBER_RPC_HOST, from this host — the indexer could not be asked"
+fi
 
 # psql against the estate's own databases. `-qtA` so a value is a value.
 lsql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d ledger "$@" 2>/dev/null; }
@@ -2999,7 +3127,7 @@ reconcile_now() {
 }
 
 if [ "$ember_chain" != "$ember_chain_want" ]; then
-  echo "  ..   SKIPPED: no EMBER $EMBER_NETWORK at $EMBER_RPC_HOST (chain id read: ${ember_chain:-none},"
+  echo "  ..   SKIPPED: no EMBER $EMBER_NETWORK reachable via $ember_probe_via (chain id read: ${ember_chain:-none},"
   echo "       wanted $ember_chain_want / $ember_chain_dec)."
   echo "       The refusal branch above is the correct verdict for an estate without a chain."
   echo "       To drive the success path:  ./scripts/ember-testnet.sh up && ./scripts/ember-miner.sh start"
@@ -3009,7 +3137,7 @@ elif [ "$(isql -c "select count(*) from watched_addresses where chain='ember' an
   echo "       A zero-balance custody set proves the plumbing and nothing about the arithmetic."
   echo "       Seed it:  node scripts/ember-seed.js"
 else
-  ok "an EMBER $EMBER_NETWORK is answering at $EMBER_RPC_HOST on chain $ember_chain_dec"
+  ok "an EMBER $EMBER_NETWORK is answering via $ember_probe_via on chain $ember_chain_dec"
 
   # ── 0. THE KEY, WHICH IS THE PART THAT CANNOT BE UNDONE ────────────────────
   #
@@ -3457,15 +3585,22 @@ FAUCET_RUNNING=$(docker compose -f "$COMPOSE" ps --status running --services 2>/
 
 # 1. The node this environment points at is the chain this environment claims.
 #    `ember_chain_dec` is derived from CF_EMBER_NETWORK at the head of this file.
-faucet_chain=$(curl -s --max-time 5 -X POST -H 'content-type: application/json' \
-  --data-binary '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$EMBER_RPC_HOST" 2>/dev/null \
-  | sed -n 's/.*"result":"\([^"]*\)".*/\1/p')
+#    It asks the same way the chain section above does — see the argument there.
+#    Re-probing rather than reusing `ember_chain` is deliberate: this assertion is
+#    about the estate's configuration and belongs with the faucet it guards, and a
+#    node that changed identity between the two reads is worth catching.
+faucet_chain=$(ember_chain_id)
 if [ -z "$faucet_chain" ]; then
-  ok "no EMBER node at $EMBER_RPC_HOST, so the faucet's chain agreement is not asserted (the chain section above already reports this)"
+  faucet_chain=$(curl -s --max-time 5 -X POST -H 'content-type: application/json' \
+    --data-binary '{"jsonrpc":"2.0","id":1,"method":"eth_chainId","params":[]}' "$EMBER_RPC_HOST" 2>/dev/null \
+    | sed -n 's/.*"result":"\([^"]*\)".*/\1/p')
+fi
+if [ -z "$faucet_chain" ]; then
+  ok "no EMBER node reachable via $ember_probe_via, so the faucet's chain agreement is not asserted (the chain section above already reports this)"
 elif [ "$faucet_chain" != "$ember_chain_want" ]; then
-  bad "this estate is configured as EMBER $EMBER_NETWORK ($ember_chain_dec) but $EMBER_RPC_HOST answers chain $faucet_chain — every service in this project, the faucet included, is talking to the WRONG CHAIN and answering correctly about it"
+  bad "this estate is configured as EMBER $EMBER_NETWORK ($ember_chain_dec) but the node reached via $ember_probe_via answers chain $faucet_chain — every service in this project, the faucet included, is talking to the WRONG CHAIN and answering correctly about it"
 else
-  ok "the node at $EMBER_RPC_HOST is EMBER $EMBER_NETWORK ($ember_chain_dec), which is what this project is configured for"
+  ok "the node reached via $ember_probe_via is EMBER $EMBER_NETWORK ($ember_chain_dec), which is what this project is configured for"
 fi
 
 # 2. A faucet runs here if and only if this is the testnet.

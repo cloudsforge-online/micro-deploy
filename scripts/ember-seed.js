@@ -90,9 +90,43 @@ if (EXPECTED_CHAIN_ID === undefined) {
   console.error(`CF_EMBER_NETWORK is "${EMBER_NETWORK}"; known: ${Object.keys(EMBER_CHAIN_IDS).join(', ')}`);
   process.exit(2);
 }
-const IDENTITY = process.env.IDENTITY || 'http://127.0.0.1:4100';
-const INDEXER = process.env.INDEXER || 'http://127.0.0.1:4108';
-const LEDGER = process.env.LEDGER || 'http://127.0.0.1:4102';
+// ── AND THE PORTS HAVE TO FOLLOW THE NETWORK THE CHECK ABOVE JUST ASSERTED ───
+//
+// These three were literal `4100`, `4108` and `4102`, which are the MAINNET
+// estate's published loopback ports on a host that runs both environments. So
+// `CF_EMBER_NETWORK=testnet node scripts/ember-seed.js` would assert the testnet
+// chain id — correctly, fatally, exactly as the block above intends — and then
+// register those testnet deposit addresses in MAINNET's identity, credit
+// MAINNET's ledger and reconcile against MAINNET's indexer. The assertion that
+// exists to stop money being credited against balances that do not exist would
+// have passed on its way to doing that.
+//
+// `CF_PORT_BASE` is the one-character override `docker-compose.estate.yml`
+// publishes all 45 debug ports through: `4`1xx on mainnet, `5`1xx on testnet.
+// Read from the estate's own env file rather than mapped here, so there is one
+// statement of it — the same rule `scripts/seed/lib.mjs` follows for the same
+// reason. Found on the app host on 2026-08-10, when the same defect in that file
+// made a testnet seeding check report mainnet's nda as an empty testnet surface.
+const PORT_BASE =
+  process.env.CF_PORT_BASE ||
+  (() => {
+    try {
+      const file = path.join(__dirname, '..', 'compose', `${EMBER_NETWORK}.env`);
+      const line = fs
+        .readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((l) => /^CF_PORT_BASE=/.test(l))
+        .pop();
+      if (line) return line.slice('CF_PORT_BASE='.length).trim() || null;
+    } catch {
+      /* absent on a developer machine; the default below is the right answer there */
+    }
+    return null;
+  })() ||
+  '4';
+const IDENTITY = process.env.IDENTITY || `http://127.0.0.1:${PORT_BASE}100`;
+const INDEXER = process.env.INDEXER || `http://127.0.0.1:${PORT_BASE}108`;
+const LEDGER = process.env.LEDGER || `http://127.0.0.1:${PORT_BASE}102`;
 const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test';
 // No default. The one this line used to carry is published in this repository and was the
 // operator's real password on mainnet until 2026-08-09; see the operator block in

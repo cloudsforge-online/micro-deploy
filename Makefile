@@ -248,7 +248,38 @@ GW_ESTATE := -p $(GW_PROJECT) \
 # NO TELEMETRY OVERLAY, unlike GW_ESTATE above: the `cf-testnet-*` networks are
 # declared `external` and already exist, and the telemetry plane is a single
 # mainnet-project concern that must not be duplicated per environment.
-GW_TESTNET := --env-file compose/testnet.env -p cftestnet \
+#
+# ── AND THE TOKENS FILE, WHICH `--env-file` HAD QUIETLY TAKEN AWAY ───────────
+#
+# `GW_ESTATE` above passes no `--env-file` at all, so compose falls back to its
+# default — `compose/.env`, a symlink to `estate/tokens.env`. That is where the
+# app-host split put `CF_CHAIN_HOST`, and it is how the mainnet gateway comes up
+# pointing at `http://10.10.0.1:8545` without anyone naming the file.
+#
+# This line does name a file, and `--env-file` REPLACES the default rather than
+# adding to it — the same rule `release-deploy.sh` records at its head. So the
+# testnet gateway alone lost the tokens file, and with it `CF_CHAIN_HOST`, and
+# the three `CF_*_UPSTREAM`s in `env/traefik.testnet.env` fell back to
+# `host.docker.internal`: the APP host, which since 2026-08-10 runs no chain at
+# all. Every testnet RPC, mining and P2P surface would have answered 502 with a
+# healthy gateway and a healthy seed, and the seed is on the other machine where
+# nothing would have looked. Measured here on 2026-08-10, before this line.
+#
+# testnet.env first and the tokens file last, matching every other invocation in
+# this repository, and matching the pair `check-env-files-agree.sh` enforces.
+#
+# ── AND `-p` IS READ FROM THAT FILE, NOT REPEATED HERE ──────────────────────
+#
+# It was the literal `-p cftestnet`, and that literal was the ONLY executable
+# statement of the testnet gateway's project name, while `estate-up.sh`,
+# `gateway-reload.sh` and `estate-verify.sh` each derived their own from
+# `${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}` and got `cf-testnet`.
+# `compose/testnet.env` now carries `CF_GW_PROJECT` and states the whole case;
+# this reads it so there is one value and not two.
+GW_TESTNET_PROJECT := $(shell sed -n 's/^CF_GW_PROJECT=//p' compose/testnet.env | tail -1)
+GW_TESTNET := --env-file compose/testnet.env \
+              --env-file compose/estate/tokens.testnet.env \
+              -p $(or $(GW_TESTNET_PROJECT),cftestnet) \
               -f compose/docker-compose.gateway.yml \
               -f compose/docker-compose.estate-gateway.yml
 

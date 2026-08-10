@@ -58,13 +58,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
-IDENTITY=${IDENTITY:-http://127.0.0.1:4100}
-# Section 5e's operator call. 4107 is DERIVED, not chosen: index 7 in
-# `deployableRepos()`, the same rule every host port in the compose file follows,
-# and `make check-web` recomputes it. Reached on loopback rather than through the
-# gateway because this script runs before the gateway is guaranteed to be up.
-CUSTODY=${CUSTODY:-http://127.0.0.1:4107}
 TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
+# IDENTITY and CUSTODY are derived below, once ENV_FILE is known — they are the
+# only two things in this file addressed by PORT, and the port carries the estate.
 
 # ── WHICH ESTATE AM I BOOTSTRAPPING? THE QUESTION THIS SCRIPT COULD NOT ASK ────
 #
@@ -101,6 +97,40 @@ TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 # MERGE in order, which is the whole fix: pass both files, never one.
 ENV_FILE=${ENV_FILE:-}
 OVERLAY=${OVERLAY:-}
+
+# ── AND THE TWO LOOPBACK PORTS, WHICH WERE MAINNET'S LITERALLY ────────────────
+#
+# `IDENTITY=${IDENTITY:-http://127.0.0.1:4100}` was the third way this script
+# could be half-retargeted, and the block above already names the first two. 41xx
+# is MAINNET's published debug range; testnet publishes 51xx, from the same
+# `CF_PORT_BASE` in the same `ENV_FILE` that selects the estate everywhere else.
+#
+# Measured on the app host on 2026-08-10, running this script with ENV_FILE and
+# TOKENS_FILE both set to testnet's on a host where both estates are up: sections
+# 1-3 read testnet's DATABASE over `docker compose exec` and talked to MAINNET's
+# identity over HTTP, and the run ended `could not sign in as
+# estate-admin@example.test` — because it was offering testnet's operator
+# password to mainnet's identity, which is exactly the request an attacker would
+# make and exactly the 401 it deserves.
+#
+# It stopped at section 4 by luck, not by design. Section 5's `POST
+# /service-tokens` and `POST /service-credentials` go to `$IDENTITY` while the
+# minted values are written to `$TOKENS_FILE` — so a run that DID get past the
+# login would have written mainnet-issued credentials into testnet's tokens file,
+# and revoked mainnet's existing service credentials on the way past (section 5's
+# revoke loop). Half-retargeted, again, with the halves swapped.
+#
+# `CF_PORT_BASE` from the estate's own env file, therefore, the same rule
+# `scripts/seed/lib.mjs` follows. `4` remains the default for a machine with no
+# env file at all, which is a developer's laptop running the single estate.
+PORT_BASE=${CF_PORT_BASE:-$(grep -E '^CF_PORT_BASE=' "${ENV_FILE:-compose/mainnet.env}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d ' "'"'"'')}
+PORT_BASE=${PORT_BASE:-4}
+IDENTITY=${IDENTITY:-http://127.0.0.1:${PORT_BASE}100}
+# Section 5e's operator call. `107` is DERIVED, not chosen: index 7 in
+# `deployableRepos()`, the same rule every host port in the compose file follows,
+# and `make check-web` recomputes it. Reached on loopback rather than through the
+# gateway because this script runs before the gateway is guaranteed to be up.
+CUSTODY=${CUSTODY:-http://127.0.0.1:${PORT_BASE}107}
 
 # ── AND THE TWO FILES MUST NAME THE SAME ESTATE (micro-org#238) ───────────────
 #
@@ -274,9 +304,33 @@ echo "── 3. THE BOOTSTRAP — ONE TRANSACTION, ONCE PER DATABASE ───�
 # The old note here said "if identity ever grows a real bootstrap, delete this
 # block". It has, and this IS that bootstrap — the step is permanent, so the note
 # is gone rather than left pointing at work that is finished.
+# ── `2>&1` IS DELIBERATE, AND COMPOSE WRITES TO THAT STREAM TOO ───────────────
+#
+# Keeping psql's stderr is the point: an error has to land IN the value, so a
+# check reading it sees a wrong answer rather than an empty one. But `docker
+# compose` prefixes its own diagnostics onto the same stream, and those are not
+# psql's output at all.
+#
+# Measured on the app host on 2026-08-10, bootstrapping TESTNET: mainnet's
+# tokens file defines LTC_RPC_URL, DOGE_RPC_URL and ETC_RPC_URL and testnet's
+# does not — the UTXO chains are a mainnet-only concern — so compose emitted
+#
+#   time="…" level=warning msg="The \"LTC_RPC_URL\" variable is not set. …"
+#
+# six times ahead of the single letter `t`. The precondition below compares the
+# whole captured value to "t" after squeezing whitespace, so it read the warnings
+# and reported "identity has not run migration 12" against a database where
+# migration 12 had been applied five days earlier and `platform_role_grants` was
+# sitting in `information_schema.tables`. Bootstrap then refused, and testnet's
+# fifteen missing audit-mirror subscriptions stayed missing.
+#
+# So drop compose's own log lines and keep everything else. They are recognisable
+# without guessing: compose writes `key=value` logfmt beginning with `time=`,
+# which no psql output can start with.
 psql_identity() {
   dc exec -T postgres \
-    psql -qtA -v ON_ERROR_STOP=1 -U cloudsforge -d identity "$@" 2>&1
+    psql -qtA -v ON_ERROR_STOP=1 -U cloudsforge -d identity "$@" 2>&1 \
+    | grep -v '^time="[^"]*" level='
 }
 
 # Migration 12 must have run. Without the table every check below would "pass" by
@@ -1430,7 +1484,28 @@ else
   # cannot resolve, and the interpreter node-tool just placed is in `.tools/`.
   # `estate-seed.mjs` re-execs itself with `process.execPath`, so the vendored
   # build carries through to the re-exec and to every domain module.
-  if "$SEED_NODE" ./scripts/estate-seed.mjs; then
+  # ── AND THE SEEDER MUST BE TOLD WHICH ESTATE, OR IT ASSUMES MAINNET ─────────
+  #
+  # `scripts/seed/lib.mjs` reads `ESTATE_ENV`, not `ENV_FILE`, and from it derives
+  # the gateway env file, the apex, the web suffix, the loopback port base and the
+  # tokens file. This script has always spelled the same fact `ENV_FILE`, so the
+  # child saw neither name and took every mainnet default.
+  #
+  # Measured on the app host on 2026-08-10, bootstrapping TESTNET with both env
+  # files set to testnet's: the seeder printed its BEFORE counts out of MAINNET's
+  # postgres and then tried to sign in at
+  #
+  #   POST https://nimbus.cloudsforge.online/auth/login -> 401
+  #
+  # offering testnet's operator password to mainnet's identity. The 401 is the
+  # only reason nothing was written: every surface this seeder creates — worlds,
+  # communities, listings, plans, uploads — would otherwise have been created in
+  # MAINNET from a run whose every other step touched testnet.
+  #
+  # `TOKENS_FILE` is passed for the same reason, explicitly rather than by
+  # inheritance, so the pair travels together the way it does everywhere else.
+  if ESTATE_ENV="${ENV_FILE:-compose/mainnet.env}" TOKENS_FILE="$TOKENS_FILE" \
+     "$SEED_NODE" ./scripts/estate-seed.mjs; then
     ok "product surfaces seeded"
   else
     # Named, not swallowed. A surface that could not be filled is worth knowing
@@ -1448,7 +1523,8 @@ else
   # It is REPORTED here and does not touch `fails`, for the reason this section
   # already gives — a credential bootstrap must not go red over content. The
   # check that does go red is `estate-verify.sh`, which calls the same mode.
-  if "$SEED_NODE" ./scripts/estate-seed.mjs --check >/tmp/estate-seed-check.log 2>&1; then
+  if ESTATE_ENV="${ENV_FILE:-compose/mainnet.env}" TOKENS_FILE="$TOKENS_FILE" \
+     "$SEED_NODE" ./scripts/estate-seed.mjs --check >/tmp/estate-seed-check.log 2>&1; then
     ok "every product surface has content"
   else
     ok "at least one product surface is still EMPTY after seeding — see /tmp/estate-seed-check.log; ./scripts/estate-verify.sh fails on this"

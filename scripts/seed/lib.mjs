@@ -52,15 +52,41 @@ export const ROOT = path.resolve(HERE, '../..')
 export const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/trust.crt')
 
 /**
+ * The ESTATE's env file — `compose/mainnet.env` or `compose/testnet.env` — keyed
+ * on the same `CF_EMBER_NETWORK` that `docker-compose.estate.yml` keys
+ * `env/chain.${CF_EMBER_NETWORK}.env` on. It is a second file from the gateway's
+ * because the two hold different things: the gateway's has the hostnames, the
+ * estate's has `CF_PORT_BASE`, and neither is loaded by the other's reader.
+ *
+ * It comes FIRST because it is what names the gateway's file, below.
+ */
+const ESTATE_ENV_REL =
+  process.env.ESTATE_ENV ||
+  `compose/${process.env.CF_EMBER_NETWORK || 'mainnet'}.env`
+const ESTATE_ENV_PATH = path.join(ROOT, ESTATE_ENV_REL)
+
+/**
  * The gateway's own env file — `env/traefik.env`, or `env/traefik.testnet.env`
  * when `CF_TRAEFIK_ENV` selects it, which is the same expression
  * `compose/docker-compose.gateway.yml`, `scripts/gateway-reload.sh` and
  * `scripts/release-deploy.sh` all use. One rule, four readers.
+ *
+ * ── AND THE SHELL IS NOT WHERE THAT VARIABLE LIVES ───────────────────────────
+ *
+ * `process.env.CF_TRAEFIK_ENV` alone was MAINNET on every testnet run started
+ * the way the deploy scripts start one: `ESTATE_ENV=compose/testnet.env` names a
+ * file COMPOSE reads and the shell does not, so the variable is simply unset and
+ * the `|| 'traefik'` default takes over. `scripts/release-deploy.sh` carries the
+ * measurement — on 2026-08-10 the same substitution one layer up put mainnet
+ * hostnames into seven live testnet containers' allowlists and URLs.
+ *
+ * The estate's file declares the answer (`CF_TRAEFIK_ENV=traefik.testnet` in
+ * `compose/testnet.env`), so ask it before falling back.
  */
 const TRAEFIK_ENV = path.join(
   ROOT,
   'compose/env',
-  `${process.env.CF_TRAEFIK_ENV || 'traefik'}.env`,
+  `${process.env.CF_TRAEFIK_ENV || fromEstateEnv('CF_TRAEFIK_ENV') || 'traefik'}.env`,
 )
 
 /**
@@ -71,9 +97,18 @@ const TRAEFIK_ENV = path.join(
  * gateway is not using.
  */
 function fromTraefikEnv(name) {
+  return fromEnvFile(TRAEFIK_ENV, name)
+}
+
+/** The same read, against the estate's env file rather than the gateway's. */
+function fromEstateEnv(name) {
+  return fromEnvFile(ESTATE_ENV_PATH, name)
+}
+
+function fromEnvFile(file, name) {
   try {
     const line = fs
-      .readFileSync(TRAEFIK_ENV, 'utf8')
+      .readFileSync(file, 'utf8')
       .split('\n')
       .filter((l) => new RegExp(`^${name}=`).test(l))
       .pop()
@@ -83,6 +118,38 @@ function fromTraefikEnv(name) {
   }
   return null
 }
+
+/**
+ * The leading digit of the 45 loopback debug ports: `4`100-`4`144 on mainnet,
+ * `5`100-`5`144 on testnet. The same one-character override
+ * `compose/docker-compose.estate.yml` publishes them through.
+ *
+ * ── THE FOUR LOOPBACK SERVICES BELOW WERE LITERAL 41xx, AND THAT IS A WRITE ──
+ *
+ * This file already spends two paragraphs on exactly this hazard — `WEB_SUFFIX`
+ * is READ rather than derived because a derived one "yields a real MAINNET
+ * hostname that really answers, so a testnet seeding run would write its content
+ * into production and report success", and `EMBER_RPC` is read for the same
+ * reason after a literal 8545 nearly funded testnet deployers from the mainnet
+ * miner. Every https surface in `SERVICES` was therefore correct per
+ * environment, and the five loopback ones directly under them were not: `ledger`
+ * 4102, `billing` 4106, `nda` 4116, `community` 4117 and `studio` 4111 are the
+ * MAINNET estate's published ports on a host that runs both.
+ *
+ * Measured on the app host on 2026-08-10, running `estate-seed.mjs --check`
+ * against testnet while mainnet was up beside it: it reported
+ * `nda.worlds: http://127.0.0.1:4116/v1/worlds… answered 401` — mainnet's nda
+ * refusing an unauthenticated stranger, reported as a testnet content failure.
+ *
+ * `--check` only reads. The seeder proper WRITES, and the write goes to whatever
+ * answers: seeding testnet would have created worlds in mainnet's nda,
+ * communities in mainnet's community, plans in mainnet's billing, entries in
+ * mainnet's ledger and uploads in mainnet's studio, and reported success both
+ * times. `CF_PORT_BASE` is read from the estate's own env file for the same
+ * reason the hostnames are read from the gateway's: one fact, one place.
+ */
+export const PORT_BASE =
+  process.env.CF_PORT_BASE || fromEstateEnv('CF_PORT_BASE') || '4'
 
 /**
  * The apex the fifteen browser surfaces are served on — READ, not guessed.
@@ -181,11 +248,14 @@ export const SERVICES = {
   // lets this seeder be driven against a studio built from a working tree, which
   // is how the upload path was exercised before the estate's container was
   // rebuilt.
-  studio: { base: process.env.CF_STUDIO_URL || 'http://127.0.0.1:4111', gateway: false },
-  ledger: { base: 'http://127.0.0.1:4102', gateway: false },
-  billing: { base: 'http://127.0.0.1:4106', gateway: false },
-  nda: { base: 'http://127.0.0.1:4116', gateway: false },
-  community: { base: 'http://127.0.0.1:4117', gateway: false },
+  studio: {
+    base: process.env.CF_STUDIO_URL || `http://127.0.0.1:${PORT_BASE}111`,
+    gateway: false,
+  },
+  ledger: { base: `http://127.0.0.1:${PORT_BASE}102`, gateway: false },
+  billing: { base: `http://127.0.0.1:${PORT_BASE}106`, gateway: false },
+  nda: { base: `http://127.0.0.1:${PORT_BASE}116`, gateway: false },
+  community: { base: `http://127.0.0.1:${PORT_BASE}117`, gateway: false },
 }
 
 /* ── the chain, in the places this deployment actually keeps it ─────────────── */
@@ -288,8 +358,12 @@ export const COMPOSE = process.env.COMPOSE || 'compose/docker-compose.estate.yml
  * `--env-file` flags merge and the last one wins, so tokens last means a
  * credential in the tokens file beats a placeholder in the estate file.
  */
-export const ESTATE_ENV = process.env.ESTATE_ENV || 'compose/mainnet.env'
-export const TOKENS_FILE = process.env.TOKENS_FILE || 'compose/estate/tokens.env'
+export const ESTATE_ENV = ESTATE_ENV_REL
+export const TOKENS_FILE =
+  process.env.TOKENS_FILE ||
+  (process.env.CF_EMBER_NETWORK && process.env.CF_EMBER_NETWORK !== 'mainnet'
+    ? `compose/estate/tokens.${process.env.CF_EMBER_NETWORK}.env`
+    : 'compose/estate/tokens.env')
 export const ENV_FILES = ['--env-file', ESTATE_ENV, '--env-file', TOKENS_FILE]
 
 export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test'
