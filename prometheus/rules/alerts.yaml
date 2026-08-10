@@ -687,6 +687,223 @@ groups:
             idempotent.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-deposit-credits-unposted.md
 
+  # ==================================================== TICKET — chain ======
+  #
+  # EMBER'S TWO STANDING DEFECTS, MADE VISIBLE (micro-org#363).
+  #
+  # The issue records four things. Three of them are RETARGET CHANGES to Hearth
+  # — a shorter LWMA window, a tighter solve-time clamp, a lower floor — and
+  # none of them is here, deliberately: they change consensus and they are the
+  # chain owner's call. The fourth is that on 2026-08-10 nothing in this estate
+  # could see either defect happen, and that is what these two rules fix. They
+  # are correct whichever way the retarget question is answered, and if it is
+  # answered well they go quiet on their own.
+  #
+  # WHY THEY ARE SCOPED `chain="ember"` AND NOT WRITTEN FOR EVERY CHAIN. Both
+  # thresholds are derived from EMBER's own 15 s target and its own measured
+  # solve-time distribution. Litecoin targets 150 s and Dogecoin 60 s; one
+  # threshold across all three is one threshold that is wrong for two of them.
+  # A generic version of these rules needs a per-chain target published as a
+  # metric, which is the `indexer_confirmation_depth` pattern and is worth doing
+  # if a third proof-of-work chain ever arrives here.
+  - name: cf.ticket.chain
+    rules:
+      - alert: EmberTipNotAdvancing
+        # THE WEDGE NOBODY NOTICED. On 2026-08-10 the EMBER tip sat at 11242 for
+        # 19 minutes, and later at 11245 for 52 minutes, against a 15 s target.
+        # No rule in this file moved. `IndexerChainHalted` stayed 0 — it is a
+        # deliberate reorg-policy stop and nothing had halted. `IndexerLagPast-
+        # ConfirmationDepth` stayed 0 — the indexer was perfectly in step with a
+        # chain that was not moving. `ChainNodeTemplateStale` watches the POOL's
+        # Litecoin and Dogecoin templates and has never seen Hearth at all.
+        #
+        # ── THE TRAP: 15 SECONDS IS THE TARGET, NOT THE STEADY STATE ─────────
+        #
+        # A threshold derived from `TARGET_BLOCK_TIME` alone fires continuously
+        # on a healthy chain, because EMBER at its difficulty floor is HONESTLY
+        # slower than its target: total hashrate is about 19-20 H/s against the
+        # ~17 H/s a 15 s block at difficulty 256 needs. Measured over the 3,000
+        # blocks from 8249 (2026-08-09 12:22:01Z) to 11249 (2026-08-10
+        # 20:59:49Z), solve times were mean 39.2 s, median 24 s, p90 85 s,
+        # p95 113 s, p99 197 s. A rule at one minute would have fired on 10% of
+        # blocks all day and told the reader nothing.
+        #
+        # ── WHERE 10m + 5m COMES FROM ────────────────────────────────────────
+        #
+        # `changes(v[W]) == 0` becomes true W after the last block and `for: F`
+        # delays it by F more, so this rule fires on a gap of W+F = 15 minutes
+        # and on nothing shorter. Fifteen minutes is not a round number picked
+        # for being round; it is the empty band in the measured distribution.
+        # Over those same 3,000 blocks the gaps sort into two populations with
+        # nothing in between:
+        #
+        #   the routine ones          max 771 s
+        #   ── nothing at all between 771 s and 1210 s ──
+        #   the three real wedges     1210 s, 1407 s, 3147 s
+        #
+        # 900 s sits in that gap. Simulated against the mainnet Prometheus's
+        # full 28.3 h of `indexer_tip_height{chain="ember"}` history on
+        # 2026-08-10, this exact expression and `for:` produce THREE firings —
+        # 10:36, 19:30 and 20:02 UTC — which are those same three wedges, and no
+        # others. The neighbours were checked and are worse: `[10m]` with
+        # `for: 3m` adds a fourth firing that is a 771 s gap the chain healed
+        # from, and `[5m]` with `for: 5m` produces seven.
+        #
+        # ── WHAT THIS METRIC CONFLATES, WHICH THE RUNBOOK MUST SAY ───────────
+        #
+        # `indexer_tip_height` freezes when the CHAIN stops and it freezes when
+        # the INDEXER stops, and this expression cannot tell those apart. That
+        # is not a defect to be papered over with a narrower-sounding metric
+        # name; it is the honest reading of the only series that exists, and the
+        # runbook opens with the one RPC call that separates them. Note also
+        # that if the indexer stops being scraped ENTIRELY the series goes
+        # absent, `changes()` returns nothing, and this rule goes SILENT rather
+        # than firing — `TelemetryComponentDown` is what covers that, and the
+        # runbook says to check it first.
+        expr: changes(indexer_tip_height{chain="ember"}[10m]) == 0
+        for: 5m
+        labels:
+          severity: ticket
+          team: chain
+          service: indexer
+          sev: "3"
+        annotations:
+          summary: "EMBER {{ $labels.network }} tip has not advanced in at least 15 minutes"
+          description: >-
+            No new EMBER block has been indexed for fifteen minutes against a
+            fifteen second target. This series freezes for a stalled chain and
+            for a stalled indexer alike — ask the node for its own height before
+            concluding anything, the runbook has the call. If the node agrees
+            the tip is stuck, the usual cause is difficulty left high by
+            hashrate that has since gone away, and it resolves itself as the
+            retarget walks down; the runbook says how long that has taken
+            before, and when to stop waiting.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-tip-not-advancing.md
+
+      - alert: EmberDifficultyAtFloor
+        # THE RETARGET IS SATURATED. Measured on mainnet 2026-08-10: of the
+        # 3,001 blocks from 8249 to 11249, 2,830 sat at difficulty EXACTLY 256,
+        # including one unbroken run of 2,686 blocks over 28.99 h. Over the same
+        # window the chain produced a median of 94 blocks per hour against a
+        # target of 240. The difficulty adjustment had already given everything
+        # it has; the chain is slow because there is not enough hashrate, and no
+        # retarget parameter can fix that.
+        #
+        # ── WHY THE SECOND CLAUSE IS NOT OPTIONAL ────────────────────────────
+        #
+        # "Difficulty is at the floor" ON ITS OWN IS NOT A DEFECT. The floor is
+        # the easiest the chain is allowed to be; a chain sitting there with
+        # plenty of hashrate simply mines fast, which is fine, and a rule that
+        # fired on that would fire for ever on a healthy chain — the same trap
+        # `EmberTipNotAdvancing` above documents, one metric over. The defect is
+        # at the floor AND STILL TOO SLOW, which is what the second clause says.
+        #
+        # 240 is 3600 / TARGET_BLOCK_TIME, and TARGET_BLOCK_TIME is 15 in
+        # hearth/node/src/params.js. It is that constant divided by an hour, not
+        # a number chosen here — `ChainNodeTemplateStale` derives its 120 from
+        # the pool's own constant for the same reason. Measured against it, all
+        # 336 five-minute samples of the rolling-hour block count over the 28.3 h
+        # the mainnet Prometheus held on 2026-08-10 were BELOW 240: min 2, median
+        # 94, mean 92.7, max 216. Stated honestly, the clause has therefore never
+        # yet been observed false, so it is a guard against a state the estate
+        # has not reached rather than one validated against both outcomes. Its
+        # 10% headroom at the observed max is deliberate and it is the point:
+        # micro-deploy#53 added a second miner on 2026-08-10, and if that is
+        # enough hashrate this alert should CLEAR ITSELF. If EMBER returns to the
+        # floor with two miners running and this still fires, the hashrate
+        # arithmetic in #363 was wrong and that is worth knowing.
+        #
+        # `offset 1h` and not `delta(...[1h])`: `delta` extrapolates to the
+        # window edges, which invents fractional blocks either side of a real
+        # integer count. The trade is that for the first hour after a Prometheus
+        # restart the right-hand side has no samples, the whole expression is
+        # empty, and this rule is silent. For a ticket about a condition that has
+        # stood for 29 hours, an hour of blindness after a restart is the cheaper
+        # error; for a page it would not be.
+        #
+        # `<= 256` and not `== 256`, on purpose. 256 is `MAX_TARGET`, pinned to
+        # `GENESIS_TARGET`, in hearth/node/src/params.js — verifiable in one RPC
+        # call against any floor block, and NOT published as a metric anywhere.
+        # A floor gauge was considered and rejected in micro-indexer's
+        # `src/metrics.ts`: the estate's `indexer_confirmation_depth` precedent
+        # works because that constant lives in the indexer's own pinned
+        # dependency, whereas this one lives in a repository the indexer does not
+        # import, so a gauge here would be a second uncoupled copy that goes
+        # QUIET if hearth ever lowers the floor. `<=` is the cheap insurance
+        # against that: if the floor drops, this rule keeps firing and somebody
+        # comes and edits this comment, which is the failure direction to want.
+        #
+        # `for: 1h`. The condition is a standing state, not an event — the rules
+        # header reserves `ticket` for exactly that — so the only thing `for:`
+        # buys is not re-opening a ticket the moment a transient excursion above
+        # the floor ends. The longest excursion the chain healed from by itself
+        # in the measured window was 1,804 s (30 min, 2026-08-10 17:21:14Z to
+        # 17:52:51Z). An hour is twice that.
+        # `on (chain, network, instance)` and NOT `on (chain, network)`. `and` is
+        # a set intersection, so a coarser join asks "is SOME ember series slow?"
+        # rather than "is THIS one slow?" — with one indexer replica the two are
+        # the same answer and with two they are not. Written the coarse way and
+        # fed three synthetic targets in alerts.test.yaml, this rule fired on a
+        # target mining at 300 blocks/hour because a different target was slow.
+        # `instance` is what makes the two clauses describe the same scrape.
+        expr: |
+          indexer_chain_difficulty{chain="ember"} <= 256
+            and on (chain, network, instance)
+          (
+            indexer_tip_height{chain="ember"}
+              - indexer_tip_height{chain="ember"} offset 1h
+          ) < 240
+        for: 1h
+        labels:
+          severity: ticket
+          team: chain
+          service: indexer
+          sev: "4"
+        annotations:
+          summary: "EMBER {{ $labels.network }} is at its difficulty floor and still below target block rate"
+          description: >-
+            EMBER difficulty is at 256, the lowest value the chain's parameters
+            permit, and it has still produced fewer than 240 blocks in the last
+            hour against a 15 s target. The retarget is saturated: it cannot make
+            the chain any easier, so blocks stay slow until hashrate arrives.
+            This is a capacity decision, not an incident — nothing is broken and
+            nothing needs restarting. The runbook has the two levers and what each
+            one costs.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-at-floor.md
+
+      # ── AND DELIBERATELY NO PAGE FOR EITHER OF THESE ────────────────────────
+      #
+      # The case for paging on a stalled EMBER tip is real and was argued rather
+      # than waved away: EMBER is the chain the wallet, the explorer and the
+      # mining bar all read, and this estate already pages on the analogous
+      # Litecoin condition. Four things decide it the other way.
+      #
+      # 1. THE LITECOIN PAGE IS NOT ANALOGOUS. `ChainNodeTemplateStale` pages
+      #    because miners pointed at the pool are burning electricity on work
+      #    that cannot win — other people's money, spent per second, while the
+      #    condition lasts. EMBER's two miners are ours.
+      # 2. NOTHING A WOKEN HUMAN CAN DO. All three wedges measured on 2026-08-10
+      #    resolved with no intervention, the longest in 3,147 s. The recovery is
+      #    the LWMA walking difficulty down and it runs on its own schedule; the
+      #    only real lever is adding hashrate, which micro-deploy#53 did
+      #    permanently and which nobody does at 3 a.m.
+      # 3. THE BAR IN THIS FILE'S HEADER. `page` is for user-visible failure or
+      #    irreversible money risk. A slow chain delays confirmations in the
+      #    explorer and the mining bar; it loses no money and it is entirely
+      #    reversible.
+      # 4. THE RATE. This condition occurred 3 times in 28.3 h. A page firing
+      #    twice a day is a page that is silenced by Friday, which is the exact
+      #    argument this file already makes about
+      #    `indexer_provider_failures_total` in cf.page.chain, and the silence
+      #    would then cover the ticket too.
+      #
+      # A PAGING ESCALATION AT A LONGER STALL WAS CONSIDERED AND REFUSED, for
+      # one reason: its threshold would be unmeasured. The longest stall in the
+      # whole retained history is 3,147 s, so any escalation above it has fired
+      # zero times and its number would be invention dressed in a comment. WRITE
+      # IT WHEN there is a stall this estate did NOT recover from without a
+      # human — that observation, and only that, sets the threshold.
+
   # ===================================================== TICKET — jobs ======
   - name: cf.ticket.jobs
     rules:
