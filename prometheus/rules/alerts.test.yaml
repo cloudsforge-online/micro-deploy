@@ -1,0 +1,131 @@
+# promtool UNIT TESTS for prometheus/rules/alerts.yaml.
+#
+# `make check-rules` proves the rules PARSE. It cannot tell a rule that fires
+# from a rule that never will, and this repository has shipped the second kind
+# more than once: `BackupAgeExceeded` read `backup_last_success_timestamp_seconds`
+# and `LedgerReconciliationDrift` read `ledger_reconciliation_drift_native` and
+# interpolated `{{ $labels.chain }}` — three names nothing exported, all of them
+# valid YAML, all of them deployed, none of them able to page. A green syntax
+# check on an unfireable rule is worse than no check, because it reads as cover.
+#
+# This file is the other half: promtool feeds the rules a synthetic series and
+# asserts what comes out. `make check-rule-tests` runs it, and so does CI.
+#
+# It covers one alert today. That is not the intended end state — every rule in
+# alerts.yaml belongs here eventually — but a test file with one honest case in
+# it is worth more than a plan for twenty-six.
+#
+# The `rule_files` path is relative to THIS file, which is why the test lives
+# beside the rules rather than under a tests/ directory. `prometheus.yml` names
+# its two rule files explicitly, so a third YAML in this directory is never
+# loaded by the running Prometheus — checked before choosing this layout.
+
+rule_files:
+  - alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # ══════════════════════════════════════════════════════════════════════════
+  # BackupDestinationFilesystemErrors — micro-org#207.
+  #
+  # The backup disk is a Marvell firmware RAID virtual disk that answers
+  # `smartctl -H` with "device lacks SMART capability", so ext4's own superblock
+  # error counter is the ONLY health signal the medium holding every estate
+  # backup has. The counter reads 0 on the estate host and always has, and a
+  # host healthy enough to run CI is by definition one whose disk is not logging
+  # ext4 errors — so NOTHING ANYWHERE CAN OBSERVE THIS RULE FIRING except a
+  # synthetic series. That is what this is.
+  #
+  # micro-deploy#46 made the same argument one level down, about the exporter:
+  # a `count` pinned to `BigInt(0)` passed all 88 tests that existed, which is a
+  # gauge that cannot rise sitting under an alert whose expression is `> 0`.
+  # This is the corresponding assertion for the alert.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # The label set is the one measured on the mainnet Prometheus on
+      # 2026-08-10, not an invented one: `device` comes from the exporter
+      # (src/disk.ts resolves it from `st_dev`, so it names the FILESYSTEM,
+      # `sdb1`, and not the whole disk), and `instance`/`job`/`service`/`team`
+      # come from the scrape config. `device` in particular has to be real here
+      # — the summary interpolates `{{ $labels.device }}`, and a template
+      # referencing a label the series does not carry renders empty rather than
+      # failing, which is exactly how the `{{ $labels.chain }}` defect survived.
+      #
+      # 0 for ten minutes and then 3, because that is the only shape this
+      # counter has: it lives in the superblock, it survives a remount, and it
+      # never decreases. There is no recovery case to assert.
+      - series: 'backup_destination_fs_errors{device="sdb1",instance="backup-runner:4130",job="backup-runner",service="backup-runner",team="platform"}'
+        values: "0+0x9 3+0x20"
+
+    alert_rule_test:
+      # A healthy disk is silent. Asserted rather than assumed: an expression
+      # mistyped as `>= 0` pages every five minutes for ever, and the operator
+      # response to that is to silence the alert, which costs the estate the one
+      # signal this disk has.
+      - eval_time: 5m
+        alertname: BackupDestinationFilesystemErrors
+        exp_alerts: []
+
+      # The counter goes to 3 at 10m. `for: 5m` means PENDING here, not firing —
+      # a single anomalous scrape must not page.
+      - eval_time: 10m
+        alertname: BackupDestinationFilesystemErrors
+        exp_alerts: []
+
+      # Still pending one minute short of the threshold. This case is what makes
+      # the one above load-bearing: without it, a rule with no `for:` at all
+      # would still pass, because it would have fired at 10m and the assertion
+      # there would have caught it — but a `for: 30m` would pass too.
+      - eval_time: 14m
+        alertname: BackupDestinationFilesystemErrors
+        exp_alerts: []
+
+      # 15m: active since 10m, so `for: 5m` is satisfied and it fires. Every
+      # label and every annotation is spelled out, because the routing depends
+      # on `severity` and `team` (alertmanager.yml matches on both), the paging
+      # tier depends on `sev`, and the runbook rule depends on `runbook_url`
+      # resolving to a file that exists — scripts/check-runbooks.py checks the
+      # file exists, and this checks the annotation survives to the alert.
+      - eval_time: 15m
+        alertname: BackupDestinationFilesystemErrors
+        exp_alerts:
+          - exp_labels:
+              alertname: BackupDestinationFilesystemErrors
+              device: sdb1
+              instance: backup-runner:4130
+              job: backup-runner
+              severity: page
+              team: platform
+              service: backup-runner
+              sev: "2"
+            exp_annotations:
+              summary: "ext4 has recorded 3 error(s) on sdb1, which holds every backup"
+              description: >-
+                The backup disk exposes no SMART, so this counter is the only
+                health signal it has. Establish whether the existing sets are
+                still readable before writing another one to the same volume.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-destination-fs-errors.md
+
+      # It stays firing. A counter that only rises has no resolution, and an
+      # alert that flapped off here would be reporting the disk as recovered.
+      - eval_time: 25m
+        alertname: BackupDestinationFilesystemErrors
+        exp_alerts:
+          - exp_labels:
+              alertname: BackupDestinationFilesystemErrors
+              device: sdb1
+              instance: backup-runner:4130
+              job: backup-runner
+              severity: page
+              team: platform
+              service: backup-runner
+              sev: "2"
+            exp_annotations:
+              summary: "ext4 has recorded 3 error(s) on sdb1, which holds every backup"
+              description: >-
+                The backup disk exposes no SMART, so this counter is the only
+                health signal it has. Establish whether the existing sets are
+                still readable before writing another one to the same volume.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-destination-fs-errors.md

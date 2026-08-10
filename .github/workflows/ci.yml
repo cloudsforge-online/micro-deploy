@@ -1,8 +1,13 @@
 name: CI
 
-# A content repository: no service, no suite, no image. What CI owes it is the one check that
-# guards the failure that cannot be undone — a committed secret is compromised the moment it
-# lands, whatever kind of repository it lands in.
+# Mostly a content repository. What CI owes it first is the one check that guards the failure that
+# cannot be undone — a committed secret is compromised the moment it lands, whatever kind of
+# repository it lands in.
+#
+# THIS FILE USED TO OPEN "no service, no suite, no image", and that description outlived its truth.
+# `deploy/backup` is a deployable with 97 tests of its own, and the `backup` job below is what
+# actually runs them; the `rules` job runs the promtool targets that had likewise only ever been
+# typed by hand. Both are recorded at the jobs themselves.
 #
 # ── AND THE DRIFT CHECK, WHICH USED TO RUN NOWHERE ──────────────────────────────────────────────
 #
@@ -37,6 +42,122 @@ jobs:
       require-dockerignore: false
     permissions:
       contents: read
+
+  # ── THE ONE DEPLOYABLE IN THIS REPOSITORY HAD NO SUITE RUNNING ─────────────
+  #
+  # This workflow described the repository as having "no service, no suite, no
+  # image" until 2026-08-10, and `deploy/backup` had been contradicting it for a
+  # while. It is a real Node service — 9 test files, 97 tests — and NOTHING RAN
+  # THEM: not this
+  # workflow, not `make check`. They were enforced by whoever remembered to type
+  # `pnpm test`, which for the one process in the estate holding a superuser DSN
+  # for all 29 databases and read access to the custody vault is not enforcement.
+  #
+  # micro-deploy#46 is why this is a job and not a note. It added the tests that
+  # tell the ext4 error detector apart from a stub, after finding that a `count`
+  # pinned to zero — a gauge that cannot rise, under an alert whose expression is
+  # `> 0` — passed all 88 tests that existed. Tests that catch that class of
+  # defect are worth nothing if the only thing that runs them is a habit.
+  #
+  # ── WHY micro-runtime IS CHECKED OUT ──────────────────────────────────────
+  #
+  # backup/package.json takes `link:../../runtime/packages/{jobs,lifecycle,
+  # telemetry}`. A `link:` is a directory, not a fetch, so the sibling checkout
+  # is mandatory — and it needs its OWN install, because `link:` does not install
+  # the linked package's dependencies. Measured 2026-08-10 against a clean clone:
+  # with runtime present but uninstalled, `disk.test.ts` alone fails with
+  # `Cannot find package '@opentelemetry/api'` and the other eight files pass, so
+  # the omission would read as one broken test rather than as a missing install.
+  #
+  # The `path:` values are explicit for the same reason the drift job's are:
+  # GitHub checks a repository out to `work/<repo>/<repo>` by default, and the
+  # `link:` targets resolve two levels up from `deploy/backup`. A sibling
+  # checkout is already ordinary here — the drift job does it with micro-ui.
+  backup:
+    name: The backup runner's own suite
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: deploy
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-runtime
+          path: runtime
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install micro-runtime
+        working-directory: runtime
+        run: corepack enable && pnpm install --frozen-lockfile
+
+      - name: Install the backup runner
+        working-directory: deploy/backup
+        run: corepack enable && pnpm install --frozen-lockfile
+
+      # Typecheck before test, because it is the cheaper failure: a type error is
+      # a one-line diff, and finding it under a stack trace from a test that only
+      # failed because a signature moved buries it.
+      - name: The backup runner typechecks
+        working-directory: deploy/backup
+        run: pnpm typecheck
+
+      - name: The backup runner's tests pass
+        working-directory: deploy/backup
+        run: pnpm test
+
+  # ── THE ALERT RULES FIRE, RATHER THAN MERELY PARSING ───────────────────────
+  #
+  # `make check-rules` — promtool `check rules` — has been in the Makefile the
+  # whole time and has never been in CI. It also cannot, by construction, catch
+  # the defect this repository keeps shipping: a rule that is valid YAML and can
+  # never fire. Three have been deployed. `BackupAgeExceeded` read
+  # `backup_last_success_timestamp_seconds` and `LedgerReconciliationDrift` read
+  # `ledger_reconciliation_drift_native` and interpolated `{{ $labels.chain }}`;
+  # of 1,329 metric names on the mainnet Prometheus, none of the three existed.
+  # Every one passed `check rules`, had a runbook, and could not page.
+  #
+  # `promtool test rules` is the only thing that tells those apart, because it
+  # supplies the series itself. `prometheus/rules/alerts.test.yaml` is the first
+  # such test and it covers `BackupDestinationFilesystemErrors` — the rule that
+  # NOTHING ELSE CAN OBSERVE FIRING, because the ext4 superblock counter it
+  # watches reads 0 on the estate host and always has, and a CI runner healthy
+  # enough to trust is one whose disk is not logging ext4 errors either.
+  #
+  # Mutation-proved on 2026-08-10 rather than asserted: `> 0` widened to `> 5`,
+  # `for: 5m` deleted, and `{{ $labels.device }}` misspelt as `{{ $labels.disk }}`
+  # each take promtool from exit 0 to exit 1. The third is the interesting one —
+  # it renders the page as "ext4 has recorded 3 error(s) on , which holds every
+  # backup", which is the silent half of the `{{ $labels.chain }}` defect.
+  #
+  # Docker rather than a promtool binary because the Makefile targets already run
+  # it that way, pinned to the same image tag the estate runs. A check that
+  # validates a config against a different build from the one that serves it is a
+  # check that can pass wrongly.
+  rules:
+    name: The alert rules fire
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: The rules and the scrape config parse
+        run: make check-rules
+
+      - name: BackupDestinationFilesystemErrors actually fires
+        run: make check-rule-tests
+
+      # The runbook rule, which has also only ever run by hand. An alert without
+      # a runbook is deleted, not silenced: an unactionable page teaches the
+      # on-call to ignore pages, and the pages here are about somebody's money.
+      - name: Every alert carries a runbook, and every runbook exists
+        run: make check-runbooks
 
   drift:
     name: The registry and the gateway agree

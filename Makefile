@@ -13,9 +13,10 @@ AM_IMG    := prom/alertmanager:v0.28.1
 OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
 
 .DEFAULT_GOAL := help
-.PHONY: help up down gateway logs ps config check check-rules check-alertmanager \
+.PHONY: help up down gateway logs ps config check check-rules check-rule-tests \
+        check-alertmanager \
         check-collector check-runbooks check-prometheus-targets check-compose-ports \
-        check-token-resolution check-custody-backup-guard \
+        check-token-resolution check-custody-backup-guard check-backup \
         prometheus-targets \
         dashboards estate clean
 
@@ -50,7 +51,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard ## Run every check
+check: config check-rules check-rule-tests check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-backup ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -60,6 +61,20 @@ check-rules: ## promtool over the recording and alerting rules
 	@docker run --rm --entrypoint /bin/promtool \
 		-v "$(PWD)/prometheus:/p:ro" $(PROM_IMG) \
 		check config --syntax-only /p/prometheus.yml
+
+check-rule-tests: ## promtool UNIT TESTS — the rules actually fire, not merely parse
+	@# `check-rules` above proves the rules PARSE, and that is all it proves. Three
+	@# deployed rules in this file have referenced a metric or a label that nothing
+	@# exported — `backup_last_success_timestamp_seconds`,
+	@# `ledger_reconciliation_drift_native`, `{{ $$labels.chain }}` — and every one
+	@# of them was valid YAML that passed the target above and could never page.
+	@#
+	@# `test rules` is the only thing that can tell those apart, because it
+	@# supplies the series. The test file names its own `rule_files`, so the rules
+	@# under test are chosen there and not here.
+	@docker run --rm --entrypoint /bin/promtool \
+		-v "$(PWD)/prometheus:/p:ro" $(PROM_IMG) \
+		test rules /p/rules/alerts.test.yaml
 
 check-alertmanager: ## amtool over the routing configuration
 	@docker run --rm --entrypoint /bin/amtool \
@@ -92,6 +107,26 @@ check-token-resolution: ## up.sh resolves each token to ONE home, and refuses tw
 
 check-custody-backup-guard: ## a backup set never carries the keyring beside the vault (micro-org#25)
 	@./scripts/check-custody-backup-guard.sh
+
+check-backup: ## backup/'s own suite — the one deployable that lives in this repository
+	@# `deploy/backup` is a real Node service with 97 tests, and until 2026-08-10
+	@# nothing ran them: not CI, not `make check`. They were enforced by whoever
+	@# remembered to type `pnpm test`, which for a process holding a superuser DSN
+	@# and read access to the custody vault is not enforcement.
+	@#
+	@# micro-runtime is a SIBLING CHECKOUT, not a dependency fetched from a
+	@# registry: backup/package.json takes `link:../../runtime/packages/{jobs,
+	@# lifecycle,telemetry}` — two levels up from `deploy/backup`, so one level up
+	@# from here — and those packages point `main` at their own `src/index.ts`, so
+	@# nothing needs building. They DO need their own `pnpm install`, because
+	@# `link:` does not install the linked package's dependencies. Measured
+	@# 2026-08-10: skip it and disk.test.ts alone fails with
+	@# `Cannot find package '@opentelemetry/api'` while the other 8 files pass, so
+	@# the omission reads as a broken test rather than as a missing install.
+	@test -d ../runtime/packages/telemetry || { \
+	  echo "micro-runtime must be checked out beside this repository at ../runtime"; exit 2; }
+	@cd ../runtime && pnpm install --frozen-lockfile
+	@cd backup && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
 
 check-prometheus-targets: ## The scrape list is generated from the release, and excludes what cannot be scraped
 	@# `prometheus/targets/services.yaml` was the literal `[]` from the telemetry
