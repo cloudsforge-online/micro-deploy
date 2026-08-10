@@ -113,7 +113,25 @@ services:
     # volumes are reached as volume mounts. `docker exec` is convenient for a human at a terminal
     # (which is what the §2 runbook uses) and is a privilege escalation when it is left in a daemon.
     ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}130:4130"
+      # ── 4147 ON THE HOST, 4130 IN THE CONTAINER, AND THE TWO ARE NOT A TYPO ──────────────────
+      #
+      # This published 4130:4130 until 2026-08-10, and `trade-web` in `docker-compose.estate.yml`
+      # has owned `127.0.0.1:${CF_PORT_BASE:-4}130` the whole time. The first attempt to bring the
+      # runner up on mainnet — the composition this file's own header prescribes — built the image,
+      # created the container and then died at the last step with
+      # `Bind for 127.0.0.1:4130 failed: port is already allocated` (micro-org#328).
+      #
+      # It hid because this is the only compose file in the repository that no deploy path renders:
+      # it is named by no release manifest, `release-deploy.sh` never composes it, and it is brought
+      # up by hand. Nothing had ever put the two files in one model, and one file cannot see the
+      # other's ports. `scripts/check-compose-host-ports.py` now does, in CI.
+      #
+      # ONLY THE HOST SIDE MOVED. The container listens on 4130, which is what the healthcheck below
+      # probes and what `prometheus/prometheus.yml`'s `backup-runner:4130` job scrapes over the
+      # estate network — neither goes through this publish. The host mapping exists for a human with
+      # a terminal, and 4147 is one past the top of the estate file's contiguous 41xx block rather
+      # than into the 4144/4145 gap, which is not obviously free to claim.
+      - "127.0.0.1:${CF_PORT_BASE:-4}147:4130"
     depends_on:
       postgres:
         condition: service_healthy
