@@ -248,10 +248,20 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
     the file, and stops there.
     """
     needles: dict[str, set[str]] = {}
+    # The source files hold these values BY DEFINITION and are not findings. A
+    # sweep of a home directory that contains the deploy checkout reported 238
+    # of them on 2026-08-10, of which every single one inside `compose/secrets`,
+    # `compose/estate` and the two `*/secrets` directories was the credential
+    # sitting where it is supposed to sit. A report that is mostly noise is a
+    # report nobody reads to the end, and the interesting lines were at the end.
+    sources: set[Path] = set()
     for raw in against:
         path = Path(raw)
         if not path.is_file():
             continue
+        # resolve(), so that `compose/.env` — a symlink to the token file — and
+        # the token file itself are recognised as one source, not two.
+        sources.add(path.resolve())
         for name, value in parse_env_file(path):
             if name in NOT_A_SECRET or not SECRET_NAME.search(name):
                 continue
@@ -280,6 +290,8 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
                 # as a place they leaked to.
                 if fpath.is_symlink():
                     continue
+                if fpath.resolve() in sources:
+                    continue
                 try:
                     st = fpath.stat()
                     if st.st_size > MAX_SCAN_BYTES:
@@ -300,7 +312,8 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
                         key = (str(fpath), ",".join(sorted(names)), st.st_mode & 0o777)
                         hits[key] = hits.get(key, 0) + count
 
-    print(f"  {examined} file(s) examined")
+    print(f"  {examined} file(s) examined, {len(sources)} source file(s) excluded "
+          f"as the places these values are supposed to live")
     for (fpath, names, mode), count in sorted(hits.items(), key=lambda kv: -kv[1]):
         world = " WORLD-READABLE" if mode & 0o004 else ""
         print(f"::error::{names} appears {count}x in {fpath} (mode {mode:o}{world})")
