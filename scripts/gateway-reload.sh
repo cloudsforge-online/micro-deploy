@@ -98,7 +98,10 @@ DYNAMIC="$ROOT/gateway/dynamic"
 CERTS="${CF_CERT_DIR:-$ROOT/gateway/certs}"
 SCRATCH="$ROOT/.gateway-validate"
 ENV_FILE="$ROOT/compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
-GW_PROJECT=${CF_GW_PROJECT:-cfmicro}
+# The gateway moved to the estate's own compose project on 2026-08-10 so that
+# `docker compose -p cloudsforge-estate ps` lists the container every public
+# hostname depends on (micro-org#257). This default follows it.
+GW_PROJECT=${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}
 PROBE=cf-gateway-validate
 # Clock drift a suspended VM accumulates. Not a fudge factor for the comparison:
 # the two clocks were measured identical, and a real staleness gap is minutes.

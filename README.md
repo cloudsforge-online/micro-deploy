@@ -56,10 +56,12 @@ or by hand, in the one order that works:
 export CF_WEB_APEX=cloudsforge.localtest.me
 docker compose -f compose/docker-compose.estate.yml up -d --build --wait
 ./scripts/estate-bootstrap.sh      # THE MANUAL ADMIN UPDATE, then the tokens
-docker compose -p cfmicro \
-  -f compose/docker-compose.telemetry.yml \
+docker compose -p cfmicro -f compose/docker-compose.telemetry.yml up -d
+# The gateway is in the ESTATE's project, not the telemetry plane's, so that
+# `docker compose -p cloudsforge-estate ps` lists it — micro-org#257.
+docker compose -p cloudsforge-estate \
   -f compose/docker-compose.gateway.yml \
-  -f compose/docker-compose.estate-gateway.yml up -d
+  -f compose/docker-compose.estate-gateway.yml up -d gateway
 ./scripts/estate-verify.sh         # drives real flows and asserts real effects
 ```
 

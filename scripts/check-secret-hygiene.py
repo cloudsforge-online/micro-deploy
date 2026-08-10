@@ -58,6 +58,8 @@ USAGE
   check-secret-hygiene.py --live cloudsforge-estate cf-testnet
   check-secret-hygiene.py --transcripts ~/.claude/projects /private/tmp \
                           --against compose/secrets/*.env
+  make check-residue                 # the same sweep over the whole home dir,
+                                     # which is the last step of a rotation
 
 Exit 1 on any finding, so it can gate a deploy.
 """
@@ -109,6 +111,32 @@ PLACEHOLDER_SHAPE = [
 ]
 
 MIN_LENGTH = 24  # matches the floor the services already enforce at boot
+
+# ── WHAT THE TRANSCRIPT SWEEP REFUSES TO WALK ─────────────────────────────────
+#
+# Pruned by directory NAME at any depth, and this is what decides whether the
+# sweep gets run at all. `--transcripts ~/.claude/projects /private/tmp` is
+# cheap, but the sweep that matters after a rotation is the one over the whole
+# of `/home/malf` — that is where the answer to "is the retired value still
+# sitting in a backup file" lives — and unpruned that walk took over ten minutes
+# on this host, because it descends three chain data directories. A UTXO set
+# cannot contain a base64 env value, so the cost buys nothing, and a sweep too
+# slow to run at the end of a rotation is a sweep that does not exist. That cost
+# is the entire reason a second, pruned implementation of this function grew in
+# an operator's home directory (micro-org#340 item 4); the answer is to make
+# this one fast rather than to keep two.
+PRUNE_DIRS = {
+    # chain data — large, binary, and structurally incapable of holding a hit
+    "btc-ssd", "ltc-ssd", "doge-ssd", "bitcoin", "litecoin", "dogecoin",
+    "chainstate", "blocks", "indexes",
+    # a hit inside any of these is a hit in a file that also exists outside it,
+    # reported a second time under a path nobody edits
+    ".git", "node_modules", ".pnpm-store", ".cache", "snap",
+}
+
+# A file bigger than this is a database dump, an image layer or a chain file.
+# The previous ceiling was 400 MB, which does not exclude any of those.
+MAX_SCAN_BYTES = 4_000_000
 
 
 def _fingerprint(value: str) -> str:
@@ -212,7 +240,8 @@ def check_live(projects: list[str]) -> int:
     return findings
 
 
-def check_transcripts(roots: list[str], against: list[str]) -> int:
+def check_transcripts(roots: list[str], against: list[str],
+                      allow: list[str] | None = None) -> int:
     """Has any currently-deployed secret been printed into an agent transcript?
 
     Reads the live values only to use them as needles. They are held in memory,
@@ -220,16 +249,38 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
     the file, and stops there.
     """
     needles: dict[str, set[str]] = {}
+    # The source files hold these values BY DEFINITION and are not findings. A
+    # sweep of a home directory that contains the deploy checkout reported 238
+    # of them on 2026-08-10, of which every single one inside `compose/secrets`,
+    # `compose/estate` and the two `*/secrets` directories was the credential
+    # sitting where it is supposed to sit. A report that is mostly noise is a
+    # report nobody reads to the end, and the interesting lines were at the end.
+    sources: set[Path] = set()
     for raw in against:
         path = Path(raw)
         if not path.is_file():
             continue
+        # resolve(), so that `compose/.env` — a symlink to the token file — and
+        # the token file itself are recognised as one source, not two.
+        sources.add(path.resolve())
         for name, value in parse_env_file(path):
             if name in NOT_A_SECRET or not SECRET_NAME.search(name):
                 continue
             for candidate in _split_candidates(value):
                 if len(candidate) >= 16:
                     needles.setdefault(candidate, set()).add(name)
+
+    # `--allow` names the OTHER legitimate homes: the ones a value was copied to
+    # on purpose, by `up.sh`, in a shape this parser cannot read as a source —
+    # `prometheus/secrets/beacon_token` is a bare value with no `=` in it, so it
+    # can never appear in `--against`. Without this, those four files are
+    # reported on every run, the check can never exit 0, and a check that is
+    # permanently red is a check that has been switched off.
+    allowed = [Path(a).resolve() for a in (allow or [])]
+
+    def is_allowed(p: Path) -> bool:
+        rp = p.resolve()
+        return any(rp == a or a in rp.parents for a in allowed)
 
     if not needles:
         print("  no deployed secrets to search for — pass --against")
@@ -238,25 +289,48 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
           f"across {len(roots)} root(s)")
 
     findings = 0
-    hits: dict[tuple[str, str], int] = {}
+    examined = 0
+    hits: dict[tuple[str, str, int], int] = {}
     for root in roots:
-        for dirpath, _dirs, files in os.walk(root):
+        for dirpath, dirs, files in os.walk(root):
+            # In-place, because os.walk reads this list to decide where to
+            # descend. Rebinding it does nothing.
+            dirs[:] = [d for d in dirs if d not in PRUNE_DIRS]
             for fname in files:
                 fpath = Path(dirpath) / fname
+                # Never follow a symlink: `compose/.env` is one, pointing at the
+                # token file, and following it reports the SOURCE of the values
+                # as a place they leaked to.
+                if fpath.is_symlink():
+                    continue
+                if fpath.resolve() in sources or is_allowed(fpath):
+                    continue
                 try:
-                    if fpath.stat().st_size > 400 * 1024 * 1024:
+                    st = fpath.stat()
+                    if st.st_size > MAX_SCAN_BYTES:
                         continue
                     blob = fpath.read_text(encoding="utf-8", errors="ignore")
                 except (OSError, UnicodeError):
                     continue
+                examined += 1
                 for needle, names in needles.items():
                     count = blob.count(needle)
                     if count:
-                        key = (str(fpath), ",".join(sorted(names)))
+                        # The mode travels with the finding because it changes
+                        # what the finding MEANS. A live token in a file only the
+                        # operator can read is a residue problem; the same token
+                        # in a world-readable one is a disclosure to every
+                        # account on the host, and that difference was invisible
+                        # while this printed a path alone (micro-org#340).
+                        key = (str(fpath), ",".join(sorted(names)), st.st_mode & 0o777)
                         hits[key] = hits.get(key, 0) + count
 
-    for (fpath, names), count in sorted(hits.items(), key=lambda kv: -kv[1]):
-        print(f"::error::{names} appears {count}x in {fpath}")
+    print(f"  {examined} file(s) examined; {len(sources)} source file(s) and "
+          f"{len(allowed)} allowed path(s) excluded as the places these values "
+          f"are supposed to live")
+    for (fpath, names, mode), count in sorted(hits.items(), key=lambda kv: -kv[1]):
+        world = " WORLD-READABLE" if mode & 0o004 else ""
+        print(f"::error::{names} appears {count}x in {fpath} (mode {mode:o}{world})")
         findings += 1
     return findings
 
@@ -268,6 +342,9 @@ def main() -> int:
     ap.add_argument("--live", nargs="*", metavar="PROJECT")
     ap.add_argument("--transcripts", nargs="*", metavar="DIR")
     ap.add_argument("--against", nargs="*", default=[], metavar="ENV")
+    ap.add_argument("--allow", nargs="*", default=[], metavar="PATH",
+                    help="files or directories that are legitimate homes for these "
+                         "values; hits inside them are not findings")
     args = ap.parse_args()
 
     if args.files is None and args.live is None and args.transcripts is None:
@@ -282,7 +359,7 @@ def main() -> int:
         total += check_live(args.live)
     if args.transcripts is not None:
         print("── agent transcripts ──")
-        total += check_transcripts(args.transcripts, args.against)
+        total += check_transcripts(args.transcripts, args.against, args.allow)
 
     if total:
         print(f"\n{total} finding(s). NOTHING ABOVE QUOTES A SECRET; resolve each "

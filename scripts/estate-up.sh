@@ -28,9 +28,10 @@
 #   2. the bootstrap         the admin UPDATE, the service tokens, the long-lived
 #                            credentials. Services are RECREATED by it, so it
 #                            must finish before anything routes to them.
-#   3. telemetry + gateway   telemetry owns the three `cf-micro-*` networks and
-#                            declares them; the gateway file attaches to them as
-#                            external, so telemetry cannot be later either.
+#   3. telemetry + gateway   `ensure-networks.sh` makes the three `cf-micro-*`
+#                            networks; every compose file attaches to them as
+#                            external, so no `-f` ordering can change who owns
+#                            them. The gateway is in the ESTATE's project.
 #   3c. the seeders          custody addresses that actually hold coin, so the
 #                            solvency check compares two real numbers. AFTER the
 #                            bootstrap, because it needs a service token.
@@ -52,7 +53,12 @@ ESTATE=compose/docker-compose.estate.yml
 TELEMETRY=compose/docker-compose.telemetry.yml
 GATEWAY=compose/docker-compose.gateway.yml
 GATEWAY_ESTATE=compose/docker-compose.estate-gateway.yml
-GW_PROJECT=${COMPOSE_PROJECT_NAME:-cfmicro}
+# TWO projects, not one. The telemetry plane keeps `cfmicro` — renaming a compose
+# project renames its volumes, and those hold 15 days of metrics and 30 of logs.
+# The gateway belongs to the estate it serves; see micro-org#257 and the note at
+# step 3b below.
+TELEMETRY_PROJECT=${COMPOSE_PROJECT_NAME:-cfmicro}
+GW_PROJECT=${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}
 
 export CF_WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
 # The environment is a SUFFIX ON THE SUBDOMAIN, not a prefix on the apex — see the
@@ -310,33 +316,59 @@ echo "── 2. bootstrap: the admin UPDATE, the tokens, the credentials ──�
 ./scripts/estate-bootstrap.sh || exit 1
 
 echo
-echo "── 3a. telemetry, which OWNS the three cf-micro-* networks ──────────────"
-# TWO INVOCATIONS, NOT ONE, AND THIS IS THE REASON.
+echo "── 3a. the three cf-micro-* networks, then telemetry ────────────────────"
+# THE NETWORKS ARE MADE FIRST, BY A SCRIPT, AND NO COMPOSE FILE OWNS THEM.
 #
-# `docker-compose.telemetry.yml` CREATES `cf-micro-edge`, `cf-micro-app` and
-# `cf-micro-vault`; `docker-compose.gateway.yml` declares the same three as
-# `external: true`. Compose merges the top-level `networks:` map across `-f`
-# files and the LAST declaration wins, so naming both files in one command turns
-# the creator into an attacher and the command fails with "network cf-micro-app
-# declared as external, but could not be found" on any machine where they do not
-# already exist.
+# Until 2026-08-10 `docker-compose.telemetry.yml` CREATED `cf-micro-edge`,
+# `cf-micro-app` and `cf-micro-vault` while the two gateway files declared the
+# same three `external: true`. Compose merges the top-level `networks:` map
+# across `-f` files last-wins, so ownership depended on the order of the `-f`
+# flags, and every file involved carried a paragraph about keeping the
+# invocations separate to preserve it.
 #
-# The gateway file's own header says "the telemetry file must be up first"; this
-# is what "first" has to mean. `up.sh --gateway` passed both in one invocation
-# and had the same defect — fixed there too.
-if ! docker compose -p "$GW_PROJECT" -f "$TELEMETRY" up -d; then
-  echo "the telemetry plane did not come up; it owns the networks the gateway attaches to" >&2
+# Measured on the host: all three were live with NO labels, so nothing in compose
+# had ever created them, and compose refuses to adopt an unlabelled network —
+# "found but has incorrect label com.docker.compose.network set to ''". That is
+# fatal, which means THIS STEP had been failing on this host for as long as those
+# networks had existed. It was invisible because the merged invocations that
+# actually got run attached instead of creating, and so never reached the check.
+#
+# `ensure-networks.sh` creates what is missing and reports what is present and
+# wrong; every compose file now attaches. The ordering hazard is gone rather than
+# documented.
+if ! ./scripts/ensure-networks.sh; then
+  echo "the cf-micro-* networks could not be made; nothing below can attach to them" >&2
+  exit 1
+fi
+if ! docker compose -p "$TELEMETRY_PROJECT" -f "$TELEMETRY" up -d; then
+  echo "the telemetry plane did not come up; the gateway scrapes and routes through it" >&2
   exit 1
 fi
 
 echo
 echo "── 3b. the gateway, wired to the estate's network and bound to 443 ──────"
-# A different compose PROJECT (`cfmicro`) from the estate's, deliberately: the
-# telemetry plane and the gateway have their own lifecycle and `make down` must
-# not take the estate with them. The estate overlay attaches to the estate's
-# network as EXTERNAL, so this fails with a named missing network if step 1 was
+# ── THE GATEWAY IS IN THE ESTATE'S PROJECT, AND WAS NOT (micro-org#257) ───────
+#
+# This said "a different compose PROJECT (`cfmicro`) from the estate's,
+# deliberately", and the deliberation was about lifecycle: `make down` on the
+# telemetry plane must not take the estate with it. That reason is real and is
+# preserved — the gateway is still a separate `-f` and a separate invocation with
+# its own lifecycle, and `down.sh` removes it by NAME rather than by project.
+#
+# What was wrong is which project it landed in. The gateway serves the estate's
+# ~50 containers and was labelled with the telemetry plane's project, so
+# `docker compose -p cloudsforge-estate ps` — the command an operator runs to see
+# what is serving this estate — did not list it. The testnet twin of exactly this
+# was deleted as an apparent orphan on 2026-08-05 and again on 2026-08-08, each
+# time putting every public `*-testnet` hostname on 502 while all 46 services
+# reported healthy.
+#
+# NO `-f "$TELEMETRY"` any more: with the projects split, merging the telemetry
+# file into this invocation would build a second telemetry plane inside the
+# estate's project. The estate overlay attaches to the estate's network as
+# EXTERNAL, so this still fails with a named missing network if step 1 was
 # skipped, rather than starting a gateway that resolves nothing.
-if ! docker compose -p "$GW_PROJECT" -f "$TELEMETRY" -f "$GATEWAY" -f "$GATEWAY_ESTATE" up -d; then
+if ! docker compose -p "$GW_PROJECT" -f "$GATEWAY" -f "$GATEWAY_ESTATE" up -d gateway; then
   echo "the gateway did not come up; the surfaces will not be reachable on their hostnames" >&2
   exit 1
 fi

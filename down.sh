@@ -9,15 +9,30 @@ set -euo pipefail
 cd "$(dirname "$0")"
 
 PROJECT="${COMPOSE_PROJECT_NAME:-cfmicro}"
+# The gateway is in the ESTATE's project now (micro-org#257), so it is a second
+# `down` rather than a second `-f`. It is also the reason `--remove-orphans`
+# below is safe again: it applies to `$PROJECT`, which after the split contains
+# the telemetry plane and nothing else.
+GW_PROJECT="${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}"
 ARGS=(-p "$PROJECT"
       -f compose/docker-compose.telemetry.yml
-      -f compose/docker-compose.gateway.yml
       down --remove-orphans)
 
 # Volumes are kept by default. Losing a week of traces is not a business event
 # (13-operational-model.md §14), but losing them because somebody typed `down`
 # during an incident is an avoidable one.
 [[ "${1:-}" == "--volumes" ]] && ARGS+=(--volumes)
+
+# The gateway first: it attaches to the three networks the telemetry file owns,
+# and `docker network rm` below refuses a network that still has an endpoint.
+#
+# `stop` + `rm`, and NOT `down`, for the one reason that matters here: `down` on
+# `$GW_PROJECT` with only the gateway file would be a `down` OF THE ESTATE's
+# project. Compose scopes `down` to the project, not to the services in the
+# files, so it would stop and remove the ~50 estate containers as well. This
+# names the one container it is allowed to remove.
+docker compose -p "$GW_PROJECT" -f compose/docker-compose.gateway.yml \
+  rm -sf gateway 2>/dev/null || true
 
 docker compose "${ARGS[@]}"
 

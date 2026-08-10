@@ -170,6 +170,25 @@ it up, lists it, or notices its absence. It has now been missing twice —
 unreachable origin as 502. `make estate-gateway-testnet` starts it and runs the
 same check.
 
+**Mainnet's gateway no longer has that defect and testnet's still does.** On
+2026-08-10 the mainnet gateway was moved out of the telemetry plane's project
+into `cloudsforge-estate`, the project of the ~50 services it serves, so
+`docker compose -p cloudsforge-estate ps` lists it (micro-org#257). Two
+consequences for anybody deploying:
+
+- **Never pass `--remove-orphans` to a `cloudsforge-estate` invocation that does
+  not include the two gateway compose files.** The gateway is in that project
+  now and is not defined by `docker-compose.estate.yml`, so compose will offer to
+  remove it — and it prints the invitation as a warning listing the ~50 estate
+  containers as orphans when you run it the other way round. `release-deploy.sh`
+  passes no such flag and is unaffected.
+- `make estate-gateway` brings it up in the right project and then runs
+  `check-tunnel-origin.sh mainnet`, so the target proves its own claim.
+
+Testnet's rename is still outstanding: it is a recreate of every container in
+`cftestnet`, and testnet is deliberately stopped while bitcoind finishes its
+initial block download.
+
 **Both `--env-file` flags, every time, and this is not style.** `--env-file`
 *replaces* the default `.env` rather than adding to it, and `compose/.env` is a
 symlink to **mainnet's** tokens. Drop the flags and compose still runs, happily:
