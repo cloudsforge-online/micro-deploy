@@ -192,6 +192,91 @@ for pair in \
   [ "$(code "$2/readyz")" = 200 ] && ok "$1 /readyz" || bad "$1 /readyz"
 done
 
+echo "── the databases this estate declares are the databases it HAS ──────────"
+# ── THE FILE THAT ONLY EVER RUNS ONCE, AND THE LIST NOBODY COMPARED ──────────
+#
+# `compose/estate/initdb.sql` is mounted at
+# `/docker-entrypoint-initdb.d/10-databases.sql`, and postgres runs that
+# directory ONLY against an empty data directory. Every estate that already
+# exists ran the file once, months ago, with whatever list it held that day, so
+# adding a `CREATE DATABASE` line changes nothing on a running server — and
+# until this block nothing anywhere compared the list the file declares against
+# the databases a server actually has, in either direction.
+#
+# THE FAILURE THIS WOULD HAVE CAUGHT, WHICH IS NOT HYPOTHETICAL. Deploying 2.5.8
+# with `COMPOSE_PROFILES=pool` on mainnet: `pool-migrate` exited 1 with
+# `PostgresError: database "pool" does not exist`, `--wait` failed the whole
+# deploy, and the estate refused. The file declared `pool`; this server had 28 of
+# the 29 names. It was created by hand and the deploy re-run. That is the right
+# direction to fail in and the most expensive place to discover it — at deploy
+# time, on the estate, as a stack trace rather than a sentence — and it was only
+# loud at all because pool's migrator runs eagerly. A service that connects
+# lazily would have deployed green and failed on its first real request.
+# micro-org#306.
+#
+# WHY HERE AND NOT ONLY AS A `release-deploy.sh` PRE-FLIGHT. This runs per estate
+# on a schedule, so it answers the question when nobody is deploying anything —
+# which is the moment the answer is cheap. It also reaches the estate a deploy
+# pre-flight would not: at the time of writing, testnet is deliberately stopped
+# so bitcoind can finish IBD, and since `initdb.sql` ran once per estate with
+# whatever list it held on that estate's first boot, and the two estates were
+# bootstrapped at different times, testnet is the MORE likely of the two to have
+# drifted. A check that only runs during a deploy would never ask it.
+#
+# ── THE FAILURE POLICY, WHICH IS THE ONLY REAL DECISION HERE ─────────────────
+#
+# The diff itself is three commands. Both directions are failures, and that is a
+# decision rather than an oversight:
+#
+#   DECLARED BUT ABSENT is the `pool` defect exactly. A service whose database
+#   this server lacks cannot migrate and cannot serve.
+#
+#   PRESENT BUT UNDECLARED is the SAME defect seen from the other estate. A
+#   database that exists here and is not in the file is one a FRESH estate would
+#   come up without — the identical stack trace, deferred to whoever bootstraps
+#   next. It is also how an abandoned service's data outlives the decision to
+#   abandon it, silently. Both remedies are cheap and both are a decision
+#   somebody should make on purpose: add the line, or drop the database.
+#
+# NEVER SKIPS. If psql cannot be reached this reports a failure rather than the
+# success it did not establish — the estate has already been bitten by checks
+# that went quiet when their input vanished and still looked like evidence.
+initdb_sql="$(dirname "$COMPOSE")/estate/initdb.sql"
+if [ ! -f "$initdb_sql" ]; then
+  bad "database drift: $initdb_sql is missing, so the declared list cannot be read"
+else
+  # The same `docker compose exec -T postgres` path the thirty-three database
+  # checks below use, so this asks the postgres of the estate named at the top of
+  # this run and not whichever one happens to answer.
+  db_live=$(docker compose -f "$COMPOSE" exec -T postgres \
+    psql -qtA -U cloudsforge -d postgres \
+    -c "select datname from pg_database where datistemplate = false and datname <> 'postgres' order by 1" \
+    2>/dev/null | tr -d '\r' | sed '/^$/d')
+  # `template0`, `template1` and `postgres` are the server's own and are excluded
+  # by the query, not by a name list here — a name list is the thing that goes
+  # stale.
+  db_declared=$(grep -oE '^[[:space:]]*CREATE DATABASE[[:space:]]+[a-z_]+' "$initdb_sql" \
+    | awk '{print $3}' | sort -u)
+  if [ -z "$db_live" ]; then
+    # Anchored on the query returning NOTHING, which no reachable server can do:
+    # a postgres with zero non-template databases is not a state this estate has.
+    bad "database drift: could not read pg_database through 'compose exec -T postgres' — not checked, so not passing"
+  else
+    db_missing=$(comm -23 <(printf '%s\n' "$db_declared") <(printf '%s\n' "$db_live"))
+    db_extra=$(comm -13 <(printf '%s\n' "$db_declared") <(printf '%s\n' "$db_live"))
+    db_dn=$(printf '%s\n' "$db_declared" | wc -l | tr -d ' ')
+    db_ln=$(printf '%s\n' "$db_live" | wc -l | tr -d ' ')
+    if [ -n "$db_missing" ]; then
+      bad "declared in initdb.sql and ABSENT from this server: $(printf '%s' "$db_missing" | tr '\n' ' ') — every service that owns one of these will fail its migration at deploy time. Create it: CREATE DATABASE <name> OWNER cloudsforge"
+    fi
+    if [ -n "$db_extra" ]; then
+      bad "on this server and NOT declared in initdb.sql: $(printf '%s' "$db_extra" | tr '\n' ' ')— a fresh estate would come up without them. Add the line, or drop the database"
+    fi
+    [ -z "$db_missing" ] && [ -z "$db_extra" ] &&
+      ok "initdb.sql declares $db_dn databases and this server has exactly those $db_ln"
+  fi
+fi
+
 echo "── identity publishes a signing key ─────────────────────────────────────"
 jwks=$(curl -s "$IDENTITY/.well-known/jwks.json")
 if printf '%s' "$jwks" | grep -q '"kty"'; then
