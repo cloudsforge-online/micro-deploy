@@ -128,10 +128,16 @@ function withScheduleRefresh(
  * processes that each chose a key have no reason to agree.
  *
  * So this seeds a kind only when NO row of that kind exists at all. Whoever gets there first owns
- * the schedule, and `rescheduleRecurring` re-enqueues under the completed job's own key, so the
- * ownership survives every cycle. The cost is that a kind whose only row is dead-lettered will not
- * be re-seeded — which is correct: a dead-lettered recurring job is a durable record that the work
- * was requested and never done, and quietly creating a fresh one would erase it.
+ * the schedule. The cost is that a kind whose only row is dead-lettered will not be re-seeded —
+ * which is correct: a dead-lettered recurring job is a durable record that the work was requested
+ * and never done, and quietly creating a fresh one would erase it.
+ *
+ * **What admin-api enqueues is not a schedule, and must not be mistaken for one.** Its
+ * `backup.schedule` tick decides when a backup is due and queues the WORK as a one-shot keyed
+ * `backup:<backup_run id>` — admin-api's own `src/jobs.ts` header calls those "distinct artefacts
+ * rather than recurring ticks" and says none of its recurring keys is a row id. `rescheduleRecurring`
+ * therefore re-arms only the row keyed `backup:<environment>`; see its comment for what treating a
+ * one-shot as a tick did to this estate.
  */
 export async function seedRecurring(sql: Sql, queue: JobQueue, environment: string, logger: Logger): Promise<void> {
   const key = leaseKeyFor(environment)
@@ -152,17 +158,37 @@ export async function seedRecurring(sql: Sql, queue: JobQueue, environment: stri
  * stop being free once the row dead-letters — which is what leaves a durable record that
  * verification could not pass.
  *
- * The event's OWN key is reused rather than this process's, so a schedule seeded by admin-api stays
- * where admin-api put it.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **AND ONLY FOR THE ROW THAT IS THE SCHEDULE — WHICH IS THE ONE KEYED `backup:<environment>`.**
+ *
+ * Not every `backup.run` is the nightly one. admin-api enqueues an operator-requested or
+ * schedule-driven run as a ONE-SHOT keyed `backup:<backup_run id>`, carrying that row's id in the
+ * payload. This used to re-enqueue under whatever key arrived, so every one-shot became a permanent
+ * daily job — pinned for ever to a `backup_runs` row that had already succeeded.
+ *
+ * Measured on mainnet 2026-08-10: five one-shots queued while the runner was down, all five
+ * completed within ten minutes of it starting, and all five re-armed themselves for the following
+ * midnight. Six nightly backups where one was intended, growing by one every day admin-api's
+ * `backup.schedule` fires — at ~530 MB a set, on the disk the chain data shares.
+ *
+ * The header states the doctrine this restores: THE LEASE KEY NAMES THE CONTENDED RESOURCE, NOT THE
+ * ROW. A key that names a row is by construction not this environment's schedule, so it is run once
+ * and not put back. Whoever asked for it gets exactly the one backup they asked for.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
 export function rescheduleRecurring(
   queue: JobQueue,
   schedule: RecurringSchedule,
   logger: Logger,
+  scheduleKey: string,
 ): (event: { type: string; kind?: string; key?: string }) => void {
   const kinds = new Set(RECURRING.map((entry) => entry.kind))
   return (event) => {
     if (event.type !== 'completed' || !event.kind || !event.key || !kinds.has(event.kind)) return
+    if (event.key !== scheduleKey) {
+      logger.info('a one-shot backup job completed and was not rescheduled', { kind: event.kind, key: event.key })
+      return
+    }
     void queue
       .enqueue({
         kind: event.kind,
