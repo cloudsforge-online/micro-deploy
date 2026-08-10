@@ -1,0 +1,138 @@
+# THE SECOND EMBER MINER, AND THE ONLY ONE THAT IS NOT ON THE CHAIN HOST.
+#
+#   cd deploy && docker compose -p cf-miners -f compose/docker-compose.miners-apphost.yml up -d
+#
+# Run this ON THE APP HOST (192.168.1.129, inside WSL). `docker-compose.miners.yml`
+# is the chain host's pair and is unchanged; this file adds a third miner beside
+# them rather than moving anything. THE CHAIN ITSELF DOES NOT MOVE AND IS NOT
+# TOUCHED: `cf-hearth-seed`, bitcoind, litecoind and dogecoind all stay on the
+# chain host. What runs here is `bin/hearth-mine.js`, which holds no chain, opens
+# no port and stores nothing but a key — it GETs /mining/template, grinds nonces,
+# and POSTs /mining/submit. It is a CLIENT of the chain in exactly the way a
+# stranger's miner is, and `docker-compose.miners.yml` already argues that going
+# out through the public HTTPS path is the right dependency. From this host that
+# argument is true rather than aspirational: there is no loopback to fall back to.
+#
+# ── WHY A SECOND MINER EXISTS AT ALL: micro-org#363 ──────────────────────────
+#
+# `docker-compose.miners.yml` says of its 0.25 throttle: "at the current target
+# one core finds a block every few seconds, so a quarter core is already far more
+# than the chain needs". Measured on 2026-08-10, that is false, and had been for
+# about 2,000 blocks:
+#
+#   difficulty                             256 — exactly GENESIS_TARGET, the FLOOR
+#   mean interval over the preceding 50    29–50 s, against a TARGET_BLOCK_TIME of 15 s
+#   cf-miner-mainnet, throttle 0.25        a steady 7–8 H/s
+#
+# A chain at its difficulty floor cannot ask for easier work. The retarget was
+# already saturated and the miner was still about a third of what a 15 s block
+# needs, so the shortfall came out of block time and nothing anywhere said so.
+#
+# It got worse the same evening. Browser mining shipped in 2.5.16, one reader's
+# tab took difficulty 256 -> 8,146 in ~140 blocks, and when that tab closed the
+# tip sat unmoved for 19 minutes, then 48 minutes at difficulty 5,712 — on a
+# 15-second chain. Recovery is slow BY CONSTRUCTION: LWMA over a 60-block window
+# clamps each sample's solve time to TARGET_BLOCK_TIME * 6, so one long block
+# eases the target by about a fifth however long it really took, and each of
+# those steps costs a whole block at the wedged difficulty.
+#
+# ── WHY HERE AND NOT BY RAISING THE CHAIN HOST'S THROTTLE ────────────────────
+#
+# That was the obvious fix and it was measured and rejected: on 2026-08-10 the
+# chain host sat at load average 11.3 on 4 CORES with bitcoind and dogecoind in
+# initial block download, and testnet is stopped specifically so Bitcoin can
+# catch up. Taking CPU there would be paid for out of that sync.
+#
+# This host has 28 cores at load average 2.6 and, measured here on 2026-08-10 at
+# throttle 0.25, does ~30 H/s — four times the chain host's 7–8.
+#
+# ── THE THROTTLE IS 0.10, AND THE NUMBER IS DERIVED RATHER THAN PICKED ───────
+#
+# To hold a 15 s block AT THE FLOOR the chain needs difficulty/target ≈ 256/15 ≈
+# 17 H/s in total. The chain host supplies 7–8. 0.10 of a core here measured
+# ~12 H/s, for a total of ~19–20 H/s.
+#
+# MORE WOULD BE WORSE, WHICH IS THE WHOLE ARGUMENT. Above ~17 H/s the extra
+# hashrate does not buy faster blocks — a retarget always returns block time to
+# 15 s — it buys HIGHER DIFFICULTY, and difficulty is precisely what a surviving
+# miner has to clear alone when the other one stops. At ~19 H/s difficulty settles
+# just above GENESIS_TARGET, so losing this container returns the chain to the
+# 29–50 s blocks it had this morning and cannot wedge it: difficulty is already at
+# its minimum and has nowhere further to fall. Sized for a comfortable margin
+# instead, this file would have manufactured the exact failure it exists to fix.
+#
+# Raise it only against a fresh measurement of the tip interval, and only after
+# reading micro-org#363 — the durable fix is a retarget change in hearth's
+# consensus, which is a hard fork and the owner's call. This is the operational
+# half that does not need one.
+#
+# ── THE KEY IS THIS HOST'S OWN, AND IT HAS NEVER EXISTED IN THE CLEAR ────────
+#
+# Under the account model the coinbase SIGNS the block — src/chain/header.js
+# `verifyPow` recovers the coinbase from the proof signature — so there is no
+# "mine to somebody else's address" mode and this miner must hold a key. Two
+# things it deliberately is NOT:
+#
+#   * not a copy of the chain host's key. Copying a spendable key between hosts
+#     is what micro-org#206 is about. Nothing crossed the network; this key was
+#     generated here by `hearth minerkey new`, which writes only the sealed file.
+#   * not a plaintext `coinbase-key.json`. HEARTH_COINBASE_SOURCE is pinned to
+#     `keystore`, so the search and the create-on-miss are both off — an empty or
+#     unmounted data directory FAILS here instead of quietly minting a new key
+#     and mining into an account nobody has.
+#
+# The keystore is scrypt N=2^18 + AES-256-GCM and is useless without the
+# passphrase, which lives outside this repository at mode 600 and is mounted
+# read-only. HEARTH_COINBASE_ADDRESS pins the address the resolved key must
+# derive, so a wrong mount is a refusal to start rather than three days of blocks
+# paid to nowhere.
+#
+# SAID OUT LOUD, BECAUSE IT IS AN OWNER-LEVEL CONSEQUENCE AND NOT A DETAIL: this
+# is a SECOND address accruing EMBER, separate from the chain host's coinbase.
+# That is a bookkeeping consequence of the key model above, not a preference —
+# and it is recorded in micro-org#363 rather than left for whoever next totals up
+# what the project holds.
+services:
+  miner-mainnet-apphost:
+    # Pinned by commit, never `main`, for the reason `docker-compose.miners.yml`
+    # gives: a miner that follows a moving tag changes behaviour on a restart
+    # nobody asked for. 1568f2d is the first published build that carries
+    # `hearth minerkey` and src/coinbase.js's four key sources — the chain host's
+    # miners are still on 0cf1445, which predates them and could not open a
+    # keystore at all.
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-1568f2dbfd51686a3a3cf08d24756950b9bcacbe
+    container_name: cf-miner-mainnet-apphost
+    entrypoint: ["node", "/app/bin/hearth-mine.js"]
+    command:
+      - "--url"
+      - "https://rpc.cloudsforge.online"
+      - "--data"
+      - "/minerdata"
+      # CHAIN 7411. As on the chain host this only names the banner — the header
+      # ground here comes from the node's /mining/template — but an unregistered
+      # value is a hard error in params.js, which makes the flag a cheap assertion
+      # that somebody thought about which network this miner is on.
+      - "--network"
+      - "hearth"
+      - "--throttle"
+      - "0.10"
+      - "--status-ms"
+      - "60000"
+    # No `extra_hosts` and no trust mount: `rpc.cloudsforge.online` resolves
+    # publicly, through Cloudflare to the tunnel to the chain host's gateway, and
+    # the certificate is Cloudflare's own, which the base image already trusts.
+    # This host has no loopback shortcut to that name and must not be given one.
+    environment:
+      HEARTH_NO_TTY: "1"
+      HEARTH_COINBASE_SOURCE: keystore
+      HEARTH_COINBASE_PASSPHRASE_FILE: /run/secrets/coinbase-passphrase
+      # Public. An address is not a credential, and pinning it here is what turns
+      # a mis-mounted volume into a refusal instead of a silent loss.
+      HEARTH_COINBASE_ADDRESS: "0x2098b519aaf94e704534c6de35c5c516723dcca8"
+    volumes:
+      # Read-only: the miner never needs to write the sealed key, and a container
+      # that cannot write its data directory cannot destroy the key either — the
+      # second half of what micro-org#206 asked for.
+      - ${CF_APPHOST_MINER_KEYS:-/home/savvaniss/dev/cloudsforge/miner-keys}/mainnet:/minerdata:ro
+      - ${CF_APPHOST_MINER_KEYS:-/home/savvaniss/dev/cloudsforge/miner-keys}/secrets/coinbase-passphrase:/run/secrets/coinbase-passphrase:ro
+    restart: unless-stopped
