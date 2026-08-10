@@ -105,13 +105,37 @@ services:
       # `indexer/src/evm.ts` assert 7411 rather than 7412 before it writes
       # a block, and `docker-compose.miners.yml` mines this node as `hearth`.
       HEARTH_NETWORK: "hearth"
+    # ── 10.10.0.1 IS THE WIREGUARD ADDRESS, AND IT IS NOT 0.0.0.0 FOR A REASON ──
+    #
+    # The application stack moved to a second machine on 2026-08-10 (micro-org#338).
+    # This node stays here — it IS a chain — so the four consumers that used to reach
+    # it over `docker0` (indexer, settlement, foresight and the gateway's three
+    # `CF_*_UPSTREAM`s) now arrive from off-box and need an address that exists on
+    # the wire.
+    #
+    # This RPC carries NO CREDENTIAL AT ALL. `estate-web.yml` says so plainly: `rpc.`
+    # and `p2p.` are the only two hostnames in this estate that take work from a
+    # stranger with nothing, and the only thing standing in front of them is a
+    # Traefik rate limit keyed on `Cf-Connecting-Ip` — a limit that is worth
+    # something ONLY because Traefik is the sole path in. Publishing on `0.0.0.0`
+    # here would hand `eth_call` to anybody on the LAN and quietly retire that whole
+    # argument. 10.10.0.1 is a WireGuard address: it is not reachable from the LAN at
+    # all, only from the one peer whose public key is in `wg0.conf` on this host, so
+    # "the only path in is controlled" stays true.
+    #
+    # wg0 must therefore be up before this container starts, or the bind fails and
+    # compose says so loudly. That is the correct failure: a seed that came up
+    # without the app's path to it is worse than one that refused to start.
     ports: !override
       - "127.0.0.1:8545:8545"     # Ethereum JSON-RPC     -> CF_RPC_UPSTREAM
       - "172.17.0.1:8545:8545"
+      - "10.10.0.1:8545:8545"
       - "127.0.0.1:8645:8645"     # REST, /mining/*       -> CF_MINING_UPSTREAM
       - "172.17.0.1:8645:8645"
+      - "10.10.0.1:8645:8645"
       - "127.0.0.1:8648:8648"     # P2P over WebSocket    -> CF_P2P_WS_UPSTREAM
       - "172.17.0.1:8648:8648"
+      - "10.10.0.1:8648:8648"
     # 8646 (raw TCP gossip) is deliberately NOT published. It is the transport a
     # tunnel cannot carry, it has no in-estate consumer, and the two miners that
     # used it are the two services this file exists to keep down.
