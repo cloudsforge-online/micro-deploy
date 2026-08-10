@@ -404,6 +404,10 @@ docker logs ${P}-custody-1 2>&1 | grep '"msg":"starting"'
 
 # ---- 7. Back up the NEW keyring to paper and USB before you walk away (§4).
 #         Until you do, the estate has one copy of it, on one disk.
+
+# ---- 8. Sweep the WHOLE MACHINE for the retired secret. Step 6 changed a file;
+#         it did not change any container that was created from that file
+#         earlier, in this project or any other. See §5.5 — this is not optional.
 ```
 
 A retained old secret is not a lesser secret — it decrypts every blob not yet
@@ -461,6 +465,21 @@ EOF
 It prints counts, public addresses and pass/fail. **It never prints key material,
 and it must not be modified to.** Anything other than `0 bad` is a SEV1: stop, do
 not remove the old secret, and restore from the §2 backup you took at step 5.1.
+
+**Run it after step 6, not before, and read the first line it prints.** Run while
+the old secret is still loaded it passes on a blob that is still encrypted under
+that old secret — the keyring simply reaches for the version the envelope names
+and finds it. That run proves the vault is readable; it does not prove the
+rotation happened. Only the run where the script reports it holds the new version
+alone distinguishes the two. On the local estate 2026-08-10 both runs were
+performed deliberately: the first passed with `[2, 3]` loaded, the second passed
+with `[ 3 ]`, and only the second is quoted as the proof.
+
+The counts may be higher than the drain reported — 875 keys + 880 seeds drained,
+1045 + 1030 verified. A live estate mints while you work, and everything minted
+after `CUSTODY_KEY_VERSION` moved is written at the new version by definition.
+That is why the drain converges instead of chasing its own tail, and a count that
+grew is expected rather than alarming. A count that *shrank* is not.
 
 ### 5.4 Recovering from a skipped drain
 
@@ -543,6 +562,69 @@ only if the old secret still exists somewhere**:
 Performed on the local estate 2026-08-05: 262 keys + 247 seeds re-encrypted,
 **0 failures**, backlog 0, and afterwards 283/283 keys and 268/268 seeds verified
 readable under the service's own keyring.
+
+### 5.5 The rotation is not finished when the file changes
+
+Steps 1–7 above rotate a **file** and re-create **one** container. That is not the
+same as removing the retired secret from the machine, and on 2026-08-10 the
+difference was live on the workstation estate: the rotation of §5.2 had completed,
+every check in §5.5 was zero, §5.3 passed with the new version alone — and three
+containers were still holding retired key material.
+
+Two mechanisms, both of which survive a correctly performed §5.2:
+
+1. **Compose bakes the environment at container *create* time.** A container
+   created from the secrets file before the rotation keeps the old value in its
+   `Config.Env` for as long as the container object exists. `docker restart`
+   re-reads nothing; only `--force-recreate` does.
+
+2. **A second compose *project* can read the same secrets file.** Scoping the
+   rotation to `-p cloudsforge-estate` reaches nothing in `-p cf-erasure`, even
+   though both were brought up from this repository's own
+   `docker-compose.estate.yml` with the same `--env-file` pair.
+
+The quiet case is the one-shot `*-migrate-1` containers. They run for seconds,
+exit 0, are never looked at again, and carry a **full copy of the keyring** in
+their config indefinitely. On 2026-08-10 `cloudsforge-estate-custody-migrate-1`
+was still holding V1 — the secret that had been *publicly disclosed*, four days
+after that was resolved and long after V1 stopped being in any secrets file.
+
+So finish every rotation with a sweep of the whole machine. Fingerprints only:
+
+```bash
+for c in $(docker ps -a --format '{{.Names}}'); do          # -a: STOPPED ONES TOO
+  out=$(docker inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+        | grep '^CUSTODY_MASTER_SECRET_V' \
+        | while IFS='=' read -r n v; do
+            printf '%s=%s ' "$n" "$(printf '%s' "$v" | sha256sum | cut -c1-12)"
+          done)
+  [ -n "$out" ] && printf '%-40s %-9s %s\n' \
+    "$c" "$(docker inspect "$c" --format '{{.State.Status}}')" "$out"
+done
+#   The retired fingerprint must appear NOWHERE. Not in a stopped container,
+#   not in another project, not in a migrate container.
+```
+
+It prints names, container states and 12-character SHA-256 fingerprints, never a
+value — which is also what makes it safe to paste the output into an issue.
+
+Clearing what it finds:
+
+- **Exited one-shot migrate containers:** `docker rm` them. They are artefacts;
+  the next deploy creates them again with current environment.
+- **A running container in another project:** re-create it on the new file. If it
+  owns custody data, that is a full §5.2 rotation of *its* estate, not a
+  re-create — check `custody_keys`/`custody_seeds` counts and the vault file
+  count before you decide which. `cf-erasure` held 0 keys, 0 seeds and an empty
+  vault, so a plain re-create was correct there and would have been destructive
+  had any of the three been non-zero.
+
+**`CF_PORT_BASE` is a shell variable, not an entry in either `--env-file`.** A
+second project on one host must publish on a different base, so re-creating one
+of its containers with the estate's base fails with
+`Bind for 127.0.0.1:4107 failed: port is already allocated`. It appears in no
+compose file; recover it from the published ports of that project's *siblings*
+(`docker ps --format '{{.Names}}\t{{.Ports}}'`) and pass it on the command line.
 
 ---
 
@@ -776,18 +858,34 @@ first precondition query to final verification was **under 10 minutes**.
   after the restart, so they need no drain — which is exactly why the write version
   moves *before* the drain rather than after.
 
-### B.3 What is still outstanding
+### B.3 The local estate, finished 2026-08-10
 
-The **local estate's** mainnet and testnet keyrings were also exposed (§7.1) and
-have **not** been rotated. Its custody container cannot be recreated: the
-committed `compose/docker-compose.estate.yml` requires
-`compose/secrets/outbox.mainnet.env`, which does not exist in the local checkout,
-so `docker compose up` refuses before it starts. Since a keyring change only takes
-effect on container **re-creation** (env is baked at create time, `docker restart`
-re-reads nothing), the rotation cannot be completed there until that file exists.
+The **local estate's** mainnet and testnet keyrings were exposed by the same
+incident (§7.1). They stayed unrotated for five days behind a blocker worth
+naming, because it is the kind that looks permanent and is not: the committed
+`compose/docker-compose.estate.yml` requires `compose/secrets/outbox.mainnet.env`,
+which did not exist in the local checkout, so `docker compose up` refused before
+it started — and a keyring change only takes effect on container **re-creation**.
+A missing file two directories away from custody held a key rotation shut.
 
-What was done instead, because it needed no re-creation: the local estate was
-found mid-failure with 509 blobs orphaned on a retired version, and was fully
-recovered (§5.4). It is now internally consistent — 551 blobs, all `v2:`, all
-readable — but still on an exposed keyring. **Rotate it per §5.2 as soon as the
-compose file is whole.**
+Both are now rotated, on 2026-08-10, and the record is micro-org#144.
+
+- **Mainnet, V2 → V3, full §5.2.** Backup first (`vault.tar`, 4139 entries).
+  Drain: 875 keys + 880 seeds, **0 failures**, remaining 0. Then all three §5.5
+  checks zero, old secret removed, `readableKeyVersions:[3]` alone, and §5.3 run
+  against the new version by itself: **1045 keys ok / 0 bad, 1030 seeds ok / 0
+  bad**. Every key here is ember/EVM, so that proof exercised one of the four
+  address families; the host's data exercises the rest.
+- **Testnet, replaced outright, no drain.** Correct precisely because it
+  encrypted nothing: 0 containers in project `cf-testnet`, no
+  `cf-testnet_custody-keys` volume, no local testnet postgres. It is also a
+  different secret from the host's testnet keyring, which was never exposed. The
+  retired value was deliberately **not** backed up — nothing decrypts with it, so
+  a backup would only be one more copy of exposed material.
+
+**What the rotation did not reach, and §5.5 now exists for.** With all of the
+above green, a sweep of every container on the machine found the retired
+mainnet V2 still baked into a *running* `cf-erasure-custody-1` from a second
+compose project, into its exited migrate container, and — worse — found the
+publicly disclosed **V1** still baked into the estate's own exited
+`custody-migrate-1`. Nothing in §5.2 as written would ever have looked there.
