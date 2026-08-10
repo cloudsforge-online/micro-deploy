@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { selectForPrune, type PrunableRun } from './prune.ts'
-import { assertDestinationIsReal, assertSpaceAvailable, DestinationError, SpaceError } from './disk.ts'
+import { assertDestinationIsReal, assertSpaceAvailable, DestinationError, fsErrorsAt, majorMinorOf, SpaceError } from './disk.ts'
 
 const GiB = 1_073_741_824n
 
@@ -187,4 +187,52 @@ test('a destination on an implausibly small filesystem is refused — that is th
   } finally {
     await rm(dir, { recursive: true, force: true })
   }
+})
+
+// ── THE BACKUP DISK'S ONLY HEALTH SIGNAL (micro-org#207) ──────────────────────────────────────
+//
+// `/dev/sdb` is a Marvell 88SE9230 firmware array bound to `ahci`, so it exposes no SMART and no
+// `-d` type can reach its members. ext4's superblock error counter is what is left. These tests
+// cover the two halves that can be wrong without anything noticing: naming the wrong device, and
+// turning "unreadable" into a zero.
+
+test('a device number decodes to the major:minor /sys/dev/block is indexed by', () => {
+  // 2065 is the estate's own `/backups` on 2026-08-10 — `stat -c %d` inside the running
+  // backup-runner container, and `/sys/dev/block/8:17` -> `…/block/sdb/sdb1`.
+  assert.equal(majorMinorOf(2065n), '8:17')
+  assert.equal(majorMinorOf(2050n), '8:2')
+})
+
+test('a minor past eight bits is not truncated — the high halves of both fields are decoded', () => {
+  // The trap this guards is silent: a naive `dev & 0xff` names a REAL but DIFFERENT device, so the
+  // metric would report some other disk's health under this disk's name. Worse than reporting none.
+  // Built with the same split encoding glibc's makedev() uses, so these are the kernel's numbers
+  // and not this function's own restated.
+  const makedev = (major: bigint, minor: bigint) =>
+    (minor & 0xffn) | ((major & 0xfffn) << 8n) | ((minor & 0xffffff00n) << 12n) | ((major & 0xfffff000n) << 32n)
+
+  assert.equal(majorMinorOf(makedev(253n, 300n)), '253:300')
+  assert.equal(majorMinorOf(makedev(4096n, 1n)), '4096:1')
+  assert.equal(majorMinorOf(makedev(259n, 1048576n)), '259:1048576')
+})
+
+test('a destination with no readable error counter publishes NOTHING, not a zero', async () => {
+  // A temporary directory is on whatever filesystem the test host has, and on macOS or a tmpfs
+  // there is no `/sys/fs/ext4` at all. `null` is the required answer: zero would be a claim that
+  // ext4 has seen no error on this filesystem, which is precisely the unearned green light this
+  // whole issue is about.
+  const dir = await mkdtemp(join(tmpdir(), 'cf-fserr-'))
+  try {
+    const errors = await fsErrorsAt(dir)
+    assert.ok(errors === null || typeof errors.count === 'bigint')
+    if (errors) assert.match(errors.device, /^[a-z0-9-]+$/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a path that does not exist is unreadable rather than an exception', async () => {
+  // This runs inside the /metrics handler. A throw there would be an unhandled rejection on a
+  // scrape, which is a way to lose the whole exposition over a question about one gauge.
+  assert.equal(await fsErrorsAt('/nonexistent-cf-backup-destination'), null)
 })

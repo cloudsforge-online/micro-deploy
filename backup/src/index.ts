@@ -51,7 +51,7 @@ const { env, SERVICE } = await import('./env.ts')
 const { registerHandlers, RecurringSchedule, rescheduleRecurring, seedRecurring, leaseKeyFor } = await import('./jobs.ts')
 const { lastSucceededAt } = await import('./catalogue.ts')
 const { assertClientMatchesServer, parseDsn, readClusterFacts } = await import('./pg.ts')
-const { assertDestinationIsReal, freeBytesAt } = await import('./disk.ts')
+const { assertDestinationIsReal, freeBytesAt, fsErrorsAt } = await import('./disk.ts')
 
 // ── 1. Telemetry, before anything that can fail, so the pool's failure is a structured line.
 const logger = new Logger({ service: SERVICE, level: env.logLevel, version: env.version, env: env.env })
@@ -78,6 +78,20 @@ const metrics = registerJobMetrics(new Metrics())
   .register({ name: 'backup_last_verified_unixtime', help: 'When a restore last proved a set', kind: 'gauge' })
   .register({ name: 'backup_retained_bytes', help: 'Bytes retained after the last prune', kind: 'gauge' })
   .register({ name: 'backup_destination_free_bytes', help: 'Free space at the destination', kind: 'gauge' })
+  // The backup disk has NO SMART — `/dev/sdb` is a Marvell 88SE9230 firmware array behind `ahci`,
+  // and there is no `-d` type that can reach its members (micro-org#207). ext4's superblock error
+  // counter is the one health signal that survives that, and this process is already the one with
+  // the destination mounted. LABELLED BY DEVICE, unlike the gauges above: this is the only one
+  // whose subject is a piece of hardware rather than "the destination", and the alert has to be
+  // able to say `sdb1` without an operator going to look it up. Cardinality is one.
+  // NOTHING IS PUBLISHED when the counter cannot be read — see `fsErrorsAt`; a zero would be a
+  // claim ext4 has not made.
+  .register({
+    name: 'backup_destination_fs_errors',
+    help: 'ext4 errors_count for the filesystem holding the backups, from its superblock',
+    kind: 'gauge',
+    labels: ['device'],
+  })
 
 logger.info('starting', {
   version: env.version,
@@ -202,10 +216,19 @@ const server = createServer((request, response) => {
     return
   }
   if (url === '/metrics') {
-    void freeBytesAt(env.backupRoot)
-      .then((free) => metrics.set('backup_destination_free_bytes', Number(free)))
-      .catch(() => {})
-      .finally(() => response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }).end(metrics.render()))
+    // Both are read AT SCRAPE TIME rather than on a timer: Rule 8 forbids `setInterval`, and a
+    // value sampled when it is asked for cannot be older than the scrape interval. `allSettled`
+    // and not `all`, so a destination whose error counter is unreadable still publishes its free
+    // space — the two questions are independent and one failing must not take the other with it.
+    void Promise.allSettled([
+      freeBytesAt(env.backupRoot).then((free) => metrics.set('backup_destination_free_bytes', Number(free))),
+      fsErrorsAt(env.backupRoot).then((errors) => {
+        // Left UNSET when there is nothing to read. `Metrics.render` then drops the series
+        // entirely, which is the honest encoding of "this filesystem's health was not readable"
+        // and is a different fact from a zero.
+        if (errors) metrics.set('backup_destination_fs_errors', Number(errors.count), { device: errors.device })
+      }),
+    ]).finally(() => response.writeHead(200, { 'content-type': 'text/plain; version=0.0.4' }).end(metrics.render()))
     return
   }
   if (url === '/readyz') {

@@ -55,6 +55,21 @@ write_secret() {
   chmod 644 "$path"
 }
 
+# ── ONE CREDENTIAL MUST HAVE ONE HOME (micro-org#156) ────────────────────────
+# `estate_token`, `fp` and `resolve_token` live in their own file because this
+# script ends by talking to Docker and so cannot be run in CI, while a rule about
+# credentials that nothing exercises is true only on the day it is written.
+# `scripts/check-token-resolution.sh` runs them against fixtures instead.
+# shellcheck source=scripts/resolve-token.sh
+. scripts/resolve-token.sh
+
+# All three resolved BEFORE the first file is written. A refusal on the third
+# token must not leave the first two already rewritten — half a rotation applied
+# is the state this whole section exists to prevent.
+beacon_token=$(resolve_token BEACON_TOKEN CF_BEACON_TOKEN) || exit 1
+analytics_token=$(resolve_token ANALYTICS_TOKEN CF_ANALYTICS_TOKEN) || exit 1
+lantern_token=$(resolve_token LANTERN_TOKEN CF_LANTERN_TOKEN) || exit 1
+
 # Beacon gates /metrics behind auth, deliberately — an open /metrics publishes
 # the shape of the estate to anyone who can reach the port. Prometheus reads the
 # token from this file via `http_headers: files:` rather than from its config,
@@ -84,7 +99,7 @@ write_secret() {
 #
 # Prometheus cannot be told to run as another uid without also owning
 # `/prometheus`, and chown to 65534 needs root the deploy does not have.
-write_secret prometheus/secrets/beacon_token "${CF_BEACON_TOKEN:-}"
+write_secret prometheus/secrets/beacon_token "$beacon_token"
 
 # The SAME token, in a second file, for Alertmanager (micro-org#311). Beacon's
 # `/api/alerts/webhook` is gated exactly like its `/metrics`, and every alert in
@@ -101,14 +116,14 @@ write_secret prometheus/secrets/beacon_token "${CF_BEACON_TOKEN:-}"
 # read-only mounts into two containers, and mounting Prometheus's secrets
 # directory into Alertmanager to save a copy would hand Alertmanager the
 # analytics and lantern tokens as well — three credentials to deliver one.
-write_secret alertmanager/secrets/beacon_token "${CF_BEACON_TOKEN:-}"
+write_secret alertmanager/secrets/beacon_token "$beacon_token"
 
 # `analytics` and `lantern` gate /metrics the same way and for the same reason,
 # each with its own header and its own job in prometheus.yml — Prometheus
 # attaches credentials per job and not per target, so three gated services are
 # three jobs. Empty is the honest default here too.
-write_secret prometheus/secrets/analytics_token "${CF_ANALYTICS_TOKEN:-}"
-write_secret prometheus/secrets/lantern_token "${CF_LANTERN_TOKEN:-}"
+write_secret prometheus/secrets/analytics_token "$analytics_token"
+write_secret prometheus/secrets/lantern_token "$lantern_token"
 
 # Alert delivery. Unconfigured falls back to the Beacon incident receiver, which
 # is a degradation (no acknowledgement, no escalation) and not a failure —

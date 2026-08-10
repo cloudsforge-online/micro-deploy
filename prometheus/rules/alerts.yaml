@@ -412,6 +412,79 @@ groups:
             hypothesis; a backup that has not run is not even that.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-restore-from-backup.md
 
+      - alert: BackupDestinationFilesystemErrors
+        # THE BACKUP DISK HAS NO SMART, AND THIS IS THE ONLY HEALTH SIGNAL LEFT
+        # (micro-org#207).
+        #
+        # `/dev/sdb` — 3.6 TB, `/data`, and as of 2026-08-10 the estate's ONLY
+        # backup destination — is a MARVELL 88SE9230 virtual disk. `smartctl -H`
+        # answers "device lacks SMART capability", and on 2026-08-10 the "we used
+        # the wrong `-d` type" hypothesis was closed permanently rather than left
+        # untried: the controller is bound to `ahci`, not to a RAID driver, so it
+        # does its array in FIRMWARE and hands the kernel one ordinary SATA
+        # device. The member disks are not devices Linux has ever seen, there is
+        # no `-d` value that can work, and `mvcli` is in no Ubuntu archive.
+        # Reallocated sectors, pending sectors, power-on hours and the overall
+        # assessment are permanently unknown for the disk holding every backup.
+        #
+        # ext4 keeps its own error count in the SUPERBLOCK and exposes it under
+        # `/sys`, so it survives a reboot and a remount and needs no root, no
+        # smartmontools and no privileged container. The backup runner publishes
+        # it from the process that already has the destination mounted, resolving
+        # the device from `st_dev` rather than from configuration — measured
+        # inside the running container on 2026-08-10, `/backups` resolves to
+        # `sdb1` and reads 0.
+        #
+        # ── WHAT THIS DOES AND DOES NOT SAY, BECAUSE IT WILL BE OVER-READ ─────
+        #
+        # SMART's value is PREDICTION — sectors climbing before anything fails —
+        # and that is genuinely lost. This is DETECTION only. It counts errors
+        # ext4 itself hits; a read error on file DATA handed straight back to a
+        # caller is not one, and a disk days from failure reads zero here until
+        # the first failure. A smoke alarm, not a thermometer. It is still
+        # strictly more than the estate had, which was nothing.
+        #
+        # Do not read a firing of this as "a disk is dying" either. On a firmware
+        # array the member is invisible, so a non-zero count says only that ext4
+        # was handed something it could not complete. The runbook's first step is
+        # therefore to establish whether the BACKUPS are still readable, not to
+        # order hardware.
+        #
+        # ── SEV2 PAGE, NOT A TICKET ───────────────────────────────────────────
+        #
+        # Same severity as `BackupAgeExceeded` above and for the same reason: the
+        # ledger's RPO is zero and this is the medium every backup is on. Unlike
+        # that one it is not a slow-moving condition an operator can catch in the
+        # morning — corruption on a backup volume spreads with every subsequent
+        # write, and the runner writes to it nightly.
+        #
+        # NO `absent()` COMPANION, and that is a deliberate boundary rather than
+        # an oversight. The gauge is absent in exactly two states, and both are
+        # already covered: a runner nobody scrapes fires `BackupNeverRun` below
+        # after 30m, and a destination that is not the real backup disk stops the
+        # runner from starting at all (src/disk.ts writes a canary and checks the
+        # filesystem size). The residue is "the backup disk was reformatted as
+        # something other than ext4", which is a deliberate host change and not a
+        # failure this can be asked to notice.
+        #
+        # `for: 5m` on a counter that lives in a superblock and only ever rises.
+        # It costs nothing on a signal that is permanent once set, and it means a
+        # single anomalous scrape cannot page.
+        expr: backup_destination_fs_errors > 0
+        for: 5m
+        labels:
+          severity: page
+          team: platform
+          service: backup-runner
+          sev: "2"
+        annotations:
+          summary: "ext4 has recorded {{ $value }} error(s) on {{ $labels.device }}, which holds every backup"
+          description: >-
+            The backup disk exposes no SMART, so this counter is the only health
+            signal it has. Establish whether the existing sets are still readable
+            before writing another one to the same volume.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-destination-fs-errors.md
+
   # ==================================================== TICKET — money ======
   - name: cf.ticket.money
     rules:
