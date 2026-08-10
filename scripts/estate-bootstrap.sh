@@ -58,13 +58,9 @@ set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
 
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
-IDENTITY=${IDENTITY:-http://127.0.0.1:4100}
-# Section 5e's operator call. 4107 is DERIVED, not chosen: index 7 in
-# `deployableRepos()`, the same rule every host port in the compose file follows,
-# and `make check-web` recomputes it. Reached on loopback rather than through the
-# gateway because this script runs before the gateway is guaranteed to be up.
-CUSTODY=${CUSTODY:-http://127.0.0.1:4107}
 TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
+# IDENTITY and CUSTODY are derived below, once ENV_FILE is known — they are the
+# only two things in this file addressed by PORT, and the port carries the estate.
 
 # ── WHICH ESTATE AM I BOOTSTRAPPING? THE QUESTION THIS SCRIPT COULD NOT ASK ────
 #
@@ -101,6 +97,40 @@ TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 # MERGE in order, which is the whole fix: pass both files, never one.
 ENV_FILE=${ENV_FILE:-}
 OVERLAY=${OVERLAY:-}
+
+# ── AND THE TWO LOOPBACK PORTS, WHICH WERE MAINNET'S LITERALLY ────────────────
+#
+# `IDENTITY=${IDENTITY:-http://127.0.0.1:4100}` was the third way this script
+# could be half-retargeted, and the block above already names the first two. 41xx
+# is MAINNET's published debug range; testnet publishes 51xx, from the same
+# `CF_PORT_BASE` in the same `ENV_FILE` that selects the estate everywhere else.
+#
+# Measured on the app host on 2026-08-10, running this script with ENV_FILE and
+# TOKENS_FILE both set to testnet's on a host where both estates are up: sections
+# 1-3 read testnet's DATABASE over `docker compose exec` and talked to MAINNET's
+# identity over HTTP, and the run ended `could not sign in as
+# estate-admin@example.test` — because it was offering testnet's operator
+# password to mainnet's identity, which is exactly the request an attacker would
+# make and exactly the 401 it deserves.
+#
+# It stopped at section 4 by luck, not by design. Section 5's `POST
+# /service-tokens` and `POST /service-credentials` go to `$IDENTITY` while the
+# minted values are written to `$TOKENS_FILE` — so a run that DID get past the
+# login would have written mainnet-issued credentials into testnet's tokens file,
+# and revoked mainnet's existing service credentials on the way past (section 5's
+# revoke loop). Half-retargeted, again, with the halves swapped.
+#
+# `CF_PORT_BASE` from the estate's own env file, therefore, the same rule
+# `scripts/seed/lib.mjs` follows. `4` remains the default for a machine with no
+# env file at all, which is a developer's laptop running the single estate.
+PORT_BASE=${CF_PORT_BASE:-$(grep -E '^CF_PORT_BASE=' "${ENV_FILE:-compose/mainnet.env}" 2>/dev/null | tail -1 | cut -d= -f2- | tr -d ' "'"'"'')}
+PORT_BASE=${PORT_BASE:-4}
+IDENTITY=${IDENTITY:-http://127.0.0.1:${PORT_BASE}100}
+# Section 5e's operator call. `107` is DERIVED, not chosen: index 7 in
+# `deployableRepos()`, the same rule every host port in the compose file follows,
+# and `make check-web` recomputes it. Reached on loopback rather than through the
+# gateway because this script runs before the gateway is guaranteed to be up.
+CUSTODY=${CUSTODY:-http://127.0.0.1:${PORT_BASE}107}
 
 # ── AND THE TWO FILES MUST NAME THE SAME ESTATE (micro-org#238) ───────────────
 #
