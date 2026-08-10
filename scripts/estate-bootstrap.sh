@@ -57,6 +57,32 @@ set -uo pipefail
 
 cd "$(dirname "$0")/.." || exit 1
 
+# ── THE SIBLING CHECKOUTS THIS SCRIPT READS (micro-org#350) ───────────────────
+#
+# This file opens files inside OTHER repositories, under directory names that are
+# not those repositories' names — `micro-contracts` has to be checked out as
+# `contracts`. On a fresh host that produced, from the middle of a run that had
+# already created the operator account and minted credentials:
+#
+#   FileNotFoundError: '../contracts/packages/events/src/audit.ts'
+#
+# A traceback naming a path inside a repository the operator has never heard of,
+# raised well after the run started changing things. Every prerequisite is now
+# named up front, ALL of them in one pass — a preflight that reports one missing
+# repository per run turns standing up a host into clone-rerun-clone-rerun, and
+# each of those runs is a bootstrap against a half-provisioned estate.
+#
+# The list lives in `provision-siblings.sh` and is not repeated here: two copies
+# of a prerequisite list is how one of them becomes wrong.
+if [ -x ./scripts/provision-siblings.sh ]; then
+  if ! ./scripts/provision-siblings.sh --check; then
+    echo >&2
+    echo "Bootstrapping without these would fail partway, after this script had already" >&2
+    echo "created an operator account and minted credentials." >&2
+    exit 1
+  fi
+fi
+
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 # IDENTITY and CUSTODY are derived below, once ENV_FILE is known — they are the

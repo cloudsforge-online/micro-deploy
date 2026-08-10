@@ -18,6 +18,76 @@ anything here, and `down.sh` removes only what this project created.
 
 ---
 
+## Standing up a new host
+
+Two things bite a fresh machine before anything in this repository runs, and
+both of them used to be undiscoverable from the documentation.
+
+### The sibling checkouts, under names that are not their repository names
+
+This repository is not self-contained. Several scripts read files out of
+**sibling repositories**, and they read them under directory names that are
+**not** the repository names — `micro-contracts` has to be checked out as
+`contracts`, `micro-ui` as `ui`. Cloning either with git's default name leaves
+the tooling failing exactly as if it had never been cloned.
+
+```sh
+cd micro/deploy
+./scripts/provision-siblings.sh            # clone what is missing
+./scripts/provision-siblings.sh --check    # report only; non-zero if a required one is absent
+./scripts/provision-siblings.sh --all      # also the optional asset repositories
+```
+
+`estate-bootstrap.sh` runs the `--check` form in its pre-flight, so a missing
+prerequisite is now a named line before anything is created rather than a
+`FileNotFoundError` from the middle of a run that has already minted
+credentials. `make check-siblings` holds the table to the scripts in CI — a row
+that nothing reads, and a read that has no row, both fail the build.
+
+| directory | repository | needed by | absent |
+|---|---|---|---|
+| `org` | `micro-org` | `release-deploy.sh` reads `../org/releases/<version>.yaml` | **required** — no deploy and no rollback |
+| `contracts` | `micro-contracts` | `estate-bootstrap.sh` reads the audited topic list | **required** — bootstrap dies with a traceback |
+| `ui` | `micro-ui` | `surface-routes.py`, `seed/beacon.mjs` | **required** — `estate-up.sh` refuses |
+| `analytics` | `micro-analytics` | `estate-bootstrap.sh` reads `EVENT_TOPICS` | degrades — analytics is never subscribed, silently |
+| `runtime` | `micro-runtime` | `make check-backup`, the `runtimepkgs` build context | degrades — nothing can be built from source |
+| `brand`, `emberkin-assets`, `aetherholm-assets`, `tessera-assets` | `micro-*` | seeded market cover images; the source of `CF_WORLD_ASSETS` | optional — listings get no cover, `/world-assets/` 404s |
+
+The asset repositories **do** have upstreams and are clonable like any other
+(micro-org#350 recorded them as unreproducible state on one machine; they are
+not). The world art itself is a separate step: `materialise.py` in
+`micro-tessera-assets` writes a set, and `CF_WORLD_ASSETS` points at it —
+unmounted, the compose gate calls a 404 "the supported default".
+
+### Docker's credential helper, on the Windows/WSL app host
+
+`docker` inside a WSL distro is Docker Desktop's integration, so
+`~/.docker/config.json` there is the **Windows** config and its `credsStore`
+names a helper that needs an interactive Windows logon session. Over
+`ssh → wsl -d Ubuntu-24.04` there is not one, and docker consults the helper on
+*every* pull — including anonymous ones. The estate's GHCR packages are public
+and never needed a credential at all.
+
+Measured on the app host on 2026-08-10:
+
+```
+docker-credential-desktop.exe list  → exit 1, "A specified logon session does not exist."
+docker pull …                       → exit 1, "error getting credentials - err: exit status 1"
+DOCKER_CONFIG=$HOME/.docker-cf docker pull …  → exit 0
+```
+
+`release-deploy.sh` now detects this itself and routes around it, so a deploy
+over ssh needs no prior knowledge. It **exercises** the helper rather than
+looking for it: the helper binaries are all on `PATH` through WSL's Windows
+interop, so a presence check passes on the very host that cannot deploy.
+
+Note that `DOCKER_CONFIG` also selects the CLI's *plugin* directory. Where the
+compose plugin is user-scoped (a dev Mac, `$HOME/.docker/cli-plugins`) moving it
+takes `docker compose` away with it; the fallback inherits the original's plugin
+directory and the script asserts `docker compose` still answers before going on.
+
+---
+
 ## Bringing it up
 
 ```sh

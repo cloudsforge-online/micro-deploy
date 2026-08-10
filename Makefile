@@ -51,7 +51,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-rule-tests check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-backup ## Run every check
+check: config check-rules check-rule-tests check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-siblings check-release-deploy check-backup ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -127,6 +127,25 @@ check-backup: ## backup/'s own suite — the one deployable that lives in this r
 	  echo "micro-runtime must be checked out beside this repository at ../runtime"; exit 2; }
 	@cd ../runtime && pnpm install --frozen-lockfile
 	@cd backup && pnpm install --frozen-lockfile && pnpm typecheck && pnpm test
+
+check-siblings: ## Every sibling repo this repo reads is in the prerequisite table (micro-org#350)
+	@# `deploy` reads files out of sibling repositories under directory names that
+	@# are NOT the repository names, and nothing said so: standing up the app host
+	@# the only signal was `FileNotFoundError: '../contracts/packages/events/src/
+	@# audit.ts'` from the middle of a bootstrap. The table that clones them is
+	@# checked here rather than trusted, because a hand-kept prerequisite list is
+	@# right on the day it is written and only ever fails on a FRESH host.
+	@python3 scripts/check-sibling-prerequisites.py
+
+siblings: ## Clone the sibling repos the deploy scripts read. Add ALL=1 for the asset repos
+	@./scripts/provision-siblings.sh $(if $(ALL),--all,)
+
+check-release-deploy: ## A release is pulled in full before any container is replaced, and an unfixable failure stops (micro-org#359)
+	@# Two failures in one script. A registry blip that aborts `up -d` partway
+	@# leaves half a release running; and a docker credential helper this host
+	@# cannot run fails EVERY pull, which the retry loop treated as a blip and
+	@# re-asked ~50 times at 45s each — eighteen minutes of silence on 2026-08-10.
+	@python3 scripts/check-release-deploy-pulls-before-switching.py
 
 check-prometheus-targets: ## The scrape list is generated from the release, and excludes what cannot be scraped
 	@# `prometheus/targets/services.yaml` was the literal `[]` from the telemetry
