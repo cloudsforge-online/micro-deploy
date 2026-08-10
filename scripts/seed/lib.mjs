@@ -52,28 +52,42 @@ export const ROOT = path.resolve(HERE, '../..')
 export const CA = process.env.CF_ESTATE_CA || path.join(ROOT, 'gateway/certs/trust.crt')
 
 /**
- * The gateway's own env file — `env/traefik.env`, or `env/traefik.testnet.env`
- * when `CF_TRAEFIK_ENV` selects it, which is the same expression
- * `compose/docker-compose.gateway.yml`, `scripts/gateway-reload.sh` and
- * `scripts/release-deploy.sh` all use. One rule, four readers.
- */
-const TRAEFIK_ENV = path.join(
-  ROOT,
-  'compose/env',
-  `${process.env.CF_TRAEFIK_ENV || 'traefik'}.env`,
-)
-
-/**
  * The ESTATE's env file — `compose/mainnet.env` or `compose/testnet.env` — keyed
  * on the same `CF_EMBER_NETWORK` that `docker-compose.estate.yml` keys
- * `env/chain.${CF_EMBER_NETWORK}.env` on. It is a second file because the two
- * hold different things: the gateway's file has the hostnames, the estate's has
- * `CF_PORT_BASE`, and neither is loaded by the other's reader.
+ * `env/chain.${CF_EMBER_NETWORK}.env` on. It is a second file from the gateway's
+ * because the two hold different things: the gateway's has the hostnames, the
+ * estate's has `CF_PORT_BASE`, and neither is loaded by the other's reader.
+ *
+ * It comes FIRST because it is what names the gateway's file, below.
  */
 const ESTATE_ENV_REL =
   process.env.ESTATE_ENV ||
   `compose/${process.env.CF_EMBER_NETWORK || 'mainnet'}.env`
 const ESTATE_ENV_PATH = path.join(ROOT, ESTATE_ENV_REL)
+
+/**
+ * The gateway's own env file — `env/traefik.env`, or `env/traefik.testnet.env`
+ * when `CF_TRAEFIK_ENV` selects it, which is the same expression
+ * `compose/docker-compose.gateway.yml`, `scripts/gateway-reload.sh` and
+ * `scripts/release-deploy.sh` all use. One rule, four readers.
+ *
+ * ── AND THE SHELL IS NOT WHERE THAT VARIABLE LIVES ───────────────────────────
+ *
+ * `process.env.CF_TRAEFIK_ENV` alone was MAINNET on every testnet run started
+ * the way the deploy scripts start one: `ESTATE_ENV=compose/testnet.env` names a
+ * file COMPOSE reads and the shell does not, so the variable is simply unset and
+ * the `|| 'traefik'` default takes over. `scripts/release-deploy.sh` carries the
+ * measurement — on 2026-08-10 the same substitution one layer up put mainnet
+ * hostnames into seven live testnet containers' allowlists and URLs.
+ *
+ * The estate's file declares the answer (`CF_TRAEFIK_ENV=traefik.testnet` in
+ * `compose/testnet.env`), so ask it before falling back.
+ */
+const TRAEFIK_ENV = path.join(
+  ROOT,
+  'compose/env',
+  `${process.env.CF_TRAEFIK_ENV || fromEstateEnv('CF_TRAEFIK_ENV') || 'traefik'}.env`,
+)
 
 /**
  * One variable out of the file the GATEWAY actually loads.

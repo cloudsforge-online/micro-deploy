@@ -118,7 +118,54 @@ done
 # gateway's own env file is the single source, so read it and adopt it. An
 # explicit shell value still wins if it AGREES, and is fatal if it does not —
 # that disagreement is a real mistake worth stopping for.
-TRAEFIK_ENV="compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
+#
+# ── AND WHICH GATEWAY FILE, WHICH `ESTATE_ENV` ALONE DID NOT REACH ────────────
+#
+# `compose/env/${CF_TRAEFIK_ENV:-traefik}.env` reads `CF_TRAEFIK_ENV` FROM THE
+# SHELL. This script selects the estate with `--env-file`, which COMPOSE reads
+# and the shell does not, so `ESTATE_ENV=compose/testnet.env` left the variable
+# unset and this line silently chose MAINNET's gateway file.
+#
+# It does not stop at reading it. The loop below EXPORTS the three variables it
+# finds, and an exported shell variable outranks every `--env-file` in compose
+# interpolation — so a testnet deploy rendered MAINNET hostnames into every
+# container variable built from them, and the rendered-allowlist guard 300 lines
+# down then checked that allowlist against the same mainnet values and passed.
+#
+# Measured on the app host on 2026-08-10, immediately after deploying testnet
+# 2.5.14 with ESTATE_ENV=compose/testnet.env and the matching tokens file — the
+# variable NAMES, read off the live containers, whose values named mainnet:
+#
+#   cf-testnet-identity-1   IDENTITY_HANDOFF_ORIGINS, IDENTITY_ACCOUNT_URL
+#   cf-testnet-lantern-1    LANTERN_RUM_ORIGINS
+#   cf-testnet-beacon-1     BEACON_HANDOFF_ORIGIN
+#   cf-testnet-faucet-1     FAUCET_CORS_ORIGINS
+#   cf-testnet-foresight-1  STUDIO_PUBLIC_URL
+#   cf-testnet-market-1     STUDIO_PUBLIC_URL
+#
+# Every testnet surface answered 200 throughout. Cross-surface SSO answered 403,
+# the RUM sink 400, and a testnet verification mail would have carried a link to
+# mainnet's Hub. Re-running the deploy did not repair it: the second run made the
+# same substitution and therefore rendered an IDENTICAL config, so compose saw no
+# change and recreated nothing.
+#
+# The estate's own env file already declares the answer — `compose/testnet.env`
+# sets `CF_TRAEFIK_ENV=traefik.testnet` — so read it from there, the same way the
+# three variables below are read from the file that owns THEM. Same rule as the
+# apex: an explicit shell value wins if it agrees and is fatal if it does not.
+estate_traefik_env=$(grep -E '^CF_TRAEFIK_ENV=' "$ESTATE_ENV" 2>/dev/null | tail -1 | cut -d= -f2-)
+if [ -n "${CF_TRAEFIK_ENV:-}" ] && [ -n "$estate_traefik_env" ] &&
+   [ "${CF_TRAEFIK_ENV}" != "$estate_traefik_env" ]; then
+  echo "FATAL: CF_TRAEFIK_ENV disagrees between the shell and $ESTATE_ENV." >&2
+  echo "         shell        : $CF_TRAEFIK_ENV" >&2
+  echo "         $ESTATE_ENV : $estate_traefik_env" >&2
+  echo "       One of them names the wrong environment's gateway file, and whichever" >&2
+  echo "       wins is exported into compose's interpolation — so this deploy would" >&2
+  echo "       build one estate's hand-off allowlist out of the other's hostnames." >&2
+  exit 1
+fi
+export CF_TRAEFIK_ENV="${CF_TRAEFIK_ENV:-${estate_traefik_env:-traefik}}"
+TRAEFIK_ENV="compose/env/${CF_TRAEFIK_ENV}.env"
 
 # ── THREE VARIABLES, BECAUSE THE APEX ALONE STOPPED IDENTIFYING AN ENVIRONMENT ─
 #
