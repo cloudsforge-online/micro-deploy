@@ -175,7 +175,8 @@ check-residue: ## Does any file on this host still hold a live estate secret? RO
 	@# variable NAMES and paths, never a value.
 	@python3 scripts/check-secret-hygiene.py \
 		--transcripts $(or $(ROOTS),$(HOME)) \
-		--against compose/secrets/*.env compose/estate/tokens.env compose/.env .env
+		--against compose/secrets/*.env compose/estate/tokens.env compose/.env .env \
+		--allow prometheus/secrets alertmanager/secrets
 
 estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort

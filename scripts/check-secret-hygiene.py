@@ -240,7 +240,8 @@ def check_live(projects: list[str]) -> int:
     return findings
 
 
-def check_transcripts(roots: list[str], against: list[str]) -> int:
+def check_transcripts(roots: list[str], against: list[str],
+                      allow: list[str] | None = None) -> int:
     """Has any currently-deployed secret been printed into an agent transcript?
 
     Reads the live values only to use them as needles. They are held in memory,
@@ -262,6 +263,18 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
         # resolve(), so that `compose/.env` — a symlink to the token file — and
         # the token file itself are recognised as one source, not two.
         sources.add(path.resolve())
+
+    # `--allow` names the OTHER legitimate homes: the ones a value was copied to
+    # on purpose, by `up.sh`, in a shape this parser cannot read as a source —
+    # `prometheus/secrets/beacon_token` is a bare value with no `=` in it, so it
+    # can never appear in `--against`. Without this, those four files are
+    # reported on every run, the check can never exit 0, and a check that is
+    # permanently red is a check that has been switched off.
+    allowed = [Path(a).resolve() for a in (allow or [])]
+
+    def is_allowed(p: Path) -> bool:
+        rp = p.resolve()
+        return any(rp == a or a in rp.parents for a in allowed)
         for name, value in parse_env_file(path):
             if name in NOT_A_SECRET or not SECRET_NAME.search(name):
                 continue
@@ -290,7 +303,7 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
                 # as a place they leaked to.
                 if fpath.is_symlink():
                     continue
-                if fpath.resolve() in sources:
+                if fpath.resolve() in sources or is_allowed(fpath):
                     continue
                 try:
                     st = fpath.stat()
@@ -312,8 +325,9 @@ def check_transcripts(roots: list[str], against: list[str]) -> int:
                         key = (str(fpath), ",".join(sorted(names)), st.st_mode & 0o777)
                         hits[key] = hits.get(key, 0) + count
 
-    print(f"  {examined} file(s) examined, {len(sources)} source file(s) excluded "
-          f"as the places these values are supposed to live")
+    print(f"  {examined} file(s) examined; {len(sources)} source file(s) and "
+          f"{len(allowed)} allowed path(s) excluded as the places these values "
+          f"are supposed to live")
     for (fpath, names, mode), count in sorted(hits.items(), key=lambda kv: -kv[1]):
         world = " WORLD-READABLE" if mode & 0o004 else ""
         print(f"::error::{names} appears {count}x in {fpath} (mode {mode:o}{world})")
@@ -328,6 +342,9 @@ def main() -> int:
     ap.add_argument("--live", nargs="*", metavar="PROJECT")
     ap.add_argument("--transcripts", nargs="*", metavar="DIR")
     ap.add_argument("--against", nargs="*", default=[], metavar="ENV")
+    ap.add_argument("--allow", nargs="*", default=[], metavar="PATH",
+                    help="files or directories that are legitimate homes for these "
+                         "values; hits inside them are not findings")
     args = ap.parse_args()
 
     if args.files is None and args.live is None and args.transcripts is None:
@@ -342,7 +359,7 @@ def main() -> int:
         total += check_live(args.live)
     if args.transcripts is not None:
         print("── agent transcripts ──")
-        total += check_transcripts(args.transcripts, args.against)
+        total += check_transcripts(args.transcripts, args.against, args.allow)
 
     if total:
         print(f"\n{total} finding(s). NOTHING ABOVE QUOTES A SECRET; resolve each "
