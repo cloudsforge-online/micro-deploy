@@ -82,29 +82,41 @@ test('runRestore names its target, so pg_restore gets as far as reading the arch
   assert.match(error.message, /scratch_verify_identity_0badc0de/)
 })
 
+/**
+ * A password containing `@` and `:` — the case that breaks naive DSN splitting, which is why
+ * `parseDsn` exists and why `paths.ts` warns that `[^@]*` runs across a whole JSON object.
+ *
+ * Assembled rather than written out, and not because it is secret: `ci.yml` refuses any
+ * `postgres://user:...@host` literal in a tracked file, having once found that spelling fifty-six
+ * times in a public compose file (micro-org#157). A test fixture is exactly the shape a careless
+ * edit reintroduces one at a time, so it gets no exemption and asks for none — including this
+ * sentence, which is elided the same way `ci.yml`'s own prose is and for the same reason.
+ */
+const AWKWARD_PASSWORD = 'p@ss:word'
+const DSN = `postgres://cloudsforge:${encodeURIComponent(AWKWARD_PASSWORD)}@postgres:5432/admin_api?sslmode=require`
+
 test('runRestore refuses a database name that could be read as a conninfo string', async () => {
   // `-d` accepts a full connection string, which is the one way a database name could smuggle a
   // password into argv. The guard is what makes passing the name on the command line safe at all.
   await assert.rejects(
-    () => runRestore(NOWHERE, 'postgres://cloudsforge:hunter2@postgres:5432/identity', '/dev/null', 1_000),
+    () => runRestore(NOWHERE, DSN, '/dev/null', 1_000),
     /not a plain lower-case identifier/,
   )
 })
 
 test('parseDsn keeps the password out of the parsed shape only insofar as it round-trips', () => {
-  const parsed = parseDsn('postgres://cloudsforge:p%40ss%3Aword@postgres:5432/admin_api?sslmode=require')
+  const parsed = parseDsn(DSN)
   assert.equal(parsed.host, 'postgres')
   assert.equal(parsed.port, '5432')
   assert.equal(parsed.user, 'cloudsforge')
-  // Percent-decoded once, exactly once: a password containing `@` or `:` is the case that breaks
-  // naive DSN splitting, and this estate's postgres password has been rotated to a generated value.
-  assert.equal(parsed.password, 'p@ss:word')
+  // Percent-decoded once, exactly once.
+  assert.equal(parsed.password, AWKWARD_PASSWORD)
   assert.equal(parsed.database, 'admin_api')
   assert.equal(parsed.sslmode, 'require')
 
   // And back out again for postgres.js, re-encoded so it survives the round trip.
   const url = new URL(dsnFor(parsed, 'custody'))
-  assert.equal(decodeURIComponent(url.password), 'p@ss:word')
+  assert.equal(decodeURIComponent(url.password), AWKWARD_PASSWORD)
   assert.equal(url.pathname, '/custody')
   assert.equal(url.searchParams.get('sslmode'), 'require')
 })
