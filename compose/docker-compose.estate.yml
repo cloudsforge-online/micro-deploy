@@ -1922,13 +1922,25 @@ services:
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
-      SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # ── THE CREDENTIAL, UNDER ITS OWN NAME AT LAST ────────────────────────
+      # See the `settlement` block below for why this replaces
+      # `SETTLEMENT_SERVICE_TOKEN` rather than sitting beside it. On the
+      # migrator for the reason wallet's block gives: `src/migrator.ts` imports
+      # the eager `env.ts`, so it resolves the credential at boot exactly as the
+      # service does.
+      SETTLEMENT_IDENTITY_CREDENTIAL: ${SETTLEMENT_IDENTITY_CREDENTIAL:-}
       # On the migrator for the reason wallet's block gives: `src/migrator.ts`
       # imports the eager `env.ts` and parses this at boot.
       SETTLEMENT_RPC_URLS: *settlement-rpc-urls
       SETTLEMENT_NETWORK: *money-network
       INSTANCE_ID: settlement-migrate
     env_file: *outbox-secrets
+    # Docker Desktop resolves `host.docker.internal`; the Linux daemon does not.
+    # Same reason as the `indexer`, `foresight` and `faucet` blocks, and on the
+    # MIGRATOR as well because `src/migrator.ts` imports the eager `env.ts`,
+    # which parses SETTLEMENT_RPC_URLS at boot.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       postgres:
         condition: service_healthy
@@ -1944,7 +1956,30 @@ services:
       LEDGER_URL: http://ledger:4000
       CUSTODY_URL: http://custody:4000
       INDEXER_URL: http://indexer:4000
-      SETTLEMENT_SERVICE_TOKEN: ${SETTLEMENT_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # ── THE CREDENTIAL, UNDER ITS OWN NAME AT LAST (micro-org#191 §2) ─────
+      #
+      # `estate-bootstrap.sh` has minted `SETTLEMENT_IDENTITY_CREDENTIAL` into
+      # both tokens files all along and no compose block referenced it, so it
+      # reached no container. The bootstrap papered over that by writing the same
+      # secret a second time under `SETTLEMENT_SERVICE_TOKEN`, which
+      # `settlement/src/env.ts` accepts off the `cfsc_` prefix. That alias is
+      # deleted in the same commit as this line, because leaving both is worse
+      # than either: the workaround would then be permanent and invisible.
+      #
+      # Confirmed on this estate 2026-08-10 before making the change: the two
+      # keys in `compose/estate/tokens.env` hold the SAME 48-character `cfsc_`
+      # value — identical sha256 prefix bc42662d5f60 — so this is a rename of the
+      # slot the secret arrives in, not a new secret. `tokens.testnet.env`
+      # carries the credential under its own name too.
+      #
+      # REPLACES the token rather than joining it, and that is enforced:
+      # `check-service-credential-wiring.py` refuses a block that carries a
+      # credential beside a `*_SERVICE_TOKEN` with a non-empty default, because
+      # the old `estate-placeholder-token-0000000000000000` default hands the
+      # service forty characters that read as configured. No default here for the
+      # same reason as wallet's: an absent credential must be a hard `/readyz`
+      # failure, not a placeholder.
+      SETTLEMENT_IDENTITY_CREDENTIAL: ${SETTLEMENT_IDENTITY_CREDENTIAL:-}
       # See the anchor. Without this the service boots reporting `endpoint:false`
       # for all five chains and can neither build nor broadcast anything.
       SETTLEMENT_RPC_URLS: *settlement-rpc-urls
@@ -1954,6 +1989,36 @@ services:
       SETTLEMENT_NETWORK: *money-network
       INSTANCE_ID: settlement-estate
     env_file: *outbox-secrets
+    # ── THE NAME THE RPC MAP IS WRITTEN IN HAS TO RESOLVE (micro-org#191 §1) ──
+    #
+    # Docker Desktop resolves `host.docker.internal`; the Linux daemon does not.
+    # Same reason as the `indexer`, `foresight` and `faucet` blocks, whose own
+    # comments say so — and this is the block that needed it most and did not
+    # have it. The anchor's EMBER default is `http://host.docker.internal:8545`,
+    # so without this line every EMBER withdrawal failed to build with
+    # `TypeError: fetch failed`, was retried to its stuck deadline and refunded,
+    # against a Hearth node that was healthy and one hop away.
+    #
+    # Measured on this estate 2026-08-10, which is the asymmetry this repairs:
+    #   cloudsforge-estate-settlement-1          ExtraHosts []
+    #   cloudsforge-estate-settlement-migrate-1  ExtraHosts []
+    #   cloudsforge-estate-indexer-1             ExtraHosts [host.docker.internal:host-gateway]
+    # and `getent hosts host.docker.internal` returns nothing inside settlement
+    # while indexer resolves it to 172.17.0.1.
+    #
+    # THIS REPLACES A WORKAROUND THAT IS NOT PORTABLE. Both estates' untracked
+    # tokens files currently pin `EMBER_RPC_URL` to that literal 172.17.0.1
+    # address, which is only what `host-gateway` happens to mean on this daemon
+    # and is silently wrong on any host whose bridge is not 172.17.0.0/16. Those
+    # two lines are an operator deletion, not a commit — the files are gitignored
+    # by design — and the bootstrap's carry-forward now preserves any key it does
+    # not itself write, so they survive indefinitely until deleted by hand.
+    # `/readyz` green with them gone is the run that distinguishes the repair
+    # from the workaround.
+    #
+    # `host-gateway` is a no-op where the name already resolves, as indexer says.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}104:4000"
     depends_on:
