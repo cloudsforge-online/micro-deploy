@@ -92,6 +92,15 @@ NOT_A_SECRET = {
     "CUSTODY_KEY_VERSION",   # an integer
     "SMTP_SECURE",           # a boolean
     "GF_AUTH_ANONYMOUS_ENABLED",
+    # Cloudflare Turnstile's PUBLIC key. It matches `_KEY$`, and it is published
+    # on purpose: `GET /auth/challenge` serves it to every browser and it is in
+    # the HTML of the register page, so a hit for it in a transcript or a bundle
+    # is the system working. Naming it here is not a tolerance — it stops the
+    # transcript sweep, the one that runs after a rotation, from reporting a
+    # value anybody can read off the page and burying a real hit under it. Its
+    # PAIR, `TURNSTILE_SECRET`, is deliberately absent from this set and is
+    # checked like every other secret (micro-org#361).
+    "TURNSTILE_SITE_KEY",
 }
 
 # ── WHAT MAKES A VALUE UNFIT ───────────────────────────────────────────────────

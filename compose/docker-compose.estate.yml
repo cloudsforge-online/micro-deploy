@@ -908,6 +908,75 @@ services:
       # link to the wrong estate — the worst kind, because it succeeds.
       IDENTITY_ACCOUNT_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
 
+      # ── THE REGISTRATION CHALLENGE (Cloudflare Turnstile), micro-org#361 ──────
+      #
+      # `POST /auth/register` is the estate's one unauthenticated write, and it
+      # had nothing in front of it but a rate limit of 5. What that cost is
+      # measured, not feared: 4,483 verification tokens issued across the two
+      # networks with ZERO ever consumed, and the mail plan's 250 sends a day
+      # gone before anyone was awake (micro-org#243). Every one of those rows is
+      # still in `identity.users`.
+      #
+      # ── ALL THREE ARE INTERPOLATIONS, AND ONE OF THEM IS A REAL SECRET ───────
+      #
+      # `TURNSTILE_SECRET` is what redeems a solved challenge at Cloudflare's
+      # `siteverify`. It is set BY HAND in `compose/estate/tokens.env` — mode
+      # 0600, gitignored, untracked, absent from history — and it may never
+      # appear here as a literal, in any environment, for the reason the custody
+      # header at the top of this file records in full: this repository is
+      # public. Nothing in this repo reads it and nothing needs to; `identity`
+      # takes it from the environment by name.
+      #
+      # A hand-set value in `tokens.env` SURVIVES A BOOTSTRAP. `estate-bootstrap.sh`
+      # rewrites that file wholesale, but its carry-forward copies every key the
+      # script does not itself write and prints the NAMES it carried. These three
+      # are not minted by it, so they are carried. (The header of `x-custody-secrets`
+      # above says `tokens.env` "IS REGENERATED" as a reason not to put a master
+      # secret there; that was true before the carry-forward existed and is no
+      # longer the whole story. The OTHER reason it gives still stands, and it is
+      # the one that applies here — see the next paragraph.)
+      #
+      # ── WHY THIS IS OFF ON TESTNET, DELIBERATELY ─────────────────────────────
+      #
+      # Testnet is brought up with `--env-file compose/testnet.env`, which
+      # REPLACES the default `.env` symlink rather than adding to it, so nothing
+      # from `tokens.env` reaches it. All three render empty there. That is the
+      # correct outcome and not a gap: `identity/src/env.ts` enables the gate only
+      # when the secret AND the site key are both present, and a testnet estate
+      # whose registrations are challenged by a widget keyed to `hub.cloudsforge.online`
+      # would refuse every one of them — the hostname assertion would never hold.
+      #
+      # ── `:-` AND NOT `:?`, WHICH IS THE UNCOMFORTABLE HALF ───────────────────
+      #
+      # `:?` would fail the bring-up when the secret is missing, which is the
+      # fail-closed instinct and is wrong HERE: it would stop testnet and every
+      # fresh clone dead, arming a guard only where it was never needed. So a
+      # deploy that loses `tokens.env` turns the gate OFF rather than failing, and
+      # that is a real hole with a real precedent — the top of this file records
+      # two agents blanking service credentials with a bare `docker compose up`.
+      # What closes it is the same thing that closes it for every other
+      # credential here: deploy with `scripts/release-deploy.sh`, which passes the
+      # env files explicitly. `identity` publishes the answer at
+      # `GET /auth/challenge`, so `required` there is the one-request check that
+      # the gate is actually on, and beacon's `identity.registration-challenge`
+      # journey asks it every run.
+      #
+      # ── AND WHY THE SITE KEY IS NOT BAKED INTO hub-web ───────────────────────
+      #
+      # It is public — it is in the HTML of the register page — but hub-web reads
+      # NO build-time constants (`hub-web/test/no-build-time-config.test.ts`
+      # forbids it), and one bundle serves every environment. So the browser asks
+      # `identity` for it at runtime, which is why the site key belongs on THIS
+      # service and not on a web one.
+      #
+      # `TURNSTILE_HOSTNAMES` is the allowlist a verified token's `hostname` must
+      # be in — bare hostnames, comma-separated, no scheme and no port, or
+      # `env.ts` refuses to boot. Mainnet has exactly one register form, so it is
+      # one entry.
+      TURNSTILE_SECRET: ${TURNSTILE_SECRET:-}
+      TURNSTILE_SITE_KEY: ${TURNSTILE_SITE_KEY:-}
+      TURNSTILE_HOSTNAMES: ${TURNSTILE_HOSTNAMES:-}
+
       # ══════════════════════════════════════════════════════════════════════════
       # GENERATED — `node scripts/derive-grants.mjs --write`. Do not hand-edit.
       #
