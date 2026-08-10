@@ -40,13 +40,32 @@ services:
     container_name: cf-hearth-seed-testnet
     environment:
       HEARTH_DATA: /data/evm
+    # ── AND 10.10.0.1, FOR THE SAME REASON THE MAINNET SEED HAS IT ────────────
+    #
+    # The app stack moved to a second machine on 2026-08-10 (micro-org#338) and
+    # testnet followed it there; this seed stayed here, because it IS a chain. Its
+    # consumers — the testnet indexer, faucet and foresight, and the testnet
+    # gateway's three `CF_*_UPSTREAM`s — therefore arrive from off-box, and
+    # `172.17.0.1` is a bridge on THIS host that they cannot route to.
+    #
+    # 10.10.0.1 is the WireGuard address, and it is deliberately not `0.0.0.0`:
+    # this RPC carries no credential of any kind, so the only thing keeping it from
+    # a stranger is that the sole path in is controlled. A LAN bind would retire
+    # that argument quietly. `docker-compose.hearth-seed.yml` makes the case in
+    # full and it applies here unchanged.
+    #
+    # wg0 must be up before this starts or the bind fails loudly, which is the
+    # correct failure: a seed the app cannot reach is worse than one that refused.
     ports: !override
       - "127.0.0.1:8745:8545"     # Ethereum JSON-RPC  -> CF_RPC_UPSTREAM
       - "172.17.0.1:8745:8545"
+      - "10.10.0.1:8745:8545"
       - "127.0.0.1:8845:8645"     # REST, /mining/*    -> CF_MINING_UPSTREAM
       - "172.17.0.1:8845:8645"
+      - "10.10.0.1:8845:8645"
       - "127.0.0.1:8848:8648"     # P2P over WebSocket -> CF_P2P_WS_UPSTREAM
       - "172.17.0.1:8848:8648"
+      - "10.10.0.1:8848:8648"
     restart: unless-stopped
     healthcheck:
       # The mainnet overlay carries the full argument; it applies here unchanged
