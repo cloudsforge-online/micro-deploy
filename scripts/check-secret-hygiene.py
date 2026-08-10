@@ -263,6 +263,12 @@ def check_transcripts(roots: list[str], against: list[str],
         # resolve(), so that `compose/.env` — a symlink to the token file — and
         # the token file itself are recognised as one source, not two.
         sources.add(path.resolve())
+        for name, value in parse_env_file(path):
+            if name in NOT_A_SECRET or not SECRET_NAME.search(name):
+                continue
+            for candidate in _split_candidates(value):
+                if len(candidate) >= 16:
+                    needles.setdefault(candidate, set()).add(name)
 
     # `--allow` names the OTHER legitimate homes: the ones a value was copied to
     # on purpose, by `up.sh`, in a shape this parser cannot read as a source —
@@ -275,12 +281,6 @@ def check_transcripts(roots: list[str], against: list[str],
     def is_allowed(p: Path) -> bool:
         rp = p.resolve()
         return any(rp == a or a in rp.parents for a in allowed)
-        for name, value in parse_env_file(path):
-            if name in NOT_A_SECRET or not SECRET_NAME.search(name):
-                continue
-            for candidate in _split_candidates(value):
-                if len(candidate) >= 16:
-                    needles.setdefault(candidate, set()).add(name)
 
     if not needles:
         print("  no deployed secrets to search for — pass --against")
