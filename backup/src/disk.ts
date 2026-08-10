@@ -184,19 +184,38 @@ export function majorMinorOf(dev: bigint): string {
  * through a bind mount (`/home/malf/cloudsforge-backups` -> `/data/cloudsforge-backups` on
  * `/dev/sdb1`) — and a stale value would report a different disk's health under this disk's name,
  * which is worse than reporting none. `stat` follows the bind to the real filesystem for free.
+ *
+ * ── WHY `sysfsRoot` IS A PARAMETER, WHICH IS THE ONLY REASON THIS GAUGE CAN BE BELIEVED ───────
+ *
+ * It is `/sys` in production and nothing else ever passes anything else there. It exists so the
+ * tests can hand this function a sysfs they built in a temporary directory and assert the answer
+ * for a NON-ZERO count.
+ *
+ * That is not a convenience. Every path through here except one returns `null`, and `null` is what
+ * this function returns on a host with no ext4 at all — so a suite that can only reach `null`
+ * asserts nothing about the gauge and would stay green if the whole read were replaced by
+ * `return null`. The alert on this metric is `> 0`; if the rising path is never exercised, the
+ * estate is left with exactly the thing micro-org#207 objects to — a green light that means
+ * nothing was asked. Measured 2026-08-10: the four hosts this suite runs on (macOS dev machines
+ * and the CI runner's container) have no `/sys/fs/ext4` between them, and the estate's own disk
+ * reads 0, so there is no host anywhere that can produce a non-zero from the real sysfs.
+ *
+ * The one thing the fake CANNOT fake is `st_dev`, and it is not asked to: the tests stat a real
+ * temporary directory and key the fake `dev/block` entry off `majorMinorOf` of that real device
+ * number, so the decode this function depends on is exercised against a number the kernel issued.
  */
-export async function fsErrorsAt(path: string): Promise<FilesystemErrors | null> {
+export async function fsErrorsAt(path: string, sysfsRoot = '/sys'): Promise<FilesystemErrors | null> {
   const info = await stat(path, { bigint: true }).catch(() => null)
   if (!info) return null
 
   // `/sys/dev/block/8:17` -> `../../devices/…/block/sdb/sdb1`. The last segment is the name
   // `/sys/fs/ext4` uses. `readlink` and not `realpath`, because the target of the link is all that
   // is wanted and resolving it would touch every directory on the way.
-  const link = await readlink(`/sys/dev/block/${majorMinorOf(info.dev)}`).catch(() => null)
+  const link = await readlink(`${sysfsRoot}/dev/block/${majorMinorOf(info.dev)}`).catch(() => null)
   const device = link?.split('/').pop()
   if (!device) return null
 
-  const raw = await readFile(`/sys/fs/ext4/${device}/errors_count`, 'utf8').catch(() => null)
+  const raw = await readFile(`${sysfsRoot}/fs/ext4/${device}/errors_count`, 'utf8').catch(() => null)
   if (raw === null) return null
 
   // A file under `/sys` that exists and does not hold a number is a kernel this code does not
