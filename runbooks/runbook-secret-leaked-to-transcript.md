@@ -76,8 +76,27 @@ One command, no investigation:
       --against compose/secrets/*.env compose/estate/tokens.env compose/.env
 
 It searches for the values of every secret currently deployed and reports the
-variable names and file paths that contain them. Values are held in memory and
-never written.
+variable names, file paths and file MODES that contain them. Values are held in
+memory and never written.
+
+**Then widen it, because transcripts are not where the worst copy is.** The
+sweep above looks in the two directories a leak was once found in. The copy that
+outlives a rotation is a backup of the file being rotated — `.env.bak-*`,
+`tokens.env.bak-*` — sitting beside the original with the retired value in it,
+and on 2026-08-10 one of those held the *live* beacon token. `make check-residue`
+is the same command with the whole home directory as its root:
+
+    make check-residue                      # ROOTS defaults to $HOME
+    make check-residue ROOTS="/home/malf /srv"
+
+It prunes the three chain data directories by name. Do not remove that pruning
+to "be thorough": unpruned, this walk takes over ten minutes, and the version of
+this step that is too slow to run is the version that gets skipped.
+
+**Read the mode on every hit.** A live token in a file only the operator can
+read is residue to be deleted; the same token in a mode-644 file is a disclosure
+to every account on the host, and the report says `WORLD-READABLE` when it is
+(micro-org#340).
 
 ### 2. Rotate, in this order, and never any other
 

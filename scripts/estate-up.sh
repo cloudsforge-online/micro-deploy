@@ -52,7 +52,12 @@ ESTATE=compose/docker-compose.estate.yml
 TELEMETRY=compose/docker-compose.telemetry.yml
 GATEWAY=compose/docker-compose.gateway.yml
 GATEWAY_ESTATE=compose/docker-compose.estate-gateway.yml
-GW_PROJECT=${COMPOSE_PROJECT_NAME:-cfmicro}
+# TWO projects, not one. The telemetry plane keeps `cfmicro` — renaming a compose
+# project renames its volumes, and those hold 15 days of metrics and 30 of logs.
+# The gateway belongs to the estate it serves; see micro-org#257 and the note at
+# step 3b below.
+TELEMETRY_PROJECT=${COMPOSE_PROJECT_NAME:-cfmicro}
+GW_PROJECT=${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}
 
 export CF_WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
 # The environment is a SUFFIX ON THE SUBDOMAIN, not a prefix on the apex — see the
@@ -324,19 +329,35 @@ echo "── 3a. telemetry, which OWNS the three cf-micro-* networks ───�
 # The gateway file's own header says "the telemetry file must be up first"; this
 # is what "first" has to mean. `up.sh --gateway` passed both in one invocation
 # and had the same defect — fixed there too.
-if ! docker compose -p "$GW_PROJECT" -f "$TELEMETRY" up -d; then
+if ! docker compose -p "$TELEMETRY_PROJECT" -f "$TELEMETRY" up -d; then
   echo "the telemetry plane did not come up; it owns the networks the gateway attaches to" >&2
   exit 1
 fi
 
 echo
 echo "── 3b. the gateway, wired to the estate's network and bound to 443 ──────"
-# A different compose PROJECT (`cfmicro`) from the estate's, deliberately: the
-# telemetry plane and the gateway have their own lifecycle and `make down` must
-# not take the estate with them. The estate overlay attaches to the estate's
-# network as EXTERNAL, so this fails with a named missing network if step 1 was
+# ── THE GATEWAY IS IN THE ESTATE'S PROJECT, AND WAS NOT (micro-org#257) ───────
+#
+# This said "a different compose PROJECT (`cfmicro`) from the estate's,
+# deliberately", and the deliberation was about lifecycle: `make down` on the
+# telemetry plane must not take the estate with it. That reason is real and is
+# preserved — the gateway is still a separate `-f` and a separate invocation with
+# its own lifecycle, and `down.sh` removes it by NAME rather than by project.
+#
+# What was wrong is which project it landed in. The gateway serves the estate's
+# ~50 containers and was labelled with the telemetry plane's project, so
+# `docker compose -p cloudsforge-estate ps` — the command an operator runs to see
+# what is serving this estate — did not list it. The testnet twin of exactly this
+# was deleted as an apparent orphan on 2026-08-05 and again on 2026-08-08, each
+# time putting every public `*-testnet` hostname on 502 while all 46 services
+# reported healthy.
+#
+# NO `-f "$TELEMETRY"` any more: with the projects split, merging the telemetry
+# file into this invocation would build a second telemetry plane inside the
+# estate's project. The estate overlay attaches to the estate's network as
+# EXTERNAL, so this still fails with a named missing network if step 1 was
 # skipped, rather than starting a gateway that resolves nothing.
-if ! docker compose -p "$GW_PROJECT" -f "$TELEMETRY" -f "$GATEWAY" -f "$GATEWAY_ESTATE" up -d; then
+if ! docker compose -p "$GW_PROJECT" -f "$GATEWAY" -f "$GATEWAY_ESTATE" up -d gateway; then
   echo "the gateway did not come up; the surfaces will not be reachable on their hostnames" >&2
   exit 1
 fi

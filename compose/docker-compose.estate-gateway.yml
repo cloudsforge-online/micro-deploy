@@ -1,12 +1,21 @@
 # The gateway, wired to the estate — the overlay that makes a BROWSER work.
 #
-#   docker compose -p cfmicro \
-#     -f compose/docker-compose.telemetry.yml \
+#   docker compose -p cfmicro -f compose/docker-compose.telemetry.yml up -d
+#   docker compose -p cloudsforge-estate \
 #     -f compose/docker-compose.gateway.yml \
-#     -f compose/docker-compose.estate-gateway.yml up -d
+#     -f compose/docker-compose.estate-gateway.yml up -d gateway
 #
 # `scripts/estate-up.sh` does exactly that; this header exists so the ordering is written down
 # somewhere that is not a script.
+#
+# TWO INVOCATIONS AND TWO PROJECTS, and both halves of that are load-bearing. Two invocations
+# because the telemetry file CREATES the three `cf-micro-*` networks the gateway file declares
+# `external`, and compose's top-level `networks:` map is merged last-wins — pass both in one
+# command and the creator becomes an attacher. Two projects because this gateway serves the
+# estate: it lived in the telemetry plane's project until 2026-08-10, so
+# `docker compose -p cloudsforge-estate ps` did not list the one container every public hostname
+# depends on. The testnet twin of that was deleted as an apparent orphan twice in three days
+# (micro-org#257).
 #
 # ── WHY IT IS A SEPARATE FILE ──────────────────────────────────────────────────
 #

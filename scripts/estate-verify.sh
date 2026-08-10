@@ -2298,7 +2298,7 @@ fi
 if [ "$(gw "hub$WEB_SUFFIX" /healthz)" = 200 ]; then
   ok "the gateway is answering on :$GW_PORT"
 else
-  bad "no gateway on https://…:$GW_PORT — run ./scripts/estate-up.sh, or 'docker compose -p cfmicro -f compose/docker-compose.telemetry.yml -f compose/docker-compose.gateway.yml -f compose/docker-compose.estate-gateway.yml up -d'"
+  bad "no gateway on https://…:$GW_PORT — run ./scripts/estate-up.sh, or 'make estate-gateway' (project ${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}, not the telemetry plane's — micro-org#257)"
 fi
 
 # ── AND IS IT ANSWERING FROM THE FILES THAT ARE ON DISK? ──────────────────────

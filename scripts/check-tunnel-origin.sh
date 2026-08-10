@@ -28,8 +28,14 @@
 # which means the container that every public testnet hostname depends on
 # presents itself, to anybody auditing the environment, as an unclaimed container
 # belonging to no stack. Removing it is the reasonable conclusion from what
-# `docker ps` shows. The naming is fixable and should be fixed; until it is, this
-# check is what notices.
+# `docker ps` shows.
+#
+# MAINNET HAD THE SAME DEFECT AND WORSE ODDS — `cfmicro` is not one hyphen from
+# `cloudsforge-estate`, it is a different word — and it was the gateway carrying
+# live traffic. Fixed on 2026-08-10: that gateway is `cloudsforge-estate-gateway-1`
+# in project `cloudsforge-estate` now, and the `owner` line this script prints at
+# the end is what proves it on any given day. Testnet's rename is still open
+# (micro-org#257); until it lands, this check is what notices there.
 #
 # ── WHAT IT ASSERTS ───────────────────────────────────────────────────────────
 #

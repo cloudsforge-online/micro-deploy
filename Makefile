@@ -157,6 +157,21 @@ check-secrets: ## No secret is a placeholder, too short, or already in a transcr
 	@python3 scripts/check-secret-hygiene.py \
 		--files compose/secrets/*.env compose/estate/tokens.env compose/.env
 
+check-residue: ## Does any file on this host still hold a live estate secret? ROOTS=<dirs>
+	@# THE LAST STEP OF EVERY ROTATION, and the one that was being skipped because
+	@# it had no name. A rotation is not finished when the running containers are
+	@# clean: the retired value is still in whatever `.env.bak-*` was made before
+	@# the edit, and twice it was still in an exited `*-migrate-1` container. This
+	@# target covers the file half; the container half is `make check-secrets`
+	@# plus `docker rm` of the exited residue.
+	@#
+	@# It reports the MODE of each file it finds, so a hit that is world-readable
+	@# is distinguishable from a hit that is not (micro-org#340). It prints
+	@# variable NAMES and paths, never a value.
+	@python3 scripts/check-secret-hygiene.py \
+		--transcripts $(or $(ROOTS),$(HOME)) \
+		--against compose/secrets/*.env compose/estate/tokens.env compose/.env
+
 estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort
 
@@ -183,7 +198,26 @@ ESTATE  := --env-file compose/mainnet.env --env-file compose/estate/tokens.env \
 # The gateway, wired to the estate's network and bound to 443. Needed by every
 # browser surface: a bundle derives its sibling hosts as `https://<sub>.<apex>`
 # with NO PORT, so 9096 is unreachable to the page that was served on it.
-GW_ESTATE := -f compose/docker-compose.telemetry.yml \
+#
+# ── IT IS IN THE ESTATE'S PROJECT, WHICH IS THE WHOLE OF #257 ────────────────
+#
+# This was `-p $(COMPOSE_PROJECT_NAME)` — the TELEMETRY plane's project — so the
+# container every public hostname depends on was labelled `cfmicro` while the
+# ~50 services it serves are labelled `cloudsforge-estate`, and
+# `docker compose -p cloudsforge-estate ps` did not list it. The testnet twin of
+# that mistake got the testnet gateway deleted as an apparent orphan twice in
+# three days, each time putting every public `*-testnet` hostname on 502 with all
+# 46 services healthy. The mainnet gateway carried the same defect and the live
+# traffic.
+#
+# NO TELEMETRY OVERLAY here any more, for the same reason `GW_TESTNET` never had
+# one: with the projects split, a `-f docker-compose.telemetry.yml` on this line
+# would create a SECOND telemetry plane inside the estate's project. The three
+# `cf-micro-*` networks are declared `external` and are created by `make up`,
+# which `estate-up.sh` runs first; if they are absent this fails by name rather
+# than starting a gateway that resolves nothing.
+GW_PROJECT ?= cloudsforge-estate
+GW_ESTATE := -p $(GW_PROJECT) \
              -f compose/docker-compose.gateway.yml \
              -f compose/docker-compose.estate-gateway.yml
 
@@ -218,7 +252,11 @@ estate-up: ## Everything: 21 services, 15 frontends, bootstrap, gateway, verify
 	@./scripts/estate-up.sh
 
 estate-gateway: ## Just the gateway half, against an estate that is already up
-	@docker compose -p $(COMPOSE_PROJECT_NAME) $(GW_ESTATE) up -d
+	@# Named service, not a bare `up -d`: the project is the estate's now, and a
+	@# bare `up` in it would be an `up` of a compose file that defines one service
+	@# — harmless today, and one `--remove-orphans` away from removing the estate.
+	@docker compose $(GW_ESTATE) up -d gateway
+	@./scripts/check-tunnel-origin.sh mainnet
 
 estate-gateway-testnet: ## The TESTNET gateway on 9181 — without it every *-testnet host is 502
 	@docker compose $(GW_TESTNET) up -d gateway
@@ -250,7 +288,11 @@ estate-ps: ## What the environment is running, and whether it is healthy
 	@docker compose $(ESTATE) ps
 
 estate-down: ## Stop the environment. Add VOLUMES=1 to delete its databases too
-	@docker compose -p $(COMPOSE_PROJECT_NAME) $(GW_ESTATE) down
+	@# `rm -sf gateway` and NOT `down`: `down` is scoped to the PROJECT rather than
+	@# to the services in the files, and the gateway's project is the estate's, so
+	@# `down` here would take the whole estate with it a line early — including
+	@# `--volumes` when it is asked for.
+	@docker compose $(GW_ESTATE) rm -sf gateway
 	@docker compose $(ESTATE) down $(if $(VOLUMES),--volumes,)
 
 check-gateway: ## Compare the public route map against what the services serve
@@ -273,7 +315,9 @@ check-client-ip-live: ## The same question asked of what a RUNNING gateway actua
 	@# topology change nobody wrote into a compose file (a port opened by hand, a
 	@# second proxy in front, an entrypoint reconfigured on the container) is
 	@# caught by its OUTPUT. No address is printed, only counts.
-	@python3 scripts/check-client-ip-logging.py --live $(or $(PROJECT),cfmicro)
+	@# The GATEWAY's project, which is the estate's since micro-org#257 — this
+	@# reads the gateway's access log, not the telemetry plane's.
+	@python3 scripts/check-client-ip-logging.py --live $(or $(PROJECT),$(GW_PROJECT))
 
 check-surfaces: ## Every registry surface has a gateway route, and every route a surface
 	@# The drift this ends was live three times in one night: `worlds-api` (a

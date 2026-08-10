@@ -91,6 +91,32 @@ services:
       # Scrape credentials, never in the committed config. See README §Secrets.
       - ../prometheus/secrets:/etc/prometheus/secrets:ro
       - prometheus-data:/prometheus
+    # ── HOW THREE LIVE SCRAPE CREDENTIALS STOP BEING WORLD-READABLE ───────────
+    #
+    # `../prometheus/secrets/` holds the Beacon, analytics and lantern tokens.
+    # They were mode 644 — readable by every account on the host — and the
+    # reason written into ../up.sh was not laziness: this image runs as `nobody`
+    # (uid 65534, gid 65534, measured with `docker exec cfmicro-prometheus-1 id`
+    # on 2026-08-09 and again on 2026-08-10), the files are written by the
+    # operator (uid 1000), and 600 therefore means unreadable BY THE PROCESS
+    # THAT NEEDS THEM. Setting a token then produced the same dead scrape as not
+    # setting one, with `unable to read headers file` in the log.
+    #
+    # A supplementary group is what closes that without root and without moving
+    # the files out of the operator's ownership: the container process keeps its
+    # own uid and gains gid 1000, so `-rw-r----- malf malf` is readable inside
+    # and unreadable to any other account outside. `chmod 600` was the wrong
+    # tool for a permission problem that was about a GROUP.
+    #
+    # The alternative — `chown 65534` on the host — was rejected because it
+    # needs root on every deploy AND takes write access away from the operator
+    # and from up.sh, which rewrites these files. This needs neither.
+    #
+    # Measured after the change on 2026-08-10, mainnet: files 640 malf:malf,
+    # `/api/v1/targets` 37 active / 37 up / 0 down, beacon, analytics and lantern
+    # all `up`. micro-org#340.
+    group_add:
+      - "${CF_SECRETS_GID:-1000}"
     ports:
       - "127.0.0.1:9090:9090"
     healthcheck:
@@ -192,6 +218,13 @@ services:
       # Receiver URLs, written by ../up.sh from ../.env. Never committed.
       - ../alertmanager/secrets:/etc/alertmanager/secrets:ro
       - alertmanager-data:/alertmanager
+    # The same supplementary group, for the same reason and against the same
+    # measured uid — see the long note on prometheus above. This directory holds
+    # Beacon's token a second time (`authorization.credentials_file`, because
+    # Alertmanager cannot send an arbitrary header) plus the two delivery
+    # webhook URLs, and a webhook URL is a credential. micro-org#340.
+    group_add:
+      - "${CF_SECRETS_GID:-1000}"
     ports:
       - "127.0.0.1:9093:9093"
     healthcheck:
