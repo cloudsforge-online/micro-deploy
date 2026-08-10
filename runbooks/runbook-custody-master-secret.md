@@ -51,13 +51,16 @@ stored like any other blob. So:
   private key to anyone who ALSO obtains the blobs - a disk, a volume backup, a
   stray `docker cp`, a container escape. Treat exposure as loss of the coins.
 
-As of 2026-08-10 the mainnet estate holds **261 addresses and 246 seeds**, every
-one on `key_version` 3 with 507 of 507 vault blobs stamped `v3:`; the testnet
-estate holds none. (It held 198 and 189 on 2026-08-05 — this number grows, so
-check it rather than quoting it.)
+As of 2026-08-10, after the V3 → V4 rotation of the same day, the mainnet estate
+holds **261 addresses and 246 seeds**, every one on `key_version` 4 with 507 of
+507 vault blobs stamped `v4:`; the testnet estate holds none and is on its own
+separate keyring at V2. (Mainnet held 198 and 189 on 2026-08-05 — this number
+grows, so check it rather than quoting it.) The rotation record, with the
+verification that proves it, is `../docs/custody-backup-restore.md` Appendix B.4.
 
-The V1 secret that was published in this repository's history is unloadable here
-and decrypts nothing that exists. The disposition of that disclosure — accept and
+**Every version below V4 is retired and destroyed.** V1, V2 and V3 decrypt
+nothing that exists on either machine and none of them is loadable anywhere.
+The V1 secret was additionally published in this repository's history. The disposition of that disclosure — accept and
 document, not rewrite history — is recorded in `../docs/custody-v1-disclosure.md`
 with the measurements behind it.
 

@@ -407,7 +407,7 @@ machinery exists precisely so that a compromise is survivable
 ### 5.1 Preconditions
 
 ```bash
-D=~/dev/cloudsforge/deploy; P=cloudsforge-estate; OLD=2; NEW=3
+D=~/dev/cloudsforge/deploy; P=cloudsforge-estate; OLD=3; NEW=4
 # 1. TAKE A BACKUP FIRST (§2). The drain rewrites every blob in place.
 # 2. Record what you are about to rotate.
 docker exec ${P}-postgres-1 psql -U cloudsforge -d custody -tAc \
@@ -432,8 +432,19 @@ sed -i "s/^CUSTODY_KEY_VERSION=.*/CUSTODY_KEY_VERSION=$NEW/" $D/compose/secrets/
 cut -d= -f1 $D/compose/secrets/custody.mainnet.env    # names only — confirm V$OLD and V$NEW both present
 
 # ---- 3. Restart. New blobs are written at v$NEW; every old blob still decrypts.
-docker compose -p $P -f $D/compose/docker-compose.estate.yml \
-  -f $D/compose/docker-compose.release.yml up -d --force-recreate custody
+#         PASS THE ENV FILES. A bare `up` uses the default `.env` instead, and on
+#         the estate that silently drops `mainnet.env` — the public hostnames
+#         revert to localtest.me. Recover the pair the container was CREATED from
+#         rather than typing it from memory:
+#           docker inspect ${P}-custody-1 \
+#             --format '{{index .Config.Labels "com.docker.compose.project.environment_file"}}'
+#         `--no-deps` is there because this recreates ONE service: without it
+#         compose brings the whole dependency chain up, and one unrelated
+#         `*-migrate` failing exit 1 aborts the rotation before custody restarts
+#         (measured on the workstation estate, 2026-08-10).
+docker compose -p $P --env-file $D/compose/mainnet.env --env-file $D/compose/estate/tokens.env \
+  -f $D/compose/docker-compose.estate.yml -f $D/compose/docker-compose.release.yml \
+  up -d --force-recreate --no-deps custody
 docker logs ${P}-custody-1 2>&1 | grep '"msg":"starting"'
 #   readableKeyVersions MUST list both. If it lists only one, STOP.
 
@@ -469,8 +480,9 @@ an operator without shell access.
 ```bash
 # ---- 6. ONLY NOW remove the old secret, and only if step 5 showed zero.
 sed -i "/^CUSTODY_MASTER_SECRET_V$OLD=/d" $D/compose/secrets/custody.mainnet.env
-docker compose -p $P -f $D/compose/docker-compose.estate.yml \
-  -f $D/compose/docker-compose.release.yml up -d --force-recreate custody
+docker compose -p $P --env-file $D/compose/mainnet.env --env-file $D/compose/estate/tokens.env \
+  -f $D/compose/docker-compose.estate.yml -f $D/compose/docker-compose.release.yml \
+  up -d --force-recreate --no-deps custody
 docker logs ${P}-custody-1 2>&1 | grep '"msg":"starting"'
 #   readableKeyVersions must now be [$NEW] alone.
 
@@ -961,3 +973,74 @@ mainnet V2 still baked into a *running* `cf-erasure-custody-1` from a second
 compose project, into its exited migrate container, and — worse — found the
 publicly disclosed **V1** still baked into the estate's own exited
 `custody-migrate-1`. Nothing in §5.2 as written would ever have looked there.
+
+### B.4 V3 → V4, both machines, 2026-08-10
+
+Trigger, and the two halves are not the same event. A V3 → V4 rotation of the
+**estate host** had been carried as a precaution for several days under §7's rule
+— *rotate on exposure, not on proof of theft*. Separately and on the day, the
+**workstation** estate's mainnet keyring was read out of
+`compose/secrets/custody.mainnet.env` into an agent transcript. The second is a
+real exposure; the first was housekeeping until it happened.
+
+**The fingerprints were compared before anything was changed, and that is the
+step worth copying.** The host's V3 was `896b32423197` and the workstation's was
+`9633f318af61`: two different secrets, so the workstation exposure did not reach
+the host. That is §1.1's separation holding under test rather than in principle,
+and it is a twelve-character comparison — no value is printed to establish it.
+Both were rotated anyway; the point of checking first was to know which incident
+was being handled.
+
+| | Estate host `cloudsforge-estate` | Workstation `cloudsforge-estate` |
+| --- | --- | --- |
+| Before | 261 keys + 246 seeds, 507 blobs `v3:` | 1,088 keys + 1,073 seeds, 2,161 blobs `v3:` |
+| Backup first (§2) | `20260810T060819Z`, pulled off-host and re-verified there, 507 = 261 + 246 | local A + B, 2,161 blobs |
+| V4 added, write version moved | `keyVersion:4, readableKeyVersions:[3,4]` | same |
+| Drain | `keys 188, seeds 174, failures 0, remaining 0`, exit 0 | `keys 868, seeds 859, failures 0, remaining 0`, exit 0 |
+| `custody_key_version_backlog` | `0` | `0` |
+| Rows below 4, not retired | `0` | `0` |
+| Blob stamps | `507 v4:` | `2161 v4:` |
+| V3 removed, restarted | `readableKeyVersions:[4]` | `readableKeyVersions:[4]` |
+| **§5.3 under V4 alone** | **keys 261 ok / 0 bad · seeds 246 ok / 0 bad** | **keys 1088 ok / 0 bad · seeds 1073 ok / 0 bad** |
+
+Recorded as micro-org#339. `cf-erasure` held 0 keys, 0 seeds and an empty vault,
+so a plain re-create was correct there — B.3's finding, now handled as B.3 says
+to handle it rather than discovered again.
+
+**§5.5 earned its place a second time.** With every check above green on the
+workstation, the machine-wide sweep still found the retired V3 baked into the
+exited `cloudsforge-estate-custody-migrate-1`. That is the same container class,
+on the same machine, as the V1 that B.3 found — a one-shot that runs for seconds,
+exits 0 and keeps a full copy of the keyring in its `Config.Env` for as long as
+the container object exists. `docker rm`'d, then re-swept clean. **Two rotations
+in a row have ended with a retired secret in an exited migrate container.** Treat
+step 8 as part of the rotation, not as an epilogue to it.
+
+The host swept clean on the first pass, because recreating `custody` there
+recreated `custody-migrate` with it. That difference is not a property of the
+host: it is a property of which services compose happened to bring along, which
+is exactly why the sweep is what decides rather than the deploy command.
+
+Three notes for whoever runs the next one:
+
+- **The drain's own tally is not the finish line, again.** The CLI reported 447
+  remaining on the host against 507 blobs, and re-encrypted 362 of them itself;
+  the recurring job had already taken the rest. B.2 says this and it still reads
+  as an error the first time you see it. Judge by `remaining=0`, the exit code
+  and §5.3.
+- **The workstation's testnet keyring was replaced outright, not drained**, on
+  the same reasoning B.3 gives: no `cf-testnet` project, no `cf-testnet` volume,
+  and no container on that machine has ever held its fingerprint, so nothing was
+  encrypted under it. Stated every time because replacing a keyring without
+  draining is *the* step that destroys funds when blobs do exist.
+- **Every copy of V3 was destroyed the same hour**: `shred -u` on the host's
+  `.bak-pre-v4`, overwritten and removed on the workstation, and the pre-rotation
+  local backup set — v3 ciphertext, undecryptable and therefore worthless the
+  moment the keyring went — deleted after a post-rotation set replaced it. A
+  fresh off-host A + B was pulled so that what is off the machine matches the
+  keyring that is on it.
+
+**What this did not do.** Neither new keyring has a paper or USB copy. §4 is the
+owner's, at each machine's own console, for **both** V4 secrets, and until it is
+done each estate has one copy of artefact C on one disk and the nightly off-host
+A + B recovers nothing. micro-org#25 item 3.
