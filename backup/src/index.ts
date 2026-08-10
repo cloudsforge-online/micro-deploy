@@ -159,7 +159,7 @@ const runner = new JobRunner({
     if (event.type === 'failed' || event.type === 'dead' || event.type === 'error') {
       logger.error('job event', { ...event })
     }
-    rescheduleRecurring(queue, schedule, logger)(event)
+    rescheduleRecurring(queue, schedule, logger, leaseKeyFor(env.env))(event)
   },
 })
 
