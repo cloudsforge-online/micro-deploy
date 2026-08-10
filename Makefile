@@ -155,7 +155,12 @@ check-secrets: ## No secret is a placeholder, too short, or already in a transcr
 	@# printed into an agent transcript by `docker inspect`. See
 	@# runbooks/runbook-secret-leaked-to-transcript.md. Prints NO secret values.
 	@python3 scripts/check-secret-hygiene.py \
-		--files compose/secrets/*.env compose/estate/tokens.env compose/.env
+	@# `.env` at the repository root is in the list because it is the ONLY home of
+	@# CF_GRAFANA_ADMIN_PASSWORD — the telemetry plane reads it, `compose/.env` is
+	@# a symlink to the estate's tokens and does not contain it, and so a check
+	@# against the three compose paths alone had a live credential outside its
+	@# field of view (measured 2026-08-10, during micro-org#156).
+		--files compose/secrets/*.env compose/estate/tokens.env compose/.env .env
 
 check-residue: ## Does any file on this host still hold a live estate secret? ROOTS=<dirs>
 	@# THE LAST STEP OF EVERY ROTATION, and the one that was being skipped because
@@ -170,7 +175,7 @@ check-residue: ## Does any file on this host still hold a live estate secret? RO
 	@# variable NAMES and paths, never a value.
 	@python3 scripts/check-secret-hygiene.py \
 		--transcripts $(or $(ROOTS),$(HOME)) \
-		--against compose/secrets/*.env compose/estate/tokens.env compose/.env
+		--against compose/secrets/*.env compose/estate/tokens.env compose/.env .env
 
 estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort
