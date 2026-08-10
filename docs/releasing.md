@@ -185,6 +185,19 @@ recreates every container that does not match, which is all of them. Nothing
 persistent is harmed — the databases are volumes and are not touched — but it
 is several minutes of testnet being down for a flag.
 
+**If this is the first bring-up after the pause, rotate the operator password
+before the environment is announced.** Testnet's `estate-admin@example.test`
+still holds the password that `estate-bootstrap.sh` once defaulted to in a
+**public** repository — the row has been sitting in testnet's `identity`
+database the whole time it was down, and `up -d` does not re-run the bootstrap,
+so none of the refusals added since it protect this account. The moment the
+`*-testnet` hostnames answer, that account is reachable by anybody who read the
+file. `compose/estate/tokens.testnet.env` carries no `ESTATE_ADMIN_PASSWORD`
+line today, so the seed and verification scripts will refuse to run against
+testnet until it does. The procedure, and why it recreates nothing, is
+`runbooks/runbook-estate-administrator-password.md`; the exposure is
+micro-org#276 item 3.
+
 Then **open it in a browser.** Not `curl`. A page that returns 200 with a
 correct `<h1>` can still be scrolled to the wrong place, have its last footer
 link covered by the consent banner, or throw on line one of a module — all
@@ -301,3 +314,5 @@ the thing it exists to prevent. Read which ref failed, and why, every time.
   has its own ordering constraints
 - `compose/docker-compose.design.yml` — the testnet overlay header carries the
   per-release record of what each tag changed and why
+- `runbooks/runbook-estate-administrator-password.md` — the operator credential,
+  which is a step in the testnet bring-up above and not a step in any release
