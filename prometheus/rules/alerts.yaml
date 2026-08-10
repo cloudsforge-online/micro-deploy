@@ -521,6 +521,99 @@ groups:
             path failing, not a crediting freeze — no such state exists.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-deposit-address-unwatched.md
 
+      - alert: DepositCreditsUnposted
+        # THE MIRROR IMAGE OF THE RULE ABOVE, AND THE ONE HALF OF THE DEPOSIT
+        # PATH NOTHING WAS WATCHING (micro-org#326).
+        #
+        # `wallet_deposit_credits_pending` counts deposit credits whose
+        # `ledger_entry_id` is still null: money that arrived on chain, was
+        # claimed by wallet, and was never posted to the ledger. Until it is
+        # posted the owner cannot see it — their balance is the ledger's answer,
+        # and the ledger has not been told. micro-wallet's own `index.ts` says
+        # "a credit claimed but never posted is money the user cannot see"
+        # beside the line that publishes the gauge, and until this rule nothing
+        # in the estate read it. `grep -rn wallet_deposit_credits_pending
+        # deploy/` returned nothing on 2026-08-10.
+        #
+        # The estate pages for a withdrawal that is stuck and for an asset that
+        # is frozen. Both are money the user cannot move. This is money the user
+        # cannot SEE, arriving by the deposit side, and it was the only one of
+        # the three with no rule at all.
+        #
+        # ── IN cf.ticket.money, NOT A NEW cf.ticket.wallet ──────────────────
+        #
+        # micro-org#326 proposed a `cf.ticket.wallet` group. It is here instead:
+        # the groups in this file are cut by DOMAIN — money, jobs, backup, slo,
+        # telemetry, conformance — and never by owning team, which is why
+        # `DepositAddressUnwatched` directly above already carries `team: wallet`
+        # from inside `cf.ticket.money`. Alertmanager routes on the `severity`
+        # and `team` LABELS and never on the group name, so a new group would
+        # change no routing and would separate the two halves of one failure
+        # path in the file an operator reads at 3am. Group membership only
+        # controls evaluation order and interval, and these two want neither.
+        #
+        # ── TICKET AND NOT A PAGE, DELIBERATELY ──────────────────────────────
+        #
+        # `deposit.post` retries the whole backlog on a schedule and the retry
+        # is safe to repeat: `postCredit` sends the credit key as the ledger's
+        # idempotency key, so a posting that did in fact land is replayed rather
+        # than doubled. A non-zero reading that clears on its own is therefore
+        # the system working, not an incident. A reading that PERSISTS is a
+        # posting that keeps being refused — the ledger down, or a credit the
+        # ledger will not accept — and that never clears without a human.
+        #
+        # ── `for: 20m` IS MEASURED AGAINST THE JOB, NOT CHOSEN FOR ROUNDNESS ──
+        #
+        # `RECURRING` in micro-wallet's `jobs.ts` schedules `deposit.post` at
+        # `everyMs: 5_000`, so twenty minutes is roughly 240 passes over the
+        # same backlog. Anything still unposted after that is not a queue
+        # draining; it is the same posting failing 240 times. The same reasoning
+        # as `for: 30m` on `DepositAddressUnwatched` above, which is sixty
+        # passes of a 30s job — and a shorter window here because the user is
+        # already waiting on a balance they cannot see.
+        #
+        # ── NO `by`, AND NO `absent()` COMPANION ─────────────────────────────
+        #
+        # The gauge is unlabelled by decision, argued at its registration in
+        # micro-wallet's `registerServiceMetrics`: every unposted credit has the
+        # same repair, and the per-row answer — `creditId` and `err` on the
+        # `deposit credit posting failed` log line — belongs in the logs rather
+        # than in a label Prometheus would carry for ever. The runbook opens
+        # with the query that names them, which is the other half of that
+        # bargain and is the half micro-org#327 found missing on
+        # `ledger_assets_frozen`.
+        #
+        # No `absent()` guard either, unlike `BackupNeverRun` below: `beforeScrape`
+        # writes this series unconditionally on every scrape on every replica, so
+        # it cannot go missing while wallet is being scraped at all — and wallet
+        # not being scraped is `BeaconTargetDown`'s question, not this rule's.
+        #
+        # ── THE VALUE IN `summary` ONLY BECAME TRUE WITH micro-org#326 ───────
+        #
+        # The gauge was `(await pendingCredits(db, 500)).length`, i.e.
+        # `min(backlog, 500)`, so `{{ $value }}` saturated at 500 and a runaway
+        # backlog and a nearly-drained one printed the same number. It is a
+        # `count(*)` now. Deploy this rule against a wallet older than that fix
+        # and the condition is still detected — it is `> 0` — but the number in
+        # front of the operator stops being the backlog at 500.
+        expr: wallet_deposit_credits_pending > 0
+        for: 20m
+        labels:
+          severity: ticket
+          team: wallet
+          service: wallet
+          sev: "3"
+        annotations:
+          summary: "{{ $value }} deposit credit(s) claimed and never posted to the ledger"
+          description: >-
+            Money is on the chain, wallet has claimed it, and the ledger has not
+            been told — so the owner's balance does not include it. The retry
+            job has been failing to post these for twenty minutes, which means
+            the posting is being refused rather than queued. Find out why before
+            touching any row: the credits are intact and re-posting is
+            idempotent.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-deposit-credits-unposted.md
+
   # ===================================================== TICKET — jobs ======
   - name: cf.ticket.jobs
     rules:
