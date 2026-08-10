@@ -115,13 +115,23 @@ export const SURFACES = [
     // state". The marketplace page is empty to a visitor, which is the defect
     // the owner reported, and a check that went green on four invisible drafts
     // would be asserting the opposite of what it is for. It can pass — the day
-    // the deposit-and-convert seam funds a seller, it does — so it is a true
+    // the seller is honestly funded with the item, it does — so it is a true
     // statement about a live gap and not a permanent alarm.
+    //
+    // The `empty` line named SHARD until 2026-08-10 and was wrong on its own
+    // terms, not just stale (micro-org#226). What activation escrows is the
+    // ITEM's asset code, never the price's — `holdEscrow(..., assetCode:
+    // listing.itemAssetCode)`, commented there as "reserving the wrong one
+    // produces an entry that balances perfectly and reserves something the
+    // seller is not selling". The item asset is `TOKEN:cf:brand:...`, and the
+    // ledger holds ZERO accounts in any `TOKEN:` asset (measured on mainnet
+    // 2026-08-10). What the price is denominated in has never had anything to do
+    // with why these stay draft.
     empty:
       'the marketplace has nothing for sale. NOTE: the seeder creates four listings and they are ' +
-      'all `draft` — activation needs micro-ledger to escrow the item and the operator holds no ' +
-      'SHARD, so this is the deposit-and-convert seam and not missing content. `select status, ' +
-      'count(*) from listings` shows them',
+      'all `draft` — activation needs micro-ledger to escrow the ITEM (`TOKEN:cf:brand:...`, not ' +
+      'the price asset) and the operator holds none, so this is the honest-funding seam and not ' +
+      'missing content. `select status, count(*) from listings` shows them',
   },
   {
     key: 'market.collections',

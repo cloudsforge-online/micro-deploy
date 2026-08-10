@@ -35,7 +35,11 @@
  * `compose/docker-compose.estate.yml` — the only mention is a comment — so an
  * approval carrying a seed answers 409 `house_address_unconfigured`. Behind that
  * sits the harder one: the seed is staked from a funded platform wallet, and the
- * engagement treasury is funded by mined EMBER converted through the front door.
+ * engagement treasury is funded by mined EMBER arriving through the front door
+ * as an ordinary deposit — this said "converted through the front door" until
+ * 2026-08-10, and 21 §3 deleted the "→ conversion to Shards" step it referred to
+ * on 2026-08-07. The treasury's own ledger legs are EMBER wei as of admin-api's
+ * migration 13 (micro-org#226), so there is no conversion anywhere on this path.
  * Manufacturing that balance to make a pool look deep would be the invisible
  * house position §2 refuses in those words.
  *
