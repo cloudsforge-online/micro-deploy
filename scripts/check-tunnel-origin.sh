@@ -94,7 +94,28 @@ if [ "$canary" != "000" ]; then
   exit 1
 fi
 
-code=$(probe "$port" "$host")
+# ── A GATEWAY THAT HAS JUST STARTED HAS NOT LOADED ITS ROUTES YET ────────────
+#
+# Both `make` targets run this immediately after `docker compose up -d gateway`,
+# and `up -d` returns when the container is STARTED, not when Traefik has read
+# its providers. Measured on the app host on 2026-08-10, bringing the testnet
+# gateway up cold: this check printed the 404 verdict below — "something is
+# bound to this environment's tunnel entrypoint and it is not this
+# environment's gateway" — against the gateway it had itself just started, and
+# the same hostname answered 200 a second later. A false alarm at the exact
+# moment an operator is looking at a real one is worse than no check.
+#
+# So retry, briefly, and only while the answer is still a failing one. A genuine
+# outage is delayed by twenty seconds and reported with the same words; a
+# gateway still waking up gets those seconds and reports ok. The `000` case
+# retries too — the container may be started and not yet listening — but nothing
+# retries the canary, which is about this script's own machinery rather than the
+# estate's.
+for _ in $(seq 1 10); do
+  code=$(probe "$port" "$host")
+  case "$code" in 2*|3*) break ;; esac
+  sleep 2
+done
 
 if [ "$code" = "000" ]; then
   echo "FATAL: NOTHING IS LISTENING ON 127.0.0.1:$port." >&2
