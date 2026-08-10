@@ -24,8 +24,9 @@
 #   docker compose -f compose/docker-compose.telemetry.yml \
 #                  -f compose/docker-compose.gateway.yml up -d
 #
-# The telemetry file must be up first: it creates the three networks this one
-# attaches to as external.
+# `./scripts/ensure-networks.sh` must have run first: it makes the three
+# `cf-micro-*` networks that this file, the telemetry file and the estate overlay
+# all attach to as external. `up.sh` and `scripts/estate-up.sh` call it.
 
 x-obs: &obs
   restart: unless-stopped
@@ -425,9 +426,12 @@ services:
           - trade${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
           - worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
 networks:
-  # External here: created by docker-compose.telemetry.yml, which is the file
-  # that owns them. Two compose files each creating a network called
-  # `cf-micro-edge` is two networks or one error, depending on ordering.
+  # External here, and external in every other file since 2026-08-10:
+  # `scripts/ensure-networks.sh` makes them and nothing in compose owns them.
+  # They used to be created by docker-compose.telemetry.yml, which made ownership
+  # a function of `-f` ORDER — compose merges the top-level `networks:` map
+  # last-wins — and the host showed that bet had already been lost: all three were
+  # live with no compose labels, so no telemetry-only invocation could run at all.
   edge:
     external: true
     name: ${CF_NET_PREFIX:-cf-micro}-edge

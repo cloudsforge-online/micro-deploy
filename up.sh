@@ -215,22 +215,23 @@ if ! docker network inspect stack_default >/dev/null 2>&1; then
 fi
 
 # ------------------------------------------------- networks, then the rest ---
-# THE TELEMETRY FILE GOES UP ON ITS OWN FIRST, and `--gateway` was broken without
-# it on any machine where the networks did not already exist.
+# THE NETWORKS ARE MADE FIRST, BY A SCRIPT, AND NO COMPOSE FILE OWNS THEM.
 #
-# `docker-compose.telemetry.yml` CREATES `cf-micro-edge`, `cf-micro-app` and
-# `cf-micro-vault`. `docker-compose.gateway.yml` declares the same three as
-# `external: true`. Compose merges the top-level `networks:` map across `-f`
-# files and the LAST declaration wins — so passing both in one invocation turned
-# the creator into an attacher, and the command died with "network cf-micro-app
-# declared as external, but could not be found".
+# `docker-compose.telemetry.yml` used to CREATE `cf-micro-edge`, `cf-micro-app`
+# and `cf-micro-vault`. `docker-compose.gateway.yml` declares the same three as
+# `external: true` — and so, since 2026-08-10, does the telemetry file. Compose
+# merges the top-level `networks:` map across `-f` files and the LAST declaration
+# wins, so which file "owned" a network used to depend on the ORDER of the `-f`
+# flags. That is not a discipline, it is a coin toss with a paragraph of
+# documentation attached, and the host proved it had already been lost: all three
+# networks were live with no compose labels at all, which made every
+# telemetry-only invocation — this line, and step 3a of scripts/estate-up.sh —
+# fail outright with "found but has incorrect label com.docker.compose.network".
 #
-# The gateway file's header has always said "the telemetry file must be up
-# first: it creates the three networks this one attaches to as external". This is
-# what "first" has to mean: a separate invocation, not an earlier `-f`. Since the
-# two are now separate PROJECTS as well (see the note at the top), that is no
-# longer a discipline anybody can forget — the files can no longer be merged into
-# one command even by accident.
+# One script owns them now, every compose file attaches, and the ordering hazard
+# does not exist to be got wrong.
+./scripts/ensure-networks.sh
+
 docker compose -p "$PROJECT" "${TELEMETRY[@]}" up -d --remove-orphans
 
 # The gateway, second and in its own project. NO `--remove-orphans` HERE, ever:

@@ -306,11 +306,11 @@ services:
 #
 # `compose/testnet.env` says a second environment is "six variables, no second
 # copy of anything", and names `CF_NET_PREFIX` as the one that moves the three
-# shared networks. THIS FILE IGNORED IT. It is also the file that OWNS them —
-# `docker-compose.gateway.yml` says so where it declares the same three
-# `external: true` ("created by docker-compose.telemetry.yml, which is the file
-# that owns them"), and gateway.yml has interpolated `${CF_NET_PREFIX:-cf-micro}`
-# all along. So the consumer was parameterised and the producer was not: setting
+# shared networks. THIS FILE IGNORED IT. It was also, at the time, the file that
+# OWNED them — that ownership has since moved to `scripts/ensure-networks.sh`,
+# which interpolates the same variable — and gateway.yml has interpolated
+# `${CF_NET_PREFIX:-cf-micro}` all along. So the consumer was parameterised and
+# the producer was not: setting
 # `CF_NET_PREFIX=cf-testnet` made the testnet gateway ask for `cf-testnet-edge`
 # and `cf-testnet-app`, and left the only file that could create them building
 # `cf-micro-*` regardless. Measured before this change — `CF_NET_PREFIX=cf-testnet
@@ -335,14 +335,55 @@ services:
 #
 # So this line changes behaviour on purpose, and only in the case that was
 # already broken.
+# ── ALL FOUR ARE EXTERNAL, AND THE THREE cf-micro-* ONES DID NOT USED TO BE ───
+#
+# This file used to declare `edge`, `app` and `vault` as networks it CREATES,
+# and `docker-compose.gateway.yml` declares the same three as `external: true`.
+# Every header in this directory recorded the discipline that followed from
+# that: telemetry first, in its own invocation, because compose merges the
+# top-level `networks:` map across `-f` files last-wins, so passing both files in
+# one command turned the creator into an attacher.
+#
+# On 2026-08-10 that model was measured against the host and it is not what is
+# running. All three networks exist with NO labels at all —
+# `docker network inspect cf-micro-app --format '{{json .Labels}}'` returns `{}` —
+# so they were created by hand, not by this file, and compose refuses to adopt
+# them:
+#
+#   network cf-micro-app was found but has incorrect label
+#   com.docker.compose.network set to "" (expected: "app")
+#
+# That is FATAL, not a warning. Which means every invocation this repository
+# documents as "telemetry first, on its own" — `./up.sh` with no arguments, and
+# step 3a of `scripts/estate-up.sh` — has been dead on this host for as long as
+# the networks have existed, and nobody noticed because the only invocations that
+# ever ran were the merged ones, where the gateway file's `external: true` won
+# the merge and compose attached instead of creating.
+#
+# `cf-micro-vault` proved the same point a second way: this file declared it
+# `internal: true`, and the live network had `Internal=false`. A declaration that
+# nothing enforces is a comment.
+#
+# So the ownership moves OUT of compose, to `scripts/ensure-networks.sh`, which
+# both bring-up paths call. Three consequences, all of them wanted:
+#
+#   - the last-wins merge hazard is GONE. Every file that mentions these networks
+#     now declares them external, so no ordering discipline is required and none
+#     can be forgotten.
+#   - the networks outlive `docker compose down`, which is correct: the gateway
+#     lives in a different project and is attached to two of them.
+#   - if they are missing, compose fails HERE, naming the network, instead of
+#     silently building a second one under a different name.
 networks:
   edge:
+    external: true
     name: ${CF_NET_PREFIX:-cf-micro}-edge
   app:
+    external: true
     name: ${CF_NET_PREFIX:-cf-micro}-app
   vault:
+    external: true
     name: ${CF_NET_PREFIX:-cf-micro}-vault
-    internal: true
   estate:
     # The running estate. `external` means compose attaches to it and never
     # creates, modifies or removes it.
