@@ -274,9 +274,33 @@ echo "── 3. THE BOOTSTRAP — ONE TRANSACTION, ONCE PER DATABASE ───�
 # The old note here said "if identity ever grows a real bootstrap, delete this
 # block". It has, and this IS that bootstrap — the step is permanent, so the note
 # is gone rather than left pointing at work that is finished.
+# ── `2>&1` IS DELIBERATE, AND COMPOSE WRITES TO THAT STREAM TOO ───────────────
+#
+# Keeping psql's stderr is the point: an error has to land IN the value, so a
+# check reading it sees a wrong answer rather than an empty one. But `docker
+# compose` prefixes its own diagnostics onto the same stream, and those are not
+# psql's output at all.
+#
+# Measured on the app host on 2026-08-10, bootstrapping TESTNET: mainnet's
+# tokens file defines LTC_RPC_URL, DOGE_RPC_URL and ETC_RPC_URL and testnet's
+# does not — the UTXO chains are a mainnet-only concern — so compose emitted
+#
+#   time="…" level=warning msg="The \"LTC_RPC_URL\" variable is not set. …"
+#
+# six times ahead of the single letter `t`. The precondition below compares the
+# whole captured value to "t" after squeezing whitespace, so it read the warnings
+# and reported "identity has not run migration 12" against a database where
+# migration 12 had been applied five days earlier and `platform_role_grants` was
+# sitting in `information_schema.tables`. Bootstrap then refused, and testnet's
+# fifteen missing audit-mirror subscriptions stayed missing.
+#
+# So drop compose's own log lines and keep everything else. They are recognisable
+# without guessing: compose writes `key=value` logfmt beginning with `time=`,
+# which no psql output can start with.
 psql_identity() {
   dc exec -T postgres \
-    psql -qtA -v ON_ERROR_STOP=1 -U cloudsforge -d identity "$@" 2>&1
+    psql -qtA -v ON_ERROR_STOP=1 -U cloudsforge -d identity "$@" 2>&1 \
+    | grep -v '^time="[^"]*" level='
 }
 
 # Migration 12 must have run. Without the table every check below would "pass" by
