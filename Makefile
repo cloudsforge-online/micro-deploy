@@ -267,8 +267,19 @@ GW_ESTATE := -p $(GW_PROJECT) \
 #
 # testnet.env first and the tokens file last, matching every other invocation in
 # this repository, and matching the pair `check-env-files-agree.sh` enforces.
+#
+# ── AND `-p` IS READ FROM THAT FILE, NOT REPEATED HERE ──────────────────────
+#
+# It was the literal `-p cftestnet`, and that literal was the ONLY executable
+# statement of the testnet gateway's project name, while `estate-up.sh`,
+# `gateway-reload.sh` and `estate-verify.sh` each derived their own from
+# `${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}` and got `cf-testnet`.
+# `compose/testnet.env` now carries `CF_GW_PROJECT` and states the whole case;
+# this reads it so there is one value and not two.
+GW_TESTNET_PROJECT := $(shell sed -n 's/^CF_GW_PROJECT=//p' compose/testnet.env | tail -1)
 GW_TESTNET := --env-file compose/testnet.env \
-              --env-file compose/estate/tokens.testnet.env -p cftestnet \
+              --env-file compose/estate/tokens.testnet.env \
+              -p $(or $(GW_TESTNET_PROJECT),cftestnet) \
               -f compose/docker-compose.gateway.yml \
               -f compose/docker-compose.estate-gateway.yml
 
