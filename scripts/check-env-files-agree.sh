@@ -57,10 +57,28 @@ fi
 # neither `mainnet` nor anything else distinguishing, and mainnet's tokens file is
 # the unadorned name — the same "the environment is a suffix, and its absence is
 # the default" rule the hostnames follow.
+#
+# ── `tokens.env` WITH NO DIRECTORY IS THE SAME FILE AND MUST MATCH TOO ────────
+#
+# `*/tokens.env` requires a slash, so the bare filename fell through to `*)` and
+# this guard exited 0 in silence — the one spelling that reaches it from the one
+# place a person is most likely to be standing. Measured on 2026-08-10, before
+# this clause:
+#
+#   compose/testnet.env + tokens.env                     -> exit 0   (accepted)
+#   compose/testnet.env + ./compose/estate/tokens.env    -> exit 1
+#   compose/testnet.env + estate/tokens.env              -> exit 1
+#   testnet.env         + estate/tokens.env              -> exit 1
+#
+# `TOKENS_FILE=tokens.env` run from inside `compose/estate/` is a real
+# invocation: it is what you type when you have just been reading the file, and
+# both entry points take `TOKENS_FILE` from the environment. Every other
+# spelling of the same path was refused, which is the shape of hole that reads
+# as "the guard works" right up to the one time it does not.
 environment_of() {
   case "$1" in
   *testnet*) echo testnet ;;
-  *mainnet* | */tokens.env) echo mainnet ;;
+  *mainnet* | */tokens.env | tokens.env) echo mainnet ;;
   *) echo "" ;;
   esac
 }

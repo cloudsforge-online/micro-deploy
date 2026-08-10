@@ -38,7 +38,9 @@ WHAT IT CHECKS
      dev estate must not be refused, or the check becomes a thing people
      work around.
   2. Every `--env-file` pair written literally in a tracked file names one
-     estate. Both directions, in the Makefile and in every script.
+     estate. Both directions, in the Makefile and in every script. Decided by
+     HANDING EACH PAIR TO THE SHELL GUARD, not by a second copy of its rule —
+     see below.
   3. Both entry points that accept the two paths as variables — `release-deploy.sh`
      and `estate-bootstrap.sh` — actually call the refusal. A guard nothing
      invokes is a guard nothing runs, and this repository has shipped one before:
@@ -47,8 +49,25 @@ WHAT IT CHECKS
   4. The refusal is reachable and its verdicts differ — asserted by running it,
      not by grepping it.
 
+ONE RULE, ONE IMPLEMENTATION — AND THIS FILE USED TO BE THE SECOND COPY
+----------------------------------------------------------------------
+This module carried its own `environment_of()`, "the same rule the shell guard
+applies". The two drifted, in the direction that matters: the shell `case` tested
+`*/tokens.env`, which requires a slash, so a bare `tokens.env` fell through and
+the guard exited 0 on a crossed pair. The copy here had the missing clause, so
+this check went on passing — it was verifying a rule it had reimplemented rather
+than the rule that actually runs on the host. Measured 2026-08-10:
+`check-env-files-agree.sh compose/testnet.env tokens.env` exited 0 while every
+other spelling of the same file exited 1.
+
+So there is no `environment_of` here any more. Every pair — the fixed runtime
+pairs below and every pair found in a tracked file — is decided by RUNNING
+`check-env-files-agree.sh`. A hole in the guard now fails this check instead of
+hiding behind it.
+
 Exit non-zero on failure, print nothing but the verdict on success.
 """
+import itertools
 import pathlib
 import re
 import subprocess
@@ -61,6 +80,21 @@ MAINNET_ENV = "compose/mainnet.env"
 MAINNET_TOKENS = "compose/estate/tokens.env"
 TESTNET_ENV = "compose/testnet.env"
 TESTNET_TOKENS = "compose/estate/tokens.testnet.env"
+
+# The SPELLINGS of the mainnet tokens file an operator actually types. `TOKENS_FILE`
+# is an environment variable on both entry points, so the guard is handed whatever
+# somebody had in their shell — an absolute path from a runbook, a relative one from
+# the repository root, or the bare name from inside `compose/estate/`, which is where
+# a person who has just been reading the file is standing. Each is crossed with the
+# testnet env file below and each must be refused; `tokens.env` was not, until
+# 2026-08-10.
+MAINNET_TOKENS_SPELLINGS = (
+    MAINNET_TOKENS,
+    "./compose/estate/tokens.env",
+    "estate/tokens.env",
+    "tokens.env",
+    "/home/malf/dev/cloudsforge/micro/deploy/compose/estate/tokens.env",
+)
 
 # The entry points that take both paths as overridable variables. Named rather
 # than discovered: what is being asserted is that THESE call the refusal, and a
@@ -77,19 +111,6 @@ ENV_FILE = re.compile(r"--env-file[= ]+([^\s\\'\"]+)")
 CONTINUED = re.compile(r"\\\s*\n\s*")
 
 
-def environment_of(path):
-    """The same rule `check-env-files-agree.sh` applies, and for the same reason.
-
-    `testnet` first: the mainnet tokens file is the unadorned name, so a suffix
-    test has to come before any test that could match it.
-    """
-    if "testnet" in path:
-        return "testnet"
-    if "mainnet" in path or path.endswith("/tokens.env") or path == "tokens.env":
-        return "mainnet"
-    return None
-
-
 def agree(estate_env, tokens):
     proc = subprocess.run(
         ["bash", str(AGREE), estate_env, tokens], capture_output=True, text=True
@@ -104,10 +125,9 @@ def main():
     if not AGREE.exists():
         sys.exit(f"FAIL: {AGREE} does not exist, so nothing enforces the pairing at runtime.")
 
-    for estate_env, tokens in (
-        (TESTNET_ENV, MAINNET_TOKENS),
-        (MAINNET_ENV, TESTNET_TOKENS),
-    ):
+    crossed = [(TESTNET_ENV, tokens) for tokens in MAINNET_TOKENS_SPELLINGS]
+    crossed.append((MAINNET_ENV, TESTNET_TOKENS))
+    for estate_env, tokens in crossed:
         code, out = agree(estate_env, tokens)
         if code == 0:
             bad.append(
@@ -146,7 +166,6 @@ def main():
     # ── 2. EVERY PAIR WRITTEN OUT IN A TRACKED FILE ──────────────────────────
     files = [ROOT / "Makefile"] + sorted(ROOT.glob("*.sh")) + sorted((ROOT / "scripts").glob("*.sh"))
     inspected = 0
-    pairs_found = 0
     for path in files:
         if not path.exists():
             continue
@@ -156,17 +175,19 @@ def main():
             paths = ENV_FILE.findall(line)
             if len(paths) < 2:
                 continue
-            environments = {p: environment_of(p) for p in paths}
-            named = {env for env in environments.values() if env}
-            if len(named) < 2:
-                continue
-            pairs_found += 1
-            bad.append(
-                f"{path.name}: one command names both estates — "
-                + ", ".join(f"`{p}` ({env})" for p, env in environments.items() if env)
-                + ". Compose merges repeated --env-file flags in order and complains about "
-                "nothing; the result is one estate's project holding the other's credentials."
-            )
+            # Every pair in the command, decided by the guard itself. `combinations`
+            # rather than the first two, because a command carrying three env files
+            # can cross the estates in the pair nobody looked at.
+            for first, second in itertools.combinations(paths, 2):
+                code, out = agree(first, second)
+                if code == 0:
+                    continue
+                bad.append(
+                    f"{path.name}: one command names both estates — `{first}` and `{second}`. "
+                    "Compose merges repeated --env-file flags in order and complains about "
+                    "nothing; the result is one estate's project holding the other's "
+                    f"credentials.\n       {out.strip()}"
+                )
 
     # ── 3. THE ENTRY POINTS ACTUALLY CALL IT ─────────────────────────────────
     for caller in CALLERS:
