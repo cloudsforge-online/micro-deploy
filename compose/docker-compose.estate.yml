@@ -2773,7 +2773,8 @@ services:
   #
   # There is a second, decisive reason not to normalise it, and it is already
   # committed: `gateway/dynamic/public-api.yml` sends the public API's
-  # `/v1/markets` and `/v1/categories` to `http://foresight:4021`, read off this
+  # `/v1/markets`, `/v1/categories` and `/v1/stake-assets` to
+  # `http://foresight:4021`, read off this
   # image's own `EXPOSE`. Setting `PORT: "4000"` here would break the public API
   # surface and put this file in drift with the gateway, which
   # `scripts/surface-routes.py` now fails on.

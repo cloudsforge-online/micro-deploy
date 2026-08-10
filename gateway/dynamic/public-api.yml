@@ -93,9 +93,31 @@ http:
       service: cf-api-activity
 
     # -------------------------------------------------------------- foresight
-    # Unversioned upstream: /categories, /markets (foresight/src/server.ts,409)
+    # Unversioned upstream: /categories, /markets, /stake-assets (foresight/src/server.ts)
+    #
+    # `/v1/stake-assets` added 2026-08-10 for micro-org#300. Measured that day against
+    # this estate's gateway, with a Host header straight at the origin so no Cloudflare
+    # hop is in the answer: `/v1/markets` 200, `/v1/stake-assets` 404, `/stake-assets`
+    # 404 — and the same 404 pair on `foresight.<apex>`. The service answers 200 to an
+    # unauthenticated in-estate GET, so the endpoint was public by design and reachable
+    # by nobody outside.
+    #
+    # It rides the router that already exists rather than getting its own, because the
+    # decision that would otherwise be needed is already made here: foresight serves no
+    # `/v1` of its own, and `cf-api-strip-version` is on this router for exactly that
+    # reason. The `foresight.<apex>` content-negotiated split (`estate-web.yml`) is left
+    # alone deliberately — a second Accept-gated path there is the delicate option, and
+    # `api.<apex>` is where the estate's public read endpoints live.
+    #
+    # WHY IT MATTERS MORE THAN A MISSING READ ENDPOINT USUALLY WOULD: this is the only
+    # place the estate publishes `custodialStakingAvailable`, the capability flag behind
+    # the `503 custodial_staking_unconfigured` of micro-org#34. The flag that explains
+    # the refusal was unreachable by the caller receiving it. And micro-org#291 had to
+    # be fixed by `micro-site` checking out `micro-foresight` at build time, because
+    # asking the service at runtime was not possible — fine for the site, useless for a
+    # wallet or a third-party integration, which cannot check out another repository.
     cf-api-foresight:
-      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/markets`) || PathPrefix(`/v1/categories`))'
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/markets`) || PathPrefix(`/v1/categories`) || PathPrefix(`/v1/stake-assets`))'
       priority: 1000
       entryPoints: [websecure, tunnel]
       middlewares: [cf-api-headers, cf-api-strip-version]
