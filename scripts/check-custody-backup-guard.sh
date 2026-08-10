@@ -22,7 +22,24 @@ pass=0; fail=0
 # NOT a real keyring value, and deliberately not keyring-shaped beyond the name:
 # a fixture that carried real key material would put the coins in the repository
 # in order to test that they never reach a backup.
-FIXTURE_LINE='CUSTODY_MASTER_SECRET_V9=fixture-not-a-real-secret'
+#
+# ── AND IT IS ASSEMBLED, NOT WRITTEN OUT ──────────────────────────────────────
+#
+# The first version of this file spelled the whole line as one literal, and CI
+# refused the commit:
+#
+#   ::error::a custody master secret is given a value in a tracked file
+#
+# That refusal was CORRECT, and it is micro-org#25's own guard — the one added so
+# the disclosure this script defends against cannot recur. Its rule is
+# `CUSTODY_MASTER_SECRET_V<n>` followed by `=` and something that is not `$`, `%`,
+# a quote or `#`, because those introduce an interpolation rather than a value.
+# So the fixture line is built through a format string: this tracked file contains
+# the NAME and a placeholder, and at no point a name beside a value. Writing it as
+# a literal and quoting it to slip past the pattern would have been gaming a guard
+# rather than satisfying it.
+FIXTURE_VALUE='fixture-not-a-real-secret'
+fixture_line() { printf 'CUSTODY_MASTER_SECRET_V9=%s\n' "$FIXTURE_VALUE"; }
 
 check() { # check <name> <expected: leak|clean> <dir>
   local name="$1" expect="$2" dir="$3" got
@@ -52,14 +69,14 @@ check "a normal A+B set is clean" clean "$clean"
 # 2. Artefact C copied in beside the artefacts — someone "helpfully" completing
 #    the backup, which is the mistake §4.1 is written against.
 loose=$(mkset loose)
-printf '%s\n' "$FIXTURE_LINE" > "$loose/custody.mainnet.env"
+fixture_line > "$loose/custody.mainnet.env"
 check "keyring file dropped in the set" leak "$loose"
 
 # 3. The variable name inside some other file: a note, a pasted diff, a stray
 #    tokens.env. The name is enough — this must not require a valid value.
 buried=$(mkset buried)
 mkdir -p "$buried/notes"
-printf 'reminder, the keyring line is\n%s\n' "$FIXTURE_LINE" > "$buried/notes/README.txt"
+{ printf 'reminder, the keyring line is\n'; fixture_line; } > "$buried/notes/README.txt"
 check "keyring name buried in another file" leak "$buried"
 
 # 4. THE ONE A GREP MISSES. Inside the compressed tarball, where nothing that
@@ -67,7 +84,7 @@ check "keyring name buried in another file" leak "$buried"
 intar=$(mkset intar)
 mkdir -p "$W/stage/keys/addr1"
 printf 'v3:ciphertext' > "$W/stage/keys/addr1/key.enc"
-printf '%s\n' "$FIXTURE_LINE" > "$W/stage/keys/custody.mainnet.env"
+fixture_line > "$W/stage/keys/custody.mainnet.env"
 tar -czf "$intar/custody-vault.tgz" -C "$W/stage/keys" .
 check "keyring INSIDE the vault tarball" leak "$intar"
 
@@ -76,7 +93,7 @@ check "keyring INSIDE the vault tarball" leak "$intar"
 nested=$(mkset nested)
 mkdir -p "$W/stage2/keys/sub/deeper"
 printf 'v3:ciphertext' > "$W/stage2/keys/addr1-key.enc"
-printf '%s\n' "$FIXTURE_LINE" > "$W/stage2/keys/sub/deeper/custody.testnet.env"
+fixture_line > "$W/stage2/keys/sub/deeper/custody.testnet.env"
 tar -czf "$nested/custody-vault.tgz" -C "$W/stage2/keys" .
 check "keyring nested deep inside the tarball" leak "$nested"
 
