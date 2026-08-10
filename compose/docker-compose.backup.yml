@@ -143,9 +143,36 @@ services:
       start_period: 30s
 
     # This process holds a superuser DSN and reads a key vault. It should not also be able to gain
-    # privileges it was not started with.
+    # privileges it was not started with — so the DEFAULT here is the hardened value and stays that
+    # way.
+    #
+    # ══════════════════════════════════════════════════════════════════════════════════════════
+    # **THE ESTATE HOST CANNOT HONOUR IT, AND `mainnet.env` TURNS IT OFF (micro-org#329).**
+    #
+    # Docker here is the canonical SNAP, 29.3.1 rev 3505. On that build `no-new-privileges` makes
+    # the container fail to exec ANYTHING. Measured on the host 2026-08-10, with no compose file
+    # involved at all:
+    #
+    #   docker run --rm --security-opt no-new-privileges:true node:22-slim node -e 1
+    #     -> exec /usr/local/bin/docker-entrypoint.sh: operation not permitted
+    #   docker run --rm --security-opt no-new-privileges:true alpine:3.20 echo ok
+    #     -> exec /bin/echo: operation not permitted
+    #   docker run --rm node:22-slim node -e 1
+    #     -> works
+    #
+    # Not AppArmor: adding `apparmor=unconfined` changes nothing. It is not this image and not this
+    # service — the first container in the estate to ask for the flag was simply the first to find
+    # out. The symptom is a `Restarting (255)` loop with one line of log, which is why the
+    # measurement is written down here rather than left to be re-derived.
+    #
+    # THE OPT-OUT IS A VARIABLE AND NOT A DELETION. Deleting the line would make every future host
+    # inherit the weakening silently; a variable whose default is `true` means only a host that has
+    # declared it cannot comply runs without it, and the declaration is in a tracked file.
+    # `no-new-privileges:false` is a real docker security-opt, so the opt-out is explicit rather
+    # than an empty string compose would have to interpret.
+    # ══════════════════════════════════════════════════════════════════════════════════════════
     security_opt:
-      - no-new-privileges:true
+      - ${CF_BACKUP_SECURITY_OPT:-no-new-privileges:true}
 
 # Declared so the overlay can mount them by their project-scoped names
 # (`<project>_custody-keys`). `external: false` is the default: these are the estate file's own
