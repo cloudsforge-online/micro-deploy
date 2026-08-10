@@ -278,6 +278,160 @@ if ! python3 scripts/release-render.py "$manifest" --base "$BASE" "${ENVSET[@]}"
   exit 1
 fi
 
+# ── DOCKER'S CREDENTIAL HELPER, WHICH THIS HOST CANNOT RUN (micro-org#359) ────
+#
+# The app host is Windows running WSL2, and `docker` inside the distro is Docker
+# Desktop's integration — so `~/.docker/config.json` is the WINDOWS config and its
+# `credsStore` names a Windows binary. That helper needs an interactive Windows
+# logon session. Over `ssh → wsl -d Ubuntu-24.04` there is not one, and docker
+# consults the helper on EVERY pull, including anonymous ones. The estate's GHCR
+# packages are public and no credential was ever needed; a helper that could not
+# answer a question nobody had to ask blocked an entire release.
+#
+# Measured on 192.168.1.129 (WSL Ubuntu-24.04) on 2026-08-10, over ssh:
+#
+#   docker-credential-desktop.exe list  -> exit 1,
+#     "A specified logon session does not exist. It may already have been terminated."
+#   docker pull hello-world             -> exit 1,
+#     "error getting credentials - err: exit status 1, out: `A specified logon
+#      session does not exist. It may already have been terminated.`"
+#   DOCKER_CONFIG=$HOME/.docker-cf docker pull hello-world  -> exit 0
+#
+# ── WHY THE HELPER IS EXERCISED RATHER THAN LOOKED FOR ────────────────────────
+#
+# The obvious check — is the helper binary on PATH — CANNOT FAIL HERE. Measured
+# on the same host and the same day: `docker-credential-desktop.exe`,
+# `docker-credential-wincred.exe` and `docker-credential-ecr-login.exe` are all
+# on PATH through WSL's Windows interop. They exist and they do not work. So this
+# runs the helper and reads its ANSWER.
+#
+# `list` is the probe because it is the one credential-helper verb that needs no
+# argument and no stored credential, and a healthy helper answers it with a JSON
+# object — `{}` when it holds nothing. Judging it by its exit status alone would
+# call a helper broken for having an empty keychain; judging it by whether it
+# SPOKE THE PROTOCOL is the question actually being asked.
+DOCKER_CONFIG_DIR=${DOCKER_CONFIG:-$HOME/.docker}
+DOCKER_CONFIG_FALLBACK=${DOCKER_CONFIG_FALLBACK:-$HOME/.docker-cf}
+
+# Both keys, because they configure the same thing at different scopes:
+# `credsStore` is the default helper and `credHelpers` overrides it per registry.
+# A `credHelpers` entry for ghcr.io alone breaks this deploy exactly as totally.
+docker_credential_helpers() { # <config dir> -> one helper NAME per line
+  [ -f "$1/config.json" ] || return 0
+  python3 - "$1/config.json" <<'PY' 2>/dev/null
+import json, sys
+try:
+    doc = json.load(open(sys.argv[1]))
+except Exception:
+    sys.exit(0)
+if not isinstance(doc, dict):
+    sys.exit(0)
+names = set()
+store = doc.get("credsStore")
+if isinstance(store, str) and store:
+    names.add(store)
+helpers = doc.get("credHelpers")
+if isinstance(helpers, dict):
+    names.update(h for h in helpers.values() if isinstance(h, str) and h)
+print("\n".join(sorted(names)))
+PY
+}
+
+broken_helper=""
+broken_helper_said=""
+while IFS= read -r helper; do
+  [ -z "$helper" ] && continue
+  if ! command -v "docker-credential-$helper" >/dev/null 2>&1; then
+    broken_helper="$helper"
+    broken_helper_said="docker-credential-$helper is named in the config and is not on PATH"
+    break
+  fi
+  if probe=$("docker-credential-$helper" list </dev/null 2>&1) &&
+     printf '%s' "$probe" | python3 -c 'import json,sys; json.loads(sys.stdin.read() or "{}")' 2>/dev/null
+  then
+    continue
+  fi
+  broken_helper="$helper"
+  broken_helper_said=$(printf '%s' "$probe" | grep -v '^[[:space:]]*$' | tail -1)
+  broken_helper_said=${broken_helper_said:-it produced no output and did not speak the credential protocol}
+  break
+done <<EOF
+$(docker_credential_helpers "$DOCKER_CONFIG_DIR")
+EOF
+
+if [ -n "$broken_helper" ]; then
+  echo "── docker's credential helper does not work here; routing around it ─────"
+  echo "  config     : $DOCKER_CONFIG_DIR/config.json names the helper '$broken_helper'"
+  echo "  it said    : $broken_helper_said"
+  if [ "$DOCKER_CONFIG_FALLBACK" = "$DOCKER_CONFIG_DIR" ]; then
+    echo "FATAL: DOCKER_CONFIG_FALLBACK is the same directory as the broken config." >&2
+    echo "       There is nowhere to put a helper-free config, so every pull below would" >&2
+    echo "       fail on the credential lookup this block exists to avoid." >&2
+    exit 1
+  fi
+  # An EXISTING fallback is validated rather than overwritten: an operator may
+  # have put real `auths` in it, and clobbering those would turn a working private
+  # pull into a `denied` that this script had caused itself.
+  if [ -f "$DOCKER_CONFIG_FALLBACK/config.json" ]; then
+    if [ -n "$(docker_credential_helpers "$DOCKER_CONFIG_FALLBACK")" ]; then
+      echo "FATAL: $DOCKER_CONFIG_FALLBACK/config.json names a credential helper too." >&2
+      echo "       It is the fallback precisely because it must name none — pointing docker" >&2
+      echo "       at it would reproduce the failure it exists to route around." >&2
+      exit 1
+    fi
+  else
+    # `{"auths":{}}` and nothing else. The estate's GHCR packages are public, so
+    # an empty auth set is not a downgrade — it is what an anonymous pull needs,
+    # and it is what docker refused to attempt while a helper was in the way.
+    if ! mkdir -p "$DOCKER_CONFIG_FALLBACK" ||
+       ! printf '{"auths":{}}\n' > "$DOCKER_CONFIG_FALLBACK/config.json"; then
+      echo "FATAL: could not write $DOCKER_CONFIG_FALLBACK/config.json." >&2
+      echo "       Every pull below would fail on the credential helper named above." >&2
+      exit 1
+    fi
+    echo "  wrote      : $DOCKER_CONFIG_FALLBACK/config.json  (no credential helper)"
+  fi
+  # ── AND `DOCKER_CONFIG` IS NOT ONLY ABOUT CREDENTIALS ───────────────────────
+  #
+  # It also selects where the docker CLI looks for its plugins, so moving it can
+  # take `docker compose` away with it — and this script is nothing but compose
+  # calls after this point. Measured 2026-08-11, the same command on two machines:
+  #
+  #   app host (WSL)  plugins in /usr/local/lib/docker/cli-plugins, system-wide
+  #                   DOCKER_CONFIG=$HOME/.docker-cf docker compose version -> v2.40.3
+  #   a dev Mac       plugins in $HOME/.docker/cli-plugins, user-scoped
+  #                   DOCKER_CONFIG=<other dir> docker compose version
+  #                     -> "docker: unknown command: docker compose"
+  #
+  # So the fallback inherits the original's plugin directory when there is one.
+  # A symlink rather than a copy: the plugins are large, and a copy would go stale
+  # the first time docker is upgraded.
+  if [ -d "$DOCKER_CONFIG_DIR/cli-plugins" ] && [ ! -e "$DOCKER_CONFIG_FALLBACK/cli-plugins" ]; then
+    ln -s "$DOCKER_CONFIG_DIR/cli-plugins" "$DOCKER_CONFIG_FALLBACK/cli-plugins" 2>/dev/null &&
+      echo "  linked     : $DOCKER_CONFIG_FALLBACK/cli-plugins -> $DOCKER_CONFIG_DIR/cli-plugins"
+  fi
+
+  export DOCKER_CONFIG="$DOCKER_CONFIG_FALLBACK"
+  echo "  using      : DOCKER_CONFIG=$DOCKER_CONFIG for every registry call below"
+  echo "  NOTE       : this deploy will pull ANONYMOUSLY. The estate's packages are public;"
+  echo "               a private one would answer 'denied' rather than hang."
+
+  # Asserted rather than reasoned about. The plugin directory is the known way this
+  # redirection breaks a deploy, and every step from here to `up -d` is a compose
+  # call — so the cost of being wrong is a deploy that dies later with a message
+  # about a missing subcommand, which reads as a broken docker install rather than
+  # as something this block did.
+  if ! docker compose version >/dev/null 2>&1; then
+    echo "FATAL: \`docker compose\` stopped working once DOCKER_CONFIG moved to" >&2
+    echo "       $DOCKER_CONFIG." >&2
+    echo "       DOCKER_CONFIG also selects the CLI's plugin directory, so a user-scoped" >&2
+    echo "       compose plugin under $DOCKER_CONFIG_DIR/cli-plugins is no longer found." >&2
+    echo "       Link it and re-run:" >&2
+    echo "         ln -s $DOCKER_CONFIG_DIR/cli-plugins $DOCKER_CONFIG_FALLBACK/cli-plugins" >&2
+    exit 1
+  fi
+fi
+
 # ── A REGISTRY FAILS IN TWO WAYS AND THIS SCRIPT TREATED THEM AS ONE ──────────
 #
 # Every registry call below used to be one attempt, and any non-zero exit refused
@@ -319,6 +473,65 @@ registry_said_no() { # <message> -> 0 when the registry gave a definitive answer
   return 1
 }
 
+# ── AND A THIRD WAY, WHICH IS NOT THE REGISTRY'S AT ALL (micro-org#359) ───────
+#
+# The two cases above are both ANSWERS FROM A REGISTRY. This one never reached a
+# registry: docker asked its credential helper for a token, the helper failed, and
+# docker gave up before opening a connection. The message is a local one.
+#
+# It matters because the retry rule that is right for a blip is catastrophic here.
+# A blip is per-request, so the next attempt genuinely can differ. A credential
+# helper that cannot run is a property of THE MACHINE — it will fail for this
+# image, for the next image, and for every image, identically, forever.
+#
+# On 2026-08-10 that cost eighteen minutes of a deploy that could never succeed.
+# With the defaults below the arithmetic is worse than it looks: five attempts
+# from a three-second backoff is 3+6+12+24 = 45s of sleeping PER REFERENCE, and a
+# release resolves to about fifty of them, so the loop would have spent roughly
+# thirty-seven minutes re-asking a question whose answer cannot change before
+# reporting the failure it already had in hand at second zero.
+#
+# So this returns "stop", and it stops the WHOLE RUN rather than this reference:
+# once one image has proved this host cannot authenticate, the other forty-nine
+# are not evidence and are not worth gathering.
+registry_local_failure() { # <message> -> 0 when the failure is THIS HOST's
+  case "$1" in
+  *"error getting credentials"* | *"error storing credentials"* | \
+    *"error listing credentials"* | *"credential helper"* | \
+    *"docker-credential-"* | *"logon session"* | *"resolve authconfig"*)
+    return 0
+    ;;
+  esac
+  return 1
+}
+
+# Set once `registry_local_failure` has matched, and never cleared: it records a
+# fact about the host, which no later reference can disprove.
+registry_fatal=0
+
+# The remedy, printed at the point of abort rather than left to be rediscovered.
+# It names the cause first, because "error getting credentials" reads as a missing
+# login and the fix is the opposite — REMOVING the credential path entirely.
+registry_local_failure_note() {
+  echo "       docker never reached a registry. It asked its credential helper for a token," >&2
+  echo "       the helper failed, and docker refused to open the connection — so NO image" >&2
+  echo "       will pull on this host, for any release, until that is fixed." >&2
+  echo "       This is why the run stopped at the first reference instead of asking the" >&2
+  echo "       same unanswerable question of every image in the release." >&2
+  echo >&2
+  echo "       On the Windows/WSL app host this is Docker Desktop's Windows credsStore," >&2
+  echo "       which needs an interactive Windows logon session that ssh does not have." >&2
+  echo "       The pre-flight above routes around it automatically; if you are seeing this," >&2
+  echo "       it did not run or did not catch this helper. By hand, for this shell:" >&2
+  echo >&2
+  echo "         export DOCKER_CONFIG=\$HOME/.docker-cf" >&2
+  echo "         mkdir -p \"\$DOCKER_CONFIG\"" >&2
+  echo "         printf '{\"auths\":{}}' > \"\$DOCKER_CONFIG/config.json\"" >&2
+  echo >&2
+  echo "       The estate's GHCR packages are public, so a config with no credential" >&2
+  echo "       helper at all is what an anonymous pull needs." >&2
+}
+
 # Runs a registry command until it succeeds, until the registry answers no, or
 # until the attempts run out. Exponential backoff because the two things that
 # actually produce a blip — a rate limit and a saturated link — are both made
@@ -339,6 +552,11 @@ registry_try() { # <label> <command…>
     if registry_err=$("$@" 2>&1 >/dev/null); then return 0; fi
     registry_err=$(printf '%s' "$registry_err" | grep -v '^[[:space:]]*$' | tail -1)
     registry_err=${registry_err:-no error message}
+    if registry_local_failure "$registry_err"; then
+      registry_gaveup="this host cannot authenticate to any registry; retrying cannot change it"
+      registry_fatal=1
+      return 1
+    fi
     if registry_said_no "$registry_err"; then
       registry_gaveup="the registry answered; retrying cannot change it"
       return 1
@@ -390,6 +608,8 @@ while IFS= read -r ref; do
   else
     missing=$((missing+1))
     printf '  \033[31mFAIL\033[0m %s — %s (%s)\n' "$ref" "$registry_err" "$registry_gaveup"
+    # One reference is the whole proof when the failure belongs to the host.
+    if [ "$registry_fatal" -eq 1 ]; then break; fi
   fi
 done <<EOF
 $release_refs
@@ -401,6 +621,11 @@ if [ "$checked" -eq 0 ]; then
 fi
 if [ "$missing" -gt 0 ]; then
   echo >&2
+  if [ "$registry_fatal" -eq 1 ]; then
+    echo "THIS HOST CANNOT TALK TO A REGISTRY AT ALL. NOT DEPLOYING." >&2
+    registry_local_failure_note
+    exit 1
+  fi
   echo "$missing of $checked image(s) cannot be pulled. NOT DEPLOYING." >&2
   echo "This is the check that exists so the failure happens here rather than on the host." >&2
   exit 1
@@ -534,6 +759,25 @@ if [ "$dry_run" -eq 1 ]; then
   echo
   echo "--dry-run: rendered $OVERLAY and confirmed $checked image(s) exist in the registry."
   echo "Nothing was pulled, and no container was created, started or stopped."
+  # ── WHAT A CLEAN --dry-run DOES NOT PROVE (micro-org#359) ────────────────────
+  #
+  # It was read as "the deploy will work", and on 2026-08-10 it said "all 48
+  # image(s) exist" minutes before a deploy that pulled nothing for eighteen
+  # minutes. The phase above asks with `docker manifest inspect`, which resolves
+  # a public image ANONYMOUSLY — measured on the WSL app host that day, it
+  # answered normally while `docker pull` on the same host, in the same shell,
+  # failed on the credential helper. Existence and pullability are two questions
+  # and only one of them had been asked.
+  #
+  # The credential pre-flight at the head of this script now closes that
+  # particular gap for both paths, which is why this says what it covered rather
+  # than only what it did not.
+  echo
+  echo "It proved the manifest RESOLVES — \`docker manifest inspect\`, which reads a public"
+  echo "image anonymously — and that this host's docker credential path works, which is a"
+  echo "separate question and the one that stalled a deploy for eighteen minutes on"
+  echo "2026-08-10. It did not prove there is disk for the layers, and it says nothing"
+  echo "about whether the new images will start."
   exit 0
 fi
 
@@ -595,10 +839,22 @@ while IFS= read -r ref; do
   else
     unpullable=$((unpullable + 1))
     printf '  \033[31mFAIL\033[0m   %s — %s (%s)\n' "$ref" "$registry_err" "$registry_gaveup"
+    # As in the verify phase: a host-side failure is proved by one reference, and
+    # the remaining forty-nine would each cost the full backoff to prove it again.
+    if [ "$registry_fatal" -eq 1 ]; then break; fi
   fi
 done <<EOF
 $pull_refs
 EOF
+
+if [ "$registry_fatal" -eq 1 ]; then
+  echo >&2
+  echo "THIS HOST CANNOT TALK TO A REGISTRY AT ALL. NOT DEPLOYING." >&2
+  registry_local_failure_note
+  echo >&2
+  echo "       NO CONTAINER WAS CREATED, STARTED OR STOPPED." >&2
+  exit 1
+fi
 
 if [ "$unpullable" -gt 0 ]; then
   echo >&2

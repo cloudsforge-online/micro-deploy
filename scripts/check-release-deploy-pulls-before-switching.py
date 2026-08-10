@@ -180,6 +180,13 @@ plan = json.loads(pathlib.Path(os.environ["DOCKER_PLAN"]).read_text())
 def record():
     with log.open("a") as fh:
         fh.write(json.dumps(argv) + "\\n")
+    # Which config directory docker was actually given, per invocation. A separate
+    # file rather than a field on the line above, so every assertion written
+    # against the argv log keeps reading a plain list.
+    env_log = os.environ.get("DOCKER_ENV_LOG")
+    if env_log:
+        with pathlib.Path(env_log).open("a") as fh:
+            fh.write((os.environ.get("DOCKER_CONFIG") or "") + "\\n")
 
 
 def passthrough():
@@ -285,17 +292,71 @@ with tempfile.TemporaryDirectory() as tmp:
     (root / "bin" / "docker").write_text(DOCKER_STUB)
     (root / "bin" / "docker").chmod(0o755)
 
+    # ── A DOCKER CONFIG WHOSE CREDENTIAL HELPER CANNOT RUN (micro-org#359) ────
+    #
+    # The app host is Windows/WSL: `~/.docker/config.json` inside the distro is
+    # Docker Desktop's WINDOWS config, and its `credsStore` names a helper that
+    # needs an interactive Windows logon session. Over ssh there is not one, so
+    # every `docker pull` failed on the credential lookup — for a set of packages
+    # that are public and needed no credential at all.
+    #
+    # The helper here EXISTS and FAILS, which is the combination that matters:
+    # measured on 192.168.1.129 on 2026-08-10, `docker-credential-desktop.exe`,
+    # `-wincred.exe` and `-ecr-login.exe` were all on PATH through WSL's Windows
+    # interop. A check for the binary's presence would have passed on the very
+    # host that could not deploy, so this fixture reproduces "present and broken"
+    # rather than "absent".
+    BROKEN_HELPER = "cffixturebroken"
+    (root / "bin" / f"docker-credential-{BROKEN_HELPER}").write_text(
+        "#!/bin/sh\n"
+        "# The message the Windows helper actually produced, verbatim.\n"
+        "echo 'A specified logon session does not exist."
+        " It may already have been terminated.' >&2\n"
+        "exit 1\n"
+    )
+    (root / "bin" / f"docker-credential-{BROKEN_HELPER}").chmod(0o755)
+
+    broken_cfg = root / "dockercfg-broken"
+    broken_cfg.mkdir()
+    (broken_cfg / "config.json").write_text(json.dumps({"credsStore": BROKEN_HELPER}))
+    # DOCKER_CONFIG also selects the CLI's PLUGIN directory, and on a machine whose
+    # compose plugin is user-scoped — measured on a dev Mac 2026-08-11, plugins in
+    # $HOME/.docker/cli-plugins — moving DOCKER_CONFIG takes `docker compose` away
+    # with it and every later step dies with "unknown command: docker compose".
+    # The fixture reproduces that layout when the host has it, so the script's
+    # inheriting of the plugin directory is exercised where it is load-bearing and
+    # simply absent where plugins are system-wide (CI).
+    real_plugins = pathlib.Path(os.path.expanduser("~/.docker/cli-plugins"))
+    if real_plugins.is_dir():
+        (broken_cfg / "cli-plugins").symlink_to(real_plugins)
+
+    fallback_cfg = root / "dockercfg-fallback"
+
+    def credential_env():
+        """A shell that looks like the app host's: a helper that is there and fails."""
+        return {
+            "DOCKER_CONFIG": str(broken_cfg),
+            "DOCKER_CONFIG_FALLBACK": str(fallback_cfg),
+        }
+
     plan_file = root / "plan.json"
     log_file = root / "docker.log"
 
-    def deploy(plan, args=(VERSION,)):
+    env_log_file = root / "docker-config.log"
+
+    def deploy(plan, args=(VERSION,), env_extra=None):
         """One run of the real script against a scripted registry.
 
         Returns (exit code, combined output, list of recorded docker argvs).
         """
         plan_file.write_text(json.dumps(plan))
         log_file.write_text("")
+        env_log_file.write_text("")
         env = dict(os.environ)
+        env.update(
+            DOCKER_ENV_LOG=str(env_log_file),
+        )
+        env.update(env_extra or {})
         env.update(
             PATH=f"{root / 'bin'}{os.pathsep}{env['PATH']}",
             REAL_DOCKER=real_docker,
@@ -455,8 +516,94 @@ with tempfile.TemporaryDirectory() as tmp:
     if switches(calls):
         fail(f"--dry-run switched the estate:\n\n{out}")
 
+    # ── 7. A CREDENTIAL HELPER THAT CANNOT RUN IS ROUTED AROUND ──────────────
+    #
+    # Not merely reported. Every deploy from the app host over ssh hits this, and
+    # a deploy that requires the operator to know an undocumented `export` first
+    # is a deploy the estate cannot perform from its own documentation.
+    code, out, calls = deploy({}, env_extra=credential_env())
+    if code != 0:
+        fail(
+            "a deploy could not complete on a host whose docker credential helper fails,\n"
+            "       though the estate's packages are public and need no credential at all.\n"
+            f"       This is every ssh deploy from the Windows/WSL app host (exit {code}).\n\n{out}"
+        )
+    if not switches(calls):
+        fail(f"the credential-helper run reported success without switching:\n\n{out}")
+
+    used = [line for line in env_log_file.read_text().splitlines() if line]
+    if not used:
+        fail("no docker invocation was recorded, so which config it used cannot be read.")
+    wrong = sorted({u for u in used if u != str(fallback_cfg)})
+    if wrong:
+        fail(
+            "docker was invoked with a config directory other than the helper-free one:\n"
+            f"       {wrong}\n"
+            "       The pre-flight reported it had routed around the broken helper and then\n"
+            "       did not, which is the same eighteen-minute stall with a reassuring line\n"
+            f"       of output above it.\n\n{out}"
+        )
+    written = json.loads((fallback_cfg / "config.json").read_text())
+    if written.get("credsStore") or written.get("credHelpers"):
+        fail(
+            f"the config the deploy switched to names a credential helper itself: {written}\n"
+            "       It exists to name none; docker would consult it and fail identically."
+        )
+    if "logon session" not in out:
+        fail(
+            "the pre-flight did not print what the credential helper said. `error getting\n"
+            "       credentials` reads as a missing login and the remedy is the opposite, so\n"
+            f"       the helper's own message is the thing that makes it diagnosable.\n\n{out}"
+        )
+
+    # ── 8. AND ONE THAT SLIPS PAST THE PRE-FLIGHT STOPS THE RUN AT ONCE ──────
+    #
+    # THIS IS THE EIGHTEEN MINUTES. A helper can pass the pre-flight's `list` probe
+    # and still fail the pull, so the classification has to hold on its own.
+    #
+    # A credential failure is not the registry's answer and not a blip: docker
+    # never opened a connection, and the result is a property of the MACHINE. It
+    # will be identical for every image. Retrying it five times per reference
+    # across ~50 references is 3+6+12+24 = 45s of sleeping each, ~37 minutes, to
+    # re-derive a fact that was complete at second zero.
+    #
+    # Asserted as ONE attempt and a run that stops, not merely as an eventual
+    # failure: "it fails in the end" was true of the version that hung.
+    creds_error = (
+        "error getting credentials - err: exit status 1, out: `A specified logon "
+        "session does not exist. It may already have been terminated.`"
+    )
+    code, out, calls = deploy({"pull": {LEDGER: [creds_error]}}, env_extra=credential_env())
+    if code == 0:
+        fail(f"a deploy whose images could not be pulled at all reported success:\n\n{out}")
+    attempts = len(pulls_of(calls, LEDGER))
+    if attempts != 1:
+        fail(
+            f"a credential failure was retried: {attempts} attempts for one image. docker\n"
+            "       never reached a registry — the helper failed locally — so every attempt\n"
+            "       asks a question whose answer cannot change, and the deploy sleeps its way\n"
+            f"       through the whole release before saying so.\n\n{out}"
+        )
+    later = pulls_of(calls, THIRD_PARTY)
+    if later:
+        fail(
+            "the run carried on to the next image after proving this host cannot\n"
+            "       authenticate to any registry. One reference is the whole proof; the rest\n"
+            f"       cost the full backoff each to reach the same conclusion.\n\n{out}"
+        )
+    if switches(calls):
+        fail(f"the estate was switched after a credential failure:\n\n{out}")
+    if "DOCKER_CONFIG" not in out:
+        fail(
+            "the abort does not name the remedy. `error getting credentials` reads as a\n"
+            "       missing docker login, and the fix is to remove the credential path\n"
+            f"       entirely — which nobody guesses at 3am.\n\n{out}"
+        )
+
 print(
     "ok: every image is pulled before any container is replaced, a transient registry\n"
     "    failure is retried with a growing wait, one that never clears aborts without\n"
-    "    touching a container, and a tag the registry says does not exist aborts at once"
+    "    touching a container, a tag the registry says does not exist aborts at once,\n"
+    "    and a credential helper this host cannot run is routed around rather than\n"
+    "    retried — or, if it slips past, stops the run on the first reference"
 )

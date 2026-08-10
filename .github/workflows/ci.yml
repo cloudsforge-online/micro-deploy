@@ -696,9 +696,39 @@ jobs:
       # The ordering is asserted by the ORDER of the recorded invocations rather
       # than by their presence, because "it pulls and it switches" was true of the
       # broken version too.
+      # It also covers the OTHER way that script stalled a release. On 2026-08-10
+      # a deploy from the Windows/WSL app host ran for eighteen minutes and pulled
+      # nothing: `~/.docker/config.json` inside the distro is Docker Desktop's
+      # WINDOWS config, its `credsStore` needs an interactive Windows logon
+      # session, and over ssh there is not one — so docker failed the credential
+      # lookup before opening a connection, on every pull, for packages that are
+      # public and needed no credential at all.
+      #
+      # The retry loop could not tell that from a busy registry, so it re-asked
+      # ~50 references five times each at 45s of backoff apiece. A loop that
+      # cannot succeed is not resilience, and the fixture proves both halves: the
+      # helper is routed around before the first pull, and a credential failure
+      # that reaches the loop stops it on the first reference.
       - name: A release is pulled in full before any container is replaced
         working-directory: deploy
         run: python3 scripts/check-release-deploy-pulls-before-switching.py
+
+      # ── A FRESH HOST CANNOT BE PROVISIONED FROM DOCUMENTATION (micro-org#350) ─
+      #
+      # This repository reads files out of SIBLING repositories, under directory
+      # names that are not the repository names — `micro-contracts` has to be
+      # checked out as `contracts`. Nothing cloned them and nothing listed them,
+      # so standing up the second app host the only signal was a traceback from
+      # the middle of a bootstrap that had already started changing things:
+      # `FileNotFoundError: '../contracts/packages/events/src/audit.ts'`.
+      #
+      # The table that clones them is checked rather than trusted, in both
+      # directions, because a hand-kept prerequisite list is accurate on the day
+      # it is written and the failure only ever shows up on a machine nobody is
+      # testing on.
+      - name: Every sibling repository this repo reads is a declared prerequisite
+        working-directory: deploy
+        run: python3 scripts/check-sibling-prerequisites.py
 
       # ── A CREDENTIAL IS A SECRET, AND A MISSPELT ONE IS SILENTLY ABSENT ──────
       #
