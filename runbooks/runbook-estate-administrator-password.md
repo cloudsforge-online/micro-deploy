@@ -250,6 +250,12 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST "$IDENTITY/auth/login" \
 Mind the rate limit: `/auth/login` is 10 per window, and a burst of these while
 debugging will start answering 429, which is not a rejected password.
 
+Run against mainnet on 2026-08-10, codes only, nothing else printed: **the value
+in `tokens.env` answered 200, a wrong value 401, and the same correct value in
+an `email` field instead of `identifier` answered 400.** So the file and the row
+agree today, and the `identifier` trap above is live rather than historical — it
+is a 400 that arrives at the exact moment you are questioning a password.
+
 **The tokens file and the row agree.** Sign in with the value the file actually
 holds — sourcing it rather than using the `$NEW` still in the shell, because a
 step-4 typo is invisible to `$NEW`:
