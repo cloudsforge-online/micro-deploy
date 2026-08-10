@@ -189,6 +189,29 @@ export function startDump(connection: ClusterConnection, database: string, timeo
  * `--single-transaction` with `--exit-on-error` is the difference between a restore and a mess: a
  * partial restore leaves a database that has some of the old data and some of the new, and there
  * is no way to tell which rows are which. Either the whole archive lands or nothing does.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **`--dbname` IS NOT REDUNDANT WITH `PGDATABASE`, AND THAT ASYMMETRY COST THIS ESTATE EVERY
+ * AUTOMATED RESTORE IT HAS EVER ATTEMPTED.**
+ *
+ * `pg_dump` takes its target from `PGDATABASE` like any other libpq client, so `startDump` above
+ * needs no `-d` and works. `pg_restore` does not: it decides between "restore into a database" and
+ * "write a SQL script" from its OWN arguments, and with neither `-d` nor `-f` it exits 1 on
+ * `one of -d/--dbname and -f/--file must be specified` — before it opens a connection, so
+ * `PGDATABASE` is never consulted. The two tools disagree, and the one that silently succeeds is
+ * the one that writes the backup.
+ *
+ * Measured on the mainnet estate 2026-08-10: five nightly sets written and checksummed, and five
+ * consecutive `backup.verify` jobs dead-lettered after five attempts each on exactly that message,
+ * plus one dead `backup.restore`. The dumps were real. Nothing had ever been restored from them,
+ * and `backup_runs.verified_at` was correctly NULL on every set — the catalogue was telling the
+ * truth and there was no green tick to contradict it.
+ *
+ * The name goes in `argv`, which the header of this module otherwise forbids — but the rule there
+ * is about the PASSWORD, not the target. `-d` also accepts a full conninfo string, which is how a
+ * database name would become a password in `argv`; `assertSafeDatabaseName` admits only
+ * `[a-z_][a-z0-9_]*`, so it can contain neither `=`, `:` nor `/` and can never be parsed as one.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
  */
 export async function runRestore(
   connection: ClusterConnection,
@@ -199,7 +222,15 @@ export async function runRestore(
   const name = assertSafeDatabaseName(database)
   const child = spawn(
     'pg_restore',
-    ['--no-password', '--no-owner', '--no-acl', '--exit-on-error', '--single-transaction', archivePath],
+    [
+      '--no-password',
+      '--no-owner',
+      '--no-acl',
+      '--exit-on-error',
+      '--single-transaction',
+      `--dbname=${name}`,
+      archivePath,
+    ],
     {
       env: pgEnvFor(connection, name),
       stdio: ['ignore', 'ignore', 'pipe'],
