@@ -1484,7 +1484,28 @@ else
   # cannot resolve, and the interpreter node-tool just placed is in `.tools/`.
   # `estate-seed.mjs` re-execs itself with `process.execPath`, so the vendored
   # build carries through to the re-exec and to every domain module.
-  if "$SEED_NODE" ./scripts/estate-seed.mjs; then
+  # ── AND THE SEEDER MUST BE TOLD WHICH ESTATE, OR IT ASSUMES MAINNET ─────────
+  #
+  # `scripts/seed/lib.mjs` reads `ESTATE_ENV`, not `ENV_FILE`, and from it derives
+  # the gateway env file, the apex, the web suffix, the loopback port base and the
+  # tokens file. This script has always spelled the same fact `ENV_FILE`, so the
+  # child saw neither name and took every mainnet default.
+  #
+  # Measured on the app host on 2026-08-10, bootstrapping TESTNET with both env
+  # files set to testnet's: the seeder printed its BEFORE counts out of MAINNET's
+  # postgres and then tried to sign in at
+  #
+  #   POST https://nimbus.cloudsforge.online/auth/login -> 401
+  #
+  # offering testnet's operator password to mainnet's identity. The 401 is the
+  # only reason nothing was written: every surface this seeder creates — worlds,
+  # communities, listings, plans, uploads — would otherwise have been created in
+  # MAINNET from a run whose every other step touched testnet.
+  #
+  # `TOKENS_FILE` is passed for the same reason, explicitly rather than by
+  # inheritance, so the pair travels together the way it does everywhere else.
+  if ESTATE_ENV="${ENV_FILE:-compose/mainnet.env}" TOKENS_FILE="$TOKENS_FILE" \
+     "$SEED_NODE" ./scripts/estate-seed.mjs; then
     ok "product surfaces seeded"
   else
     # Named, not swallowed. A surface that could not be filled is worth knowing
@@ -1502,7 +1523,8 @@ else
   # It is REPORTED here and does not touch `fails`, for the reason this section
   # already gives — a credential bootstrap must not go red over content. The
   # check that does go red is `estate-verify.sh`, which calls the same mode.
-  if "$SEED_NODE" ./scripts/estate-seed.mjs --check >/tmp/estate-seed-check.log 2>&1; then
+  if ESTATE_ENV="${ENV_FILE:-compose/mainnet.env}" TOKENS_FILE="$TOKENS_FILE" \
+     "$SEED_NODE" ./scripts/estate-seed.mjs --check >/tmp/estate-seed-check.log 2>&1; then
     ok "every product surface has content"
   else
     ok "at least one product surface is still EMPTY after seeding — see /tmp/estate-seed-check.log; ./scripts/estate-verify.sh fails on this"
