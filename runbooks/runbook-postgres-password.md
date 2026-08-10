@@ -49,15 +49,31 @@ rejects, which is the outage above wearing a disguise.
 It is an *interpolation* variable rather than an `env_file:` entry because the 56
 connection strings need it substituted into the middle of a URL, and `env_file:`
 only ever reaches a container's own environment. That is why it is passed with
-`--env-file` and why **both** files must always be passed:
+`--env-file` and why **both** files must always be passed.
+
+**Bring an estate up with `scripts/release-deploy.sh`, not by hand.** The raw
+two-file invocation is written out here so the mechanism is legible, and it is
+what the deploy script runs:
 
     docker compose --env-file compose/<net>.env \
                    --env-file compose/estate/tokens[.testnet].env \
                    -f compose/docker-compose.estate.yml \
                    -f compose/docker-compose.release[.testnet].yml up -d
 
+Typed by hand it has two failure modes that both present as this page's symptom.
+
 `--env-file` **replaces** the default `.env`, it does not add to it. Passing only
 the network file silently drops every credential in the tokens file.
+
+And the two paths are *independent arguments*: nothing in compose objects to a
+`<net>.env` and a tokens file that name **different estates**. That combination
+is the subject of micro-org#238 and it is refused by
+`scripts/check-env-files-agree.sh`, which `release-deploy.sh` and
+`estate-bootstrap.sh` both call before they render — and which a hand-typed
+`docker compose` never reaches. Ask it directly before running one:
+
+    ./scripts/check-env-files-agree.sh compose/testnet.env compose/estate/tokens.env
+    # FATAL: these two --env-file paths name different estates.
 
 ## Rotating it
 
@@ -124,8 +140,37 @@ until it needs a new connection. Check the database layer directly.
       docker exec <project>-postgres-1 pg_isready -U cloudsforge -d postgres
 
 - **No service is logging authentication failures.** `password authentication
-  failed for user "cloudsforge"` in any service log means that container is still
-  carrying an old string and was not recreated.
+  failed for user "cloudsforge"` in any service log has **two** causes, and only
+  the first belongs to a rotation:
+
+  1. That container is still carrying an old string and was not recreated.
+  2. **The estate was brought up with the other estate's tokens file.** The
+     password is not old, it is *the other network's*, and every other signal
+     says the deploy was correct — see below.
+
+- **When the failure is EVERY migration at once, suspect the second cause first.**
+  A half-finished rotation leaves some containers working. A crossed pair leaves
+  none: on 2026-08-07 a testnet bring-up with `--env-file estate/tokens.env`
+  (mainnet's) failed all 29 migrations with this one line, all 29 services stayed
+  in `Created` behind `service_completed_successfully`, and the 17 frontends
+  stayed up and healthy — so the estate looked two-thirds alive. Every banner
+  said testnet, because the project name came from the file that was right
+  (micro-org#238).
+
+  The obvious hands-on check *passes* in this state and sends the diagnosis the
+  wrong way: `pg_hba.conf` grants `trust` on `local` and `127.0.0.1/32` and only
+  reaches `scram-sha-256` on `host all all all`, so `psql -U cloudsforge` from
+  inside the postgres container succeeds while every container on the docker
+  network fails. Do not read that success as "the role is fine, so the password
+  must be stale".
+
+  Establish which cause it is by asking the guard about the pair that was
+  actually used — it is a pure function of the two paths and touches no secret:
+
+      ./scripts/check-env-files-agree.sh "$ESTATE_ENV" "$TOKENS_FILE"
+
+  Exit 1 names both halves. Then bring the estate up again through
+  `scripts/release-deploy.sh`, which runs that guard itself.
 - **The two networks differ.** Compare the two fingerprints; they must not match.
   Never print the values to compare them.
 
