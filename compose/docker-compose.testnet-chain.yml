@@ -2,11 +2,22 @@
 #
 #   docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
 #     -p cf-testnet \
-#     -f docker-compose.estate.yml \
-#     -f docker-compose.release.yml \
-#     -f docker-compose.design.yml \
 #     -f docker-compose.testnet-chain.yml \
 #     up -d
+#
+# THIS FILE ALONE, and that is not a shorthand. It used to be quoted here as the
+# fourth `-f` of a four-overlay invocation that also carried the estate file, the
+# release overlay and `docker-compose.design.yml` — and that command is what
+# `docs/releasing.md` prescribed for every testnet deploy until 2026-08-11, when
+# following it rolled `mint` back seventeen releases (micro-org#414). Testnet is
+# deployed by `./scripts/release-deploy.sh` now, which composes the estate file
+# and the rendered release overlay and NOTHING else. This node is the one thing
+# that path does not declare, so it is brought up on its own.
+#
+# Naming only this file is safe by construction: compose acts on the services it
+# was given and leaves the other ~48 in the project alone — which is also why
+# `--remove-orphans` must never be added to this command. It would offer to
+# remove every service this file does not define, which is all of them.
 #
 # ══════════════════════════════════════════════════════════════════════════════
 #  ⚠  THERE ARE TWO litecoind PROCESSES ON THIS HOST AND THEY ARE NOT COPIES.
@@ -48,11 +59,10 @@
 #
 # ── WHY IT IS A SEPARATE FILE, NOT A BLOCK IN docker-compose.estate.yml ───────
 #
-# Same reasoning as docker-compose.design.yml: this is TESTNET-ONLY, and the
-# estate file is shared. A regtest node in the shared file would be one
-# `CF_EMBER_NETWORK` interpolation away from starting beside mainnet's real node
-# and one config slip away from mainnet indexing it. It cannot start on mainnet
-# if mainnet never passes the `-f`.
+# Because this is TESTNET-ONLY and the estate file is shared. A regtest node in
+# the shared file would be one `CF_EMBER_NETWORK` interpolation away from
+# starting beside mainnet's real node and one config slip away from mainnet
+# indexing it. It cannot start on mainnet if mainnet never passes the `-f`.
 #
 # ── THE CREDENTIAL ────────────────────────────────────────────────────────────
 #

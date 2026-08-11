@@ -162,11 +162,23 @@ Both must be zero.
 That is shell interpolation, not an `env_file:`, and `compose/testnet.env` does
 not contain the tokens. Bringing testnet up with `--env-file compose/testnet.env`
 alone therefore renders every service token EMPTY, and `market` refuses to start
-with *"MARKET_SERVICE_TOKEN is required"*. Source both:
+with *"MARKET_SERVICE_TOKEN is required"*. Pass both — and testnet's tokens, not
+mainnet's:
 
-    set -a; . ./estate/tokens.env; . ./testnet.env; set +a
-    docker compose -p cf-testnet -f docker-compose.estate.yml \
-                                 -f docker-compose.release.testnet.yml up -d
+    docker compose -p cf-testnet \
+      --env-file compose/testnet.env --env-file compose/estate/tokens.testnet.env \
+      -f compose/docker-compose.estate.yml -f compose/docker-compose.release.yml \
+      up -d
+
+**Corrected in place on 2026-08-11, and what it used to say is why** (micro-org#414).
+It sourced `estate/tokens.env` and `testnet.env` into the shell in front of a
+per-estate overlay named `docker-compose.release.testnet.yml`, and both halves
+had gone stale. There is no per-estate release overlay: `release-render.py` writes one
+`compose/docker-compose.release.yml` per deploy, so that `-f` named a file that
+has not existed for months. And `estate/tokens.env` is **mainnet's** tokens file,
+so sourcing it for a `cf-testnet` bring-up is exactly the crossed pair
+`check-env-files-agree.sh` refuses on every entry point today (micro-org#238) —
+testnet's project name, testnet's ports, mainnet's credentials.
 
 ---
 
