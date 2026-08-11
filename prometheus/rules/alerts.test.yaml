@@ -414,3 +414,79 @@ tests:
                 nothing needs restarting. The runbook has the two levers and what each
                 one costs.
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-at-floor.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # MailSentToReservedDomain — micro-org#390.
+  #
+  # The rule this file exists for. `notify` declines to route email to a domain
+  # the standards reserve before a delivery row is written, so the adapter's
+  # backstop firing means the routing rule did not run — and the cause that has
+  # actually occurred is a DEPLOYED BUILD THAT LOST THE RULE. Mainnet sent 1,535
+  # of 1,552 deliveries to `beacon.test` over seven days to 2026-08-11 with the
+  # fix merged the whole time, and the estate found out from a provider
+  # dashboard rather than from anything it runs.
+  #
+  # An alert against a counter that is correctly ZERO FOREVER can never be
+  # observed firing in production by definition, which is precisely the class
+  # this file was written for. A synthetic series is the only way to know it
+  # works before the day it matters.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # The label set `notify` really exports: `channel` and `reason` are the two
+      # declared on `notify_failed_total` in `metrics.ts`, and the rest come from
+      # the scrape config. `reason` has to be exactly `reserved_domain` — the
+      # value added in notify 2.5.20 — because the expression selects on it, and
+      # a rule selecting a label value nothing writes is the unfireable shape
+      # this file's header lists three examples of.
+      #
+      # Flat at 0 for twenty minutes, then one increment. One is the whole point:
+      # there is no "acceptable level" of mail to an address that cannot exist.
+      - series: 'notify_failed_total{channel="email",reason="reserved_domain",instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "0+0x20 1+0x20"
+
+      # A second series that must NOT trigger it, and the reason the expression
+      # names `reason` at all. Before notify 2.5.20 this refusal shared the label
+      # `rejected` with a push gateway 4xx, a webhook 410 and an SMTP 5xx — all
+      # of them ordinary and all of them non-zero on a healthy estate. If the
+      # expression ever loses its `reason` selector, this series pages
+      # constantly, the operator silences the alert, and the estate loses the
+      # signal exactly as it did before.
+      - series: 'notify_failed_total{channel="email",reason="rejected",instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "0+3x40"
+
+    alert_rule_test:
+      # Silent while the counter is flat, with a steadily rising `rejected`
+      # series beside it. Asserted rather than assumed.
+      - eval_time: 15m
+        alertname: MailSentToReservedDomain
+        exp_alerts: []
+
+      # 21m: the counter moved by one. `for: 0m`, so it fires on the first
+      # evaluation that sees it — there is no benefit to waiting, because the
+      # condition does not resolve itself and every minute of delay is more of a
+      # shared allowance spent.
+      - eval_time: 22m
+        alertname: MailSentToReservedDomain
+        exp_alerts:
+          - exp_labels:
+              alertname: MailSentToReservedDomain
+              channel: email
+              reason: reserved_domain
+              instance: notify:4090
+              job: notify
+              severity: ticket
+              team: platform
+              service: notify
+              sev: "2"
+            exp_annotations:
+              summary: "notify attempted mail to a reserved domain — the routing rule is not running"
+              description: >-
+                The adapter backstop in notify refused an address under a reserved
+                domain. On the live path nothing should ever reach it, because
+                pipeline.ts declines to route email there first. Check that the
+                RUNNING notify container carries reserved.ts — read the container,
+                not the repo; the last time this happened the fix was merged and the
+                process was older. Then check the provider's remaining daily
+                allowance before assuming mail is otherwise healthy.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md

@@ -40,8 +40,13 @@
 #
 # That was the obvious fix and it was measured and rejected: on 2026-08-10 the
 # chain host sat at load average 11.3 on 4 CORES with bitcoind and dogecoind in
-# initial block download, and testnet is stopped specifically so Bitcoin can
-# catch up. Taking CPU there would be paid for out of that sync.
+# initial block download. Taking CPU there would be paid for out of that sync.
+#
+# Bitcoin reached its tip on 2026-08-10 and dogecoind did not — it was 1.28M
+# blocks behind at the last reading, and its headers were still arriving faster
+# than its blocks validated. So the argument is unchanged and only its subject
+# narrowed: one IBD on 4 cores instead of two. Do not read BTC's completion as
+# permission to take the chain host's CPU.
 #
 # This host has 28 cores at load average 2.6 and, measured here on 2026-08-10 at
 # throttle 0.25, does ~30 H/s — four times the chain host's 7–8.

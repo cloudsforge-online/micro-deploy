@@ -171,4 +171,11 @@ disclosure, but it is a copy, and copies are what the sweep above exists to find
   accepted and retired refused on both `/metrics` and `/api/alerts/webhook`,
   37/37 targets up. `.env.bak-pre-grafana-156` — which held the live token at
   mode 600 — deleted. Testnet not rotated: its token is a different value and
-  the environment is stopped for bitcoind's initial block download.
+  the environment was stopped at the time.
+- **2026-08-11 — testnet's rotation is now DUE, not blocked.** The reason
+  recorded above expired: testnet moved to the app host and runs there, 48
+  containers healthy, measured on `savva@192.168.1.129`. A token left unrotated
+  because nobody could reach the environment is a different thing from a token
+  left unrotated while the environment serves public `*-testnet` hostnames
+  through Cloudflare. Rotate it with the procedure above against
+  `compose/estate/tokens.testnet.env`.

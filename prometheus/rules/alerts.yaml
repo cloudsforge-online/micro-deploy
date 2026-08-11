@@ -1038,6 +1038,58 @@ groups:
   # ================================================== TICKET — telemetry ====
   - name: cf.ticket.telemetry
     rules:
+      - alert: MailSentToReservedDomain
+        # ── AN ALERT WHOSE THRESHOLD IS ZERO, BECAUSE ITS EVENT IS IMPOSSIBLE ──
+        #
+        # `notify` declines to ROUTE email to a domain the standards reserve
+        # (`.test`, `.example`, `.invalid`, `.localhost`, and the RFC 2606
+        # documentation domains) — the rule lives in `reserved.ts` and runs in
+        # `pipeline.ts`, before a delivery row is written. The adapter keeps its
+        # own guard as a backstop. That backstop firing means the routing rule
+        # did not run, which has exactly three causes: a row written before the
+        # rule shipped, a caller building an OutboundMessage some other way, or
+        # A BUILD THAT LOST THE RULE.
+        #
+        # The third one is not hypothetical. Measured on mainnet 2026-08-11:
+        # 1,535 of 1,552 email deliveries over seven days went to `beacon.test`,
+        # because the deployed `notify` process predated a rule that had been
+        # merged since 2.4.0 and verified — on TESTNET. The estate found out
+        # from a provider dashboard reading 241 against a 150/day allowance, six
+        # days and one exhausted allowance later, during which a real visitor's
+        # verification mail could not be delivered at all. micro-org#390.
+        #
+        # ── WHY `> 0` AND NOT A RATE ─────────────────────────────────────────
+        #
+        # Every other mail alert here is a rate, because mail failures are
+        # normal at some level. This one is not: the estate's synthetic monitor
+        # registers ~2,250 accounts a day under `beacon.test`, so the CORRECT
+        # value of this counter is exactly zero forever, and any increase at all
+        # means the thing that spends the whole allowance in an afternoon has
+        # started again. A rate threshold would wait for the damage it exists to
+        # prevent.
+        #
+        # sev2 rather than sev3: the allowance is shared with every real
+        # recipient, and the first genuine signup is the one whose verification
+        # link lands in the exhausted window and can never be clicked.
+        expr: increase(notify_failed_total{channel="email",reason="reserved_domain"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: platform
+          service: notify
+          sev: "2"
+        annotations:
+          summary: "notify attempted mail to a reserved domain — the routing rule is not running"
+          description: >-
+            The adapter backstop in notify refused an address under a reserved
+            domain. On the live path nothing should ever reach it, because
+            pipeline.ts declines to route email there first. Check that the
+            RUNNING notify container carries reserved.ts — read the container,
+            not the repo; the last time this happened the fix was merged and the
+            process was older. Then check the provider's remaining daily
+            allowance before assuming mail is otherwise healthy.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
+
       - alert: BeaconScrapeFailing
         # Beacon gates /metrics behind auth. The most likely cause of this alert
         # is not that Beacon is down — it is that BEACON_TOKEN is unset or the

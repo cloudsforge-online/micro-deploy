@@ -302,14 +302,20 @@ Two facts that are easy to misread, so both are written out:
   micro-deploy#13 prevent a *new* weak operator; they do nothing about the one
   that exists.
 
-**It is blocked, not forgotten.** Testnet is stopped so `bitcoind` can finish
-initial block download without competing for the same disk and bandwidth — 0
-running containers and 79 exited, measured on the host 2026-08-10 — so the
-account is reachable by nobody while it stays down. The exposure begins the
-moment testnet comes back up, because the public `*-testnet` hostnames are
-served through Cloudflare and are gated by nothing in the compose set.
+**It WAS blocked. It is not any more, and that changes its priority.** The
+earlier note here read: testnet is stopped so `bitcoind` can finish initial
+block download, 0 running containers and 79 exited on 2026-08-10, so the account
+is reachable by nobody while it stays down — and the exposure begins the moment
+testnet comes back up, because the public `*-testnet` hostnames are served
+through Cloudflare and are gated by nothing in the compose set.
 
-**So the rotation belongs to the restart, before the hostnames answer.** The
+**Testnet came back up.** Measured on the app host `savva@192.168.1.129` on
+2026-08-11: 48 testnet containers healthy, the 31 exited ones all completed
+migrate and init jobs. So the condition this runbook named as the start of the
+exposure has been met, and the password whose only remaining copy is git history
+now fronts a live environment on a public hostname.
+
+**The rotation was scheduled for the restart, and the restart has happened.** The
 procedure is the one above with `compose/estate/tokens.testnet.env` in place of
 `compose/estate/tokens.env`, `$IDENTITY` pointing at testnet, and one
 difference: the current password is not in any tokens file, so step 1 reads it
