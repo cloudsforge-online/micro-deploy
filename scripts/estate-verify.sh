@@ -325,8 +325,88 @@ EMAIL="slice-$$@example.test"
 # 48 hex characters clears identity's minimum with room to spare, and hex needs no
 # shell quoting anywhere it is interpolated into JSON below.
 PASS=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+
+# ── THE REGISTRATION CHALLENGE, AND WHY THE RETRY BELOW IS NOT A SHORTCUT ─────
+#
+# micro-org#361 put a Cloudflare Turnstile in front of `POST /auth/register`, and
+# release 2.5.19 turned it on. This drill went red the same minute and in the
+# familiar shape: `challenge_required`, then no verification link, then no
+# session, then every later section that needs a signed-in user — a report about
+# the drill, not about the estate, exactly like the 202 breakage documented
+# above.
+#
+# A SCRIPT CANNOT SOLVE A TURNSTILE. That is what one is for, so there is no
+# honest fix that makes this call succeed as an anonymous caller. There is one
+# bypass identity grants on purpose — `challengeBypass` in
+# `identity/src/server.ts` excuses a SERVICE PRINCIPAL — and it is how micro-
+# beacon has kept registering since the same release. This drill takes the same
+# door, and only after being refused at the front one.
+#
+# THE ORDER IS THE POINT. The unauthenticated attempt comes first and its refusal
+# is an assertion: it proves the gate is ON in this environment, which is the one
+# half of "the widget works" an unattended run can establish. A drill that simply
+# presented a bearer would pass just as happily against an estate whose Turnstile
+# had been switched off by a missing variable.
+#
+# WHAT IT STILL DOES NOT PROVE: that a HUMAN gets through the widget. Nothing
+# automated can. That is a manual check against hub-web.
+#
+# The credential is BEACON_IDENTITY_CREDENTIAL from the untracked
+# `compose/estate/tokens.env` — reused rather than minted anew, because beacon is
+# already the estate's synthetic-registration principal and a second credential
+# would be a second thing to rotate. Override with VERIFY_SERVICE_CREDENTIAL.
+# Neither it nor the token it buys is ever echoed, including in the failures.
+#
+# `REG_BEARER` is empty on an unchallenged deployment and stays that way, so
+# `register_as_drill` below sends no Authorization header there — the anonymous
+# path remains the path an unchallenged estate is checked on.
+REG_BEARER=''
+
+# Register, handling the challenge. Prints the response body.
+#
+# TWO drills register: this one, and the SSO hand-off further down. The second is
+# where the cascade landed the first time — it registered, was refused, then set
+# `email_verified_at` on an account that did not exist, then failed the login and
+# reported it as "the SSO checks are NOT a verdict on the allowlist". One helper
+# rather than two copies, because a third caller appearing and being written the
+# anonymous way is exactly how this comes back.
+register_as_drill() {
+  local body out
+  body="{\"email\":\"$1\",\"handle\":\"$2\",\"password\":\"$PASS\"}"
+  out=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' -d "$body")
+  if [ -n "$REG_BEARER" ] && printf '%s' "$out" | grep -q '"code":"challenge_required"'; then
+    out=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
+      -H "authorization: Bearer $REG_BEARER" -d "$body")
+  fi
+  printf '%s' "$out"
+}
+
 reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"handle\":\"slice$$\",\"password\":\"$PASS\"}")
+if printf '%s' "$reg" | grep -q '"code":"challenge_required"'; then
+  ok "the registration challenge is ON — a caller with neither a solved challenge nor a service principal is refused"
+  service_credential=${VERIFY_SERVICE_CREDENTIAL:-${BEACON_IDENTITY_CREDENTIAL:-}}
+  if [ -n "$service_credential" ]; then
+    # The long-lived credential goes in the header and buys a short-lived token;
+    # identity shape-checks its prefix before it touches the database.
+    REG_BEARER=$(curl -s -X POST "$IDENTITY/service-tokens/exchange" \
+      -H "authorization: Bearer $service_credential" \
+      | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or d.get('accessToken') or '')" 2>/dev/null)
+  fi
+  unset service_credential
+  if [ -z "$REG_BEARER" ]; then
+    bad "this drill cannot pass the registration challenge: no service token could be minted. Set BEACON_IDENTITY_CREDENTIAL — 'set -a; . compose/estate/tokens.env; set +a' — and re-run. EVERY check below this line is then about that variable and not about the estate"
+  else
+    reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
+      -H "authorization: Bearer $REG_BEARER" \
+      -d "{\"email\":\"$EMAIL\",\"handle\":\"slice$$\",\"password\":\"$PASS\"}")
+  fi
+else
+  # Not a failure: `parseTurnstile` refuses a half-configured deployment at boot,
+  # so an unchallenged register means an operator set neither variable — which is
+  # every developer machine and every micro network.
+  ok "register is not challenged here, so this deployment has no Turnstile configured (micro-org#361)"
+fi
 printf '%s' "$reg" | grep -q '"verificationRequired":true' \
   && ok "register asks for the address to be proved, and mints no session" \
   || bad "register: $(printf '%s' "$reg" | head -c 160)"
@@ -2674,9 +2754,14 @@ echo "── CROSS-SURFACE SSO: the hand-off, driven end to end ─────�
 # So the session is obtained the way a real user gets one — the account is
 # verified, then signed in — and the drill FAILS EARLY AND SAYS SO if it cannot
 # get one, rather than carrying an empty token into an assertion about SSO.
+#
+# THE SECOND PLACE THE TURNSTILE LANDED. This registered anonymously, was refused
+# `challenge_required` from release 2.5.19 on, then set `email_verified_at` on an
+# account that had never been created, failed the login, and reported it as "the
+# SSO checks below are NOT a verdict on the allowlist" — true, and about nothing.
+# `register_as_drill` is the shared path; see the block where it is defined.
 so_email="sso-$$@example.test"
-so_reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
-  -d "{\"email\":\"$so_email\",\"handle\":\"sso$$\",\"password\":\"$PASS\"}")
+so_reg=$(register_as_drill "$so_email" "sso$$")
 so_tok=$(printf '%s' "$so_reg" | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
 
 if [ -z "$so_tok" ]; then
