@@ -162,32 +162,37 @@ cd /home/malf/dev/cloudsforge/deploy
 ./scripts/check-tunnel-origin.sh testnet
 ```
 
-The testnet gateway is a **separate compose project** (`cftestnet`, no hyphen)
-from the services it serves (`cf-testnet`), so no command in this section brings
-it up, lists it, or notices its absence. It has now been missing twice —
-2026-08-05 and 2026-08-08 — with all 46 services healthy and every public
+The testnet gateway *was* a **separate compose project** (`cftestnet`, no hyphen)
+from the services it serves (`cf-testnet`), so no command in this section brought
+it up, listed it, or noticed its absence. It went missing twice —
+2026-08-05 and 2026-08-08 — with every service healthy and every public
 `*-testnet` hostname answering 502 both times, because cloudflared reports an
 unreachable origin as 502. `make estate-gateway-testnet` starts it and runs the
 same check.
 
-**Mainnet's gateway no longer has that defect and testnet's still does.** On
-2026-08-10 the mainnet gateway was moved out of the telemetry plane's project
-into `cloudsforge-estate`, the project of the ~50 services it serves, so
-`docker compose -p cloudsforge-estate ps` lists it (micro-org#257). Two
-consequences for anybody deploying:
+**Neither gateway has that defect any more.** On 2026-08-10 the mainnet gateway
+was moved out of the telemetry plane's project into `cloudsforge-estate`, the
+project of the ~50 services it serves; on 2026-08-11 the testnet gateway followed
+into `cf-testnet` alongside its ~48. Both are now listed by a `ps` on the project
+an operator would actually type (micro-org#257). Two consequences for anybody
+deploying, and they apply to **both** environments:
 
-- **Never pass `--remove-orphans` to a `cloudsforge-estate` invocation that does
-  not include the two gateway compose files.** The gateway is in that project
-  now and is not defined by `docker-compose.estate.yml`, so compose will offer to
-  remove it — and it prints the invitation as a warning listing the ~50 estate
-  containers as orphans when you run it the other way round. `release-deploy.sh`
-  passes no such flag and is unaffected.
-- `make estate-gateway` brings it up in the right project and then runs
-  `check-tunnel-origin.sh mainnet`, so the target proves its own claim.
+- **Never pass `--remove-orphans` to a `cloudsforge-estate` or `cf-testnet`
+  invocation that does not include the two gateway compose files.** The gateway
+  is in that project now and is not defined by `docker-compose.estate.yml`, so
+  compose will offer to remove it — and it prints the invitation as a warning
+  listing the ~50 estate containers as orphans when you run it the other way
+  round. `release-deploy.sh` passes no such flag and is unaffected.
+- `make estate-gateway` and `make estate-gateway-testnet` bring each up in the
+  right project and then run `check-tunnel-origin.sh` for that environment, so
+  the target proves its own claim.
 
-Testnet's rename is still outstanding: it is a recreate of every container in
-`cftestnet`, and testnet is deliberately stopped while bitcoind finishes its
-initial block download.
+The project name comes from **one** place, `CF_GW_PROJECT` in
+`compose/testnet.env`, which the Makefile reads and the three scripts
+(`estate-up.sh`, `gateway-reload.sh`, `estate-verify.sh`) already derived. It is
+still a separate variable from `CF_PROJECT` even though the two now hold the same
+string — four entry points reading one value is the property that was missing,
+not the value itself.
 
 **Both `--env-file` flags, every time, and this is not style.** `--env-file`
 *replaces* the default `.env` rather than adding to it, and `compose/.env` is a

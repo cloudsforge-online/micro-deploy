@@ -319,10 +319,17 @@ GW_ESTATE := -p $(GW_PROJECT) \
 # `${CF_GW_PROJECT:-${CF_PROJECT:-cloudsforge-estate}}` and got `cf-testnet`.
 # `compose/testnet.env` now carries `CF_GW_PROJECT` and states the whole case;
 # this reads it so there is one value and not two.
+#
+# Since 2026-08-11 that value IS `cf-testnet` (micro-org#257) — the gateway is in
+# the project of the services it serves, so `docker compose -p cf-testnet ps`
+# lists it and nobody mistakes it for an orphan again. The fallback below is
+# deliberately the same string and not the old `cftestnet`: if the sed ever finds
+# nothing, failing into the project everything else uses is recoverable, and
+# failing into a project one hyphen away is the bug this fixed.
 GW_TESTNET_PROJECT := $(shell sed -n 's/^CF_GW_PROJECT=//p' compose/testnet.env | tail -1)
 GW_TESTNET := --env-file compose/testnet.env \
               --env-file compose/estate/tokens.testnet.env \
-              -p $(or $(GW_TESTNET_PROJECT),cftestnet) \
+              -p $(or $(GW_TESTNET_PROJECT),cf-testnet) \
               -f compose/docker-compose.gateway.yml \
               -f compose/docker-compose.estate-gateway.yml
 
@@ -344,7 +351,7 @@ estate-gateway-testnet: ## The TESTNET gateway on 9181 — without it every *-te
 
 # ── the check the two headers above should have been ─────────────────────────
 #
-# `estate-gateway-testnet` printed `ok: cftestnet-gateway-1 on 127.0.0.1:9181`
+# `estate-gateway-testnet` printed `ok: <gateway> on 127.0.0.1:9181`
 # unconditionally — an echo, after an `up -d`, asserting a thing it had not
 # looked at. It would have printed that line during both outages. Now the target
 # proves its own claim, and the claim is available on its own for the times

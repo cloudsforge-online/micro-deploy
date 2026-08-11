@@ -12,30 +12,35 @@
 # It ends by saying the fix is a target "because a gateway that lives only in an
 # operator's shell history is the same defect".
 #
-# On 2026-08-08 `cftestnet-gateway-1` was gone again and every testnet hostname
+# On 2026-08-08 the testnet gateway was gone again and every testnet hostname
 # was 502 for the second time. The target existed. The header existed. Neither is
 # a check, and a comment describing a failure prevents nothing.
 #
 # ── AND WHY IT LOOKED LIKE AN ORPHAN, WHICH IS THE REAL DEFECT ────────────────
 #
-# The gateway that serves testnet is in compose project `cftestnet`. The 46
+# The gateway that served testnet was in compose project `cftestnet`. The
 # services it serves are in project `cf-testnet`. ONE HYPHEN. So:
 #
-#   docker compose -p cf-testnet ps            <- does not list the gateway
+#   docker compose -p cf-testnet ps            <- did not list the gateway
 #   docker compose -p cf-testnet ... --remove-orphans
-#                                              <- cannot see it either, luckily
+#                                              <- could not see it either, luckily
 #
-# which means the container that every public testnet hostname depends on
-# presents itself, to anybody auditing the environment, as an unclaimed container
-# belonging to no stack. Removing it is the reasonable conclusion from what
-# `docker ps` shows.
+# which meant the container that every public testnet hostname depends on
+# presented itself, to anybody auditing the environment, as an unclaimed
+# container belonging to no stack. Removing it is the reasonable conclusion from
+# what `docker ps` shows, and it was removed twice in three days.
 #
 # MAINNET HAD THE SAME DEFECT AND WORSE ODDS — `cfmicro` is not one hyphen from
 # `cloudsforge-estate`, it is a different word — and it was the gateway carrying
 # live traffic. Fixed on 2026-08-10: that gateway is `cloudsforge-estate-gateway-1`
-# in project `cloudsforge-estate` now, and the `owner` line this script prints at
-# the end is what proves it on any given day. Testnet's rename is still open
-# (micro-org#257); until it lands, this check is what notices there.
+# in project `cloudsforge-estate`. Testnet followed on 2026-08-11 and is
+# `cf-testnet-gateway-1` in `cf-testnet` (micro-org#257, both halves closed).
+#
+# THIS CHECK OUTLIVES THE RENAME AND IS THE POINT OF IT. A project name is not a
+# liveness property: the gateway can be listed, labelled and healthy and still
+# answer nothing, which is what "healthy container, 502 everywhere" looked like
+# on 2026-08-04. The `owner` line printed at the end is what proves the project
+# on any given day, so a regression is visible rather than inferred.
 #
 # ── WHAT IT ASSERTS ───────────────────────────────────────────────────────────
 #
