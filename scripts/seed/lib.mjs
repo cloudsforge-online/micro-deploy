@@ -296,6 +296,47 @@ function readEmberRpc() {
 }
 
 /**
+ * The two names the key file is known by, newest first.
+ *
+ * ── DECLARED ABOVE `MINER_DATA`, AND IT HAS TO BE ───────────────────────────
+ *
+ * `readMinerData()` is hoisted, so it may be CALLED from line 313 above; this
+ * `const` is not, so it may not be READ from there. Declaring it below the call
+ * threw `ReferenceError: Cannot access 'MINER_KEY_FILES' before initialization`
+ * at import time and took the whole seeder down — every domain, not just mint.
+ * `node --check` passes on that, because a temporal dead zone is a runtime fact
+ * and not a syntax error; only actually running it finds this.
+ *
+ * ── AND THE SECOND NAME IS WHY THIS IS A LIST ────────────────────────────────
+ *
+ * micro-org#206 SEALED the plaintext coinbase key. `coinbase-key.json` — a file
+ * with `privateKey` in it at mode 0600 — became `coinbase-keystore.json`, an
+ * encrypted keystore whose passphrase lives in `miner-keys/secrets/`. That was
+ * the right thing to do and it is not being undone here.
+ *
+ * What nobody noticed is that the seeders were reading that file, and they went
+ * on looking for the old name. Measured on the app host 2026-08-11:
+ *
+ *     drwx------  miner-keys/
+ *     -rw-------  miner-keys/secrets/coinbase-passphrase
+ *     drwxr-xr-x  miner-keys/mainnet/
+ *     -rw-------  miner-keys/mainnet/coinbase-keystore.json      <- the only key file
+ *
+ * so `readMinerData()` found no `coinbase-key.json`, fell through to the laptop
+ * path that does not exist on this host, and `seed/mint.mjs` reported
+ *
+ *     skip  no token orders: there is no miner key file to read the platform's
+ *           own chain address from
+ *
+ * on every run since the sealing. That is not what happened: the file is there
+ * and the address in it is not a secret. The result reached the operator as
+ * `estate-verify.sh`'s "mint.tokens is EMPTY", which reads as missing content
+ * rather than as a path that stopped matching — the failure mode this file's
+ * previous fix (the laptop path) was written to stop, recurring under a new name.
+ */
+const MINER_KEY_FILES = ['coinbase-keystore.json', 'coinbase-key.json']
+
+/**
  * The directory holding `coinbase-key.json` for THIS environment's miner.
  *
  * `compose/docker-compose.miners.yml,161` already declares the deployed
@@ -316,9 +357,48 @@ function readMinerData() {
   if (process.env.EMBER_MINER_DATA) return process.env.EMBER_MINER_DATA
   const keys = process.env.CF_MINER_KEYS || path.resolve(ROOT, '../miner-keys')
   const perNetwork = path.join(keys, EMBER_NETWORK)
-  if (fs.existsSync(path.join(perNetwork, 'coinbase-key.json'))) return perNetwork
+  if (MINER_KEY_FILES.some((f) => fs.existsSync(path.join(perNetwork, f)))) return perNetwork
   const home = process.env.EMBER_HOME || path.join(process.env.HOME || '', '.cloudsforge/ember-testnet')
   return path.join(home, 'miner')
+}
+
+/**
+ * The miner's ADDRESS, from whichever of the two files exists — and nothing else
+ * out of either of them.
+ *
+ * An Ethereum keystore carries `address` in the CLEAR, beside the encrypted
+ * `ciphertext`; that is what makes it possible to know which account a keystore
+ * is for without unlocking it. Read on the app host, `coinbase-keystore.json`
+ * has top-level keys `address, cipher, ciphertext, kdf, version, warning`, and
+ * `address` is a 42-character `0x`-prefixed string. So every caller that wants
+ * to say WHO the platform is can be served without the passphrase ever being
+ * read, and this function deliberately cannot decrypt anything.
+ *
+ * `seed/foresight.mjs` is NOT ported onto this. It needs `privateKey` because it
+ * SIGNS a transaction to open a market on chain, and a sealed keystore cannot
+ * give it one without the passphrase. Reading a passphrase and decrypting a
+ * mining key inside a seeder is a much larger decision than this fix, so that
+ * path still looks for the plaintext file, still returns null when it is absent,
+ * and still skips with a reason. The difference is that its reason is true.
+ *
+ * Returns null when neither file exists — a machine with no miner is a normal
+ * machine, and CI is one.
+ */
+export const MINER_ADDRESS = readMinerAddress()
+
+function readMinerAddress() {
+  for (const name of MINER_KEY_FILES) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(path.join(MINER_DATA, name), 'utf8'))
+      /* Keystores written by other tools omit the `0x`. Normalised here so a
+       * caller that pastes this into an API cannot be refused for a prefix. */
+      const addr = String(raw.address ?? '')
+      if (/^(0x)?[0-9a-fA-F]{40}$/.test(addr)) return addr.startsWith('0x') ? addr : `0x${addr}`
+    } catch {
+      /* missing or unreadable — try the next name, then give up */
+    }
+  }
+  return null
 }
 
 export const COMPOSE = process.env.COMPOSE || 'compose/docker-compose.estate.yml'

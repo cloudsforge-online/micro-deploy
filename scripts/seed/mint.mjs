@@ -66,21 +66,9 @@
  * unique `token_id` (`migrations.ts`), so re-sending is free.
  */
 
-import fs from 'node:fs'
-import path from 'node:path'
 import process from 'node:process'
-import { api, ok, bad, skip, note, head, ROOT, MINER_DATA } from './lib.mjs'
+import { api, ok, bad, skip, note, head, ROOT, MINER_ADDRESS } from './lib.mjs'
 
-/**
- * The owner address every order is opened against.
- *
- * Read from the miner key file the estate already has, because that address is
- * the platform's real identity on this chain and mint stores it as the token's
- * owner. mint validates the 20-byte shape and canonicalises to EIP-55; it does
- * not verify that a wallet exists. If the key file is absent the domain is
- * skipped rather than fed a made-up address — a token order naming an address
- * nobody controls is a lie about who would own the token.
- */
 /**
  * What one deploy costs, in the units the catalogue itself states — or `null`
  * when it states none.
@@ -131,20 +119,34 @@ function deployPrice(body) {
   return asset ? `${usd} (${cents} US cents), settled in ${asset}` : `${usd} (${cents} US cents)`
 }
 
-function ownerAddress() {
-  // `MINER_DATA` is `lib.mjs`'s, and it looks in `../miner-keys/<network>` —
-  // the layout `compose/docker-compose.miners.yml` already declares — before
-  // falling back to the laptop path this function used to be the only reader of.
-  // On the deployment host the laptop path does not exist, so this returned null
-  // and every token order was skipped for want of a key two directories away.
-  const file = path.join(MINER_DATA, 'coinbase-key.json')
-  try {
-    const raw = JSON.parse(fs.readFileSync(file, 'utf8'))
-    return String(raw.address)
-  } catch {
-    return null
-  }
-}
+/**
+ * The owner address every order is opened against.
+ *
+ * Read from the miner key the estate already has, because that address is the
+ * platform's real identity on this chain and mint stores it as the token's
+ * owner. mint validates the 20-byte shape and canonicalises to EIP-55; it does
+ * not verify that a wallet exists. If no key is present the domain is skipped
+ * rather than fed a made-up address — a token order naming an address nobody
+ * controls is a lie about who would own the token.
+ *
+ * ── THIS USED TO READ THE KEY FILE ITSELF, AND BROKE WHEN IT WAS SEALED ─────
+ *
+ * There was an `ownerAddress()` here that opened `coinbase-key.json` under
+ * `MINER_DATA`. micro-org#206 encrypted that file into `coinbase-keystore.json`,
+ * so from the sealing onward the address sat in the same directory under a name
+ * this reader did not know, `ownerAddress()` returned null, and every token
+ * order was skipped. The operator saw that as `estate-verify.sh`'s "mint.tokens
+ * is EMPTY" — which reads as missing content, not as a reader that quietly
+ * stopped matching, so it went uninvestigated for as long as it did.
+ *
+ * `lib.mjs` now owns the reading, tries both filenames, and exports the result.
+ * Nothing is decrypted to get it: a keystore carries `address` in the clear
+ * beside the encrypted `ciphertext` — that is the field's whole purpose — so
+ * the platform can say WHO it is without the passphrase being anywhere near
+ * this process. One reader, so the next rename breaks one place and is fixed
+ * in one place.
+ */
+const ownerAddress = () => MINER_ADDRESS
 
 /**
  * Three token orders the platform genuinely intends.
@@ -240,8 +242,10 @@ export async function seedMint(token) {
   const owner = ownerAddress()
   if (!owner) {
     skip(
-      'no token orders: there is no miner key file to read the platform\'s own chain address from, ' +
-        'and opening an order against an address nobody controls would be a lie about who owns it.',
+      'no token orders: no coinbase-keystore.json or coinbase-key.json under the miner key directory ' +
+        'carries a readable address, so the platform\'s own chain identity is unknown here, and opening ' +
+        'an order against an address nobody controls would be a lie about who owns it. ' +
+        'Set CF_MINER_KEYS to the directory holding <network>/coinbase-keystore.json.',
     )
     return
   }
