@@ -173,13 +173,27 @@ check-secrets: ## No secret is a placeholder, too short, or already in a transcr
 	@# the eight known strings, so every placeholder gate passed), and a secret
 	@# printed into an agent transcript by `docker inspect`. See
 	@# runbooks/runbook-secret-leaked-to-transcript.md. Prints NO secret values.
-	@python3 scripts/check-secret-hygiene.py \
+	@#
 	@# `.env` at the repository root is in the list because it is the ONLY home of
 	@# CF_GRAFANA_ADMIN_PASSWORD — the telemetry plane reads it, `compose/.env` is
 	@# a symlink to the estate's tokens and does not contain it, and so a check
 	@# against the three compose paths alone had a live credential outside its
 	@# field of view (measured 2026-08-10, during micro-org#156).
-		--files compose/secrets/*.env compose/estate/tokens.env compose/.env .env
+	@#
+	@# EVERY COMMENT IN THIS RECIPE SITS ABOVE THE COMMAND, AND THAT IS LOAD-BEARING.
+	@# The five lines above used to sit BETWEEN `check-secret-hygiene.py \` and its
+	@# `--files`. A backslash continues the line, so make handed the whole thing to
+	@# the shell as ONE command: `@#` is not a shell comment, and the backticks
+	@# around `.env` opened a command substitution. What ran was
+	@#     /bin/sh: 1: .env: not found
+	@#     error: unrecognized arguments: @# at the repository root is in the list
+	@# and the target exited 2 without checking anything. It had done that since
+	@# 2026-08-10 — the commit that added `.env` to close micro-org#156's blind
+	@# spot is the commit that blinded the entire check, so the target reported
+	@# nothing for the whole of the window it was added to cover (measured
+	@# 2026-08-11, micro-org#340). A check that errors is a check that is off.
+	@python3 scripts/check-secret-hygiene.py \
+		--files compose/secrets/*.env compose/estate/tokens*.env compose/.env .env
 
 check-residue: ## Does any file on this host still hold a live estate secret? ROOTS=<dirs>
 	@# THE LAST STEP OF EVERY ROTATION, and the one that was being skipped because
@@ -192,9 +206,19 @@ check-residue: ## Does any file on this host still hold a live estate secret? RO
 	@# It reports the MODE of each file it finds, so a hit that is world-readable
 	@# is distinguishable from a hit that is not (micro-org#340). It prints
 	@# variable NAMES and paths, never a value.
+	@#
+	@# THE GLOB IS `tokens*.env`, NOT `tokens.env`. A host that carries testnet has
+	@# `tokens.testnet.env` beside the mainnet file, and naming only the mainnet one
+	@# was wrong twice over: its ~30 testnet values were never used as needles, and
+	@# the file itself was not recognised as a source, so the sweep reported the
+	@# estate's own live testnet secrets file as residue. On the chain host on
+	@# 2026-08-11 that was the single finding left standing after a clean sweep —
+	@# a permanent red that can only be resolved by ignoring it, which is how a
+	@# check stops being read. Widening it takes that host to 0 findings and the
+	@# needle count from 41 to 73 in the same run.
 	@python3 scripts/check-secret-hygiene.py \
 		--transcripts $(or $(ROOTS),$(HOME)) \
-		--against compose/secrets/*.env compose/estate/tokens.env compose/.env .env \
+		--against compose/secrets/*.env compose/estate/tokens*.env compose/.env .env \
 		--allow prometheus/secrets alertmanager/secrets
 
 estate: ## Confirm the existing eighteen containers are still healthy
