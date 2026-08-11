@@ -3403,6 +3403,24 @@ services:
       # things that happen to name one container.
       BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000,wallet=http://wallet:4000,custody=http://custody:4000,studio=http://studio:4000
       BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
+      # ── THE POOL THE JOURNEYS SIGN IN AS, WHICH NOTHING PASSED THROUGH ──────
+      #
+      # Eight provisioned accounts, as JSON. `beacon/scripts/provision-journey-accounts.md`
+      # describes making them; this line is what carries them, and until it existed the
+      # variable could be set in `tokens.env` all day and never reach the container.
+      #
+      # Measured on mainnet 2026-08-11, with the pool unprovisioned: EIGHT OF FIFTEEN
+      # journeys skipping — `identity.signin`, `identity.handoff`, all five `ecosystem.*`
+      # and both `browser.*`. Every journey that passed was one that needs no session, so
+      # the monitor was green while proving nothing at all about the signed-in product.
+      #
+      # A skip rather than a fail is the correct behaviour when it is unset (`pool.ts`: an
+      # estate that has not provisioned the pool has not demonstrated a broken product) —
+      # but a skip nobody reads is indistinguishable from a pass, and this one went unread
+      # long enough to matter.
+      #
+      # `:-` and not `:?`: an estate that has not provisioned the pool must still boot.
+      BEACON_JOURNEY_ACCOUNTS: ${BEACON_JOURNEY_ACCOUNTS:-}
       # The SSO origin the handoff journey hands off TO. Unset, `identity.handoff`
       # SKIPS rather than guesses an origin — correctly, since a guessed origin would
       # test nothing and report green. That skip was the last open SEV2 and the last
