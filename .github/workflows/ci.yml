@@ -247,6 +247,34 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-hearth-pins-agree.py
 
+      # ── A ROTATION LEAVES A SECOND COPY OF THE CREDENTIAL SET BEHIND ────────
+      #
+      # Every rotation this estate has run made a copy of the file it was about
+      # to edit, and every one of them left it there — four `.bak-*` files beside
+      # live secrets files across four rotations, the latest found during the
+      # bitcoind `rpcauth` rotation of 2026-08-11.
+      #
+      # They are not stale. `compose/estate/tokens.env.bak-1785933479` held 39
+      # values of which 37 were BYTE-IDENTICAL to the live `tokens.env` — only
+      # `SMTP_PASS` had moved — so it was a second complete copy of every service
+      # token, the operator password and the beacon token.
+      #
+      # Nothing catches it, because every other guard here is aimed at the
+      # commit and this failure never reaches one: `compose/secrets/` is ignored
+      # as a directory and `compose/estate/tokens*` globs the whole tail. The
+      # risk is on-disk longevity — a retired credential with no expiry, no owner
+      # and an older mode, on a network-reachable host — and the estate is
+      # perfectly healthy the entire time. It surfaces months later as a
+      # permanent red in `make check-residue`, which is where a check stops being
+      # read.
+      #
+      # It prints FILENAMES. It never reads, greps or prints the contents of a
+      # scanned file — that is the rule whose violation caused the rotation this
+      # check came out of, and a CI log here is public.
+      - name: No backup of a secrets file is lingering beside the live one
+        working-directory: deploy
+        run: ./scripts/check-no-secret-backups.sh
+
       # ── THE GATEWAY CANNOT LOG A CLIENT IP, AND NOW SOMETHING SAYS SO ───────
       #
       # micro-org#163 found that Traefik logs no client address here, and then
