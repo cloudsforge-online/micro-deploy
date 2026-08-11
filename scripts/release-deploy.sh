@@ -983,6 +983,80 @@ if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d ${PULL_POLICY[@]
     echo "  no $prom_container on this host; prometheus rules not reloaded"
   fi
 
+  # ── THE GATEWAY'S CONNECTION POOL, WHICH OUTLIVES THE ADDRESSES IN IT ──────
+  #
+  # Recreating a container gives it a new address on the compose network, and
+  # compose hands the freed addresses straight back out. So a deploy that
+  # recreates two front ends can give one of them the address the other just
+  # had — and Traefik, which is not in this compose project and was not
+  # restarted, is still holding an ESTABLISHED keep-alive connection to that
+  # address.
+  #
+  # A pooled connection is to an ADDRESS, not to a name. Traefik re-resolves
+  # `devportal-web` only when it needs a new connection, and it does not need
+  # one while a warm socket is open. The socket now terminates inside a
+  # different application, and the proxy cannot tell.
+  #
+  # Measured on mainnet 2026-08-11 (micro-org#428): the deploy recreated
+  # devportal-web and status-web at 23:15:29Z, swapping their addresses;
+  # https://developers.cloudsforge.online then served status-web's application —
+  # its `<title>`, its `cf-release` — publicly and at the tunnel origin alike,
+  # for hours. The access log recorded
+  #
+  #   RouterName: tunnel-cf-web-developers@file
+  #   ServiceName: cf-web-developers@file
+  #   ServiceAddr: devportal-web:8080
+  #   OriginStatus: 200
+  #
+  # and every word of it was true. The router was right, the service was right,
+  # the name was right, DNS inside the gateway resolved that name to the right
+  # container, the response was a 200, and the health checks were green. Only
+  # `estate-verify`'s cf-release comparison caught it, and only because two of
+  # the twenty front ends happened to trade addresses.
+  #
+  # A CONFIG RELOAD DOES NOT FIX THIS and `gateway-reload.sh` is the wrong tool:
+  # it exists for a different failure (virtiofs never delivers the inotify event
+  # that `--providers.file.watch=true` waits for), and reloading a config that
+  # was correct all along leaves the pool exactly where it was. Only dropping
+  # the pool drops the pool.
+  #
+  # So the gateway is cycled, unconditionally, on every deploy. It is stateless
+  # — its whole configuration is the bind-mounted dynamic directory — and it
+  # comes back in about a second. That second is a real interruption, and it is
+  # bought at the one moment an interruption is already expected, to close a
+  # failure whose signature is a 200 with the wrong application in it.
+  #
+  # Unconditional rather than "only when a front end was recreated", because the
+  # condition is not knowable here: `up -d` does not report which containers it
+  # recreated, and inferring it from image digests would miss a container
+  # recreated for any other reason. A guess that is wrong in the safe direction
+  # still leaves the estate serving the wrong site.
+  #
+  # It runs BEFORE check-tunnel-origin.sh below, so the reachability check that
+  # ends every deploy is also the proof that the gateway came back.
+  case "$ESTATE_ENV" in
+    *testnet*) default_gateway=cf-testnet-gateway-1 ;;
+    *)         default_gateway=cloudsforge-estate-gateway-1 ;;
+  esac
+  gateway_container="${GATEWAY_CONTAINER:-$default_gateway}"
+  if docker inspect "$gateway_container" >/dev/null 2>&1; then
+    if docker restart "$gateway_container" >/dev/null 2>&1; then
+      echo "  cycled $gateway_container — no pooled connection can outlive this deploy"
+    else
+      echo >&2
+      echo "THE RELEASE IS DEPLOYED AND THE GATEWAY WAS NOT CYCLED." >&2
+      echo "Traefik may still be proxying a surface to whichever container now" >&2
+      echo "holds its old address. Cycle it by hand and re-verify:" >&2
+      echo "  docker restart $gateway_container" >&2
+      echo "  ./scripts/estate-verify.sh" >&2
+    fi
+  else
+    # Same reasoning as the Prometheus branch above: a developer's laptop
+    # legitimately runs no gateway, and the absent case is already reported —
+    # loudly, with the command to fix it — by check-tunnel-origin.sh below.
+    echo "  no $gateway_container on this host; gateway not cycled"
+  fi
+
   # ── AND IS ANY OF IT REACHABLE? ─────────────────────────────────────────────
   #
   # `up -d` returning 0 means every container was created and, given the health

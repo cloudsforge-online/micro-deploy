@@ -297,7 +297,27 @@ hand-typed `docker run`, belonged to no project, appeared in no `ps`, and on
 Read that file's header before touching either process; the two are not copies
 and stopping the wrong one takes mainnet Litecoin indexing down.
 
-**The gateway is checked by the deploy now, and was not before.**
+**The gateway is cycled by the deploy, and the cycle is not optional.**
+`release-deploy.sh` restarts this environment's gateway container after `up -d`
+and before the reachability check. Recreating a container gives it a new address
+on the compose network and compose hands the freed addresses straight back out,
+so a deploy can hand one front end the address another just had — and Traefik,
+which is not in this compose project, is still holding a keep-alive connection
+to that address. A pooled connection is to an address, not to a name.
+
+On 2026-08-11 that put **status-web's application on
+`https://developers.cloudsforge.online`**, publicly, answering 200, with a router
+name, a service name and an access log that were all correct (micro-org#428).
+Nothing detects it but `estate-verify`'s `cf-release` comparison. **A config
+reload does not fix it** — `gateway-reload.sh` reloads config, and the config was
+never wrong; only dropping the pool drops the pool. If you bring services up by
+hand rather than through `release-deploy.sh`, restart the gateway yourself:
+
+```sh
+docker restart cloudsforge-estate-gateway-1     # or cf-testnet-gateway-1
+```
+
+**The gateway is checked by the deploy too, and was not before.**
 `release-deploy.sh` finishes by running `./scripts/check-tunnel-origin.sh` for
 the environment it just deployed, so a 502 is on the last line of the deploy
 instead of in somebody's browser. To run it alone:
