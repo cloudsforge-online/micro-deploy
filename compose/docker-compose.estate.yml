@@ -298,13 +298,22 @@ x-studio-secret-file: &studio-secret-file
 # long as this file has existed. `micro-beacon` recorded it from the outside
 # (`beacon/src/browser/walletjourneys.ts,307`) and was right.
 #
-# ── WHY EMBER IS THE ONLY ENTRY, AND WHY THAT IS NOT AN OVERSIGHT ─────────────
+# ── WHY EMBER WAS THE ONLY ENTRY, AND WHY THIS TABLE IS SHORTER THAN THE CHAINS ─
 #
 # `staticFeeQuoter`'s docstring states the rule this file is obeying: an operator
 # STATES the fee, and an asset absent from the table is refused "rather than
-# priced by guessing". This estate runs exactly one chain — `INDEXER_CHAINS=ember:mainnet`
-# in `env/chain.mainnet.env:41` — so EMBER is the only asset whose fee anyone here
-# can measure rather than invent.
+# priced by guessing". When this note was written the estate followed one chain
+# and the sentence here said so; `INDEXER_CHAINS` in `env/chain.mainnet.env` now
+# reads `ember:mainnet,ltc:mainnet,btc:mainnet`, and that is deliberately NOT the
+# same list as this table.
+#
+# **This table is what opens a deposit, and `INDEXER_CHAINS` is not.** `wallet`
+# gates observability behind `payableChainsOnly` with the payability half
+# OUTERMOST, so an asset absent here is one the estate neither offers an address
+# for nor credits, however well the indexer can see it. BTC is followed and has
+# no entry: adding one is the separate decision described in
+# `settlement/src/bitcoin.ts`, which has to answer what a Bitcoin withdrawal
+# costs on a node whose fee estimator is disabled by `blocksonly`.
 #
 # 21000000000000 is MEASURED, not copied: `eth_gasPrice` on this estate's own
 # hearth-seed answers 0x3b9aca00 (1 gwei) and a plain transfer is 21000 gas, so
