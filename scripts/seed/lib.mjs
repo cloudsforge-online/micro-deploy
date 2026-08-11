@@ -296,26 +296,18 @@ function readEmberRpc() {
 }
 
 /**
- * The directory holding `coinbase-key.json` for THIS environment's miner.
+ * The two names the key file is known by, newest first.
  *
- * `compose/docker-compose.miners.yml,161` already declares the deployed
- * layout — `${CF_MINER_KEYS}/mainnet` and `${CF_MINER_KEYS}/testnet` — and this
- * is the same expression rather than a second convention. Before it, the seeders
- * looked only at `~/.cloudsforge/ember-testnet/miner`, a developer-laptop path
- * that does not exist on the deployment host, so every market was created,
- * approved and then SKIPPED at the deploy step for want of a key that was
- * sitting two directories away. An approved market does not appear on the browse
- * page, so the surface stayed empty and the seeder reported a reasoned skip.
+ * ── DECLARED ABOVE `MINER_DATA`, AND IT HAS TO BE ───────────────────────────
  *
- * The laptop path remains the last fallback, unchanged, for the machine where it
- * is right.
- */
-export const MINER_DATA = readMinerData()
-
-/**
- * The two names this directory is known by, newest first.
+ * `readMinerData()` is hoisted, so it may be CALLED from line 313 above; this
+ * `const` is not, so it may not be READ from there. Declaring it below the call
+ * threw `ReferenceError: Cannot access 'MINER_KEY_FILES' before initialization`
+ * at import time and took the whole seeder down — every domain, not just mint.
+ * `node --check` passes on that, because a temporal dead zone is a runtime fact
+ * and not a syntax error; only actually running it finds this.
  *
- * ── AND THE SECOND ONE IS WHY THIS IS A LIST ─────────────────────────────────
+ * ── AND THE SECOND NAME IS WHY THIS IS A LIST ────────────────────────────────
  *
  * micro-org#206 SEALED the plaintext coinbase key. `coinbase-key.json` — a file
  * with `privateKey` in it at mode 0600 — became `coinbase-keystore.json`, an
@@ -343,6 +335,23 @@ export const MINER_DATA = readMinerData()
  * previous fix (the laptop path) was written to stop, recurring under a new name.
  */
 const MINER_KEY_FILES = ['coinbase-keystore.json', 'coinbase-key.json']
+
+/**
+ * The directory holding `coinbase-key.json` for THIS environment's miner.
+ *
+ * `compose/docker-compose.miners.yml,161` already declares the deployed
+ * layout — `${CF_MINER_KEYS}/mainnet` and `${CF_MINER_KEYS}/testnet` — and this
+ * is the same expression rather than a second convention. Before it, the seeders
+ * looked only at `~/.cloudsforge/ember-testnet/miner`, a developer-laptop path
+ * that does not exist on the deployment host, so every market was created,
+ * approved and then SKIPPED at the deploy step for want of a key that was
+ * sitting two directories away. An approved market does not appear on the browse
+ * page, so the surface stayed empty and the seeder reported a reasoned skip.
+ *
+ * The laptop path remains the last fallback, unchanged, for the machine where it
+ * is right.
+ */
+export const MINER_DATA = readMinerData()
 
 function readMinerData() {
   if (process.env.EMBER_MINER_DATA) return process.env.EMBER_MINER_DATA
