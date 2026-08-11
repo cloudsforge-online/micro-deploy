@@ -1618,7 +1618,9 @@ http:
     # everything else here — the estate sets `PORT: "4000"` for every service — and NOT the 4015
     # the registry row carries, which is studio's own `pnpm dev` default (studio/src/env.ts).
     # Confirmed against both running gateways rather than assumed: `http://studio:4000/livez`
-    # answers `{"ok":true,...}` from inside cfmicro-gateway-1 and cftestnet-gateway-1 alike.
+    # answers `{"ok":true,...}` from inside the mainnet and testnet gateways alike. Both have
+    # been renamed since — `cloudsforge-estate-gateway-1` and `cf-testnet-gateway-1`, both in
+    # the project of the services they serve (micro-org#257) — but the measurement stands.
     cf-svc-studio:
       loadBalancer:
         servers: [{ url: "http://studio:4000" }]
