@@ -937,3 +937,30 @@ jobs:
         run: |
           python3 -m pip install --quiet pyyaml
           python3 scripts/check-compose-host-ports.py
+
+      # ── A DOCUMENT THAT PRESCRIBES AN OVERLAY NOTHING DEPLOYS ────────────────
+      #
+      # `compose/docker-compose.design.yml` pinned all seventy-four services at
+      # `2.5.4` and `docs/releasing.md` step 3 told an operator to pass it on
+      # every testnet deploy. Testnet had not run 2.5.4 since 2026-08-08, because
+      # every deploy since went through `release-deploy.sh`, which reads a release
+      # manifest and never heard of that overlay. The file stopped being bumped
+      # the moment the deploy path moved; the document went on prescribing it.
+      #
+      # Following it on 2026-08-11 rolled `mint` from `2026.08.21` back to
+      # `2.5.4` — seventeen releases — in twelve seconds, with a green `up -d` and
+      # a healthy container, and the old migrator then ran against the live
+      # testnet schema (micro-org#414).
+      #
+      # A stale pin cannot be seen from inside the file that carries it: `2.5.4`
+      # is a well-formed tag naming an image that really exists. What IS visible
+      # is the disconnect — a file pinning the estate's own images that no deploy
+      # path applies — and that is what this reads, in the document, in the
+      # compose headers that quote the command, and in the file itself.
+      #
+      # No sibling checkout and no secrets: it reads tracked text and asks `git`
+      # which files are tracked, so a rendered `docker-compose.release.yml` on a
+      # deploy host is never mistaken for a committed pin.
+      - name: No document prescribes an overlay no deploy path passes
+        working-directory: deploy
+        run: python3 scripts/check-docs-prescribe-deployed-overlays.py

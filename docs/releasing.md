@@ -60,8 +60,19 @@ artifact. It was found five days later, by reading
 it. **Order by the manifest's `generated` field**, which is the only one that
 orders the two lineages against each other. `micro-org`'s `release-order.test.ts`
 now makes a backwards manifest a build failure rather than a deploy
-(micro-org#384), and `./scripts/release-deploy.sh --list` prints them in the
-order they were actually cut.
+(micro-org#384).
+
+**`./scripts/release-deploy.sh --list` does not order them either**, and this
+document claimed it did until 2026-08-11. It runs `ls -1` over the directory, so
+what it prints is alphabetical: the last line today is `2026.08.9`, which is
+twelve releases old, and `2.3.0` is first. It is a list of what exists, not a
+history. To find the newest, read the `generated` field:
+
+```sh
+grep -H '^generated:' ../org/releases/*.yaml | sed 's|.*/||' | sort -k2 | tail -5
+```
+
+The last line of that is the newest release, whichever lineage it belongs to.
 
 ---
 
@@ -73,10 +84,10 @@ command below is the only answer that cannot age.
 
 Both estates read the same number, which is the rule below. They are allowed to differ
 in one situation only — a release being proved on testnet before it reaches
-mainnet, which is what the design overlay exists for
-(`compose/docker-compose.design.yml`). Testnet ahead of mainnet, during a
-release, is expected. Testnet *behind* mainnet, or either estate reading two
-numbers at once, is not.
+mainnet, which is step 3 below deploying the manifest to testnet and step 5
+deploying **the same manifest** to mainnet afterwards. Testnet ahead of mainnet,
+during a release, is expected. Testnet *behind* mainnet, or either estate reading
+two numbers at once, is not.
 
 A table here sat at `2.3.0` while both estates moved to `2.4.0` and testnet to
 `2.5.1`, which is the argument for the command below rather than for a table.
@@ -178,44 +189,118 @@ the `publish` job has returned a transient `403 Forbidden` pushing to GHCR more
 than once. Re-run the failed job (`gh run rerun <id> --failed`) — **never**
 `gh run delete`; red runs stay in the history.
 
-### 2. Bump the design overlay
+### 2. Cut the manifest
 
-`deploy/compose/docker-compose.design.yml` pins all seventy-four testnet image
-lines explicitly. Bump them in the repository, add a header section saying what
-the release carries and why, then copy the file to the host — **the host is not
-a checkout and does not pull.**
+The manifest is generated from the repositories, not written by hand. In
+`micro-org`:
 
 ```sh
-scp deploy/compose/docker-compose.design.yml \
-    savva@192.168.1.129:/home/savvaniss/dev/cloudsforge/deploy/compose/
+cfctl release <version>            # reads each package.json + git HEAD
+                                   # refuses a dirty checkout
+cfctl release --verify <version>   # every image it names exists in GHCR
 ```
+
+That writes `org/releases/<version>.yaml`, and **that one file is what both
+estates deploy** — testnet in step 3, mainnet in step 5, the same file, not a
+second one cut in between. A manifest cut twice is two releases wearing one name,
+and the second one is the one nobody proved.
+
+**This step used to read "Bump the design overlay", and that is the defect this
+document was carrying** (micro-org#414). `compose/docker-compose.design.yml`
+pinned all seventy-four testnet image lines by hand, was bumped here before every
+release, and was passed as a fourth `-f` by the hand-typed command that used to
+be step 3. It was last bumped on 2026-08-08, at `2.5.4`, because every testnet
+deploy since has gone through `release-deploy.sh` — which reads a manifest and
+has never heard of that overlay. Seventeen releases later the file still said
+`2.5.4` and the document still said to use it.
+
+On 2026-08-11 somebody followed it. Applying a one-variable change to `mint` with
+the command this document prescribed rolled that service from `2026.08.21` back
+to `2.5.4` — about a hundred and forty commits — in under twelve seconds, with a
+green `up -d` and a healthy container. `mint-migrate` then ran the **old**
+migrator against the live testnet schema and reported `from: 7, to: 7,
+applied: []`, which is the only reason it cost nothing; an old migrator with
+something to undo would have been a data event, and `--rollback` puts images
+back, not schemas.
+
+So the overlay is **deleted**, not regenerated. Its job was to prove a release on
+testnet before mainnet, and that job is step 3 below: the same manifest, deployed
+to testnet first. A file that no script passes cannot be kept current by
+discipline — it was already seventeen releases stale while every check in this
+repository was green. Its header carried the per-release record of what each tag
+changed, `2.3.0` through `2.5.4`; that is in git history at `cdbc887` and the
+releases since are recorded in their manifests and in the issues that cut them.
+`scripts/check-docs-prescribe-deployed-overlays.py` now fails the build if a
+document prescribes an image-pinning overlay that no deploy path passes, so this
+particular file cannot come back quietly.
+
+**If you are reading this on the app host, delete the copy there too.**
+`/home/savvaniss/dev/cloudsforge/deploy/compose/docker-compose.design.yml` was
+`scp`'d there by the step this replaced; the host is not a checkout, so removing
+it from the repository does not remove it from the host, and a `-f` typed from
+memory still finds it.
 
 ### 3. Testnet
 
+Testnet gets **the same script as mainnet with two variables changed**, and
+nothing else:
+
 ```sh
-cd /home/savvaniss/dev/cloudsforge/deploy/compose   # app host
-docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
-  -p cf-testnet \
-  -f docker-compose.estate.yml \
-  -f docker-compose.release.yml \
-  -f docker-compose.design.yml \
-  -f docker-compose.testnet-chain.yml \
-  pull
-# then the same command with: up -d --remove-orphans
+cd /home/savvaniss/dev/cloudsforge/deploy           # app host
+ESTATE_ENV=compose/testnet.env \
+TOKENS_FILE=compose/estate/tokens.testnet.env \
+  ./scripts/release-deploy.sh <version>
 ```
 
-**Four overlays, and the fourth is the chain.**
-`docker-compose.testnet-chain.yml` declares the `litecoind -regtest` node this
-environment indexes. Omitting it does not fail: compose brings up the other 46
-services happily and the node — which has `restart: unless-stopped` — keeps
-running from before. What you lose is the declaration, and that is how it got
-lost the first time. It was created by a hand-typed `docker run`, belonged to no
-project, appeared in no `ps`, and on 2026-08-08 was reasonably mistaken for the
-host's **real Litecoin mainnet node**. Read that file's header before touching
-either process; the two are not copies and stopping the wrong one takes mainnet
-Litecoin indexing down.
+`--dry-run` renders the overlay and proves every image exists without touching a
+container, and is worth a first pass. `--rollback` deploys the previous manifest
+by the same code path.
 
-**Then check the gateway, because `up -d` does not.**
+That command is immune to all three of the traps recorded below, and they are
+recorded rather than deleted because each one is still live on anything typed by
+hand — the chain node below, and any `docker compose` an operator reaches for
+during an incident:
+
+- it passes **both** `--env-file` flags itself, and refuses the crossed pair
+  (`check-env-files-agree.sh`, micro-org#238) before it renders anything;
+- it passes **no** `--remove-orphans`;
+- it pins from the manifest, so there is no overlay to be stale.
+
+It also does more than the old command did: it pulls every image in full and
+proves each one exists before replacing a single container, derives the apex and
+the gateway env file from the estate's own env file rather than the shell,
+rewrites Prometheus's target list, reloads its rules, and ends by running
+`check-tunnel-origin.sh` for **this** environment — which the four-overlay
+command never did.
+
+**The chain node is the one thing that command does not declare.**
+`docker-compose.testnet-chain.yml` declares the `litecoind -regtest` node this
+environment indexes, and `release-deploy.sh` composes only the estate file and
+the rendered release overlay. Bring it up on its own, from `compose/`:
+
+```sh
+docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
+  -p cf-testnet \
+  -f docker-compose.testnet-chain.yml \
+  up -d
+```
+
+Naming only that file is safe: compose acts on the services it was given and
+leaves the other ~48 in the project alone. It is idempotent, so it costs nothing
+to run and leaves a node that was already up exactly as it was.
+
+Skipping it does not fail, and that is the trap: the node has
+`restart: unless-stopped` and keeps running from before. What you lose is the
+declaration, and that is how it got lost the first time. It was created by a
+hand-typed `docker run`, belonged to no project, appeared in no `ps`, and on
+2026-08-08 was reasonably mistaken for the host's **real Litecoin mainnet node**.
+Read that file's header before touching either process; the two are not copies
+and stopping the wrong one takes mainnet Litecoin indexing down.
+
+**The gateway is checked by the deploy now, and was not before.**
+`release-deploy.sh` finishes by running `./scripts/check-tunnel-origin.sh` for
+the environment it just deployed, so a 502 is on the last line of the deploy
+instead of in somebody's browser. To run it alone:
 
 ```sh
 cd /home/savvaniss/dev/cloudsforge/deploy           # app host
@@ -254,20 +339,27 @@ still a separate variable from `CF_PROJECT` even though the two now hold the sam
 string — four entry points reading one value is the property that was missing,
 not the value itself.
 
-**Both `--env-file` flags, every time, and this is not style.** `--env-file`
-*replaces* the default `.env` rather than adding to it, and `compose/.env` is a
-symlink to **mainnet's** tokens. Drop the flags and compose still runs, happily:
-`CF_PORT_BASE` falls back to `4`, so testnet's containers are recreated bound to
-**mainnet's host ports**, and every credential is read from mainnet's token
-file. What you see is `Bind for 127.0.0.1:4133 failed: port is already
-allocated` on whichever service collides first — by which point compose has
-already recreated most of the stack with the wrong environment, and it stops
-half-way, leaving testnet down.
+**Both `--env-file` flags, every time you type a `docker compose` yourself, and
+this is not style.** `--env-file` *replaces* the default `.env` rather than
+adding to it, and `compose/.env` is a symlink to **mainnet's** tokens. Drop the
+flags and compose still runs, happily: `CF_PORT_BASE` falls back to `4`, so
+testnet's containers are recreated bound to **mainnet's host ports**, and every
+credential is read from mainnet's token file. What you see is `Bind for
+127.0.0.1:4133 failed: port is already allocated` on whichever service collides
+first — by which point compose has already recreated most of the stack with the
+wrong environment, and it stops half-way, leaving testnet down.
 
 The recovery is the correct command: re-run it with both flags and compose
 recreates every container that does not match, which is all of them. Nothing
 persistent is harmed — the databases are volumes and are not touched — but it
 is several minutes of testnet being down for a flag.
+
+This is why the release path is a script and not a command in a document.
+`release-deploy.sh` builds that flag pair itself, from `ESTATE_ENV` and
+`TOKENS_FILE`, and refuses the two that name different estates. It cannot be
+half-typed. Everything above about `--env-file` therefore applies to the chain
+node command, to a rolling restart out of a runbook, and to whatever you reach
+for at 3am — not to steps 3 and 5.
 
 **Testnet is not paused any more.** It moved to the app host and came back up on
 2026-08-11, 48 containers healthy, and its operator password was rotated the same
@@ -311,15 +403,9 @@ this release that is worth skipping it for. Restore is
 
 ### 5. Mainnet
 
-The manifest is generated from the repositories, not written by hand. In
-`micro-org`:
-
-```sh
-cfctl release <version>          # reads each package.json + git HEAD
-                                 # refuses a dirty checkout
-```
-
-That writes `org/releases/<version>.yaml`. Then on the host:
+The manifest from step 2, unchanged. Do not cut a new one here — the release
+mainnet runs must be the release testnet proved, and `cfctl release` reads
+whatever the repositories say at the moment it is run.
 
 ```sh
 cd /home/savvaniss/dev/cloudsforge/deploy           # app host — NOT 192.168.1.42
@@ -330,10 +416,9 @@ Defaults it uses: `BASE=compose/docker-compose.estate.yml`,
 `OVERLAY=compose/docker-compose.release.yml`,
 `ESTATE_ENV=compose/mainnet.env`, `TOKENS_FILE=compose/estate/tokens.env`,
 `RELEASES=../org/releases`. It also takes `--list`, `--dry-run` and
-`--rollback`.
-
-Mainnet does **not** get `docker-compose.design.yml`. That overlay is testnet
-only.
+`--rollback`. Step 3 is this same command with the two testnet variables in
+front of it; mainnet is the defaults, which is why mainnet needs no variables and
+no overlay of any kind.
 
 ### 6. Confirm
 
@@ -399,7 +484,13 @@ the thing it exists to prevent. Read which ref failed, and why, every time.
 - `docs/estate-backup-restore.md` — taking the estate down and bringing it back
 - `docs/custody-backup-restore.md` — the custody service specifically, which
   has its own ordering constraints
-- `compose/docker-compose.design.yml` — the testnet overlay header carries the
-  per-release record of what each tag changed and why
+- `compose/docker-compose.testnet-chain.yml` — the regtest Litecoin node testnet
+  indexes, the one file step 3's script does not compose
+- `scripts/check-docs-prescribe-deployed-overlays.py` — what now stops this
+  document prescribing an overlay nothing deploys
+- `compose/docker-compose.design.yml` — **deleted 2026-08-11** (micro-org#414).
+  It pinned testnet by hand and stopped being bumped at `2.5.4` when the deploy
+  path became `release-deploy.sh`. Its per-release record of `2.3.0` through
+  `2.5.4` is in git history at `cdbc887`
 - `runbooks/runbook-estate-administrator-password.md` — the operator credential,
   which is a step in the testnet bring-up above and not a step in any release
