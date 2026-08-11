@@ -187,6 +187,35 @@ EMAIL="erasure-drill-$$@example.test"
 PASS=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
 reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"handle\":\"erasure$$\",\"password\":\"$PASS\"}")
+# ── THE REGISTRATION CHALLENGE ────────────────────────────────────────────────
+#
+# micro-org#361 put a Cloudflare Turnstile in front of this route and 2.5.19
+# turned it on, so this drill cannot create its own subject as an anonymous
+# caller — no script can, which is the point of a challenge. `challengeBypass` in
+# `identity/src/server.ts` excuses a SERVICE PRINCIPAL on purpose, and this drill
+# takes that door, the same one micro-beacon and `estate-verify.sh` take.
+#
+# BEACON_IDENTITY_CREDENTIAL out of the untracked `compose/estate/tokens.env`,
+# reused rather than a new credential minted; VERIFY_SERVICE_CREDENTIAL
+# overrides. Neither it nor the token it buys is ever echoed.
+if printf '%s' "$reg" | grep -q '"code":"challenge_required"'; then
+  drill_credential=${VERIFY_SERVICE_CREDENTIAL:-${BEACON_IDENTITY_CREDENTIAL:-}}
+  drill_bearer=''
+  if [ -n "$drill_credential" ]; then
+    drill_bearer=$(curl -s -X POST "$IDENTITY/service-tokens/exchange" \
+      -H "authorization: Bearer $drill_credential" \
+      | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or d.get('accessToken') or '')" 2>/dev/null)
+  fi
+  unset drill_credential
+  if [ -z "$drill_bearer" ]; then
+    bad "the registration challenge refused this drill's subject and no service token could be minted to be excused it. Set BEACON_IDENTITY_CREDENTIAL — 'set -a; . compose/estate/tokens.env; set +a' — and re-run. Nothing was erased and nothing is broken; this run could not start"
+    exit 1
+  fi
+  reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
+    -H "authorization: Bearer $drill_bearer" \
+    -d "{\"email\":\"$EMAIL\",\"handle\":\"erasure$$\",\"password\":\"$PASS\"}")
+  unset drill_bearer
+fi
 printf '%s' "$reg" | grep -q '"verificationRequired":true' \
   || { bad "register did not ask for verification: $(printf '%s' "$reg" | head -c 160)"; exit 1; }
 ok "registered; the address must be proved before the account can act"

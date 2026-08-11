@@ -278,10 +278,36 @@ fi
 echo "── 2. an operator account ───────────────────────────────────────────────"
 # Register is idempotent for our purposes: if the account exists the login below
 # still works, so a re-run is safe.
-curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
-  -d "{\"email\":\"$ADMIN_EMAIL\",\"handle\":\"$ADMIN_HANDLE\",\"password\":\"$ADMIN_PASSWORD\"}" \
-  >/dev/null 2>&1
-ok "registered or already present: $ADMIN_EMAIL"
+#
+# ── THE CHALLENGE MAKES ONE CASE UNRECOVERABLE, AND IT MUST SAY SO ────────────
+#
+# micro-org#361 put a Cloudflare Turnstile in front of this route and 2.5.19
+# turned it on. The refusal comes BEFORE the duplicate check, so on a re-run
+# against an existing operator it is meaningless — but on a FRESH estate it is
+# terminal, and terminal in the worst available way: the bypass identity grants
+# is a SERVICE PRINCIPAL, and a fresh estate has no service credential to be one
+# with. Minting the first service token is what section 5 of this script does,
+# and it needs the operator this section creates. That is the bootstrap gap,
+# reached from a new side.
+#
+# The response used to go to /dev/null and this line printed unconditionally, so
+# the run said "registered or already present" and then failed at the sign-in in
+# section 4 with `could not sign in as …` — an accurate sentence about a
+# password. The refusal is read now, and an estate that genuinely has no operator
+# gets told what to do about it instead.
+reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
+  -d "{\"email\":\"$ADMIN_EMAIL\",\"handle\":\"$ADMIN_HANDLE\",\"password\":\"$ADMIN_PASSWORD\"}" 2>/dev/null)
+if printf '%s' "$reg" | grep -q '"code":"challenge_required"'; then
+  if [ -n "$(curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
+       -d "{\"identifier\":\"$ADMIN_EMAIL\",\"password\":\"$ADMIN_PASSWORD\"}" | jsonfield accessToken)" ]; then
+    ok "already present: $ADMIN_EMAIL — the registration challenge refused a re-registration, and the account it would have created is already here"
+  else
+    bad "the registration challenge refused this operator and $ADMIN_EMAIL cannot sign in, so this estate has NO operator and a script cannot make one: the only bypass is a service principal and no service credential exists yet. Register $ADMIN_EMAIL once through hub-web in a browser — that surface carries the widget — then re-run this script. Or bring the estate up with the Turnstile variables unset for the first boot; identity refuses a half-configured pair, so unsetting both is the whole feature off"
+    echo "$fails failure(s); nothing was bootstrapped"; exit 1
+  fi
+else
+  ok "registered or already present: $ADMIN_EMAIL"
+fi
 
 echo "── 3. THE BOOTSTRAP — ONE TRANSACTION, ONCE PER DATABASE ────────────────"
 #
