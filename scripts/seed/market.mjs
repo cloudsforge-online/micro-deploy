@@ -31,36 +31,71 @@
  * (`market/README.md`). A seller who holds nothing gets a 402 and the listing
  * stays a draft.
  *
- * The operator holds none of these item assets in the ledger, and there are
- * exactly two ways to change that.
+ * The operator holds none of these item assets in the ledger, and the refusal to
+ * change that stands. **The REASON given here was wrong until 2026-08-11 and is
+ * restated below, because a correct refusal resting on a false premise is one
+ * somebody eventually disproves and then walks straight through.** micro-org#407
+ * measured all of it.
  *
- *   1. **Post a journal entry crediting them.** This was considered at length
- *      and REFUSED. It is a liability credited with nothing behind it, which is
- *      the precise shape that froze EMBER in this estate tonight: micro-wallet
- *      posted five EMBER of unbacked liability and reconciliation caught it at
- *      `drift_exceeded`. Doing the same thing deliberately, in a seeding script,
- *      to make a page look populated, would be indefensible — and it would be
- *      indefensible for the same reason whether the asset is money or an item.
+ * What this comment used to say was that issuing the item would be "a liability
+ * credited with nothing behind it, the precise shape that froze EMBER", and that
+ * the honest path was blocked anyway because "EMBER is frozen". Both are false:
  *
- *   2. **Fund the seller honestly** — mine EMBER, deposit it through the front
- *      door, let the indexer confirm it, and acquire or issue the item against
- *      something real. That is the path §3 already describes. This bullet said
- *      "convert to Shards" as its third step until 2026-08-10; there is no such
- *      step and there is nothing to convert. 21 §3's own bullet dropped its
- *      "→ conversion to Shards" on 2026-08-07, mined EMBER now arrives as an
- *      ordinary deposit, and SHARD is retired (`RETIRED_ASSETS`,
- *      `contracts/packages/chain`) so a conversion INTO it could not be made
- *      anyway. micro-org#226. The path is blocked for its own reason regardless:
- *      EMBER is frozen. A seeder that retried around a freeze would be defeating
- *      the control that exists to catch exactly this.
+ *   * **Reconciliation would never see it.** The sweep covers exactly the assets
+ *     named in `LEDGER_RECONCILE_ASSETS`, which is `SHARD,EMBER,LTC` on this
+ *     estate, one job per named asset (`ledger/src/jobs.ts`, `env.ts`). A
+ *     `TOKEN:` item asset is not in the list and is never swept, so an issuance
+ *     would drift against nothing and freeze nothing. Note the trap in that: if
+ *     a `TOKEN:` asset were ever ADDED to the list, `reconcileAsset` would take
+ *     the `liability_sum` branch, compare Σ custody (0) against Σ liabilities
+ *     (N), and freeze the item on its first sweep. The reconciled set and any
+ *     issuable set must never intersect.
  *
- * So the drafts are real, they are correct, and they are one ledger posting away
- * from being live. That posting is not this script's to invent. `market-web`'s
- * browse page reads `status=active` by default and deliberately does not show
- * drafts — "a browse page that asked for drafts would be showing sellers'
- * unpublished work to buyers" (`market-web/src/pages/browse.tsx`) — so the
- * public surface stays empty and the reason is a real blocker in the estate
- * rather than a gap in the seeding.
+ *   * **EMBER is not frozen.** `select * from asset_freezes` returns no rows on
+ *     mainnet, read 2026-08-11. The only freeze anywhere is testnet LTC, for a
+ *     missing indexer observation, unrelated to this.
+ *
+ *   * **The double entry is expressible and already designed.** micro-tessera
+ *     works out the exact cells (`tessera/src/ledgerclient.ts`): debit
+ *     `clearing / TOKEN:<urn> / suspense`, credit `user:<holder> / .. /
+ *     available`, with the clearing side allowed to go negative because
+ *     `ledger_assert_no_overdraft` exempts it, and the negative BEING the count
+ *     in circulation. `LedgerAssetCode` is open (`TOKEN:${string}`), so nothing
+ *     would need declaring in contracts either.
+ *
+ * So the easy objections do not hold, and the refusal has to rest on the real
+ * one, which is not about accounting at all:
+ *
+ *   **THE PLATFORM CANNOT SELL WHAT IT HAS NO WAY TO DELIVER.** On settlement,
+ *   market moves the item from the seller's `reserved` to the buyer's
+ *   `available` and that is the ENTIRE delivery (`market/src/ledgerclient.ts`,
+ *   kind `market_settled`) — no bytes, no licence, no download, no entitlement.
+ *   For a Tessera object that is enough, because the asset code is derived from
+ *   the sha256 of bytes micro-studio actually produced and the URN resolves back
+ *   to them. `cf:brand:cloudsforge:identity-suite-v1` resolves to nothing: the
+ *   four `itemUrn` strings below are the ONLY occurrences of `cf:brand:` in the
+ *   estate, no service owns the namespace, there is no `TITLE_SLUG = 'brand'`,
+ *   and the URNs do not even parse into the roles their segments occupy
+ *   (`parseTitleUrn` wants `cf:<title>:<kind>:<id>`, so these read as title
+ *   `brand`, kind `emberkin`). The quantities are edition sizes nobody decided.
+ *
+ *   Issuing them would be a balanced entry, invisible to every control the
+ *   estate has, crediting the platform with N units of a thing a buyer could
+ *   never receive. That is quieter than the EMBER defect rather than safer:
+ *   reconciliation caught EMBER in one sweep, and nothing in the estate audits
+ *   whether a sold item can be handed over.
+ *
+ * Two things would have to exist first, and neither is a seeding script's to
+ * invent: a namespace with an owner and a decided edition size, and a mechanism
+ * by which a buyer receives the thing. micro-org#407 lists the rest.
+ *
+ * So the drafts are real, they are correct, and they are further from being live
+ * than "one ledger posting" — which is what this comment claimed while the
+ * posting it named was the only missing piece. `market-web`'s browse page reads
+ * `status=active` by default and deliberately does not show drafts — "a browse
+ * page that asked for drafts would be showing sellers' unpublished work to
+ * buyers" (`market-web/src/pages/browse.tsx`) — so the public surface stays
+ * empty, and it is honestly empty rather than broken.
  *
  * ── IDEMPOTENCY ─────────────────────────────────────────────────────────────
  *
@@ -393,9 +428,11 @@ export async function seedMarket(token) {
       skip(
         `activation refused, as expected: ${res.status} ` +
           `${JSON.stringify(res.body?.error?.code ?? res.body).slice(0, 80)}. A listing cannot go ` +
-          `active until micro-ledger reserves its item (listings_active_is_escrowed), the operator ` +
-          `holds none, and the only way to change that from here would be to credit a liability ` +
-          `with nothing behind it — the exact shape that froze EMBER in this estate tonight.`,
+          `active until micro-ledger reserves its item (listings_active_is_escrowed) and the ` +
+          `operator holds none. Issuing one would balance, and no control in the estate would ` +
+          `object — the item asset is not in LEDGER_RECONCILE_ASSETS, so it drifts against ` +
+          `nothing. It is refused because a cf:brand: URN resolves to nothing a buyer could be ` +
+          `given: the sale would move a ledger balance and deliver no bytes. micro-org#407.`,
       )
     }
   }
@@ -408,8 +445,8 @@ export async function seedMarket(token) {
   skip(
     'market-web\'s browse page therefore still shows nothing. It reads status=active by design — ' +
       '"a browse page that asked for drafts would be showing sellers\' unpublished work to buyers" ' +
-      '— so these drafts are correct, real, and one honest ledger posting away from being live. ' +
-      'That posting needs a funded seller, which needs the deposit-and-convert seam, which is ' +
-      'blocked while EMBER is frozen. Reported rather than routed around.',
+      '— so these drafts are correct and real. What they are NOT is one posting away from live: ' +
+      'the item needs a namespace with an owner, a decided edition size, and some way for a buyer ' +
+      'to receive it, none of which exist. The marketplace is honestly empty. micro-org#407.',
   )
 }
