@@ -325,8 +325,65 @@ EMAIL="slice-$$@example.test"
 # 48 hex characters clears identity's minimum with room to spare, and hex needs no
 # shell quoting anywhere it is interpolated into JSON below.
 PASS=$(od -An -tx1 -N24 /dev/urandom | tr -d ' \n')
+
+# ── THE REGISTRATION CHALLENGE, AND WHY THE RETRY BELOW IS NOT A SHORTCUT ─────
+#
+# micro-org#361 put a Cloudflare Turnstile in front of `POST /auth/register`, and
+# release 2.5.19 turned it on. This drill went red the same minute and in the
+# familiar shape: `challenge_required`, then no verification link, then no
+# session, then every later section that needs a signed-in user — a report about
+# the drill, not about the estate, exactly like the 202 breakage documented
+# above.
+#
+# A SCRIPT CANNOT SOLVE A TURNSTILE. That is what one is for, so there is no
+# honest fix that makes this call succeed as an anonymous caller. There is one
+# bypass identity grants on purpose — `challengeBypass` in
+# `identity/src/server.ts` excuses a SERVICE PRINCIPAL — and it is how micro-
+# beacon has kept registering since the same release. This drill takes the same
+# door, and only after being refused at the front one.
+#
+# THE ORDER IS THE POINT. The unauthenticated attempt comes first and its refusal
+# is an assertion: it proves the gate is ON in this environment, which is the one
+# half of "the widget works" an unattended run can establish. A drill that simply
+# presented a bearer would pass just as happily against an estate whose Turnstile
+# had been switched off by a missing variable.
+#
+# WHAT IT STILL DOES NOT PROVE: that a HUMAN gets through the widget. Nothing
+# automated can. That is a manual check against hub-web.
+#
+# The credential is BEACON_IDENTITY_CREDENTIAL from the untracked
+# `compose/estate/tokens.env` — reused rather than minted anew, because beacon is
+# already the estate's synthetic-registration principal and a second credential
+# would be a second thing to rotate. Override with VERIFY_SERVICE_CREDENTIAL.
+# Neither it nor the token it buys is ever echoed, including in the failures.
 reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
   -d "{\"email\":\"$EMAIL\",\"handle\":\"slice$$\",\"password\":\"$PASS\"}")
+if printf '%s' "$reg" | grep -q '"code":"challenge_required"'; then
+  ok "the registration challenge is ON — a caller with neither a solved challenge nor a service principal is refused"
+  service_credential=${VERIFY_SERVICE_CREDENTIAL:-${BEACON_IDENTITY_CREDENTIAL:-}}
+  reg_bearer=''
+  if [ -n "$service_credential" ]; then
+    # The long-lived credential goes in the header and buys a short-lived token;
+    # identity shape-checks its prefix before it touches the database.
+    reg_bearer=$(curl -s -X POST "$IDENTITY/service-tokens/exchange" \
+      -H "authorization: Bearer $service_credential" \
+      | python3 -c "import sys,json;d=json.load(sys.stdin);print(d.get('token') or d.get('accessToken') or '')" 2>/dev/null)
+  fi
+  unset service_credential
+  if [ -z "$reg_bearer" ]; then
+    bad "this drill cannot pass the registration challenge: no service token could be minted. Set BEACON_IDENTITY_CREDENTIAL — 'set -a; . compose/estate/tokens.env; set +a' — and re-run. EVERY check below this line is then about that variable and not about the estate"
+  else
+    reg=$(curl -s -X POST "$IDENTITY/auth/register" -H 'content-type: application/json' \
+      -H "authorization: Bearer $reg_bearer" \
+      -d "{\"email\":\"$EMAIL\",\"handle\":\"slice$$\",\"password\":\"$PASS\"}")
+  fi
+  unset reg_bearer
+else
+  # Not a failure: `parseTurnstile` refuses a half-configured deployment at boot,
+  # so an unchallenged register means an operator set neither variable — which is
+  # every developer machine and every micro network.
+  ok "register is not challenged here, so this deployment has no Turnstile configured (micro-org#361)"
+fi
 printf '%s' "$reg" | grep -q '"verificationRequired":true' \
   && ok "register asks for the address to be proved, and mints no session" \
   || bad "register: $(printf '%s' "$reg" | head -c 160)"
