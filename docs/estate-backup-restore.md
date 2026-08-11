@@ -1,6 +1,41 @@
 # The estate: backup, restore and what it does not protect
 
-**Owner** platform · **Applies to** both estates on the host `miner` (192.168.1.42)
+**Owner** platform · **Applies to** both estates, now on the **app host**
+`savva@192.168.1.129` (inside WSL Ubuntu-24.04)
+
+> **THE HOST CHANGED UNDER THIS DOCUMENT — read this before you run anything.**
+> Every path below of the form `/home/malf/…` and every reference to the host
+> `miner` (`192.168.1.42`) was written when one machine ran everything. Since
+> the chain-host/app-host split:
+>
+> | | where it is now |
+> | --- | --- |
+> | Both estates (`cloudsforge-estate`, `cf-testnet`), their Postgres, the gateways, the telemetry plane | app host `savva@192.168.1.129`, deploy tree `/home/savvaniss/dev/cloudsforge/deploy` |
+> | `bitcoind`, `litecoind`, `dogecoind` (host processes, datadirs `/data/chains`), the Hearth seeds, the EMBER miners | chain host `malf@192.168.1.42`, deploy tree `/home/malf/dev/cloudsforge/deploy` |
+>
+> `docker ps` on the chain host now returns five containers, none of them an
+> estate service. **A dump taken there backs up nothing.** Substitute
+> `/home/savvaniss` for `/home/malf` in every command below unless the step is
+> explicitly about `/data/chains`, which did not move.
+>
+> **The backup disk did not move either, and this is an open gap.** The
+> dedicated destination this document is built around —
+> `/dev/sdb1` bind-mounted at `/home/malf/cloudsforge-backups`, §3 — is physically
+> in the chain host. Measured 2026-08-11: the app host has no
+> `cloudsforge-backups` mount at all; `/home/savvaniss/backups` exists but is a
+> directory on the root filesystem (`/dev/sdf`, 1.0 T, 11 G used), not a separate
+> device. So the "never write a backup to the same disk as the data" property
+> that §3 spends a page establishing is **not currently held on the machine that
+> now has the data**. Restoring the property — either an off-host pull or a
+> second device on the app host — is unfinished work, not something this document
+> can assert.
+>
+> `scripts/pull-custody-backup.sh` still defaults to `--host malf@192.168.1.42`
+> for the same reason. It fails loudly rather than silently (the project is not
+> there, so the remote step aborts and nothing is pulled), but it has not been
+> re-pointed, and re-pointing it is not a one-word change: the app host answers
+> ssh with `cmd.exe`, so the remote `bash` blocks need a
+> `wsl -d Ubuntu-24.04 -- bash -lc` wrapper first.
 
 This is the procedure for getting the estate's data back. Its companion is
 [`custody-backup-restore.md`](./custody-backup-restore.md), which covers the custody
@@ -30,7 +65,7 @@ topology suggests and which would have been the wrong thing to build against.
 
 | | mainnet (`cloudsforge-estate`) | testnet (`cf-testnet`) |
 | --- | --- | --- |
-| Running containers | 46 | 47 |
+| Running containers | 46 → **49** (2026-08-11) | 47 → **49** (2026-08-11) |
 | Databases | 29 | 29 |
 | Total database size | 284 MB | 245 MB |
 | Custody vault | 502 blobs, 4.0 MB | 17 blobs, 144 KB |

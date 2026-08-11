@@ -47,7 +47,7 @@ list is how a rotation ends with one consumer still holding the retired value.
 
 To re-derive it, do not print anything:
 
-    make check-residue ROOTS=/home/malf
+    make check-residue ROOTS=/home/savvaniss
 
 The last two files are read **per request**, not at start-up: Prometheus's
 `http_headers.x-beacon-token.files` and Alertmanager's
@@ -107,7 +107,12 @@ the rotation is declared good.
 
 ### 3. Recreate Beacon, and only Beacon
 
-    cd /home/malf/dev/cloudsforge/deploy/compose
+Beacon is an app-stack container, so this runs on the **app host**
+`savva@192.168.1.129` inside WSL — not on `192.168.1.42`, which since the
+chain-host split runs only the chain daemons, the Hearth seeds and the EMBER
+miners and has no `beacon` service to recreate.
+
+    cd /home/savvaniss/dev/cloudsforge/deploy/compose
     docker compose -p cloudsforge-estate \
       --env-file mainnet.env --env-file estate/tokens.env \
       -f docker-compose.estate.yml -f docker-compose.release.yml \
@@ -153,7 +158,7 @@ about the old token.
 
 ## Finish it
 
-    make check-residue ROOTS=/home/malf
+    make check-residue ROOTS=/home/savvaniss
     docker ps -a --filter name=cloudsforge-estate --filter status=exited
 
 Exited `*-migrate-1` containers hold a frozen copy of the environment they were

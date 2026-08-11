@@ -2,7 +2,7 @@
 
 [![ci](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml)
 ![licence](https://img.shields.io/badge/licence-MIT-97CA00)
-![runbooks](https://img.shields.io/badge/runbooks-17-EF6C00)
+![runbooks](https://img.shields.io/badge/runbooks-34-EF6C00)
 
 AD-20, built. A **parallel** stack: it runs beside the existing eighteen-container
 estate without touching it, shares no port, no container name and no volume with
@@ -515,9 +515,16 @@ scrapable service missing from it rather than defaulting it to Tier 2 — a mone
 service quietly held to an objective ten times looser than its own is worse than
 a deploy that stops. Three reasons for that location:
 
-- **`docs/` is not checked out on the deploy host.** Measured 2026-08-09:
-  `/home/malf/dev/cloudsforge` contains `org` and `deploy` and nothing else. §8
-  cannot be the runtime source of a value the renderer needs.
+- **`docs/` is not checked out on the deploy host.** Re-measured 2026-08-11,
+  after the chain-host/app-host split moved both estates: the deploy host is now
+  `savva@192.168.1.129` (inside WSL), and `/home/savvaniss/dev/cloudsforge`
+  contains `contracts`, `deploy`, `miner-keys`, `org` and `ui` — no `docs`. The
+  original 2026-08-09 measurement named `/home/malf/dev/cloudsforge` and read
+  "`org` and `deploy` and nothing else"; that host now runs only the chain
+  daemons and the Hearth seed, and its checkout has since grown to thirty
+  repositories, so both halves of that sentence have expired. The conclusion has
+  not: §8 cannot be the runtime source of a value the renderer needs, because
+  the file it lives in is not on the machine that renders.
 - **A tier is a property of a service, not of a release.** Putting it in the
   manifest would make it a property of the release, and manifests are generated,
   say "do not hand-edit", and are the rollback path.
@@ -1002,7 +1009,10 @@ grafana/
   theme/palette.json             the validated values, as data
   dashboards/*.json              generated; provisioned read-only
   provisioning/                  datasources with trace<->log<->metric links
-runbooks/*.md                    17, one per alert that needs one
+runbooks/*.md                    34: one per alert that needs one (31 rules),
+                                 plus the ones an operator opens directly and
+                                 no alert fires for — rollback, restore,
+                                 incident comms
 scripts/check-runbooks.py        the runbook rule, as a build failure
 scripts/render-prometheus-targets.py    release manifest -> file_sd
 scripts/check-prometheus-targets-render.py   and the check on that
