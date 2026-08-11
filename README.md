@@ -187,7 +187,7 @@ is easy to get wrong:
 | Site apex | `cloudsforge.online` | `testnet.cloudsforge.online` |
 | JSON-RPC | `https://rpc.cloudsforge.online` | `https://rpc-testnet.cloudsforge.online` |
 | Chain id | **7411** (`0x1cf3`) | **7412** (`0x1cf4`) |
-| P2P | — | `wss://p2p-testnet.cloudsforge.online/p2p` (only `/p2p` is routed) |
+| P2P | `wss://p2p.cloudsforge.online/p2p` (only `/p2p` is routed) | `wss://p2p-testnet.cloudsforge.online/p2p` (only `/p2p` is routed) |
 | Tunnel origin | `http://127.0.0.1:9081` (`cloudflared/config.mainnet.operator.yml`) | `http://127.0.0.1:9181` (`cloudflared/config.testnet.public.yml`) |
 
 **Testnet hostnames are SINGLE-LABEL.** `<surface>.testnet.cloudsforge.online`
