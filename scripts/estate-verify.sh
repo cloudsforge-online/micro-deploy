@@ -2277,7 +2277,24 @@ for rec in \
   "aetherholm-web 4139 /cities" \
   "tessera-web 4140 /wards"; do
   set -- $rec
-  web_surface "$1" "$2" "$3"
+  # ── THE LEADING DIGIT IS $PB HERE TOO, AND WAS NOT ────────────────────────
+  #
+  # The records above are written with the mainnet `4`, because that is the
+  # form `scripts/web-check.py` parses (`"([a-z0-9-]+) (\d{4}) /"`) in order to
+  # recompute every one of them against micro-org's registry — a table written
+  # as `${PB}126` would make that checker match nothing and pass, which is the
+  # failure mode its own zero-pins guard exists to catch. So the record keeps
+  # the derived number and the CALL swaps the base, exactly as every service
+  # URL at the top of this file does.
+  #
+  # Without this line the fifteen surface checks were pinned to mainnet on a
+  # testnet run: they curled 4126 (`cloudsforge-estate-hub-web-1`) while
+  # `web_release_for` read the image label out of the TESTNET compose project,
+  # compared two different estates' commits, and reported all fifteen as
+  # "a STALE ARTEFACT is being served". Both estates were correct. Observed on
+  # 2026-08-11 verifying release 2026.08.22 on testnet; the mainnet run had
+  # never shown it, because there the two happen to agree.
+  web_surface "$1" "$PB${2#?}" "$3"
 done
 
 echo
@@ -3301,7 +3318,18 @@ else
       # 2. 0600. `evmnode.js` and the #206 sealing both write it that way; this
       #    catches a later chmod. An encrypted keystore still earns 0600: the
       #    passphrase is one directory up, and a reader who has both has the key.
-      kmode=$(stat -f '%Lp' "$EMBER_KEY" 2>/dev/null || stat -c '%a' "$EMBER_KEY" 2>/dev/null)
+      #
+      #    GNU FIRST, AND THE ORDER IS THE WHOLE FIX. This read `stat -f '%Lp'
+      #    || stat -c '%a'`, BSD first — and on GNU coreutils `-f` is
+      #    `--file-system`, so `%Lp` was taken as a second FILE. That call
+      #    printed the ext4 superblock to stdout for the real file, failed for
+      #    the format string, and only THEN ran the fallback, whose `600` was
+      #    appended to it. The comparison saw a paragraph and the operator saw
+      #    `is mode <Block size: 4096 …> 600, not 600` — a key at exactly the
+      #    mode demanded, reported as world-readable. `-c` is rejected outright
+      #    by BSD stat with nothing on stdout, so this order degrades cleanly in
+      #    the direction the other one did not.
+      kmode=$(stat -c '%a' "$EMBER_KEY" 2>/dev/null || stat -f '%Lp' "$EMBER_KEY" 2>/dev/null)
       [ "$kmode" = 600 ] && ok "…and is mode 600" \
         || bad "…but is mode ${kmode:-unknown}, not 600 — anything running as another user on this machine can read it"
       # 3. It is not empty of the thing that makes it a key. Checked by SHAPE, so
