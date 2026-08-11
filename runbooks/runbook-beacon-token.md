@@ -172,10 +172,36 @@ disclosure, but it is a copy, and copies are what the sweep above exists to find
   37/37 targets up. `.env.bak-pre-grafana-156` — which held the live token at
   mode 600 — deleted. Testnet not rotated: its token is a different value and
   the environment was stopped at the time.
-- **2026-08-11 — testnet's rotation is now DUE, not blocked.** The reason
-  recorded above expired: testnet moved to the app host and runs there, 48
-  containers healthy, measured on `savva@192.168.1.129`. A token left unrotated
-  because nobody could reach the environment is a different thing from a token
-  left unrotated while the environment serves public `*-testnet` hostnames
-  through Cloudflare. Rotate it with the procedure above against
-  `compose/estate/tokens.testnet.env`.
+- **2026-08-11 — testnet rotated.** The reason recorded above expired: testnet
+  moved to the app host and runs there, 48 containers healthy. A token left
+  unrotated because nobody could reach the environment is a different thing
+  from one left unrotated while the environment serves public `*-testnet`
+  hostnames through Cloudflare.
+
+  **Testnet has ONE home, not four**, and that is the finding worth keeping. A
+  fingerprint sweep before touching anything:
+
+      compose/estate/tokens.env             BEACON_TOKEN      2bed6b31ffe6   mainnet
+      .env                                  CF_BEACON_TOKEN   2bed6b31ffe6   mainnet
+      prometheus/secrets/beacon_token       whole file        2bed6b31ffe6   mainnet
+      alertmanager/secrets/beacon_token     whole file        2bed6b31ffe6   mainnet
+      compose/estate/tokens.testnet.env     BEACON_TOKEN      b7fbe985d0e7   TESTNET, alone
+
+  The two secrets files hold **mainnet's** token. So nothing scrapes testnet's
+  beacon and nothing routes its alerts — which is why the rotation had no 401
+  window to manage at all, and is also a gap somebody should decide about on
+  purpose rather than discover during an incident. Filed nowhere yet; it
+  belongs with micro-org#370, which is about beacon having no error budget.
+
+  Rotated to `b524bff0b9ae`, recreating **only** `cf-testnet-beacon-1` with the
+  env files the container's own labels name (`testnet.env` +
+  `tokens.testnet.env`, project `cf-testnet`). Proved by measurement:
+
+      file fp == container fp                     MATCH
+      /metrics with the new token                 200
+      /metrics with a wrong token                 401
+      /metrics with no token                      401
+      all five MAINNET homes still agree          2bed6b31ffe6, untouched
+
+  The backup was kept **outside** the deploy tree and shredded, for the reason
+  this runbook already gives about `.env.bak-pre-grafana-156`.

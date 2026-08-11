@@ -315,17 +315,32 @@ migrate and init jobs. So the condition this runbook named as the start of the
 exposure has been met, and the password whose only remaining copy is git history
 now fronts a live environment on a public hostname.
 
-**The rotation was scheduled for the restart, and the restart has happened.** The
-procedure is the one above with `compose/estate/tokens.testnet.env` in place of
-`compose/estate/tokens.env`, `$IDENTITY` pointing at testnet, and one
-difference: the current password is not in any tokens file, so step 1 reads it
-from micro-org#276's history rather than from the host.
+**DONE, 2026-08-11.** Rotated through `POST /auth/password` at
+`http://127.0.0.1:5100`, the same route and the same ordered operation as
+mainnet. `200`, **17 sessions revoked**. Afterwards, measured rather than
+assumed:
 
-Do it as part of bringing testnet up — between `up -d` and announcing the
-environment — rather than afterwards. The restart will be driven by micro-org#257
-and micro-org#210, which are about compose project names and disk contention;
-this step is in neither of those threads, which is exactly why it is written
-here instead of only there.
+    re-login with the NEW value  -> 200
+    login with the OLD value     -> 401
+
+**Two things this rotation found that the section above had wrong**, both worth
+keeping because each would have cost the next person a detour:
+
+- **`compose/estate/tokens.testnet.env` DOES carry `ESTATE_ADMIN_PASSWORD`**, and
+  it carried a working one. The `grep -c` returning `0` was true on 2026-08-10
+  and is not true now; somebody populated it between then and the rotation. So
+  step 1 read it from the host exactly like mainnet, and micro-org#276's git
+  history was never needed.
+- **The published literal was already dead on both networks.** Recovered from
+  history (it is the only distinct candidate any commit touching
+  `ADMIN_PASSWORD:-` in `estate-bootstrap.sh` ever held) and tried against both
+  identities: **testnet 401, mainnet 401.** That is item 3 of micro-org#276
+  answered by measurement rather than by inference — the exposure this runbook
+  exists about is closed on both networks, and this rotation was the overdue
+  hygiene rather than the emergency it was filed as.
+
+The health path is `/livez`, not `/healthz` — `/healthz` answers `404` on both
+networks and reads exactly like a service that is down.
 
 ## Related
 
