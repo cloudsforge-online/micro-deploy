@@ -108,7 +108,12 @@ on each chain — derived from the chain, not from any key file:
 | EMBER testnet (`hearth-testnet`) | **7412** | `0x91a11854b364178ed96054d8a6e9be1dbd751d33` | 10,739.27 EMBER — disposable | `127.0.0.1:8745` | 1988 |
 
 (Publicly: `https://rpc.cloudsforge.online` and
-`https://rpc-testnet.cloudsforge.online:10443`. Chain ids are pinned in
+`https://rpc-testnet.cloudsforge.online` — **no port**. `:10443` is the testnet
+gateway's LOOPBACK bind (`compose/testnet.env`), which is what the on-host miner
+dials across `127.0.0.1`; it is not a public endpoint and never was. Measured
+2026-08-11 from off the estate, `rpc-testnet.cloudsforge.online:10443` times out,
+because Cloudflare proxies a fixed set of HTTPS ports and 10443 is not one of
+them, while the same host on 443 answers `eth_chainId` with `0x1cf4`. Chain ids are pinned in
 `deploy/compose/env/chain.mainnet.env:1` and `chain.testnet.env:1`. Both miners are
 producing, ~5.4 EMBER/block, so these balances rise continuously — issue #206 recorded
 9,332 EMBER at an earlier block, and neither figure is wrong.)
