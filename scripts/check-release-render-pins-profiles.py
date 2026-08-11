@@ -97,6 +97,8 @@ services:
     image: example.invalid/gated:old
     build:
       context: .
+  pulled:
+    image: example.invalid/pulled:old
 """
 
 # MIXED ON PURPOSE. `plain` carries no `digest:` — the shape of every manifest
@@ -163,14 +165,18 @@ with tempfile.TemporaryDirectory() as tmp:
         """
         return [line[len("    image: "):] for line in text.split("\n") if line.startswith("    image: ")]
 
-    def render(text, label):
-        """The real renderer over a manifest, or a failure naming which one."""
+    def run_render(text, *flags):
+        """The real renderer over a manifest, returning the whole result."""
         manifest.write_text(text)
-        proc = subprocess.run(
-            [sys.executable, str(RENDER), str(manifest), "--base", str(base)],
+        return subprocess.run(
+            [sys.executable, str(RENDER), str(manifest), "--base", str(base), *flags],
             capture_output=True,
             text=True,
         )
+
+    def render(text, label, *flags):
+        """The real renderer over a manifest, or a failure naming which one."""
+        proc = run_render(text, *flags)
         if proc.returncode != 0:
             fail(f"release-render.py exited {proc.returncode} on the {label} manifest:\n{proc.stderr}")
         return proc.stdout
@@ -247,6 +253,49 @@ with tempfile.TemporaryDirectory() as tmp:
             "the render is byte-identical with and without the manifest's digest, so the\n"
             "       renderer is not reading the field and every assertion above is vacuous."
         )
+
+    # ── AN UNPINNED SERVICE WITH A `build:` IS REFUSED, NOT WARNED ABOUT ──────
+    #
+    # micro-org#380. `pool` and `pool-web` are running mainnet services no
+    # manifest has ever named, so their `build:` survived into the release
+    # overlay; the 2.5.19 deploy to the app host pulled 48 images, passed its own
+    # `--dry-run`, and died at the switch on `unable to prepare context: path
+    # ".../pool-web" not found`. The renderer had warned, in a comment on the
+    # last line of the file it wrote, where nobody read it.
+    #
+    # `gated` is dropped from the manifest here rather than added to the compose,
+    # so the fixture's other assertions keep exercising the same two services.
+    without_gated = MANIFEST.split("  - name: gated")[0] + "absent:\n"
+    if "name: gated" in without_gated:
+        fail("the fixture for the unpinned-build case still names `gated`, so it proves nothing.")
+    refusal = run_render(without_gated)
+    if refusal.returncode == 0:
+        fail(
+            "the renderer rendered a release that does not pin `gated`, which this environment\n"
+            "       defines with a `build:`. That overlay deploys by BUILDING from a working tree,\n"
+            f"       on a host that need not have one:\n\n{refusal.stdout}"
+        )
+    if "gated" not in refusal.stderr:
+        fail(f"the refusal does not name the service it is about:\n{refusal.stderr}")
+
+    # THE REFUSAL KEYS ON `build:`, NOT ON BEING UNNAMED. `pulled` is in this
+    # environment and in no manifest here, and it has no build — so it keeps the
+    # image it already has, which is a warning and always was. If this render
+    # failed, the check above would be indistinguishable from "every unnamed
+    # service is fatal", which would make `absent:` unusable and every manifest
+    # cut before a service existed unrenderable.
+    if "pulled" in refusal.stderr:
+        fail(
+            "the refusal names `pulled`, which has no `build:` — it cannot be built from a tree\n"
+            f"       and keeps the image it already had:\n{refusal.stderr}"
+        )
+    if "pulled" not in out:
+        fail(f"the overlay no longer warns about `pulled`, which no manifest here names:\n\n{out}")
+
+    # AND THE HOST THAT REALLY HAS THE SOURCE CAN STILL SAY SO.
+    allowed = render(without_gated, "unpinned-build with --allow-unpinned-build", "--allow-unpinned-build")
+    if "  gated:\n" in allowed:
+        fail(f"`gated` is not in this manifest and the overlay pins it anyway:\n\n{allowed}")
 
     # ── THE TAG SURVIVES INTO WHAT COMPOSE ACTUALLY READS ─────────────────────
     #
