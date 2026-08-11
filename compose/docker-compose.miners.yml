@@ -133,7 +133,7 @@
 # `src/coinbase.js`'s four key sources entirely: a 0cf1445 miner CANNOT open a
 # keystore, so the pin and the custody change below had to move together.
 #
-# fcc2738 is hearth `main` as of 2026-08-11 and adds, beyond the keystore:
+# fcc2738 was hearth `main` earlier on 2026-08-11 and added, beyond the keystore:
 #   · 938a073  a block is stamped when its nonce was FOUND, not when the search
 #              began — the candidate was memoized per tip, so every block on this
 #              chain recorded the instant its parent landed and the whole
@@ -141,9 +141,33 @@
 #   · faa5dde  the chain replays outside the EvmNode constructor and the node
 #              REFUSES until it is done (micro-org#349)
 #   · 4a5e150  an expired or evicted template is 409, not 400
+#
+# ── a094dba IS A CONSENSUS CHANGE AND THAT IS WHY THIS PIN IS NOT OPTIONAL ───
+#
+# hearth 0.3.0 ships the absolute-time emergency difficulty rule (micro-org#363):
+# from block height 20,000 a block whose own timestamp is more than 120 s past
+# its parent's may be mined at the difficulty floor. Below 20,000 nothing
+# changes, and the suite replays the real mainnet header series to prove it.
+#
+# THIS IS A HARD FORK, so "the miners can catch up later" is false. A 0.2.x
+# process meeting the first eased block rejects it as `wrong difficulty target`
+# and stops following the chain — quietly, from the outside. Every hearth process
+# in the estate has to be on a094dba or newer before the tip reaches 20,000:
+# these two miners, `cf-miner-mainnet-apphost` on the app host, and the two seeds
+# on the chain host, which build LOCALLY from `/home/malf/dev/cloudsforge/hearth`
+# rather than pulling this image and so are upgraded by a `git pull` and a
+# `--build`, not by this line.
+#
+# 20,000 was picked by measuring, not by estimating. On 2026-08-11 the tip was
+# 13,671 and the last 500 blocks averaged 23 s, which puts activation about forty
+# hours out. The first proposal was 15,000, chosen against a remembered ~43 s a
+# block; at the real rate that was eight hours, and eight hours is not notice for
+# a chain whose node ships as a downloadable installer. If this pin is still
+# unapplied and the tip is near 20,000, do NOT deploy — raise the constant in
+# hearth first.
 services:
   miner-mainnet:
-    image: ghcr.io/cloudsforge-online/hearth-node:sha-fcc2738c3ca6931fbbbe58b2be4db0931bbda748
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-a094dba6ace0448a483f79533964e6663b870334
     container_name: cf-miner-mainnet
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
@@ -212,7 +236,7 @@ services:
     restart: unless-stopped
 
   miner-testnet:
-    image: ghcr.io/cloudsforge-online/hearth-node:sha-fcc2738c3ca6931fbbbe58b2be4db0931bbda748
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-a094dba6ace0448a483f79533964e6663b870334
     container_name: cf-miner-testnet
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
