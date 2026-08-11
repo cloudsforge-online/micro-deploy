@@ -130,8 +130,10 @@ export const SURFACES = [
     empty:
       'the marketplace has nothing for sale. NOTE: the seeder creates four listings and they are ' +
       'all `draft` — activation needs micro-ledger to escrow the ITEM (`TOKEN:cf:brand:...`, not ' +
-      'the price asset) and the operator holds none, so this is the honest-funding seam and not ' +
-      'missing content. `select status, count(*) from listings` shows them',
+      'the price asset) and the operator holds none, so this is not missing content. Issuing the ' +
+      'item would balance and nothing would object; it is refused because a `cf:brand:` URN ' +
+      'resolves to nothing a buyer could be given (micro-org#407). `select status, count(*) from ' +
+      'listings` shows them',
   },
   {
     key: 'market.collections',
