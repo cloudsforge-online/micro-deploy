@@ -2277,7 +2277,24 @@ for rec in \
   "aetherholm-web 4139 /cities" \
   "tessera-web 4140 /wards"; do
   set -- $rec
-  web_surface "$1" "$2" "$3"
+  # ── THE LEADING DIGIT IS $PB HERE TOO, AND WAS NOT ────────────────────────
+  #
+  # The records above are written with the mainnet `4`, because that is the
+  # form `scripts/web-check.py` parses (`"([a-z0-9-]+) (\d{4}) /"`) in order to
+  # recompute every one of them against micro-org's registry — a table written
+  # as `${PB}126` would make that checker match nothing and pass, which is the
+  # failure mode its own zero-pins guard exists to catch. So the record keeps
+  # the derived number and the CALL swaps the base, exactly as every service
+  # URL at the top of this file does.
+  #
+  # Without this line the fifteen surface checks were pinned to mainnet on a
+  # testnet run: they curled 4126 (`cloudsforge-estate-hub-web-1`) while
+  # `web_release_for` read the image label out of the TESTNET compose project,
+  # compared two different estates' commits, and reported all fifteen as
+  # "a STALE ARTEFACT is being served". Both estates were correct. Observed on
+  # 2026-08-11 verifying release 2026.08.22 on testnet; the mainnet run had
+  # never shown it, because there the two happen to agree.
+  web_surface "$1" "$PB${2#?}" "$3"
 done
 
 echo
