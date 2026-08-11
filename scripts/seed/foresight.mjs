@@ -1,5 +1,5 @@
 /**
- * Seed micro-foresight: nine real questions, and a decision about five test artefacts.
+ * Seed micro-foresight: twenty real questions, and a decision about five test artefacts.
  *
  * ── WHAT MAKES THIS IDEMPOTENT ───────────────────────────────────────────────
  *
@@ -66,6 +66,8 @@ import {
   EMBER_NETWORK,
   EMBER_RPC_HOST,
   MINER_DATA,
+  MINER_KEY_FILES,
+  MINER_PASSPHRASE_FILE,
   api,
   ok,
   bad,
@@ -109,28 +111,138 @@ const DEPLOY_GAS_LIMIT = 3_000_000n
 /* ── the chain, which is optional ──────────────────────────────────────────── */
 
 /**
- * Load hearth's transaction codec and the owner's mining key.
+ * Load hearth's transaction codec and a key that can sign with it.
  *
- * Returns `null` rather than throwing when either is absent. A machine with no
- * testnet can still seed every question, approve it, and say plainly that it
- * could not open it — which is a far more useful outcome than a stack trace, and
- * is exactly what will happen in CI.
+ * ── THIS READ `coinbase-key.json` DIRECTLY, AND THAT FILE NO LONGER EXISTS ───
+ *
+ * micro-org#206 sealed the mining key: `coinbase-key.json` — the private key in
+ * the clear at mode 600 — became `coinbase-keystore.json`, scrypt N=2^18 over a
+ * passphrase and AES-256-GCM over the key, with the passphrase supplied as a
+ * PATH rather than a value. Measured on the app host on 2026-08-11 there is no
+ * plaintext file anywhere under `miner-keys/`, only the keystore and
+ * `miner-keys/secrets/coinbase-passphrase`.
+ *
+ * The old body of this function returned `null` for that, and `null` here is not
+ * an error — it is the documented "this machine has no chain" path, meant for
+ * CI. So every new market was created, approved, and then skipped one state
+ * short of `open`:
+ *
+ *     draft → approved → deployed → open
+ *                     ^ they stopped here
+ *
+ * and an APPROVED MARKET DOES NOT APPEAR ON THE BROWSE PAGE. A seeding run
+ * against a correctly configured estate printed a reasoned skip, exited 0, and
+ * changed nothing a visitor could see. micro-org#411.
+ *
+ * ── AND THE UNSEALER IS HEARTH'S, NOT A SECOND ONE WRITTEN HERE ──────────────
+ *
+ * `hearth/node/src/coinbase.js` already resolves a coinbase key from four
+ * sources in precedence order — `HEARTH_COINBASE_KEY`, `HEARTH_COINBASE_KEY_FILE`
+ * (a path), `<data>/coinbase-keystore.json` + `HEARTH_COINBASE_PASSPHRASE_FILE`,
+ * and `<data>/coinbase-key.json` — and it is the code the estate's three miners
+ * run in production. Reimplementing scrypt-and-GCM in a seeder would be a second
+ * thing to get right, reviewed by nobody, diverging the first time the keystore
+ * format moves. This file already `require`s hearth for the transaction codec,
+ * so the resolver costs one more `require`.
+ *
+ * `create: false` IS LOAD-BEARING. `resolveCoinbaseKey` generates a fresh key and
+ * WRITES IT IN THE CLEAR when it finds nothing and nobody has said not to — that
+ * is the right default for a developer's first `hearthd` and a catastrophic one
+ * for a seeder, which would mint a new key into the miner's data directory,
+ * fund market deployers from an account with no balance, and leave a plaintext
+ * private key behind on a host that had just been cleaned of one.
+ *
+ * ── WHAT THIS FUNCTION WILL NOT PUT ON A STREAM ──────────────────────────────
+ *
+ * The private key, the passphrase, or any part or digest of either. The
+ * passphrase is never read HERE at all: hearth reads it from the path it is
+ * given, uses it, and drops it, and this file only ever names the variable. The
+ * one thing that does get printed is the funding ADDRESS, which is public, is
+ * already in the compose file, and is what an operator needs to see to know
+ * which account paid.
+ *
+ * `err.message` is passed through ONLY for hearth's own tagged refusals, whose
+ * text is written to this rule — they name files, environment variable names and
+ * addresses and nothing else. Anything else that throws gets its constructor
+ * name and no message, because a `JSON.parse` failure on a key file is exactly
+ * the error that would carry a fragment of the file into a log.
+ *
+ * @returns {{chain: object|null, why: string|null}} the chain, or a specific
+ *   reason it could not be had. Never a silent null.
  */
-function chainOrNull() {
+function signingChain() {
+  let TX
+  let CB
   try {
-    const TX = require(path.join(HEARTH, 'node/src/chain/transaction.js'))
-    const keyFile = path.join(MINER_DATA, 'coinbase-key.json')
-    if (!fs.existsSync(keyFile)) return null
-    const raw = JSON.parse(fs.readFileSync(keyFile, 'utf8'))
-    return {
-      TX,
-      key: {
-        priv: Buffer.from(String(raw.privateKey).replace(/^0x/, ''), 'hex'),
-        address: raw.address,
-      },
-    }
+    TX = require(path.join(HEARTH, 'node/src/chain/transaction.js'))
+    CB = require(path.join(HEARTH, 'node/src/coinbase.js'))
   } catch {
-    return null
+    return {
+      chain: null,
+      why:
+        `no hearth checkout at ${HEARTH}: this needs node/src/chain/transaction.js to encode a ` +
+        `transaction and node/src/coinbase.js to obtain the key that signs it. Set HEARTH_REPO to ` +
+        `a checkout, or put one beside the deploy checkout.`,
+    }
+  }
+
+  // What is actually on disk, said before anything is opened — a refusal that
+  // names the file it found is a different instruction to an operator from one
+  // that says nothing is there.
+  const present = MINER_KEY_FILES.filter((f) => fs.existsSync(path.join(MINER_DATA, f)))
+  const sealedOnly = present.length > 0 && !present.includes('coinbase-key.json')
+
+  if (present.length === 0 && !process.env.HEARTH_COINBASE_KEY && !process.env.HEARTH_COINBASE_KEY_FILE) {
+    return {
+      chain: null,
+      why:
+        `no coinbase key under ${MINER_DATA}: neither ${MINER_KEY_FILES.join(' nor ')} is there, and ` +
+        `neither HEARTH_COINBASE_KEY nor HEARTH_COINBASE_KEY_FILE is set. Point CF_MINER_KEYS at the ` +
+        `directory holding <network>/, or EMBER_MINER_DATA straight at the directory itself.`,
+    }
+  }
+  if (sealedOnly && !MINER_PASSPHRASE_FILE) {
+    return {
+      chain: null,
+      why:
+        `the coinbase key at ${path.join(MINER_DATA, 'coinbase-keystore.json')} is SEALED and there ` +
+        `is no passphrase to open it. Set HEARTH_COINBASE_PASSPHRASE_FILE to the PATH of the file ` +
+        `holding it — never the value; that is the convention ` +
+        `compose/docker-compose.miners-apphost.yml already mounts at /run/secrets/coinbase-passphrase.`,
+    }
+  }
+
+  /* A copy, not `process.env`. The passphrase path is a fact this deployment
+   * knows (`lib.mjs`) and the seeder should not have to be told twice — but
+   * writing it into the real environment would hand it to every child process
+   * `spawnSync` starts below, including `docker compose`. */
+  const env = {
+    ...process.env,
+    ...(MINER_PASSPHRASE_FILE ? { HEARTH_COINBASE_PASSPHRASE_FILE: MINER_PASSPHRASE_FILE } : {}),
+  }
+
+  let got
+  try {
+    got = CB.resolveCoinbaseKey(MINER_DATA, { env, create: false })
+  } catch (err) {
+    const tagged = err && err.code === CB.COINBASE_KEY_REFUSED
+    return {
+      chain: null,
+      why: tagged
+        ? `the coinbase key under ${MINER_DATA} could not be obtained: ${err.message}`
+        : `the coinbase key under ${MINER_DATA} could not be obtained: hearth's resolver threw a ` +
+          `${err?.constructor?.name ?? 'non-Error'}. Its message is deliberately NOT printed — a ` +
+          `parse failure on a key file is the error that carries a fragment of the file into a log.`,
+    }
+  }
+
+  return {
+    chain: {
+      TX,
+      source: got.source,
+      key: { priv: got.key.privateKey, address: got.key.addressHex },
+    },
+    why: null,
   }
 }
 
@@ -316,7 +428,7 @@ async function handleTestArtefacts(markets, userToken) {
   }
 }
 
-/* ── the nine ─────────────────────────────────────────────────────────────── */
+/* ── the twenty ───────────────────────────────────────────────────────────── */
 
 /** Create any question not already in the registry. Returns every seeded market, by question. */
 async function createMissing(existing, userToken) {
@@ -382,22 +494,27 @@ async function approveDrafts(markets, userToken) {
  *
  * Done in PHASES across all markets rather than one market at a time, and that
  * is not tidiness. The service token lives 600 seconds and the deploys are
- * driven from leased jobs; nine markets taken one at a time through a
- * submit-fund-poll-open cycle would cross the cliff halfway down the list.
- * Submitting all nine, funding all nine, then polling all nine keeps the whole
- * chain phase inside one token's life on a chain this size.
+ * driven from leased jobs; markets taken one at a time through a
+ * submit-fund-poll-open cycle would cross the cliff halfway down the list. It
+ * mattered at nine and it matters more at twenty. Submitting them all, funding
+ * them all, then polling them all keeps the whole chain phase inside one token's
+ * life on a chain this size — and the nine-minute poll below is why the eleven
+ * added in 2026-08 are the batch that tests whether that still holds.
  */
-async function deployAndOpen(markets, userToken, chain) {
+async function deployAndOpen(markets, userToken, { chain, why }) {
   const pending = markets.filter((m) => m.status === 'approved')
   if (pending.length === 0) {
     ok('every seeded market is already open or beyond — nothing to deploy')
     return
   }
   if (!chain) {
+    // The reason is `signingChain()`'s, not a guess made here. The sentence this
+    // replaced guessed — "no mining key at <dir>" — and was WRONG for eight days
+    // after micro-org#206, because the key was there and sealed. micro-org#411.
     skip(
-      `${pending.length} market(s) approved but NOT opened: no EMBER testnet reachable from here ` +
-        `(no mining key at ${MINER_DATA}, or no hearth checkout at ${HEARTH}). A market cannot open ` +
-        `until its contract is on chain, so they stay approved and invisible to the browse page.`,
+      `${pending.length} market(s) approved but NOT opened — ${why.replace(/\.?$/, '.')} A market ` +
+        `cannot open until its contract is on chain, so they stay approved and invisible to the ` +
+        `browse page.`,
     )
     return
   }
@@ -430,8 +547,9 @@ async function deployAndOpen(markets, userToken, chain) {
     return
   }
   note(
-    `funding address ${chain.key.address} holds ${ember(balance)} EMBER; ` +
-      `${ember(perMarket)} per deployer (the service requires ${ember(needed)} — bid, not quote)`,
+    `funding address ${chain.key.address} (from the ${chain.source} key source) holds ` +
+      `${ember(balance)} EMBER; ${ember(perMarket)} per deployer (the service requires ` +
+      `${ember(needed)} — bid, not quote)`,
   )
 
   // ── phase 1: submit every deploy ───────────────────────────────────────────
@@ -654,8 +772,7 @@ export async function seedForesight(userToken) {
   const seeded = await createMissing(before, userToken)
   await approveDrafts(seeded, userToken)
 
-  const chain = chainOrNull()
-  await deployAndOpen(seeded, userToken, chain)
+  await deployAndOpen(seeded, userToken, signingChain())
 
   await coverImages(seeded, userToken)
 
