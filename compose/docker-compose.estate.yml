@@ -4445,16 +4445,50 @@ services:
   #
   #   COMPOSE_PROFILES=pool ./scripts/estate-up.sh
   #
-  # ── ONLY LTC, AND THAT IS A MEASUREMENT ───────────────────────────────────────
+  # ── LTC AND, SINCE 2026-08-11, BTC — AND BOTH ARE MEASUREMENTS ────────────────
   #
-  # `POOL_CHAINS` defaults to `ltc` alone. Measured on this host 2026-08-09:
-  # litecoind is at height 3,156,603 with `initialblockdownload: false`, and
-  # bitcoind is at 876,858 of 961,659 headers — `verificationprogress` 0.773,
-  # `initialblockdownload: true`. `getblocktemplate` on a node still in initial
-  # block download returns work for a chain tip that is eighty thousand blocks
-  # behind the network, so every share against it would be judged against a
-  # template no other miner has ever seen. Add `btc` when bitcoind reports
-  # `initialblockdownload: false`, and not before.
+  # `POOL_CHAINS` defaults to `ltc` alone and `mainnet.env` now names both. The
+  # default stays at `ltc` because it is what a host with no bitcoind can serve;
+  # the estate overrides it because this one has reached the tip.
+  #
+  # The condition this line waited on was stated here on 2026-08-09 — "add `btc`
+  # when bitcoind reports `initialblockdownload: false`, and not before" — and it
+  # was met on 2026-08-10. Measured 2026-08-11: bitcoind at height 961,967,
+  # `initialblockdownload: false`, difficulty 1.2748e14. `getblocktemplate` on a
+  # node still in IBD returns work for a tip eighty thousand blocks behind the
+  # network, so every share against it would be judged against a template no other
+  # miner has ever seen. That is no longer the state.
+  #
+  # ── TWO THINGS ABOUT BTC HERE THAT LOOK LIKE FAULTS AND ARE NOT ───────────────
+  #
+  #   1. **BTC templates carry zero transactions, and that is `blocksonly`.**
+  #      Measured 2026-08-11 at 961,967: `getblocktemplate` returned an empty
+  #      `transactions` array with `coinbasevalue 312500000` — the subsidy alone,
+  #      no fees. This node runs `blocksonly=1`, so it keeps no mempool to build
+  #      from, which is the correct setting for a node whose job is custody
+  #      observation and which makes it a poor block builder. A found block would
+  #      pay 3.125 BTC and forgo the fees a full-mempool template would have
+  #      collected. That is a known cost of the node's configuration and NOT
+  #      something to repair by flipping `blocksonly` on a machine that is also
+  #      the estate's custody source of truth — see micro-org#373 §6 item 6.
+  #   2. **`stratumEndpoint` stays null for BTC, exactly as it is for LTC.** There
+  #      is no TCP ingress to this estate at all; the section below argues why at
+  #      length and nothing about adding a second chain changes it. So the mapping
+  #      for 3333 is added on the same loopback default as 3334 — reachable from
+  #      this host and this LAN once an operator widens the bind on purpose, and
+  #      advertised to nobody until `POOL_STRATUM_PUBLIC_HOST` and
+  #      `POOL_BTC_STRATUM_PUBLIC_PORT` are BOTH set. micro-org#373 §6 item 7.
+  #
+  # ── AND BTC IS NOT OFFERED TO BROWSERS, WHICH IS THE SERVICE'S DECISION ───────
+  #
+  # micro-org#360. `pool/src/chains.ts` refuses BTC to the browser transport by
+  # name and `GET /v1/pool` reports the refusal with its reason; the pool builds
+  # that chain with no ticket redeemer, so its listener answers `attachWebSocket`
+  # with false. Nothing in this file configures that and nothing here can turn it
+  # on — measured 2026-08-11 at height 961,966 the Bitcoin network ran at about
+  # 793 EH/s of purpose-built silicon, and a browser tab against it returns shares
+  # that can never become a block. Adding `btc` to `POOL_CHAINS` therefore admits
+  # hardware over Stratum and no browser at all, deliberately.
   #
   # ── THE STRATUM PORT IS RAW TCP AND TRAEFIK CANNOT CARRY IT ───────────────────
   #
@@ -4500,6 +4534,13 @@ services:
       POOL_CHAINS: ${POOL_CHAINS:-ltc}
       POOL_LTC_NODE_URL: ${LTC_RPC_URL:-}
       POOL_LTC_PAYOUT_ADDRESS: ${POOL_LTC_PAYOUT_ADDRESS:-}
+      # Both empty by default, and empty is a refusal to start rather than a
+      # default — `pool/src/env.ts` requires a node URL and a payout address for
+      # every chain in `POOL_CHAINS`. A host that names `btc` without minting an
+      # address gets a container that will not boot, which is the outcome to want:
+      # a pool mining to nowhere pays a block reward to a script nobody holds.
+      POOL_BTC_NODE_URL: ${BTC_RPC_URL:-}
+      POOL_BTC_PAYOUT_ADDRESS: ${POOL_BTC_PAYOUT_ADDRESS:-}
       POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
       INSTANCE_ID: pool-migrate
     depends_on:
@@ -4546,6 +4587,18 @@ services:
       # neither does anything here.
       POOL_LTC_NODE_URL: ${LTC_RPC_URL:-}
       POOL_LTC_PAYOUT_ADDRESS: ${POOL_LTC_PAYOUT_ADDRESS:-}
+      # The same two for bitcoin, and the same rule: `POOL_BTC_NODE_URL` carries
+      # HTTP Basic userinfo and is never echoed, by `env.ts` or by anything here.
+      # `POOL_BTC_PAYOUT_ADDRESS` is `bc1q7u9…f9jlx`, minted 2026-08-11 through
+      # custody's `POST /v1/admin/pool-payouts/bitcoin/mainnet/mint` under the
+      # `pool` purpose and under an operator's own name — never a service's, so
+      # `custody_keys.created_by` names a human as the creator of the address
+      # every BTC block reward would pay into. `pool` and not `treasury` for the
+      # reason stated above: a treasury-purpose key on btc/mainnet is a ROTATION
+      # CANDIDATE for settlement's pinned treasury, and pinning one the pool had
+      # mined to would turn every found block into unbooked custody inflow.
+      POOL_BTC_NODE_URL: ${BTC_RPC_URL:-}
+      POOL_BTC_PAYOUT_ADDRESS: ${POOL_BTC_PAYOUT_ADDRESS:-}
       POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
       # ══════════════════════════════════════════════════════════════════════════
       # TWO STRATUM TRANSPORTS, CONFIGURED NOTHING ALIKE, AND THE ASYMMETRY IS THE
@@ -4625,6 +4678,11 @@ services:
       # whose firmware silently fails to connect.
       POOL_STRATUM_PUBLIC_HOST: ${POOL_STRATUM_PUBLIC_HOST:-}
       POOL_LTC_STRATUM_PUBLIC_PORT: ${POOL_LTC_STRATUM_PUBLIC_PORT:-}
+      # Per chain, because the ports differ and a single one would advertise the
+      # litecoin listener to a bitcoin miner. Unset on this estate, so `GET
+      # /v1/pool` reports `stratumEndpoint: null` for BTC — there is no TCP
+      # ingress here to advertise (micro-org#373 §6 item 7).
+      POOL_BTC_STRATUM_PUBLIC_PORT: ${POOL_BTC_STRATUM_PUBLIC_PORT:-}
       # The other transport's advertisement, and the same rule as the pair above:
       # `GET /v1/pool` composes each chain's `websocketEndpoint` from this origin
       # plus the served path, and reports `null` when it is unset. It is NEVER
@@ -4675,6 +4733,11 @@ services:
       # container side is the literal 3334 because `POOL_LTC_STRATUM_PORT` is not
       # passed in and the listener therefore always binds its own default.
       - "${POOL_STRATUM_HOST_BIND:-127.0.0.1}:${POOL_LTC_STRATUM_PUBLIC_PORT:-3334}:3334"
+      # Bitcoin's listener, on the same terms. `DEFAULT_STRATUM_PORT` in
+      # `pool/src/chains.ts` is 3333 for btc and 3334 for ltc, and the container
+      # side is the literal for the same reason as above — `POOL_BTC_STRATUM_PORT`
+      # is not passed in, so the listener always binds its own default.
+      - "${POOL_STRATUM_HOST_BIND:-127.0.0.1}:${POOL_BTC_STRATUM_PUBLIC_PORT:-3333}:3333"
     depends_on:
       pool-migrate:
         condition: service_completed_successfully
