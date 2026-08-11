@@ -98,6 +98,40 @@ DYNAMIC="$ROOT/gateway/dynamic"
 CERTS="${CF_CERT_DIR:-$ROOT/gateway/certs}"
 SCRATCH="$ROOT/.gateway-validate"
 ENV_FILE="$ROOT/compose/env/${CF_TRAEFIK_ENV:-traefik}.env"
+# ── AND THE ENV FILE IS NOT SELF-CONTAINED, WHICH DEADLOCKED THIS SCRIPT ──────
+#
+# `compose/env/traefik.env` holds INTERPOLATIONS, not just literals:
+#
+#     CF_RPC_UPSTREAM=http://${CF_CHAIN_HOST:-host.docker.internal}:8545
+#
+# `CF_CHAIN_HOST` is defined in `compose/estate/tokens.env`, which is where it has
+# lived since the chain nodes moved onto their own machine and the estate started
+# reaching them over WireGuard at 10.10.0.1. Compose resolves that: it is passed
+# BOTH files with `--env-file` (`release-deploy.sh`), and Compose v2 interpolates
+# `env_file` values. Read from the running gateway, `CF_RPC_UPSTREAM` really is
+# `http://10.10.0.1:8545`.
+#
+# `docker run --env-file` DOES NOT INTERPOLATE. It splits on the first `=` and
+# passes the rest of the line verbatim, so the probe below received the literal
+# string `http://${CF_CHAIN_HOST:-host.docker.internal}:8545` and Traefik answered
+#
+#     ERR error parsing server URL … invalid character "{" in host name
+#
+# on four routers — and assertion 1 counts any ERR as a directory that does not
+# render. So `--validate` failed, `reload` refuses to touch the gateway when
+# validation fails, and THE GATEWAY COULD NOT BE RELOADED AT ALL. Measured
+# 2026-08-11: the live gateway was serving a router table 92,447 seconds — nearly
+# 26 hours — older than the files on disk, and `estate-verify.sh` was telling the
+# operator to fix it by running this script, which could not succeed. A check that
+# reports a real defect and prescribes a remedy that cannot work is worse than
+# either half alone.
+#
+# The fix asks COMPOSE what the environment resolves to rather than teaching this
+# script the interpolation rules a second time — same two `--env-file` arguments
+# the deploy uses, same defaults as `release-deploy.sh`, so a testnet validation
+# is driven by the testnet tokens exactly as a testnet deploy is.
+ESTATE_ENV=${ESTATE_ENV:-compose/mainnet.env}
+TOKENS_FILE=${TOKENS_FILE:-compose/estate/tokens.env}
 # The gateway moved to the estate's own compose project on 2026-08-10 so that
 # `docker compose -p cloudsforge-estate ps` lists the container every public
 # hostname depends on (micro-org#257). This default follows it.
@@ -247,12 +281,67 @@ gateway_container() {
     --filter "label=com.docker.compose.service=gateway" | head -1
 }
 
+# ── the probe's environment, resolved the way the deploy resolves it ──────────
+#
+# Writes an env file whose values are what the GATEWAY CONTAINER actually gets,
+# and sets `PROBE_ENV` to its path. Compose does the interpolation; this reads the
+# answer out of `config` rather than reimplementing `${VAR:-default}` in bash.
+#
+# It sets a variable instead of echoing the path because it also PRINTS — and a
+# `$(…)` around a function that reports its own findings captures the findings
+# and hides them, which is the failure this script exists to stop.
+#
+# It is written mode 600 and never printed. `traefik.env` holds no secrets today
+# — hostnames and upstream host:port — but this file is now a projection of the
+# TOKENS file, so it is treated as one whatever happens to be in it tomorrow.
+#
+# Any failure falls back to the raw env file, which is exactly the old behaviour:
+# a machine without the tokens file can still validate, and the four chain routers
+# are the only thing it gets wrong. Silent would be wrong, so it says which.
+resolve_env_file() {
+  local out="$SCRATCH/env.resolved" json=""
+  if [ -f "$ESTATE_ENV" ] && [ -f "$TOKENS_FILE" ]; then
+    json=$(docker compose --env-file "$ESTATE_ENV" --env-file "$TOKENS_FILE" \
+             -f compose/docker-compose.gateway.yml config --format json 2>/dev/null)
+  fi
+  if [ -n "$json" ]; then
+    if printf '%s' "$json" | (umask 077; python3 -c '
+import json, sys
+svc = json.load(sys.stdin)["services"]["gateway"]["environment"]
+out = open(sys.argv[1], "w")
+n = 0
+for k, v in svc.items():
+    if v is None:
+        continue
+    v = str(v)
+    # A newline would end the record early and docker would read the remainder as
+    # a variable name. Nothing here is multi-line; if something becomes so, drop
+    # it rather than corrupt every variable after it.
+    if "\n" in v or "\r" in v:
+        continue
+    out.write(f"{k}={v}\n")
+    n += 1
+out.close()
+print(n)
+' "$out" >"$SCRATCH/.envcount" 2>/dev/null); then
+      ok "probe environment resolved through compose ($(cat "$SCRATCH/.envcount") variables, from $ESTATE_ENV + $TOKENS_FILE)"
+      PROBE_ENV="$out"
+      return 0
+    fi
+  fi
+  bad "could not resolve the environment through compose — falling back to $ENV_FILE verbatim."
+  bad "Interpolated values (CF_*_UPSTREAM) will not render and their routers will report ERR."
+  PROBE_ENV="$ENV_FILE"
+}
+
 # ── validate ──────────────────────────────────────────────────────────────────
 validate() {
   echo "── validating $DYNAMIC in a throwaway $image ────────────────────────"
   rm -rf "$SCRATCH"
   mkdir -p "$SCRATCH/dynamic"
   cp "$DYNAMIC"/* "$SCRATCH/dynamic/" || { bad "could not copy the dynamic directory"; return 1; }
+  PROBE_ENV="$ENV_FILE"
+  resolve_env_file
 
   docker rm -f "$PROBE" >/dev/null 2>&1
   # No published ports: the probe's API is read with `docker exec`, so this can
@@ -261,7 +350,7 @@ validate() {
   # about a store it cannot build, and assertion 1 would fire on every run until
   # somebody learned to ignore it.
   if ! docker run -d --rm --name "$PROBE" \
-      --env-file "$ENV_FILE" \
+      --env-file "$PROBE_ENV" \
       -v "$SCRATCH/dynamic":/etc/traefik/dynamic:ro \
       -v "$CERTS":/etc/traefik/certs:ro \
       "$image" \
