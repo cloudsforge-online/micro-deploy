@@ -904,6 +904,49 @@ groups:
       # IT WHEN there is a stall this estate did NOT recover from without a
       # human — that observation, and only that, sets the threshold.
 
+      - alert: TestnetChainScrapeDown
+        # THE TWO RULES ABOVE ARE WRITTEN FOR BOTH NETWORKS AND, UNTIL
+        # 2026-08-12, COULD ONLY EVER MATCH ONE. `EmberTipNotAdvancing`'s own
+        # summary says "EMBER {{ $labels.network }} tip", and
+        # `/api/v1/label/network/values` on the mainnet Prometheus answered
+        # `["mainnet"]` — not because either rule was scoped, but because this
+        # Prometheus was attached to no network the testnet estate is on and no
+        # testnet series had ever existed (micro-org#398).
+        #
+        # `cf-indexer-testnet` in prometheus.yml is what fixed that, and this
+        # rule is what stops it rotting back. The failure it guards is the one
+        # the whole ticket is about and it is SILENT BY CONSTRUCTION: if that
+        # target stops being scraped, `changes()` and the difficulty comparison
+        # both return an empty vector, both chain rules go quiet, and quiet is
+        # what they look like when testnet is healthy. Nothing else covers it —
+        # `TelemetryComponentDown` names five telemetry-plane jobs explicitly,
+        # and the two `up` rules beside it name `cf-services`, `custody` and
+        # `beacon`. A monitoring gap that closes itself back up unobserved is
+        # the same defect twice.
+        #
+        # `ticket` and sev 4, not a page: nobody is on call for testnet, and the
+        # loss is a delayed ticket about a chain no user's money is on. `for:
+        # 10m` because the testnet estate is redeployed by hand and a target is
+        # legitimately absent for the length of a `docker compose up`.
+        expr: up{job="cf-indexer-testnet"} == 0
+        for: 10m
+        labels:
+          severity: ticket
+          team: chain
+          service: indexer
+          estate: testnet
+          sev: "4"
+        annotations:
+          summary: "The testnet indexer is not being scraped — both EMBER chain rules are blind to testnet"
+          description: >-
+            Prometheus cannot reach cf-testnet-indexer-1. While this is true
+            EmberTipNotAdvancing and EmberDifficultyAtFloor evaluate against no
+            testnet series at all, so a frozen testnet chain produces silence
+            rather than a ticket. The usual cause is that Prometheus lost its
+            attachment to the testnet compose network, which a `docker compose
+            up` of the telemetry stack restores; the runbook has the check.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-testnet-chain-scrape-down.md
+
   # ===================================================== TICKET — jobs ======
   - name: cf.ticket.jobs
     rules:

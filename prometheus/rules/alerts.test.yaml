@@ -687,3 +687,120 @@ tests:
       - eval_time: 30m
         alertname: NotifyReservedDomainGuardLost
         exp_alerts: []
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # EmberTipNotAdvancing ON TESTNET — the case that could not exist until
+  # 2026-08-12 (micro-org#398).
+  #
+  # The rule was written for both networks from the start: no network selector,
+  # and a summary that interpolates `{{ $labels.network }}`. It had nonetheless
+  # never once been able to match testnet, because this Prometheus was attached
+  # to no network the testnet estate is on — `/api/v1/label/network/values`
+  # answered `["mainnet"]` on 2026-08-11 while the testnet indexer was serving
+  # `indexer_tip_height{chain="ember",network="testnet"} 8958` to nobody.
+  #
+  # THE LABEL SET IS THE ONE `cf-indexer-testnet` ACTUALLY PRODUCES, not an
+  # invented one: `job="cf-indexer-testnet"`, the container name as `instance`
+  # (both estates define a service called `indexer`, so a service name would be
+  # ambiguous on a container attached to both networks), `estate="testnet"` from
+  # the target, and NO `tier` — testnet has no SLO. That is the discipline
+  # check-alert-job-labels.py exists to enforce, and this fixture is exactly the
+  # kind of thing it scans.
+  #
+  # Same timing as the mainnet case above, because it is the same rule: a rule
+  # that fired on a different schedule for testnet would be a second rule.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      - series: 'indexer_tip_height{chain="ember",network="testnet",instance="cf-testnet-indexer-1:4000",job="cf-indexer-testnet",service="indexer",team="chain",estate="testnet"}'
+        values: "8958+1x19 8977+0x30 8978+1x20"
+
+    alert_rule_test:
+      # Blocks arriving on testnet. Silent, for the same reason as mainnet.
+      - eval_time: 15m
+        alertname: EmberTipNotAdvancing
+        exp_alerts: []
+
+      # Frozen at 19m; fires at 36m, on the 15-minute gap. The `network` label
+      # reaches the summary — which is the whole point, and is the assertion
+      # that would have caught the gap this ticket is about if a series had ever
+      # existed to write it against.
+      - eval_time: 36m
+        alertname: EmberTipNotAdvancing
+        exp_alerts:
+          - exp_labels:
+              alertname: EmberTipNotAdvancing
+              chain: ember
+              network: testnet
+              instance: cf-testnet-indexer-1:4000
+              job: cf-indexer-testnet
+              estate: testnet
+              severity: ticket
+              team: chain
+              service: indexer
+              sev: "3"
+            exp_annotations:
+              summary: "EMBER testnet tip has not advanced in at least 15 minutes"
+              description: >-
+                No new EMBER block has been indexed for fifteen minutes against a
+                fifteen second target. This series freezes for a stalled chain and
+                for a stalled indexer alike — ask the node for its own height before
+                concluding anything, the runbook has the call. If the node agrees
+                the tip is stuck, the usual cause is difficulty left high by
+                hashrate that has since gone away, and it resolves itself as the
+                retarget walks down; the runbook says how long that has taken
+                before, and when to stop waiting.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-tip-not-advancing.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # TestnetChainScrapeDown — the guard on the guard.
+  #
+  # If `cf-indexer-testnet` stops being scraped, the case above goes silent, and
+  # silence is what it looks like when testnet is healthy. Nothing else covers
+  # that target: `TelemetryComponentDown` names five telemetry-plane jobs and
+  # the two other `up` rules name `cf-services`, `custody` and `beacon`.
+  #
+  # `for: 10m` is the deliberate part — testnet is redeployed by hand and the
+  # target is legitimately absent for the length of a `docker compose up`. The
+  # 9m case below is what pins it; without a `for:`, every testnet deploy files
+  # a ticket.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      - series: 'up{instance="cf-testnet-indexer-1:4000",job="cf-indexer-testnet",service="indexer",team="chain",estate="testnet"}'
+        values: "1+0x10 0+0x30"
+
+    alert_rule_test:
+      # Being scraped. Silent.
+      - eval_time: 5m
+        alertname: TestnetChainScrapeDown
+        exp_alerts: []
+
+      # Down since 11m and pending, not firing — a testnet redeploy lands here.
+      - eval_time: 19m
+        alertname: TestnetChainScrapeDown
+        exp_alerts: []
+
+      # Ten minutes down. Now it is a ticket.
+      - eval_time: 22m
+        alertname: TestnetChainScrapeDown
+        exp_alerts:
+          - exp_labels:
+              alertname: TestnetChainScrapeDown
+              instance: cf-testnet-indexer-1:4000
+              job: cf-indexer-testnet
+              estate: testnet
+              severity: ticket
+              team: chain
+              service: indexer
+              sev: "4"
+            exp_annotations:
+              summary: "The testnet indexer is not being scraped — both EMBER chain rules are blind to testnet"
+              description: >-
+                Prometheus cannot reach cf-testnet-indexer-1. While this is true
+                EmberTipNotAdvancing and EmberDifficultyAtFloor evaluate against no
+                testnet series at all, so a frozen testnet chain produces silence
+                rather than a ticket. The usual cause is that Prometheus lost its
+                attachment to the testnet compose network, which a `docker compose
+                up` of the telemetry stack restores; the runbook has the check.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-testnet-chain-scrape-down.md
