@@ -112,7 +112,22 @@ services:
     # (the timestamp series ran one block late, and that is difficulty input),
     # faa5dde takes chain replay out of the EvmNode constructor (micro-org#349),
     # and 4a5e150 makes an expired template a 409 rather than a 400.
-    image: ghcr.io/cloudsforge-online/hearth-node:sha-fcc2738c3ca6931fbbbe58b2be4db0931bbda748
+    #
+    # a094dba (2026-08-11) is the emergency difficulty rule — hearth 0.3.0, a HARD
+    # FORK that activates at height 20,000. This file is a SEPARATE file from
+    # `docker-compose.miners.yml`, and that is exactly how this miner got left
+    # behind: micro-deploy#71 bumped the two chain-host miners and its own header
+    # said "every hearth process has to be on a094dba, including
+    # `cf-miner-mainnet-apphost` on the app host" — and then did not touch the line
+    # that governs it, because the line lives here. `docker compose up -d` against
+    # the other file cannot fix this one; nothing about a project name or a service
+    # name links them. Two files, two edits, every time.
+    #
+    # A miner left on fcc2738 past height 20,000 does not slow down or fall behind:
+    # it rejects the first eased block as `wrong difficulty target`, stops
+    # following the chain, and keeps hashing a fork of one. That is silent — the
+    # log line is `hashing #N`, the same line a healthy miner prints.
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-a094dba6ace0448a483f79533964e6663b870334
     container_name: cf-miner-mainnet-apphost
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:

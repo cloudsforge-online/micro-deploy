@@ -231,6 +231,22 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-apex-prefix.py
 
+      # ── EVERY EMBER MINER RUNS ONE CONSENSUS BUILD ─────────────────────────
+      #
+      # The miner pins live in two files, one per machine, with nothing linking
+      # them — not a project, not an anchor, not an include. micro-deploy#71
+      # shipped a HARD FORK by bumping `docker-compose.miners.yml`, wrote in that
+      # file's own header that `cf-miner-mainnet-apphost` had to move too, and
+      # did not move it, because that line is in `docker-compose.miners-apphost.yml`.
+      #
+      # The resulting failure is invisible: a miner on the old build past the
+      # activation height rejects the first forked block as `wrong difficulty
+      # target`, mines a fork of one, and goes on printing `hashing #N` and
+      # passing its health check while the estate's EMBER income stops.
+      - name: Every hearth-node pin agrees, and is a commit not a tag
+        working-directory: deploy
+        run: python3 scripts/check-hearth-pins-agree.py
+
       # ── THE GATEWAY CANNOT LOG A CLIENT IP, AND NOW SOMETHING SAYS SO ───────
       #
       # micro-org#163 found that Traefik logs no client address here, and then
