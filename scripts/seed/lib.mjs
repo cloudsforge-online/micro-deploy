@@ -334,7 +334,19 @@ function readEmberRpc() {
  * rather than as a path that stopped matching — the failure mode this file's
  * previous fix (the laptop path) was written to stop, recurring under a new name.
  */
-const MINER_KEY_FILES = ['coinbase-keystore.json', 'coinbase-key.json']
+export const MINER_KEY_FILES = ['coinbase-keystore.json', 'coinbase-key.json']
+
+/**
+ * The directory holding this environment's miner keys — the root, not the
+ * per-network directory.
+ *
+ * Hoisted out of `readMinerData()` because `MINER_PASSPHRASE_FILE` below needs
+ * the same root and the two must not be able to disagree: the passphrase is one
+ * directory up from the keystore it opens, so a second copy of this expression
+ * would be a second chance to look for a secret in the wrong place. Declared
+ * above every reader for the temporal-dead-zone reason `MINER_KEY_FILES` gives.
+ */
+const MINER_KEYS_ROOT = process.env.CF_MINER_KEYS || path.resolve(ROOT, '../miner-keys')
 
 /**
  * The directory holding `coinbase-key.json` for THIS environment's miner.
@@ -355,8 +367,7 @@ export const MINER_DATA = readMinerData()
 
 function readMinerData() {
   if (process.env.EMBER_MINER_DATA) return process.env.EMBER_MINER_DATA
-  const keys = process.env.CF_MINER_KEYS || path.resolve(ROOT, '../miner-keys')
-  const perNetwork = path.join(keys, EMBER_NETWORK)
+  const perNetwork = path.join(MINER_KEYS_ROOT, EMBER_NETWORK)
   if (MINER_KEY_FILES.some((f) => fs.existsSync(path.join(perNetwork, f)))) return perNetwork
   const home = process.env.EMBER_HOME || path.join(process.env.HOME || '', '.cloudsforge/ember-testnet')
   return path.join(home, 'miner')
@@ -374,12 +385,23 @@ function readMinerData() {
  * to say WHO the platform is can be served without the passphrase ever being
  * read, and this function deliberately cannot decrypt anything.
  *
- * `seed/foresight.mjs` is NOT ported onto this. It needs `privateKey` because it
- * SIGNS a transaction to open a market on chain, and a sealed keystore cannot
- * give it one without the passphrase. Reading a passphrase and decrypting a
- * mining key inside a seeder is a much larger decision than this fix, so that
- * path still looks for the plaintext file, still returns null when it is absent,
- * and still skips with a reason. The difference is that its reason is true.
+ * `seed/foresight.mjs` is STILL not ported onto this, and now for the opposite
+ * reason. This paragraph used to say it had been left behind — that it needs
+ * `privateKey` to sign a market open, that a sealed keystore cannot give it one
+ * without the passphrase, and that "reading a passphrase and decrypting a mining
+ * key inside a seeder is a much larger decision than this fix", so it went on
+ * looking for the plaintext file and skipping. That was true when it was
+ * written and it stopped being true on 2026-08-11: micro-org#411 took the
+ * decision, and `signingChain()` there now opens the sealed keystore through
+ * hearth's own `resolveCoinbaseKey`, with the passphrase supplied as a PATH
+ * (`MINER_PASSPHRASE_FILE`, below) and never as a value.
+ *
+ * So the two functions have DIFFERENT JOBS rather than one being behind the
+ * other, and that separation is worth keeping: this one answers "who is the
+ * platform on chain" and is deliberately incapable of decrypting anything, which
+ * is why every caller that only needs an address — `seed/mint.mjs` is the whole
+ * of that list — can be served without a passphrase existing on the machine at
+ * all.
  *
  * Returns null when neither file exists — a machine with no miner is a normal
  * machine, and CI is one.
@@ -399,6 +421,45 @@ function readMinerAddress() {
     }
   }
   return null
+}
+
+/**
+ * The PATH of the file holding the keystore passphrase. Never the passphrase.
+ *
+ * ── A PATH, BECAUSE THE ESTATE ALREADY DECIDED THAT ──────────────────────────
+ *
+ * `compose/docker-compose.miners-apphost.yml:155` mounts
+ * `miner-keys/secrets/coinbase-passphrase` at `/run/secrets/coinbase-passphrase`
+ * read-only and sets `HEARTH_COINBASE_PASSPHRASE_FILE` to that path, and
+ * `docker-compose.miners.yml` says why in one line: an env STRING "is readable by
+ * anything that can read this process's environment, and `docker inspect` is one
+ * of those things". `hearth/node/src/coinbase.js` supports both forms and prefers
+ * the file. Nothing in this repository should ever hold the other kind, so this
+ * constant is a path or it is null, and no code here reads what is in it —
+ * hearth opens it, uses it and drops it.
+ *
+ * ── WHY THERE IS A DEFAULT AT ALL ────────────────────────────────────────────
+ *
+ * The passphrase's location is a FACT ABOUT THIS DEPLOYMENT, in exactly the
+ * sense `CF_API_HOST` and `CF_RPC_UPSTREAM` above are, and this file's whole
+ * argument is that such facts are read rather than typed at the invocation.
+ * `secrets/` sits beside `mainnet/` and `testnet/` under the same
+ * `CF_MINER_KEYS` root that `MINER_DATA` derives from — one root, two children,
+ * one expression — so an operator who has the keystore mounted has the
+ * passphrase discoverable without being told twice.
+ *
+ * The default is EXISTENCE-CHECKED and the explicit form is NOT, deliberately.
+ * An operator who sets `HEARTH_COINBASE_PASSPHRASE_FILE` and gets the path wrong
+ * wants a refusal naming their path — which hearth gives, in those words — and
+ * not a silent fall back onto a file they were not thinking about.
+ */
+export const MINER_PASSPHRASE_FILE = readMinerPassphraseFile()
+
+function readMinerPassphraseFile() {
+  const named = process.env.HEARTH_COINBASE_PASSPHRASE_FILE
+  if (named) return named
+  const conventional = path.join(MINER_KEYS_ROOT, 'secrets', 'coinbase-passphrase')
+  return fs.existsSync(conventional) ? conventional : null
 }
 
 export const COMPOSE = process.env.COMPOSE || 'compose/docker-compose.estate.yml'
