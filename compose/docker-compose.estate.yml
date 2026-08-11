@@ -3808,9 +3808,10 @@ services:
 
   # ------------------------------------------------------------------ hub-api
   # No migrator and no database: it is a BFF that composes other services'
-  # answers and owns no state. It holds SIX separate service tokens, one per
-  # upstream, rather than one token with the union of the scopes — which is the
-  # least-privilege property the scope vocabulary exists to make possible.
+  # answers and owns no state. It mints SEVEN separate narrow service tokens,
+  # one per upstream, rather than one token with the union of the scopes —
+  # which is the least-privilege property the scope vocabulary exists to make
+  # possible.
   hub-api:
     <<: *service-defaults
     build:
@@ -3825,6 +3826,27 @@ services:
       PRICING_URL: http://pricing:4000
       POLICY_URL: http://policy:4000
       ACTIVITY_URL: http://activity:4000
+      # ── THE ONE THAT WAS MISSING, AND WHAT IT COST ────────────────────────
+      #
+      # NOTIFY_URL was absent from this block for the whole life of the estate,
+      # and hub-api's env.ts did not require it — so the `notifications` tile
+      # was hard-coded `unavailable`, `degraded` contained it on every single
+      # dashboard response, and hub-web turned that into "notifications is not
+      # showing current data. Everything else on this page is." on EVERY
+      # signed-in Overview, permanently. Measured 2026-08-11:
+      # hub_tile_status_total{tile="notifications",status="unavailable"} was 32
+      # of 32 compositions on mainnet and 29 of 29 on testnet, while notify held
+      # 172 notifications for 85 users and 77 for 37. micro-org #415.
+      #
+      # hub-api 1.4.0 makes this REQUIRED rather than optional: a URL that may
+      # be absent is a feature that can be silently unconfigured, and this one
+      # was, for months, with an incident banner as the only symptom. A deploy
+      # that forgets it now fails at boot with the variable's name.
+      #
+      # `notify:read` is already in IDENTITY_SERVICE_TOKEN_GRANTS for hub-api
+      # above — the grant was derived from the scope constants and provisioned
+      # long before anything used it, so no grant change accompanies this.
+      NOTIFY_URL: http://notify:4000
       # ── SIX NARROW TOKENS WERE HERE, AND THEIR ABSENCE IS THE POINT ───────
       # HUB_LEDGER_TOKEN, HUB_WALLET_TOKEN, HUB_BILLING_TOKEN, HUB_PRICING_TOKEN,
       # HUB_POLICY_TOKEN and HUB_ACTIVITY_TOKEN were six separate 10-minute
@@ -3851,6 +3873,8 @@ services:
       policy:
         condition: service_healthy
       activity:
+        condition: service_healthy
+      notify:
         condition: service_healthy
     healthcheck: *healthcheck
 
