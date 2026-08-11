@@ -6,6 +6,16 @@
 #
 #   cd deploy && docker compose -p cf-miners -f compose/docker-compose.miners.yml up -d
 #
+# `-p cf-miners` IS NOT DECORATION AND OMITTING IT COST THREE DAYS OF TESTNET.
+# Without it compose names the project after the directory — `compose` — so the
+# containers answer to neither `cf-miners` nor anything an operator would think
+# to type, and a later `-p cf-miners up` cannot replace them either: it tries to
+# CREATE a second container of the same name and fails on the name conflict.
+# `cf-miner-testnet` sat exited under `project=compose` from 2026-08-08 to
+# 2026-08-11 for exactly this reason. If you meet that conflict, the recovery is
+# `docker rm -f <name>` and then the command above — the keys are on bind mounts
+# and survive it.
+#
 # ── THESE ARE LIGHT MINERS, NOT NODES ────────────────────────────────────────
 #
 # `bin/hearth-mine.js` holds no chain and opens no port: it GETs
@@ -240,12 +250,38 @@ services:
       #     gateway's local bind, and the app stack — testnet gateway included —
       #     moved to the app host on 2026-08-10 (micro-org#338). Only the chain
       #     stayed here. So `127.0.0.1:10443` on this box has been nothing at all
-      #     since that move, and this miner has been down with it: measured
-      #     2026-08-11, `cf-hearth-seed-testnet` sat at height 7,765 across two
-      #     reads 30 s apart, on a chain whose target block time is 15 s.
+      #     since that move.
+      #
+      # ── AND THE CHAIN WAS ALREADY FROZEN, FOR A DIFFERENT REASON ──────────
+      #
+      # Said precisely, because the two failures are separate and it would be easy
+      # to close this with only one of them understood. Read off the container on
+      # 2026-08-11:
+      #
+      #     cf-miner-testnet  state=exited  exit=0  finished=2026-08-08T08:35:46Z
+      #     project=compose   image=…sha-0cf14451 (the pre-`minerkey` build)
+      #
+      # It did not crash and the URL did not kill it. It exited CLEANLY on
+      # 2026-08-08 — two days BEFORE the app stack moved — and `restart:
+      # unless-stopped` is precisely the policy that does not bring a container
+      # back after an explicit stop. `project=compose` says why it was reachable
+      # to be stopped by accident: it was created by a bare `docker compose -f
+      # docker-compose.miners.yml up` with no `-p`, so it belonged to the
+      # directory-named default project rather than `cf-miners`, and it answered
+      # to commands aimed at neither.
+      #
+      # THE TWO FAULTS COMPOUND, which is the part worth keeping. The stop froze
+      # the chain; the dead loopback URL meant nobody could restart it — a plain
+      # `docker start cf-miner-testnet` after 2026-08-10 would have come up and
+      # dialled nothing. Browser miners carried the tip from #6,110 to #7,765 in
+      # between and then stopped too, so the freeze only became visible on
+      # 2026-08-11: height 7,765 on two reads 30 s apart, on a chain whose target
+      # block time is 15 s.
       #
       # A public testnet whose chain is frozen is worse than a stopped one,
-      # because everything in front of it keeps answering.
+      # because everything in front of it keeps answering. Nothing alerted for
+      # three days. That is micro-org#363's chain-stall alert not covering
+      # testnet, and it is filed rather than fixed here.
       #
       # ── WHY THIS BLOCK NOW MATCHES WHAT IS RUNNING, AND DID NOT BEFORE ─────
       #
