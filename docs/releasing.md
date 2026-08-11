@@ -34,17 +34,34 @@ rather than deleted — the chain-host paths that remain are labelled as such.
 
 ## Naming a release
 
-**Releases are named for the day they are cut: `2026.08.21`.** The `<version>`
-placeholder everywhere below takes that shape. Per-repository `package.json`
-versions are still semver and are a different thing; the estate release is the
-manifest `org/releases/<version>.yaml`, and that name is what an operator quotes.
+**A release name is `<year>.<month>.<sequence>`: `2026.08.21`.** That is the
+**twenty-first release cut in August 2026** — not 21 August. It was cut on
+2026-08-11. The `<version>` placeholder everywhere below takes that shape.
+Per-repository `package.json` versions are still semver and are a different
+thing; the estate release is the manifest `org/releases/<version>.yaml`, and that
+name is what an operator quotes.
 
-The semver-shaped estate releases in this document's history — `2.3.0`, `2.5.2`
-— are that history, not a scheme to follow. **`2026.08.12` sorts after
-`2026.08.11` lexicographically and looks like its successor while being a day
-earlier by the numbering that generated it**; `micro-org`'s `release-order.test.ts`
-exists because that trap already shipped six-day-stale pins to production once
-(micro-org#384). Do not sort these names by hand.
+**A release name cannot be sorted. Never derive "the latest" or "the previous"
+from a directory listing.** Two separate things break it:
+
+- The sequence is **not zero-padded**, so `2026.08.21` sorts *before*
+  `2026.08.6` as a string.
+- `org/releases/` holds **two incomparable lineages**. The semver-shaped estate
+  releases in this document's history — `2.3.0` through `2.5.19` — are not old
+  names for the same scheme, they are a second scheme the estate also used, and
+  no comparison of a date-shaped name with a semver-shaped one means anything.
+
+`2026.08.12` looks like the successor of `2026.08.11`, and in time it is. It was
+also six days behind `2.5.19`, and deploying it rolled 45 services back — the
+indexer by 87 commits. Nothing failed: every container was healthy, every image
+existed, `--dry-run` was green and every digest was a real digest of a real
+artifact. It was found five days later, by reading
+`org.opencontainers.image.version` off the running containers and not believing
+it. **Order by the manifest's `generated` field**, which is the only one that
+orders the two lineages against each other. `micro-org`'s `release-order.test.ts`
+now makes a backwards manifest a build failure rather than a deploy
+(micro-org#384), and `./scripts/release-deploy.sh --list` prints them in the
+order they were actually cut.
 
 ---
 
