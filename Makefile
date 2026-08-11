@@ -14,7 +14,7 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
 
 .DEFAULT_GOAL := help
 .PHONY: help up down gateway logs ps config check check-rules check-rule-tests \
-        check-alertmanager \
+        check-alert-job-labels check-alertmanager \
         check-collector check-runbooks check-prometheus-targets check-compose-ports \
         check-token-resolution check-custody-backup-guard check-backup \
         prometheus-targets \
@@ -51,7 +51,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-rule-tests check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-siblings check-release-deploy check-backup ## Run every check
+check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-siblings check-release-deploy check-backup ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -75,6 +75,15 @@ check-rule-tests: ## promtool UNIT TESTS — the rules actually fire, not merely
 	@docker run --rm --entrypoint /bin/promtool \
 		-v "$(PWD)/prometheus:/p:ro" $(PROM_IMG) \
 		test rules /p/rules/alerts.test.yaml
+
+check-alert-job-labels: ## every job= in a rule names a job prometheus.yml declares
+	@# promtool proves the rules parse and `check-rule-tests` proves they fire
+	@# against the series the FIXTURE supplies. Neither can see a matcher that
+	@# selects nothing on the real estate: `up{job="notify"}` shipped in
+	@# NotifyReservedDomainGuardLost and there is no job called `notify`, only
+	@# `cf-services` with a `service` label. The fixtures had invented the job, so
+	@# the unit tests agreed with the rule and both were wrong together.
+	@python3 scripts/check-alert-job-labels.py
 
 check-alertmanager: ## amtool over the routing configuration
 	@docker run --rm --entrypoint /bin/amtool \

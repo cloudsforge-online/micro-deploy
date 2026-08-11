@@ -442,7 +442,7 @@ tests:
       #
       # Flat at 0 for twenty minutes, then one increment. One is the whole point:
       # there is no "acceptable level" of mail to an address that cannot exist.
-      - series: 'notify_failed_total{channel="email",reason="reserved_domain",instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'notify_failed_total{channel="email",reason="reserved_domain",instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "0+0x20 1+0x20"
 
       # A second series that must NOT trigger it, and the reason the expression
@@ -452,7 +452,7 @@ tests:
       # expression ever loses its `reason` selector, this series pages
       # constantly, the operator silences the alert, and the estate loses the
       # signal exactly as it did before.
-      - series: 'notify_failed_total{channel="email",reason="rejected",instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'notify_failed_total{channel="email",reason="rejected",instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "0+3x40"
 
     alert_rule_test:
@@ -473,8 +473,9 @@ tests:
               alertname: MailSentToReservedDomain
               channel: email
               reason: reserved_domain
-              instance: notify:4090
-              job: notify
+              instance: notify:4000
+              job: cf-services
+              tier: "2"
               severity: ticket
               team: platform
               service: notify
@@ -511,11 +512,11 @@ tests:
       # Zero for twenty minutes — the correct value, forever — then one row.
       # One is the whole threshold: there is no acceptable rate of writing a
       # delivery to an address the DNS root guarantees cannot resolve.
-      - series: 'notify_deliveries_reserved_domain{instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'notify_deliveries_reserved_domain{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "0+0x20 1+0x20"
 
       # Ordinary queue depth, non-zero throughout. Must never trigger it.
-      - series: 'notify_deliveries_pending{instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'notify_deliveries_pending{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "4+2x40"
 
     alert_rule_test:
@@ -531,8 +532,9 @@ tests:
         exp_alerts:
           - exp_labels:
               alertname: MailRoutedToReservedDomain
-              instance: notify:4090
-              job: notify
+              instance: notify:4000
+              job: cf-services
+              tier: "2"
               severity: ticket
               team: platform
               service: notify
@@ -555,13 +557,25 @@ tests:
   # A build whose routing rule was removed but which still exports the metric.
   # It says so at the first scrape, before any notification is created, which is
   # the "in minutes rather than in messages" the ticket asked for.
+  #
+  # THE LABEL SET BELOW IS THE ONE MAINNET ACTUALLY PRODUCES, read off
+  # `up{instance="notify:4000"}` on 2026-08-11:
+  #
+  #     job="cf-services"  service="notify"  team="notify"  tier="2"
+  #
+  # These three cases originally invented `job="notify"`, and passed, while the
+  # rule they were testing selected nothing on the real estate — see the comment
+  # on the alert. A fixture is the one place a label set can be whatever the
+  # author expected rather than whatever exists, so it is the one place this
+  # cannot be allowed to drift. `scripts/check-alert-job-labels.py` reads this
+  # file too.
   # ══════════════════════════════════════════════════════════════════════════
   - interval: 1m
     input_series:
       # Healthy for twenty minutes, then a deploy that lost the rule.
-      - series: 'notify_reserved_domain_guard{instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'notify_reserved_domain_guard{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "1+0x20 0+0x30"
-      - series: 'up{instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'up{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "1+0x50"
 
     alert_rule_test:
@@ -583,8 +597,9 @@ tests:
         exp_alerts:
           - exp_labels:
               alertname: NotifyReservedDomainGuardLost
-              instance: notify:4090
-              job: notify
+              instance: notify:4000
+              job: cf-services
+              tier: "2"
               severity: ticket
               team: platform
               service: notify
@@ -616,7 +631,7 @@ tests:
   # ══════════════════════════════════════════════════════════════════════════
   - interval: 1m
     input_series:
-      - series: 'up{instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'up{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "1+0x40"
       # No notify_reserved_domain_guard series at all. Its absence is the input.
 
@@ -632,8 +647,9 @@ tests:
         exp_alerts:
           - exp_labels:
               alertname: NotifyReservedDomainGuardLost
-              instance: notify:4090
-              job: notify
+              instance: notify:4000
+              job: cf-services
+              tier: "2"
               severity: ticket
               team: platform
               service: notify
@@ -658,12 +674,13 @@ tests:
   # and once as a lost guard, and the second page would be a lie. A service that
   # is not running is not sending mail to anybody.
   #
-  # Deleting `up{job="notify"} == 1 unless` from the expression turns this case
+  # Deleting `up{job="cf-services", service="notify"} == 1 unless` from the
+  # expression turns this case
   # red, which is the point of it.
   # ══════════════════════════════════════════════════════════════════════════
   - interval: 1m
     input_series:
-      - series: 'up{instance="notify:4090",job="notify",service="notify",team="platform"}'
+      - series: 'up{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
         values: "0+0x40"
 
     alert_rule_test:

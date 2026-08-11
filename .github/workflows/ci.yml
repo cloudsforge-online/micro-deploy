@@ -247,6 +247,28 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-hearth-pins-agree.py
 
+      # ── AN ALERT CAN SELECT A LABEL SET THE ESTATE NEVER EMITS ─────────────
+      #
+      # `NotifyReservedDomainGuardLost` shipped with `up{job="notify"}`, and
+      # there is no job called `notify`: every application service is scraped by
+      # one file_sd job, `cf-services`, which relabels `__meta_cf_service` into
+      # `service`. Measured on mainnet the day it shipped, `up{job="notify"}`
+      # returned NO SERIES while notify was up and healthy.
+      #
+      # That selector was the half of the alert written for "the metric is
+      # absent" — so the alert covering a build too old to export the guard could
+      # not fire when the guard was missing. A ticket about an unfireable alert,
+      # fixed with another one.
+      #
+      # `promtool test rules` passed the whole time, because the fixtures INVENTED
+      # `job="notify"` in their `input_series`. promtool answers what the rules do
+      # to the series you hand it; hand it a label set no scrape config produces
+      # and it confirms the rule works on a world that does not exist. This step
+      # reads the fixtures too, which is the only reason it would have caught it.
+      - name: Every job= in an alert rule names a job Prometheus scrapes
+        working-directory: deploy
+        run: python3 scripts/check-alert-job-labels.py
+
       # ── A ROTATION LEAVES A SECOND COPY OF THE CREDENTIAL SET BEHIND ────────
       #
       # Every rotation this estate has run made a copy of the file it was about
