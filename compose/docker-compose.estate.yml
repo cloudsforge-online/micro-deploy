@@ -310,10 +310,11 @@ x-studio-secret-file: &studio-secret-file
 # **This table is what opens a deposit, and `INDEXER_CHAINS` is not.** `wallet`
 # gates observability behind `payableChainsOnly` with the payability half
 # OUTERMOST, so an asset absent here is one the estate neither offers an address
-# for nor credits, however well the indexer can see it. BTC is followed and has
-# no entry: adding one is the separate decision described in
-# `settlement/src/bitcoin.ts`, which has to answer what a Bitcoin withdrawal
-# costs on a node whose fee estimator is disabled by `blocksonly`.
+# for nor credits, however well the indexer can see it. That is still what the
+# table is for, and the BTC row below is what taking the decision looks like
+# rather than a reason to stop drawing the distinction: DOGE and ETC are one
+# line away in `INDEXER_CHAINS` and neither would become depositable, because
+# neither is named here.
 #
 # 21000000000000 is MEASURED, not copied: `eth_gasPrice` on this estate's own
 # hearth-seed answers 0x3b9aca00 (1 gwei) and a plain transfer is 21000 gas, so
@@ -369,7 +370,58 @@ x-studio-secret-file: &studio-secret-file
 # multi-input sweep. Erring high costs the user under half a cent; erring low leaves a withdrawal
 # stuck. The figure is unchanged from when it was first written against `minrelaytxfee`; what
 # changed is that it is now backed by a fee market read rather than by a relay floor.
-x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"}'
+#
+# ── BTC: 3,000 satoshi = 0.00003 BTC, ~USD 1.92 at the rate `pricing` quotes live ─────────────
+#
+# The paragraph above this one used to end "BTC is followed and has no entry: adding one is the
+# separate decision described in `settlement/src/bitcoin.ts`". This is that decision, taken on
+# 2026-08-11, and it is taken now rather than earlier because the two things it was waiting on
+# both landed first and neither of them was this variable:
+#
+#   * **A UTXO source.** micro-org#382 — every node here runs `disablewallet=1`, so `listunspent`
+#     answered `-32601` and a Bitcoin withdrawal could not choose coins at all. settlement 2.5.21
+#     takes candidate outpoints from the indexer and re-reads each one with `gettxout`, which is a
+#     chainstate RPC and needs no wallet.
+#   * **A fee source.** micro-org#383 and the `deriveFeeRateFromBlocks` block in
+#     `settlement/src/bitcoin.ts`. `estimatesmartfee` is not merely quiet on this node, it is
+#     absent: Core 25 and later do not construct an estimator under `blocksonly`, and the node
+#     answers `-32603 Fee estimation disabled`. Confirmed blocks answer instead.
+#
+# ── WHAT THE CHAIN ACTUALLY COSTS TODAY, READ FROM THE ESTATE'S OWN NODE ───────────────────────
+#
+# `getblockstats` over Bitcoin mainnet blocks 961,937-961,960 (24 blocks, 123,944 transactions),
+# 2026-08-11, in sat/vB:
+#
+#     block's 10th-pct feerate   median 0    p90 0     max 0
+#     block's 50th-pct feerate   median 0    p90 2     max 2
+#     block's 90th-pct feerate   median 2    p90 4     max 5
+#     block's average feerate    median 1    p90 2     max 5
+#
+# Thirteen of those twenty-four blocks report a 50th-percentile feerate of ZERO, which is not a
+# quiet-chain artefact — it is what an unfull block looks like when half its weight paid nothing
+# above the relay floor. settlement declines to call that a fee market reading: its window needs
+# more than half the blocks it asked about to carry a usable percentile, and with 11 of 24 it
+# returns `null` and takes the 1 sat/vB relay floor. So a Bitcoin withdrawal built on this estate
+# today costs about 141 satoshi — 1 sat/vB across a 141-vB 1-in-2-out P2WPKH spend — or USD 0.09.
+#
+# ── SO WHY 3,000 AND NOT 141 ───────────────────────────────────────────────────────────────────
+#
+# Because this number is a STATED price and the market it covers is the one that moved by two
+# orders of magnitude inside a week, more than once. 3,000 satoshi buys 21 sat/vB on that 141-vB
+# spend and 8 sat/vB on a 350-vB three-input one — above every rate this node has measured, with
+# an order of magnitude of headroom for the day it is not. In ratio it is TIGHTER than the LTC
+# entry above, which quotes 70 sat/vB against a chain building at 1.
+#
+# ── AND WHAT HAPPENS WHEN THE MARKET GOES ABOVE IT, STATED PLAINLY ────────────────────────────
+#
+# **Nothing gets stuck.** This is not a fee budget the build is clamped to — settlement builds at
+# the rate it derives, and `settlement/src/fees.ts` books what was burned as a platform expense
+# against `(platform, BTC, payout_due)`. So a spike above 21 sat/vB means the platform absorbs the
+# difference and every withdrawal still confirms; it is a P&L line, not an outage. The permanent
+# repair is the one `wallet/src/settlement.ts` already names — swapping `staticFeeQuoter` for
+# `httpFeeQuoter`, so the user is quoted what settlement is about to pay — and that swap is a
+# one-line change in `wallet/src/index.ts` that this entry does not block.
+x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000","BTC":"3000"}'
 
 # ── SETTLEMENT_RPC_URLS — ABSENT, SO NOTHING COULD BE BUILT OR BROADCAST ──────
 #

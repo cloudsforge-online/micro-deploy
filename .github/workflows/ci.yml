@@ -661,17 +661,42 @@ jobs:
       # STATUS was to keep one unconfigured chain off the six that are configured,
       # and a bad render here hands that property straight back.
       #
-      # All eight combinations of the three optional variables, rendered by real
-      # compose from the anchor READ OUT of the estate file rather than copied into
-      # the check. PyYAML installed in this step rather than relied upon from an
-      # earlier one, for the reason the step below gives: a check whose correctness
-      # depends on the order of the steps around it breaks silently when somebody
-      # reorders them.
+      # All sixteen combinations of the four optional variables — `btc` joined
+      # `ltc`, `doge` and `etc` on 2026-08-11 — rendered by real compose from the
+      # anchor READ OUT of the estate file rather than copied into the check.
+      # PyYAML installed in this step rather than relied upon from an earlier one,
+      # for the reason the step below gives: a check whose correctness depends on
+      # the order of the steps around it breaks silently when somebody reorders
+      # them.
       - name: Settlement's RPC map is valid JSON with any set of chains configured
         working-directory: deploy
         run: |
           python3 -m pip install --quiet pyyaml
           python3 scripts/check-settlement-rpc-urls.py
+
+      # ── AND NO CHAIN IS OPEN TO DEPOSITS THAT SETTLEMENT CANNOT PAY OUT OF ──
+      #
+      # The step above proves settlement's endpoint map renders. This one proves
+      # the estate never opens a chain that map cannot name, which is the other
+      # half of the same question and the half nothing asked.
+      #
+      # `WALLET_FEE_QUOTES` is not only the withdrawal price list: `wallet` gates
+      # its deposit observability on it with the payability half OUTERMOST, so an
+      # asset named there is one the estate will issue a real address for, watch
+      # and credit. Quote a fee for a chain `SETTLEMENT_RPC_URLS` cannot carry an
+      # endpoint for and you get coins in and nothing out, with no error anywhere
+      # because the deposits work. micro-org#373 §6.3 derived that ordering
+      # constraint by hand; this enforces it, and it is what made adding BTC on
+      # 2026-08-11 a checkable decision rather than a remembered one.
+      #
+      # The reachable set is read out of the sibling anchor, so wiring a chain
+      # into one file makes it quotable in the other on the same commit and there
+      # is no list here to drift.
+      - name: No chain is open to deposits that settlement could not pay back out of
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-wallet-fee-quotes.py
 
       # ── A DEPLOY THAT FAILS HALFWAY IS AN OUTAGE, SO IT MUST FAIL BEFOREHAND ──
       #
