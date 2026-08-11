@@ -1090,6 +1090,99 @@ groups:
             allowance before assuming mail is otherwise healthy.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
 
+      - alert: MailRoutedToReservedDomain
+        # ── THE ONE ABOVE CANNOT FIRE FOR THE CAUSE IT NAMES. THIS ONE CAN. ──
+        #
+        # `MailSentToReservedDomain` watches the BACKSTOP in notify's email
+        # adapter. Measured on mainnet 2026-08-11, that counter is zero over
+        # seven days — and it is zero structurally, not happily: pipeline.ts
+        # drops the email channel before a delivery row is written, so on the
+        # live path nothing ever reaches the backstop. It fires only for a
+        # PARTIAL regression, where the routing call site is removed and the
+        # adapter guard survives.
+        #
+        # The regression that actually happened was the whole one. The deployed
+        # process was an older image that contained NEITHER guard, so nothing
+        # incremented, and the alert above would have stayed inactive through
+        # all six days and all 1,535 messages. micro-org#390.
+        #
+        # This watches the delivery ROWS instead — ground truth, from notify's
+        # own table, and true whatever the code believes about itself. A row
+        # exists the moment routing returns `email` for an address the DNS root
+        # guarantees can never resolve.
+        #
+        # ── ROWS AND NOT SENDS ───────────────────────────────────────────────
+        #
+        # Of the 1,535 rows measured, 418 were ever `sent`; the other 1,117 died
+        # against an allowance the first 418 had already emptied. A gauge of
+        # sends would have seen a quarter of the damage and would have gone
+        # QUIET at the moment it got worst, because the evidence that mail is
+        # leaking is destroyed by the mail having already leaked.
+        #
+        # `> 0` and not a rate, for the reason the alert above gives: the
+        # correct value is zero forever.
+        expr: notify_deliveries_reserved_domain > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: platform
+          service: notify
+          sev: "2"
+        annotations:
+          summary: "notify ROUTED mail to a reserved domain — the rule is not running in the deployed build"
+          description: >-
+            notify wrote at least one email delivery in the last hour whose
+            recipient is under a domain the standards reserve. This is measured
+            from the delivery table, so it is what happened and not what the
+            code claims. Read the RUNNING container's build, not the repository
+            — the last time this occurred the fix had been merged for six days
+            and the process was older. Then check the provider's remaining daily
+            allowance before assuming mail is otherwise healthy.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
+
+      - alert: NotifyReservedDomainGuardLost
+        # The same question asked BEFORE any mail is sent, which is the only way
+        # to answer it in minutes rather than in messages.
+        #
+        # notify answers `notify_reserved_domain_guard` at every scrape by
+        # driving its real routing function with a canary address under a
+        # reserved TLD: 1 if this process refuses, 0 if it would send. A build
+        # that lost the rule reports 0 on its first scrape, before a single
+        # notification has been created.
+        #
+        # ── `absent()` IS HALF THE ALERT, NOT A FLOURISH ─────────────────────
+        #
+        # A build old enough to have lost the rule has lost this metric with it,
+        # and then `== 0` matches nothing at all — the same unfireable shape as
+        # the alert above. Absence IS the evidence in that case. It is qualified
+        # on `up{job="notify"} == 1` so a notify that is simply down pages as
+        # NotifyDown and not as this; a service that is not running is not
+        # sending mail to anybody.
+        #
+        # `for: 10m` on the absent half and not 0m, because a rolling deploy
+        # legitimately has no notify series for a few scrapes and a page on
+        # every release is a page nobody reads.
+        expr: >-
+          notify_reserved_domain_guard == 0
+          or (up{job="notify"} == 1 unless notify_reserved_domain_guard)
+        for: 10m
+        labels:
+          severity: ticket
+          team: platform
+          service: notify
+          sev: "2"
+        annotations:
+          summary: "the running notify build does not refuse mail to reserved domains"
+          description: >-
+            notify reports that its routing path would accept an address under a
+            reserved TLD, or is not reporting the guard at all — which for this
+            metric means a build predating it. Either way the deployed process
+            is one that can empty the mail allowance on synthetic addresses in
+            an afternoon. Compare the container's image digest against the
+            release manifest; do not read the repository, which was right the
+            last time this happened and had been for six days.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
+
       - alert: BeaconScrapeFailing
         # Beacon gates /metrics behind auth. The most likely cause of this alert
         # is not that Beacon is down — it is that BEACON_TOKEN is unset or the

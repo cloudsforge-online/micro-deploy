@@ -490,3 +490,183 @@ tests:
                 process was older. Then check the provider's remaining daily
                 allowance before assuming mail is otherwise healthy.
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # MailRoutedToReservedDomain — micro-org#390, the second pass.
+  #
+  # The alert above it watches a counter that measured ZERO on mainnet over the
+  # seven days the leak was at its worst, because notify's routing rule drops
+  # the channel before the backstop it counts is ever reached. This one watches
+  # the delivery rows, which exist whether or not any guard in the process
+  # believes they should.
+  #
+  # The negative series here is `notify_deliveries_pending`, non-zero and rising
+  # on a perfectly healthy estate. If the expression is ever loosened to a
+  # substring or the metric renamed to something that also matches pending
+  # deliveries, this pages constantly and gets silenced — the failure mode the
+  # file's header names.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # Zero for twenty minutes — the correct value, forever — then one row.
+      # One is the whole threshold: there is no acceptable rate of writing a
+      # delivery to an address the DNS root guarantees cannot resolve.
+      - series: 'notify_deliveries_reserved_domain{instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "0+0x20 1+0x20"
+
+      # Ordinary queue depth, non-zero throughout. Must never trigger it.
+      - series: 'notify_deliveries_pending{instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "4+2x40"
+
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: MailRoutedToReservedDomain
+        exp_alerts: []
+
+      # `for: 0m`, so the first evaluation that sees the row fires. Waiting buys
+      # nothing: the condition does not resolve itself, and every minute is more
+      # of an allowance real recipients share.
+      - eval_time: 22m
+        alertname: MailRoutedToReservedDomain
+        exp_alerts:
+          - exp_labels:
+              alertname: MailRoutedToReservedDomain
+              instance: notify:4090
+              job: notify
+              severity: ticket
+              team: platform
+              service: notify
+              sev: "2"
+            exp_annotations:
+              summary: "notify ROUTED mail to a reserved domain — the rule is not running in the deployed build"
+              description: >-
+                notify wrote at least one email delivery in the last hour whose
+                recipient is under a domain the standards reserve. This is measured
+                from the delivery table, so it is what happened and not what the
+                code claims. Read the RUNNING container's build, not the repository
+                — the last time this occurred the fix had been merged for six days
+                and the process was older. Then check the provider's remaining daily
+                allowance before assuming mail is otherwise healthy.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # NotifyReservedDomainGuardLost, case 1 — the guard reports 0.
+  #
+  # A build whose routing rule was removed but which still exports the metric.
+  # It says so at the first scrape, before any notification is created, which is
+  # the "in minutes rather than in messages" the ticket asked for.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # Healthy for twenty minutes, then a deploy that lost the rule.
+      - series: 'notify_reserved_domain_guard{instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "1+0x20 0+0x30"
+      - series: 'up{instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "1+0x50"
+
+    alert_rule_test:
+      # Silent while the guard reports 1. Asserted, not assumed: an expression
+      # comparing against the wrong value would fire here.
+      - eval_time: 15m
+        alertname: NotifyReservedDomainGuardLost
+        exp_alerts: []
+
+      # Still silent at 25m — the guard went to 0 at 21m and `for: 10m` has not
+      # elapsed. This case is what stops a rolling deploy paging on every
+      # release, and it is asserted so that shortening `for` cannot pass.
+      - eval_time: 25m
+        alertname: NotifyReservedDomainGuardLost
+        exp_alerts: []
+
+      - eval_time: 35m
+        alertname: NotifyReservedDomainGuardLost
+        exp_alerts:
+          - exp_labels:
+              alertname: NotifyReservedDomainGuardLost
+              instance: notify:4090
+              job: notify
+              severity: ticket
+              team: platform
+              service: notify
+              sev: "2"
+            exp_annotations:
+              summary: "the running notify build does not refuse mail to reserved domains"
+              description: >-
+                notify reports that its routing path would accept an address under a
+                reserved TLD, or is not reporting the guard at all — which for this
+                metric means a build predating it. Either way the deployed process
+                is one that can empty the mail allowance on synthetic addresses in
+                an afternoon. Compare the container's image digest against the
+                release manifest; do not read the repository, which was right the
+                last time this happened and had been for six days.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # NotifyReservedDomainGuardLost, case 2 — THE METRIC IS ABSENT AND THE
+  # SERVICE IS UP. This is the case micro-org#390 actually happened in.
+  #
+  # The deployed process was an image older than the rule. It exported no
+  # reserved-domain series of any kind, so every `== 0` comparison matched
+  # nothing and every counter stayed flat. An alert that only knows how to
+  # compare a value is blind to a build that never reports one — which is the
+  # unfireable shape this whole file exists to catch, arrived at from a new
+  # direction.
+  #
+  # `up` is 1 throughout: notify is serving, healthy, and wrong.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      - series: 'up{instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "1+0x40"
+      # No notify_reserved_domain_guard series at all. Its absence is the input.
+
+    alert_rule_test:
+      # `for: 10m` has not elapsed at 5m. Absence from the first scrape is a
+      # service that has only just started, not necessarily a bad build.
+      - eval_time: 5m
+        alertname: NotifyReservedDomainGuardLost
+        exp_alerts: []
+
+      - eval_time: 20m
+        alertname: NotifyReservedDomainGuardLost
+        exp_alerts:
+          - exp_labels:
+              alertname: NotifyReservedDomainGuardLost
+              instance: notify:4090
+              job: notify
+              severity: ticket
+              team: platform
+              service: notify
+              sev: "2"
+            exp_annotations:
+              summary: "the running notify build does not refuse mail to reserved domains"
+              description: >-
+                notify reports that its routing path would accept an address under a
+                reserved TLD, or is not reporting the guard at all — which for this
+                metric means a build predating it. Either way the deployed process
+                is one that can empty the mail allowance on synthetic addresses in
+                an afternoon. Compare the container's image digest against the
+                release manifest; do not read the repository, which was right the
+                last time this happened and had been for six days.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-mail-allowance.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # NotifyReservedDomainGuardLost, case 3 — NOTIFY IS DOWN.
+  #
+  # The `absent` half is qualified on `up == 1` for a reason worth a case of its
+  # own: without it, every notify outage would page twice, once as NotifyDown
+  # and once as a lost guard, and the second page would be a lie. A service that
+  # is not running is not sending mail to anybody.
+  #
+  # Deleting `up{job="notify"} == 1 unless` from the expression turns this case
+  # red, which is the point of it.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      - series: 'up{instance="notify:4090",job="notify",service="notify",team="platform"}'
+        values: "0+0x40"
+
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: NotifyReservedDomainGuardLost
+        exp_alerts: []
