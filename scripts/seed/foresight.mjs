@@ -68,6 +68,8 @@ import {
   MINER_DATA,
   MINER_KEY_FILES,
   MINER_PASSPHRASE_FILE,
+  TOKENS_FILE,
+  ENV_FILES,
   api,
   ok,
   bad,
@@ -103,7 +105,12 @@ if (!Number.isSafeInteger(CHAIN_ID)) {
 // deployers out of the wrong chain's node. See `EMBER_RPC_HOST` there.
 const RPC_URL = EMBER_RPC_HOST
 const HEARTH = process.env.HEARTH_REPO || path.resolve(ROOT, '../hearth')
-const TOKENS_FILE = process.env.TOKENS_FILE || 'compose/estate/tokens.env'
+// `TOKENS_FILE` is IMPORTED, not redefined. The line that used to be here read
+//   process.env.TOKENS_FILE || 'compose/estate/tokens.env'
+// which ignores `CF_EMBER_NETWORK` — so a testnet run that did not export
+// TOKENS_FILE by hand rewrote the MAINNET tokens file. `lib.mjs` derives it from
+// the network for exactly the reason its psql helper gives one line later: "or
+// this reads the mainnet project's postgres on a testnet run".
 
 /** `FORESIGHT_DEPLOY_GAS_LIMIT`, and the service bids DOUBLE the quoted price against it. */
 const DEPLOY_GAS_LIMIT = 3_000_000n
@@ -327,8 +334,68 @@ async function send(chain, { to, value }) {
  * micro-foresight — `ServiceTokenProvider` for the first, `rescheduleRecurring`
  * off the runner's completed event for the second — and this function is a
  * workaround in the open, not a fix.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════
+ * ── AND ON THE ESTATE AS IT IS TODAY, DOING THAT WOULD TAKE FORESIGHT DOWN ───
+ *
+ * Defect 1 was fixed on the OTHER side, and this workaround did not follow it.
+ * micro-org#222 retired the static bearer: `foresight/src/env.ts` now guards
+ * `FORESIGHT_SERVICE_TOKEN` with `assertServiceCredential`, which REFUSES A JWT
+ * BY NAME, and that file states the consequence in as many words — "a deployment
+ * that still sets `FORESIGHT_SERVICE_TOKEN` to a token will not boot — neither
+ * `foresight` nor `foresight-migrate`". The service takes a long-lived
+ * `FORESIGHT_IDENTITY_CREDENTIAL` instead and renews itself from it, which is
+ * why `FORESIGHT_SERVICE_TOKEN` IS NOT SET AT ALL on either running container
+ * (measured on the app host, 2026-08-11).
+ *
+ * So the old body — mint a 600s JWT, write it into the tokens file as
+ * `FORESIGHT_SERVICE_TOKEN=`, recreate the container — was a seeding run that
+ * KILLS THE SERVICE IT IS SEEDING, at the seven-minute mark, half way through
+ * opening the markets it had just funded.
+ *
+ * Two smaller faults in the same three lines, both of the class this repository
+ * already knows about:
+ *
+ *   * it passed `--env-file TOKENS_FILE` and NOT `ESTATE_ENV`, so the recreate
+ *     dropped every per-network value — the failure `lib.mjs`'s psql helper
+ *     guards against one line after it defines `ENV_FILES`, and the one that
+ *     turns public hostnames into `localtest.me`;
+ *   * it passed only `COMPOSE`, while both containers were created from
+ *     `docker-compose.estate.yml` AND `docker-compose.release.yml`, so the
+ *     recreate would drop the pinned release overlay and run something else;
+ *   * and with `cwd` set to a worktree it would have derived a PROJECT NAME from
+ *     the directory, building a stray `foresight` in a project nobody watches
+ *     while the real one carried on unchanged.
+ *
+ * Rather than repair three guesses, this now ASKS whether the renewal is needed
+ * at all, which on the credential path it is not. A deployment still on the
+ * static token keeps the old behaviour, because for that deployment it is right.
+ * ══════════════════════════════════════════════════════════════════════════════
  */
 async function refreshForesight(userToken, why) {
+  // Which credential path is this DEPLOYMENT on? A fact about the deployment,
+  // so it is read out of the deployment, the way every other such fact in these
+  // seeders is. `FORESIGHT_IDENTITY_CREDENTIAL` present means the service holds
+  // a long-lived `cfsc_…` it renews itself from, and there is nothing here to
+  // refresh — writing a JWT into the other variable would stop it booting.
+  const tokensPath = path.join(ROOT, TOKENS_FILE)
+  let tokensText = null
+  try {
+    tokensText = fs.readFileSync(tokensPath, 'utf8')
+  } catch {
+    bad(`${TOKENS_FILE} is missing — run ./scripts/estate-bootstrap.sh first`)
+    return false
+  }
+  // The NAME only. Nothing here reads, prints or compares the value.
+  if (/^FORESIGHT_IDENTITY_CREDENTIAL=.+$/m.test(tokensText)) {
+    note(
+      `not recreating foresight (${why}): this deployment sets FORESIGHT_IDENTITY_CREDENTIAL, so ` +
+        `the service renews its own credential and FORESIGHT_SERVICE_TOKEN is refused by name ` +
+        `(micro-org#222) — writing one would stop it booting`,
+    )
+    return true
+  }
+
   note(`recreating foresight: ${why}`)
   const token = await serviceToken(userToken, 'foresight', [
     'admin:read',
@@ -339,21 +406,16 @@ async function refreshForesight(userToken, why) {
     'ledger:post',
     'policy:decide',
   ])
-  const file = path.join(ROOT, TOKENS_FILE)
-  let lines = []
-  try {
-    lines = fs.readFileSync(file, 'utf8').split('\n')
-  } catch {
-    bad(`${TOKENS_FILE} is missing — run ./scripts/estate-bootstrap.sh first`)
-    return false
-  }
-  const next = lines.filter((l) => !/^FORESIGHT_SERVICE_TOKEN=/.test(l))
+  const next = tokensText.split('\n').filter((l) => !/^FORESIGHT_SERVICE_TOKEN=/.test(l))
   next.push(`FORESIGHT_SERVICE_TOKEN=${token}`)
-  fs.writeFileSync(file, next.filter((l, i) => l !== '' || i < next.length - 1).join('\n') + '\n')
+  fs.writeFileSync(tokensPath, next.filter((l, i) => l !== '' || i < next.length - 1).join('\n') + '\n')
 
+  // ENV_FILES, not TOKENS_FILE alone: both files, in the order `lib.mjs` fixed
+  // them, or the recreate drops every per-network value and the container comes
+  // back answering on `localtest.me`.
   const r = spawnSync(
     'docker',
-    ['compose', '--env-file', TOKENS_FILE, '-f', COMPOSE, 'up', '-d', '--wait', 'foresight'],
+    ['compose', ...ENV_FILES, '-f', COMPOSE, 'up', '-d', '--wait', 'foresight'],
     { cwd: ROOT, encoding: 'utf8' },
   )
   if (r.status !== 0) {
