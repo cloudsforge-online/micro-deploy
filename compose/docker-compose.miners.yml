@@ -47,10 +47,51 @@
 #
 # Under the account model the coinbase must SIGN the block, so there is no
 # "mine to this address" mode: `bin/hearthd.js` refuses `--miner-address`
-# with `--evm` in those words. Each miner therefore holds its own key at
-# <data>/coinbase-key.json, in a directory outside the repository. Whoever holds
-# that file holds the coins; nothing here ever prints it, and `session.js` is
-# written so a private key cannot reach an event a front-end renders.
+# with `--evm` in those words. So the miner genuinely needs the PRIVATE key,
+# not the address — it signs the winning proof, which is what stops the RPC
+# endpoint it polls from simply keeping the block. Whoever holds that key holds
+# the coins; nothing here ever prints it, and `session.js` is written so a
+# private key cannot reach an event a front-end renders.
+#
+# ── AND IT IS NO LONGER IN THE CLEAR. cloudsforge-online/micro-org#206 ────────
+#
+# It was. Until 2026-08-11 both miners here read `<data>/coinbase-key.json`, a
+# 240-byte JSON file holding the key as a plain hex string, bind-mounted
+# READ-WRITE into a container whose whole job is to talk to the internet. The
+# mainnet one pays `0x980d…5b45`, which had earned five figures of EMBER.
+#
+# Now they read `<data>/coinbase-keystore.json` — the same key under scrypt +
+# AES-256-GCM (`hearth/node/src/mine/keystore.js`) — with the passphrase
+# supplied as a FILE, not an environment string. Three things had to be true
+# together and all three are set below:
+#
+#   HEARTH_COINBASE_SOURCE: keystore   pins the source. Without it `coinbase.js`
+#                                      walks its four candidates in order and
+#                                      would silently fall back to the plaintext
+#                                      file, which is the failure that looks
+#                                      exactly like success.
+#   HEARTH_COINBASE_PASSPHRASE_FILE    a path, not HEARTH_COINBASE_PASSPHRASE:
+#                                      an env string is readable by anything that
+#                                      can read this process's environment, and
+#                                      `docker inspect` is one of those things.
+#   HEARTH_COINBASE_ADDRESS            public, and load-bearing. It is what turns
+#                                      a mis-mounted volume into a REFUSAL rather
+#                                      than a miner quietly paying somebody else.
+#
+# The data mount is `:ro`. A miner never needs to write its sealed key, and a
+# container that cannot write the directory cannot destroy the key either.
+#
+# THE PLAINTEXT FILE IS STILL THERE, ON PURPOSE, and this is the one step left.
+# `hearth minerkey seal` deliberately does not delete it: removing somebody's
+# only copy of a funded key on their behalf is not a tidiness worth the risk.
+# It comes out only after a keystore+passphrase pair has been RESTORED FROM a
+# backup on a different machine — see `hearth/docs/mining-key-custody.md` §4
+# Step 3. Until that rehearsal happens this file is the mitigation and not yet
+# the fix, and saying otherwise would be the kind of claim that gets believed.
+#
+# The app host's miner (`docker-compose.miners-apphost.yml`) reached this shape
+# first, on 2026-08-10, and has no plaintext file at all. This block is that
+# configuration brought across, which is why the two now read alike.
 #
 # ── THE THROTTLE IS A BUDGET, NOT A PERFORMANCE SETTING ──────────────────────
 #
@@ -74,10 +115,22 @@
 # on a restart nobody asked for. To take a newer build, change this line — which
 # is a review, not a surprise.
 #
-# 0cf1445 — "carry the nonce across a re-fetch, or the miner stops for good".
+# 0cf1445 — "carry the nonce across a re-fetch, or the miner stops for good" —
+# was that commit until 2026-08-11, and it predated `hearth minerkey` and
+# `src/coinbase.js`'s four key sources entirely: a 0cf1445 miner CANNOT open a
+# keystore, so the pin and the custody change below had to move together.
+#
+# fcc2738 is hearth `main` as of 2026-08-11 and adds, beyond the keystore:
+#   · 938a073  a block is stamped when its nonce was FOUND, not when the search
+#              began — the candidate was memoized per tip, so every block on this
+#              chain recorded the instant its parent landed and the whole
+#              timestamp series ran one block late. That is difficulty input.
+#   · faa5dde  the chain replays outside the EvmNode constructor and the node
+#              REFUSES until it is done (micro-org#349)
+#   · 4a5e150  an expired or evicted template is 409, not 400
 services:
   miner-mainnet:
-    image: ghcr.io/cloudsforge-online/hearth-node:sha-0cf14451d0e6b1e3dbd8587a3ca2e3e3050a8095
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-fcc2738c3ca6931fbbbe58b2be4db0931bbda748
     container_name: cf-miner-mainnet
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
@@ -130,12 +183,23 @@ services:
     # entries must be pointing at the plaintext origin before these are recreated.
     environment:
       HEARTH_NO_TTY: "1"
+      HEARTH_COINBASE_SOURCE: keystore
+      HEARTH_COINBASE_PASSPHRASE_FILE: /run/secrets/coinbase-passphrase
+      # Public — an address is not a credential. Pinned so that a wrong mount is
+      # a refusal at startup rather than a miner paying an address nobody owns.
+      HEARTH_COINBASE_ADDRESS: "0x980d52a868d41a34a186ce890874c8e547975b45"
     volumes:
-      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/mainnet:/minerdata
+      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/mainnet:/minerdata:ro
+      # The passphrase is a SEPARATE mount from a SEPARATE directory, not a file
+      # inside the keys dir. On one host that is not true separation of media and
+      # this file will not pretend it is — but it does mean the mount that carries
+      # the sealed key does not also carry the thing that opens it, so a single
+      # over-broad bind or a backup of the keys directory is not game over.
+      - ${CF_MINER_SECRETS:-/home/malf/secrets}/ember-coinbase-mainnet.pass:/run/secrets/coinbase-passphrase:ro
     restart: unless-stopped
 
   miner-testnet:
-    image: ghcr.io/cloudsforge-online/hearth-node:sha-0cf14451d0e6b1e3dbd8587a3ca2e3e3050a8095
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-fcc2738c3ca6931fbbbe58b2be4db0931bbda748
     container_name: cf-miner-testnet
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
@@ -205,7 +269,13 @@ services:
     environment:
       HEARTH_NO_TTY: "1"
       NODE_EXTRA_CA_CERTS: /trust.crt
+      HEARTH_COINBASE_SOURCE: keystore
+      HEARTH_COINBASE_PASSPHRASE_FILE: /run/secrets/coinbase-passphrase
+      # Testnet's own coinbase, and a DIFFERENT address from mainnet's. Sealed on
+      # 2026-08-11 in the same pass. Public, and pinned for the same reason.
+      HEARTH_COINBASE_ADDRESS: "0x91a11854b364178ed96054d8a6e9be1dbd751d33"
     volumes:
       - ${CF_CERT_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/trust.crt:/trust.crt:ro
-      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/testnet:/minerdata
+      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/testnet:/minerdata:ro
+      - ${CF_MINER_SECRETS:-/home/malf/secrets}/ember-coinbase-testnet.pass:/run/secrets/coinbase-passphrase:ro
     restart: unless-stopped

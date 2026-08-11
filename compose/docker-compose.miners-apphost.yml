@@ -101,11 +101,18 @@ services:
   miner-mainnet-apphost:
     # Pinned by commit, never `main`, for the reason `docker-compose.miners.yml`
     # gives: a miner that follows a moving tag changes behaviour on a restart
-    # nobody asked for. 1568f2d is the first published build that carries
-    # `hearth minerkey` and src/coinbase.js's four key sources — the chain host's
-    # miners are still on 0cf1445, which predates them and could not open a
-    # keystore at all.
-    image: ghcr.io/cloudsforge-online/hearth-node:sha-1568f2dbfd51686a3a3cf08d24756950b9bcacbe
+    # nobody asked for. 1568f2d was the first published build that carries
+    # `hearth minerkey` and src/coinbase.js's four key sources, and this miner ran
+    # it from 2026-08-10.
+    #
+    # fcc2738 (2026-08-11) is hearth `main`, and the chain host's two miners moved
+    # to it in the same commit that brought them onto a keystore — so all three
+    # EMBER miners run one build again. What it adds over 1568f2d: 938a073 stamps
+    # a block with when its nonce was FOUND rather than when the search began
+    # (the timestamp series ran one block late, and that is difficulty input),
+    # faa5dde takes chain replay out of the EvmNode constructor (micro-org#349),
+    # and 4a5e150 makes an expired template a 409 rather than a 400.
+    image: ghcr.io/cloudsforge-online/hearth-node:sha-fcc2738c3ca6931fbbbe58b2be4db0931bbda748
     container_name: cf-miner-mainnet-apphost
     entrypoint: ["node", "/app/bin/hearth-mine.js"]
     command:
