@@ -1155,16 +1155,35 @@ groups:
         # A build old enough to have lost the rule has lost this metric with it,
         # and then `== 0` matches nothing at all — the same unfireable shape as
         # the alert above. Absence IS the evidence in that case. It is qualified
-        # on `up{job="notify"} == 1` so a notify that is simply down pages as
-        # NotifyDown and not as this; a service that is not running is not
-        # sending mail to anybody.
+        # on notify being up, so a notify that is simply down pages as NotifyDown
+        # and not as this; a service that is not running is not sending mail to
+        # anybody.
+        #
+        # ── AND THE QUALIFIER IS `service=`, NOT `job=` ──────────────────────
+        #
+        # This half shipped as `up{job="notify"} == 1`, and `job="notify"` does
+        # not exist. Every application service in this estate is scraped by ONE
+        # file_sd job — `cf-services` — which relabels `__meta_cf_service` into
+        # `service`. The real target is
+        # `up{job="cf-services",service="notify",instance="notify:4000"}`, and
+        # `up{job="notify"}` selects nothing at all.
+        #
+        # So the half of the alert written for "the metric is absent" was itself
+        # absent: `== 0` matches nothing when there is no series, and `unless`
+        # over an empty left side is empty too. Measured on mainnet 2026-08-11,
+        # `up{job="notify"}` returned NO SERIES while notify was up and healthy.
+        # The unit tests passed throughout, because their `input_series` invented
+        # `job="notify"` — a fixture is free to fabricate a label set the estate
+        # never produces, and this one did. `scripts/check-alert-job-labels.py`
+        # now reads both files against `prometheus.yml`'s `job_name`s so a
+        # selector no target can satisfy cannot merge again.
         #
         # `for: 10m` on the absent half and not 0m, because a rolling deploy
         # legitimately has no notify series for a few scrapes and a page on
         # every release is a page nobody reads.
         expr: >-
           notify_reserved_domain_guard == 0
-          or (up{job="notify"} == 1 unless notify_reserved_domain_guard)
+          or (up{job="cf-services", service="notify"} == 1 unless notify_reserved_domain_guard)
         for: 10m
         labels:
           severity: ticket
