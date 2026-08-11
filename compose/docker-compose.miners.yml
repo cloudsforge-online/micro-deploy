@@ -18,30 +18,33 @@
 #
 # ── WHY THEY GO THROUGH THE GATEWAY RATHER THAN STRAIGHT TO THE SEED ──────────
 #
-# Each miner could talk to its seed directly on loopback. It goes through the
-# public HTTPS path instead, with `--cacert` semantics supplied by
-# NODE_EXTRA_CA_CERTS, so that an always-on process continuously exercises the
-# exact route a remote miner uses. A gateway, certificate or router regression
-# then shows up as blocks stopping, rather than being discovered the next time
-# the owner opens a laptop. `--add-host` is required because the apexes are real
-# public names that must resolve to this host's loopback, not to the internet.
+# Each miner could talk to its seed directly on loopback — the testnet node is
+# literally on this host, published at 127.0.0.1:8845. Both go out through the
+# public HTTPS path instead, so that an always-on process continuously exercises
+# the exact route a remote miner uses. A gateway, certificate, tunnel or DNS
+# regression then shows up as blocks stopping, rather than being discovered the
+# next time the owner opens a laptop.
 #
-# ── AND THAT IS WHY BOTH MOUNT `trust.crt` AND NOT `ca.crt` ───────────────────
+# ── AND NEITHER PINS A HOST OR MOUNTS A CA ANY MORE ──────────────────────────
 #
-# The design above is load-bearing here and cuts both ways: the mainnet miner
-# verifies the MAINNET gateway's certificate on every poll, and that gateway now
-# terminates on a Cloudflare Origin CA leaf rather than the estate leaf, so that
-# Cloudflare Tunnel stops refusing the origin and answering 502 (see
-# `gateway/dynamic/tls.yml`). Left on `ca.crt`, `cf-miner-mainnet` would have
-# stopped producing blocks the moment that certificate changed — a live chain
-# halted by a TLS edit, reported as nothing at all until somebody looked at the
-# height.
+# Both miners used to carry `extra_hosts` pinning the public name to 127.0.0.1
+# and `NODE_EXTRA_CA_CERTS=/trust.crt` to verify the estate's own leaf. Mainnet
+# shed both on 2026-08-05; testnet shed them on 2026-08-11, once
+# `rpc-testnet.cloudsforge.online` was live in the Cloudflare tunnel (measured
+# from off-estate: `ssl_verify_result 0`, `eth_chainId` -> 0x1cf4).
 #
-# `trust.crt` is `ca.crt` plus every public root in `gateway/trust/`, rebuilt by
-# `scripts/gateway-cert.sh`. The testnet miner keeps working unchanged for the
-# same reason: the testnet gateway still serves the estate leaf, which is in the
-# bundle. NODE_EXTRA_CA_CERTS is read ONCE at startup, so a change to this file
-# needs `docker compose … up -d` and not just a file rewrite.
+# THE PRIVATE TRUST STORE WAS THE PART THAT MATTERED, and it is worth saying why
+# it is gone rather than merely unnecessary. `trust.crt` is `ca.crt` plus every
+# public root, so a miner holding it keeps working when the PUBLIC chain is
+# broken — which is precisely the regression these miners exist to detect. A
+# probe that cannot fail proves nothing. On the base image's own trust store,
+# "the estate's miner is still producing blocks" now genuinely implies "a
+# stranger's would be too".
+#
+# The cost, said plainly: mining depends on the tunnel. That is the correct
+# dependency — a public endpoint only the local miner can reach is not a public
+# endpoint — but it is a real one, and it is why the Cloudflare hostnames must be
+# right before either of these is recreated.
 #
 # ── THE KEY IS THE POINT, AND IT IS NOT OPTIONAL ─────────────────────────────
 #
@@ -218,14 +221,31 @@ services:
       # container from the file as it stood would therefore have stopped testnet
       # mining outright, while the file said the opposite in the paragraph above.
       #
-      # ── AND THE PUBLIC FORM IS NOT REACHABLE YET, SO THIS IS THE LOOPBACK ──
+      # ── THE PUBLIC FORM IS REACHABLE NOW, AND THIS IS THAT LAST STEP ───────
       #
-      # `--url https://rpc-testnet.cloudsforge.online` — no port, no pin, out
-      # through Cloudflare like the mainnet miner above claims to be — is the
-      # TARGET, and it cannot be used until `rpc-testnet.cloudsforge.online` is a
-      # hostname in the Cloudflare tunnel. Adding it is a manual dashboard step
-      # that only the owner can take, so until they have, this reaches the testnet
-      # gateway across loopback on its own port (10443, `compose/testnet.env`).
+      # This block used to say the public name "cannot be used until
+      # `rpc-testnet.cloudsforge.online` is a hostname in the Cloudflare tunnel",
+      # and routed across loopback to port 10443 in the meantime. Both halves of
+      # that have expired:
+      #
+      #   * The owner added the hostname. Measured from OFF the estate, 2026-08-11:
+      #
+      #         https://rpc-testnet.cloudsforge.online  ssl_verify_result 0
+      #         eth_chainId -> 0x1cf4  (7412, testnet)
+      #
+      #     against `rpc.cloudsforge.online` -> 0x1cf3 (7411). Two names, two
+      #     chains, both public, both with a valid certificate.
+      #
+      #   * The loopback it fell back to STOPPED EXISTING. 10443 was the testnet
+      #     gateway's local bind, and the app stack — testnet gateway included —
+      #     moved to the app host on 2026-08-10 (micro-org#338). Only the chain
+      #     stayed here. So `127.0.0.1:10443` on this box has been nothing at all
+      #     since that move, and this miner has been down with it: measured
+      #     2026-08-11, `cf-hearth-seed-testnet` sat at height 7,765 across two
+      #     reads 30 s apart, on a chain whose target block time is 15 s.
+      #
+      # A public testnet whose chain is frozen is worse than a stopped one,
+      # because everything in front of it keeps answering.
       #
       # ── WHY THIS BLOCK NOW MATCHES WHAT IS RUNNING, AND DID NOT BEFORE ─────
       #
@@ -242,14 +262,13 @@ services:
       # predicted it because this file did not describe the miner that was
       # running.
       #
-      # So the committed form is the running form again. THE LAST STEP OF THE
-      # RENAME IS TO DELETE THE PORT AND THE `extra_hosts` BELOW, once the owner
+      # So the committed form is the running form again. The last step of the
+      # rename was "delete the port and the `extra_hosts` below, once the owner
       # has added the tunnel hostnames — at which point the argument in the
-      # mainnet block above becomes true of both miners for the first time, and
-      # that block should be corrected in the same commit rather than left as an
-      # aspiration for a third time.
+      # mainnet block above becomes true of both miners for the first time". The
+      # owner has, and it is, and this commit is that deletion.
       - "--url"
-      - "https://rpc-testnet.cloudsforge.online:10443"
+      - "https://rpc-testnet.cloudsforge.online"
       - "--data"
       - "/minerdata"
       - "--network"
@@ -259,23 +278,31 @@ services:
       - "--status-ms"
       - "60000"
     network_mode: host
-    # The two lines the loopback path needs, and neither survives the move to the
-    # tunnel: the pin, because 10443 is bound to 127.0.0.1 only and no DNS answer
-    # points there; and the estate CA, because the certificate on that port is
-    # `estate.crt` rather than Cloudflare's. `gateway/certs/trust.crt` is the CA
-    # bundle `scripts/gateway-cert.sh` writes for exactly this kind of consumer.
-    extra_hosts:
-      - "rpc-testnet.cloudsforge.online:127.0.0.1"
+    # ── THE PIN AND THE TRUST BUNDLE ARE BOTH GONE, AND HAD TO GO TOGETHER ────
+    #
+    # They were the two lines the loopback path needed: `extra_hosts` pinning the
+    # public name to 127.0.0.1, and `NODE_EXTRA_CA_CERTS=/trust.crt` because the
+    # certificate on that local port was the estate leaf rather than Cloudflare's.
+    #
+    # Removing one without the other breaks it either way round. Keep the pin and
+    # the miner dials a port that no longer exists on this host. Keep the trust
+    # bundle without the pin and it still works — `trust.crt` is `ca.crt` PLUS
+    # every public root — but it quietly re-creates the failure the mainnet block
+    # warns about: a miner carrying a private trust store cannot tell you that the
+    # public certificate chain is broken for everybody else.
+    #
+    # So both go, and this miner now verifies Cloudflare's certificate out of the
+    # base image's own trust store, over the identical path a stranger's miner
+    # uses. That is what the mainnet block above has claimed since 2026-08-05 and
+    # what is finally true of BOTH miners.
     environment:
       HEARTH_NO_TTY: "1"
-      NODE_EXTRA_CA_CERTS: /trust.crt
       HEARTH_COINBASE_SOURCE: keystore
       HEARTH_COINBASE_PASSPHRASE_FILE: /run/secrets/coinbase-passphrase
       # Testnet's own coinbase, and a DIFFERENT address from mainnet's. Sealed on
       # 2026-08-11 in the same pass. Public, and pinned for the same reason.
       HEARTH_COINBASE_ADDRESS: "0x91a11854b364178ed96054d8a6e9be1dbd751d33"
     volumes:
-      - ${CF_CERT_DIR:-/home/malf/dev/cloudsforge/deploy/gateway/certs}/trust.crt:/trust.crt:ro
       - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/testnet:/minerdata:ro
       - ${CF_MINER_SECRETS:-/home/malf/secrets}/ember-coinbase-testnet.pass:/run/secrets/coinbase-passphrase:ro
     restart: unless-stopped
