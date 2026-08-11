@@ -62,6 +62,7 @@ with a partial digest set when a release is cut in the minutes before some
 images publish, so some entries carry a digest and some do not, and both render.
 """
 import argparse
+import json
 import pathlib
 import re
 import subprocess
@@ -116,6 +117,21 @@ parser.add_argument(
     "defines. Repeatable; later files win on a shared key, matching release-deploy.sh.",
 )
 parser.add_argument("--out", help="write here instead of stdout")
+# ── THE ESCAPE HATCH FOR THE HOST THAT REALLY DOES HAVE THE SOURCE ───────────
+#
+# See the refusal further down. A service this environment defines with a
+# `build:`, which the release does not pin, is a deploy that dies at the switch
+# on any host without that source checked out — so the render refuses it. On the
+# chain host, which has all 48 sibling repositories, the same deploy builds and
+# works, and an operator there may knowingly want it. This flag is how they say
+# so, and `release-deploy.sh` does not pass it: a release deploy that builds is a
+# thing somebody has to type.
+parser.add_argument(
+    "--allow-unpinned-build",
+    action="store_true",
+    help="render even when this environment defines a service with a `build:` that the "
+    "release does not pin. The deploy will BUILD it from the working tree.",
+)
 args = parser.parse_args()
 
 manifest_path = pathlib.Path(args.manifest)
@@ -252,6 +268,31 @@ except subprocess.CalledProcessError as exc:
     sys.exit(f"FAIL: `docker compose config --services` failed:\n{exc.stderr}")
 defined = {s.strip() for s in proc.stdout.split("\n") if s.strip()}
 
+# ── AND WHICH OF THEM WOULD BE BUILT RATHER THAN PULLED ──────────────────────
+#
+# `--services` says what exists; it does not say which of those carries a
+# `build:`. That distinction is the difference between a warning and a deploy
+# that cannot happen, so it is asked for rather than inferred — the same rule
+# the two calls above follow, and for the same reason: the YAML is not the
+# configuration, the interpolated model is.
+try:
+    proc = subprocess.run(
+        compose("config", "--format", "json", profiles=profiles), capture_output=True, text=True, check=True
+    )
+    buildable = {
+        name for name, body in json.loads(proc.stdout).get("services", {}).items() if body.get("build")
+    }
+except FileNotFoundError:
+    sys.exit("FAIL: docker is not available, so the base service list cannot be read. Refusing to guess it.")
+except subprocess.CalledProcessError as exc:
+    sys.exit(f"FAIL: `docker compose config --format json` failed:\n{exc.stderr}")
+except (ValueError, AttributeError) as exc:
+    # Not survivable-by-degrading. Treating an unreadable model as "nothing has a
+    # build" would turn the refusal below off silently, which is the shape of
+    # guard this estate keeps finding: one that passes because what it guards is
+    # absent.
+    sys.exit(f"FAIL: `docker compose config --format json` produced something this cannot read: {exc}")
+
 # ── THE SHAPE OF A DIGEST, CHECKED RATHER THAN TRUSTED ───────────────────────
 #
 # The same expression cfctl's readContentDigest validates GHCR's answer with,
@@ -375,6 +416,53 @@ for name in sorted(defined):
     if root in manifest_names or root == "postgres":
         continue
     missing.append(name)
+
+# ── A MISSING PIN ON A SERVICE WITH A `build:` IS NOT A WARNING ──────────────
+#
+# The footer below has warned about `missing` since this script was written, and
+# on 2026-08-11 that warning was correct, printed, and useless. Deploying 2.5.19
+# to the app host pulled all 48 images, passed `--dry-run` ("all 46 image(s)
+# exist") and then died at the switch:
+#
+#     #1 [internal] load local bake definitions
+#     unable to prepare context: path "/home/savvaniss/dev/cloudsforge/pool-web" not found
+#     deploy failed
+#
+# `pool` and `pool-web` are running services of the mainnet estate that NO
+# manifest has ever named — `grep -c "name: pool" org/releases/*.yaml` is 0 in
+# all twelve — so their `build:` survived into the deploy, and the app host has
+# only five sibling repositories checked out. Compose refuses the whole `up`
+# rather than half of it, so nothing moved; the release simply could not be
+# deployed at all (micro-org#380).
+#
+# The distinction this makes is the one that decides which of those two endings
+# happens. A service the release does not name and that has no `build:` keeps
+# the image it already had — the silent hole the footer warns about, survivable
+# and worth reading. A service the release does not name that DOES have a
+# `build:` is a deploy that ends in a builder, on a host that may not have the
+# source, minutes after it started pulling and with a message that names a
+# filesystem path rather than a release. So it is refused here, by name, before
+# anything is written.
+#
+# It refuses old manifests too, and that is deliberate rather than overlooked:
+# rendering one of those and deploying it fails anyway — later, louder, and
+# further from the cause. `--allow-unpinned-build` is for the host that really
+# does have the source and knows it.
+unpinned_builds = sorted(name for name in missing if name in buildable)
+if unpinned_builds and not args.allow_unpinned_build:
+    detail = []
+    for name in unpinned_builds:
+        detail.append(f"    {name}")
+    sys.exit(
+        f"FAIL: {manifest_path} does not name {len(unpinned_builds)} service(s) that this environment\n"
+        f"       defines WITH A `build:`, so a release deploy would build them from a working tree:\n"
+        + "\n".join(detail)
+        + "\n\n"
+        "       That is not a release. Either add them to the manifest pinned at the image they\n"
+        "       are actually running, or list them under `absent:` and remove them from the\n"
+        "       environment — a manifest with a silent hole is how a service gets left behind.\n"
+        "       Pass --allow-unpinned-build to render anyway on a host that has the source."
+    )
 
 lines.append("")
 lines.append(f"# pinned {len(pinned)} container(s) from {len(services)} manifest entries")
