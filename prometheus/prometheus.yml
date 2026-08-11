@@ -277,6 +277,67 @@ scrape_configs:
           team: platform
           service: backup-runner
 
+  # ----------------------------------------------- the testnet chain, ONLY ---
+  # THE TESTNET ESTATE IS NOT SCRAPED AND THIS JOB IS NOT THE START OF SCRAPING
+  # IT. It exists so that two alert rules about a CHAIN have testnet series to
+  # match, and it is deliberately narrower than an estate (micro-org#398).
+  #
+  # ── WHAT WAS WRONG ─────────────────────────────────────────────────────────
+  #
+  # `EmberTipNotAdvancing` reads `indexer_tip_height{chain="ember"}` with no
+  # network selector and its summary says "EMBER {{ $labels.network }} tip" —
+  # it was written to cover both networks and it never could. Measured on the
+  # mainnet Prometheus 2026-08-11: `/api/v1/label/network/values` answered
+  # `["mainnet"]`, full stop. Not because the rule was scoped, but because this
+  # Prometheus was attached to `cf-micro-app` and `cloudsforge-estate_default`
+  # and to nothing testnet is on, so no testnet series has ever existed here.
+  # A rule that cannot match is not a quieter rule; it is an absent one, and the
+  # testnet EMBER chain has frozen at least twice with nothing to say so.
+  #
+  # ── WHY A CONTAINER NAME AND NOT A SERVICE NAME ────────────────────────────
+  #
+  # Both estates define a service called `indexer`. Prometheus now joins
+  # `cf-testnet_default` as well, and on a container attached to two networks
+  # `indexer` is ambiguous — Docker's resolver would answer with whichever, and
+  # the wrong answer here is indistinguishable from the right one because both
+  # serve the same metric names. `cf-testnet-indexer-1` is unambiguous on any
+  # network it shares, which is why this target is a container name while every
+  # other target in this file is a service name.
+  #
+  # ── WHY metric_relabel_configs, AND WHY THIS IS NOT OPTIONAL ───────────────
+  #
+  # `slo.yaml` aggregates `sum by (service) (rate(http_requests_total[5m]))`
+  # with NO job selector. Scraping this target whole would fold the testnet
+  # indexer's request rate and its 5xx into the MAINNET indexer's error budget,
+  # and a burn-rate page would then be a statement about a network nobody is
+  # paged for. `indexer_lag_blocks` and `indexer_chain_halted` are dropped for
+  # the same class of reason and a sharper one: both carry `severity: page`,
+  # `sev: "2"`, and neither is a thing to wake somebody for on testnet.
+  #
+  # So the keep-list is exactly the two series the two EMBER chain rules read,
+  # both of which are `severity: ticket`. Widening it is a decision about what
+  # testnet is allowed to page for, and it should be taken as one.
+  #
+  # `estate: testnet` is on the target rather than derived, and mainnet targets
+  # carry no such label: adding one to them would change the identity of every
+  # mainnet series and orphan every recording rule and dashboard built on them.
+  # Absence means mainnet. That asymmetry is the price of not rewriting history.
+  - job_name: cf-indexer-testnet
+    # The chain rules read this over 10m and 1h windows; 30s samples them far
+    # more finely than either needs, and the testnet indexer is a real service
+    # doing real work for a network nobody has an SLO on.
+    scrape_interval: 30s
+    static_configs:
+      - targets: ["cf-testnet-indexer-1:4000"]
+        labels:
+          team: chain
+          service: indexer
+          estate: testnet
+    metric_relabel_configs:
+      - source_labels: [__name__]
+        regex: indexer_tip_height|indexer_chain_difficulty
+        action: keep
+
   # ------------------------------------------------------------- gateway ---
   # Traefik, from the gateway overlay. Absent until that stack is up, and a
   # target that is absent rather than down is exactly what `absent()` alerts on.

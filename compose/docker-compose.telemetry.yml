@@ -135,6 +135,22 @@ services:
       # it; the estate's compose file is untouched and unaware. This is what
       # makes "adopting a scraper costs a scrape config" finally true.
       estate: {}
+      # AND THE TESTNET ESTATE, FOR EXACTLY ONE TARGET (micro-org#398).
+      #
+      # `EmberTipNotAdvancing` and `EmberDifficultyAtFloor` are written for both
+      # networks — the first says "EMBER {{ $labels.network }} tip" in its own
+      # summary — and neither could ever match testnet, because this container
+      # was on no network the testnet estate is on. Measured 2026-08-11:
+      # `/api/v1/label/network/values` answered `["mainnet"]` and nothing else,
+      # while the testnet indexer was serving
+      # `indexer_tip_height{chain="ember",network="testnet"} 8958` to anyone who
+      # could reach it. Nobody could.
+      #
+      # This attachment is the whole fix. The scrape is one target, credential-
+      # free, and filtered down to two series by `metric_relabel_configs` in
+      # prometheus.yml — the reasoning for that narrowness is written there, at
+      # the job, where the keep-list is.
+      testnet: {}
 
   # ------------------------------------------------------------------ tempo ---
   tempo:
@@ -389,6 +405,18 @@ networks:
     # creates, modifies or removes it.
     external: true
     name: ${CF_PROJECT:-cloudsforge-estate}_default
+  testnet:
+    # The running TESTNET estate, on the same host and in its own project. Same
+    # contract as `estate` above: attach, never create, never modify.
+    #
+    # `external: true` means this file will not start without it — the same
+    # hard dependency `estate` has already been for as long as it has existed,
+    # and the same fix: bring the estate up first. `CF_TESTNET_PROJECT` exists
+    # so a host that names its testnet project something else can say so once,
+    # rather than editing a compose file; the default is the name the app host
+    # actually uses, which was renamed from `cftestnet` in micro-org#257.
+    external: true
+    name: ${CF_TESTNET_PROJECT:-cf-testnet}_default
 
 volumes:
   prometheus-data:
