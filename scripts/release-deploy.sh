@@ -935,6 +935,54 @@ if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d ${PULL_POLICY[@]
     echo "  make prometheus-targets RELEASE=$version" >&2
   fi
 
+  # ── AND THE RULES, WHICH ARE NOT TARGETS AND DO NOT RELOAD THEMSELVES ───────
+  #
+  # The block above is true about `prometheus/targets/` and false about
+  # `prometheus/rules/`, and the difference had never been written down.
+  #
+  # Targets are a file_sd source: the `cf-services` job re-reads them every 30s,
+  # so writing the file IS deploying it. Rule files are read once at startup and
+  # on reload, and nothing re-reads them on a timer. So an alert rule reaches the
+  # container the moment `git pull` lands — the whole `prometheus/` directory is
+  # a bind mount from this checkout — and is then never evaluated, for as long as
+  # the Prometheus container happens to stay up.
+  #
+  # Measured on 2026-08-11: `MailSentToReservedDomain` merged, passed
+  # `promtool check rules` and `promtool test rules` in CI, deployed, was present
+  # in `/etc/prometheus/rules/alerts.yaml` inside the running container — and
+  # `/api/v1/rules` did not know it existed. The container had been up 22 hours.
+  # A rule that is green everywhere and evaluated nowhere is the vacuous pass
+  # `alerts.test.yaml` was written against, one layer further out than that file
+  # can see.
+  #
+  # Prometheus is NOT in this compose project — it runs under `cfmicro`, which is
+  # why `up -d` above never restarted it and why this needs a name rather than a
+  # service reference. `--web.enable-lifecycle` is already set, so POST /-/reload
+  # is available; SIGHUP is the fallback for a build without it.
+  #
+  # It does not fail the deploy, for the same reason the targets write does not:
+  # the release is already running and refusing to exit 0 would not un-run it.
+  # But an operator who is not told has no way to know, which is exactly how this
+  # lasted 22 hours.
+  prom_container="${PROMETHEUS_CONTAINER:-cfmicro-prometheus-1}"
+  if docker inspect "$prom_container" >/dev/null 2>&1; then
+    if docker exec "$prom_container" wget -q --post-data='' -O- http://127.0.0.1:9090/-/reload >/dev/null 2>&1 ||
+       docker kill --signal=HUP "$prom_container" >/dev/null 2>&1; then
+      echo "  reloaded $prom_container — rule changes in prometheus/rules/ are now evaluated"
+    else
+      echo >&2
+      echo "THE RELEASE IS DEPLOYED AND PROMETHEUS WAS NOT RELOADED." >&2
+      echo "Any alert rule changed in this release is on disk and is NOT being" >&2
+      echo "evaluated. Reload it by hand:" >&2
+      echo "  docker exec $prom_container wget -q --post-data= -O- http://127.0.0.1:9090/-/reload" >&2
+    fi
+  else
+    # Not an error. Testnet and a developer's laptop legitimately run no
+    # Prometheus, and a deploy that shouted about it there would train the
+    # operator to ignore the case that matters.
+    echo "  no $prom_container on this host; prometheus rules not reloaded"
+  fi
+
   # ── AND IS ANY OF IT REACHABLE? ─────────────────────────────────────────────
   #
   # `up -d` returning 0 means every container was created and, given the health
