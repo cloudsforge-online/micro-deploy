@@ -43,6 +43,17 @@
 # runs before anything is written to the destination, not after.
 set -euo pipefail
 
+# STALE DEFAULT, knowingly left in place — 2026-08-11.
+# `cloudsforge-estate` no longer runs here. The chain-host/app-host split moved
+# both estates to the app host `savva@192.168.1.129` (inside WSL Ubuntu-24.04);
+# 192.168.1.42 now runs only bitcoind/litecoind/dogecoind as host processes, the
+# two Hearth seeds and the EMBER miners. Run against this default and the remote
+# step finds no such project and `die`s — loud, and nothing is written to the
+# destination, which is the failure mode this script was built to have.
+# It is not re-pointed yet because it is not a one-word change: the app host
+# answers ssh with cmd.exe, so every remote `bash` block below needs a
+# `wsl -d Ubuntu-24.04 -- bash -lc` wrapper before --host can name it. Until
+# then, pass --host explicitly. See docs/estate-backup-restore.md, header note.
 HOST="malf@192.168.1.42"
 PROJECT="cloudsforge-estate"
 DEST="$HOME/cloudsforge-custody-backup"

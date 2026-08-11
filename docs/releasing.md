@@ -4,24 +4,67 @@ What is deployed right now, and the one rule that governs how it changes.
 
 ---
 
+## Which machine, before anything else
+
+**Every command in this document runs on the APP HOST.** The estate is two
+machines now, joined by WireGuard, and running a release step on the wrong one is
+not a no-op — the chain host has a `deploy` checkout of its own, real Bitcoin,
+Litecoin and Dogecoin daemons, and no app stack.
+
+| Host | Reach it by | Deploy checkout | What is there |
+| --- | --- | --- | --- |
+| **app** `savva@192.168.1.129` | `ssh savva@192.168.1.129` then `wsl -d Ubuntu-24.04` | `/home/savvaniss/dev/cloudsforge/deploy` | Both estates: `cloudsforge-estate` and `cf-testnet`, ~50 and ~48 containers, both gateways, Postgres, the telemetry plane. **This document.** |
+| **chain** `malf@192.168.1.42` | `ssh malf@192.168.1.42` | `/home/malf/dev/cloudsforge/deploy` | `bitcoind`, `litecoind`, `dogecoind` and the Hearth seed — host processes, not containers, datadirs under `/data/chains`. Also two EMBER miners. Nothing here is released by `release-deploy.sh`. |
+
+The app host is inside WSL, so an `ssh` alone does not land you in the right
+filesystem:
+
+```sh
+ssh savva@192.168.1.129
+wsl -d Ubuntu-24.04
+cd /home/savvaniss/dev/cloudsforge/deploy
+```
+
+Until 2026-08-11 every path in this document read `malf@192.168.1.42` and
+`/home/malf/dev/cloudsforge/deploy`, because for a while that was where
+everything was. It is not any more, and the paths below were corrected in place
+rather than deleted — the chain-host paths that remain are labelled as such.
+
+---
+
+## Naming a release
+
+**Releases are named for the day they are cut: `2026.08.21`.** The `<version>`
+placeholder everywhere below takes that shape. Per-repository `package.json`
+versions are still semver and are a different thing; the estate release is the
+manifest `org/releases/<version>.yaml`, and that name is what an operator quotes.
+
+The semver-shaped estate releases in this document's history — `2.3.0`, `2.5.2`
+— are that history, not a scheme to follow. **`2026.08.12` sorts after
+`2026.08.11` lexicographically and looks like its successor while being a day
+earlier by the numbering that generated it**; `micro-org`'s `release-order.test.ts`
+exists because that trap already shipped six-day-stale pins to production once
+(micro-org#384). Do not sort these names by hand.
+
+---
+
 ## What is deployed
 
-| Environment | Compose project | Version | Containers | Deployed |
-| --- | --- | --- | --- | --- |
-| **Testnet** | `cf-testnet` | **2.5.2** | 46 services + `postgres:17-alpine` | 2026-08-08 |
-| **Mainnet** | `cloudsforge-estate` | **2.5.2** | 45 services + `postgres:17-alpine` | 2026-08-08 |
+Do not read a version out of this document. The table that used to sit here went
+stale three times and was wrong on the day each of those releases went out; the
+command below is the only answer that cannot age.
 
-Both read the same number, which is the rule below. They are allowed to differ
+Both estates read the same number, which is the rule below. They are allowed to differ
 in one situation only — a release being proved on testnet before it reaches
 mainnet, which is what the design overlay exists for
 (`compose/docker-compose.design.yml`). Testnet ahead of mainnet, during a
 release, is expected. Testnet *behind* mainnet, or either estate reading two
 numbers at once, is not.
 
-This table sat at 2.3.0 while both estates moved to 2.4.0 and testnet to 2.5.1,
-which is the argument for the command below rather than for a table.
+A table here sat at `2.3.0` while both estates moved to `2.4.0` and testnet to
+`2.5.1`, which is the argument for the command below rather than for a table.
 
-Check it, do not trust this table:
+Ask the hosts, on the app host:
 
 ```sh
 # testnet
@@ -127,13 +170,13 @@ a checkout and does not pull.**
 
 ```sh
 scp deploy/compose/docker-compose.design.yml \
-    malf@192.168.1.42:/home/malf/dev/cloudsforge/deploy/compose/
+    savva@192.168.1.129:/home/savvaniss/dev/cloudsforge/deploy/compose/
 ```
 
 ### 3. Testnet
 
 ```sh
-cd /home/malf/dev/cloudsforge/deploy/compose
+cd /home/savvaniss/dev/cloudsforge/deploy/compose   # app host
 docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
   -p cf-testnet \
   -f docker-compose.estate.yml \
@@ -158,7 +201,7 @@ Litecoin indexing down.
 **Then check the gateway, because `up -d` does not.**
 
 ```sh
-cd /home/malf/dev/cloudsforge/deploy
+cd /home/savvaniss/dev/cloudsforge/deploy           # app host
 ./scripts/check-tunnel-origin.sh testnet
 ```
 
@@ -209,14 +252,16 @@ recreates every container that does not match, which is all of them. Nothing
 persistent is harmed — the databases are volumes and are not touched — but it
 is several minutes of testnet being down for a flag.
 
-**If this is the first bring-up after the pause, rotate the operator password
-before the environment is announced.** Testnet's `estate-admin@example.test`
-still holds the password that `estate-bootstrap.sh` once defaulted to in a
-**public** repository — the row has been sitting in testnet's `identity`
-database the whole time it was down, and `up -d` does not re-run the bootstrap,
-so none of the refusals added since it protect this account. The moment the
-`*-testnet` hostnames answer, that account is reachable by anybody who read the
-file. `compose/estate/tokens.testnet.env` carries no `ESTATE_ADMIN_PASSWORD`
+**Testnet is not paused any more.** It moved to the app host and came back up on
+2026-08-11, 48 containers healthy, and its operator password was rotated the same
+day — `runbooks/runbook-beacon-token.md` and
+`runbooks/runbook-estate-administrator-password.md` record both. What is left of
+the warning that used to stand here is a standing rule rather than a one-off: any
+environment brought up after a long stop must have its operator password rotated
+**before** the hostnames answer, because `estate-admin@example.test` once held a
+password that `estate-bootstrap.sh` defaulted to in a **public** repository, and
+`up -d` does not re-run the bootstrap, so none of the refusals added since it
+protect an existing row. `compose/estate/tokens.testnet.env` carries no `ESTATE_ADMIN_PASSWORD`
 line today, so the seed and verification scripts will refuse to run against
 testnet until it does. The procedure, and why it recreates nothing, is
 `runbooks/runbook-estate-administrator-password.md`; the exposure is
@@ -235,14 +280,15 @@ service's migrator against a live production database. `--rollback` puts the
 images back; it does not put a schema back.
 
 ```sh
-P=cloudsforge-estate; OUT=/home/malf/backups/pre-<version>; mkdir -p "$OUT/db"
+P=cloudsforge-estate; OUT=/home/savvaniss/backups/pre-<version>; mkdir -p "$OUT/db"
 for d in $(docker exec ${P}-postgres-1 psql -U cloudsforge -d postgres -tAc \
     "select datname from pg_database where datistemplate=false and datname<>'postgres'"); do
   docker exec ${P}-postgres-1 pg_dump -U cloudsforge -d "$d" -Fc > "$OUT/db/$d.dump"
 done
 ```
 
-For 2.3.0 that was 28 databases, 129M, about a minute. There is no version of
+When that loop was last timed it was 28 databases, 129M, about a minute; there
+are more databases now, so budget more. There is no version of
 this release that is worth skipping it for. Restore is
 `docs/estate-backup-restore.md`.
 
@@ -259,8 +305,8 @@ cfctl release <version>          # reads each package.json + git HEAD
 That writes `org/releases/<version>.yaml`. Then on the host:
 
 ```sh
-cd /home/malf/dev/cloudsforge/deploy
-./scripts/release-deploy.sh <version>
+cd /home/savvaniss/dev/cloudsforge/deploy           # app host — NOT 192.168.1.42
+./scripts/release-deploy.sh 2026.08.21
 ```
 
 Defaults it uses: `BASE=compose/docker-compose.estate.yml`,
