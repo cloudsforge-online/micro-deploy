@@ -40,7 +40,7 @@ one of them. So a per-chain variable in any compose file is a failure here.
 ── HOW THIS AVOIDS BEING A CHECK THAT CANNOT FAIL ───────────────────────────
 
 The anchor is not copied into this file. It is READ OUT of the estate compose and
-rendered by REAL `docker compose` in all eight combinations of the three optional
+rendered by REAL `docker compose` in all sixteen combinations of the four optional
 variables, so the string under test is the one the estate deploys and an edit to
 it is exercised the moment it is made. Every combination is then parsed with a
 real JSON parser rather than pattern-matched.
@@ -89,6 +89,7 @@ VARIABLE = "SETTLEMENT_RPC_URLS"
 # The chains micro-settlement#8 leaves optional on this map, and the estate variable each is
 # supplied by. `ember` is not here: it has a default in the anchor and is always present.
 OPTIONAL = {
+    "btc": "BTC_RPC_URL",
     "ltc": "LTC_RPC_URL",
     "doge": "DOGE_RPC_URL",
     "etc": "ETC_RPC_URL",
@@ -98,6 +99,7 @@ OPTIONAL = {
 # JSON-RPC with HTTP Basic and nothing else, so the endpoint carries userinfo and the `@`, `:` and
 # `/` in it are exactly the characters a hand-rolled parser gets wrong. Never printed.
 FIXTURE = {
+    "BTC_RPC_URL": "http://fixture-user:fixture-pass@127.0.0.1:50001",
     "LTC_RPC_URL": "http://fixture-user:fixture-pass@127.0.0.1:50002",
     "DOGE_RPC_URL": "http://fixture-user:fixture-pass@127.0.0.1:9332",
     "ETC_RPC_URL": "http://127.0.0.1:8555",
