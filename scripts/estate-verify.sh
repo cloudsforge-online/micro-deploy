@@ -3239,28 +3239,104 @@ else
   # un-pruned.
   #
   # Three assertions, in the order they matter, and NONE of them reads the key.
-  EMBER_KEY=${EMBER_MINER_DATA:-$HOME/.cloudsforge/ember-testnet/miner}/coinbase-key.json
-  if [ -f "$EMBER_KEY" ]; then
-    # 1. OUTSIDE EVERY WORK TREE. Not "ignored" — absent, so no edit to any
-    #    .gitignore and no `git add -A` anywhere can ever reach it.
-    if (cd "$(dirname "$EMBER_KEY")" && git rev-parse --show-toplevel >/dev/null 2>&1); then
-      bad "THE MINER'S KEY IS INSIDE A GIT WORK TREE ($EMBER_KEY). One 'git add -A' publishes it, and a published key cannot be unpublished"
-    else
-      ok "the miner's key is outside every git work tree — no ignore rule stands between it and a commit"
-    fi
-    # 2. 0600. `evmnode.js` writes it that way; this catches a later chmod.
-    kmode=$(stat -f '%Lp' "$EMBER_KEY" 2>/dev/null || stat -c '%a' "$EMBER_KEY" 2>/dev/null)
-    [ "$kmode" = 600 ] && ok "…and is mode 600" \
-      || bad "the miner's key is mode ${kmode:-unknown}, not 600 — anything running as another user on this machine can read it"
-    # 3. It is not empty of the thing that makes it a key. Checked by SHAPE, so
-    #    nothing here ever holds the material: a file whose `privateKey` went
-    #    missing is a miner that will silently generate a NEW key on next start
-    #    and mine to an address the owner does not know about.
-    python3 -c "import json,sys;d=json.load(open('$EMBER_KEY'));sys.exit(0 if isinstance(d.get('privateKey'),str) and d.get('address','').startswith('0x') else 1)" 2>/dev/null \
-      && ok "…and still carries the key for $(python3 -c "import json;print(json.load(open('$EMBER_KEY'))['address'])" 2>/dev/null)" \
-      || bad "the miner's key file has no usable privateKey/address; the next start would silently mine to a NEW address"
-  else
-    echo "  ..   no miner wallet at $EMBER_KEY — the owner's miner has never run here"
+  #
+  # ── WHERE THE KEY IS, WHICH MOVED AND TOOK THIS CHECK'S TEETH WITH IT ──────
+  #
+  # This used to look at exactly one path,
+  # `${EMBER_MINER_DATA:-$HOME/.cloudsforge/ember-testnet/miner}/coinbase-key.json`,
+  # which is the layout `scripts/ember-miner.sh` writes ON A LAPTOP. Two changes
+  # since left it guarding nothing at all, silently, while still printing a line
+  # that read like good news:
+  #
+  #   1. The estate mines from hosts, not laptops. `docker-compose.miners.yml`
+  #      mounts `${CF_MINER_KEYS}/<network>` and the app host's overlay mounts
+  #      `${CF_APPHOST_MINER_KEYS}/<network>`. Neither is under $HOME/.cloudsforge.
+  #   2. micro-org#206 SEALED the key. `coinbase-key.json` — `privateKey` in the
+  #      clear — became `coinbase-keystore.json`, scrypt+AES with the passphrase
+  #      in `miner-keys/secrets/`. The filename this check tested for is now the
+  #      name of a file that SHOULD NOT EXIST on a sealed host.
+  #
+  # So on every machine that actually mines, this fell through to its else branch
+  # and announced "the owner's miner has never run here" — a reassuring sentence
+  # about a key sitting two directories away, at whatever mode whoever last
+  # touched it had left it, inside or outside a work tree, unexamined. A guard
+  # that cannot find the thing it guards must say so LOUDLY. Reporting absence as
+  # innocence is worse than not checking, because it stops anyone else looking.
+  #
+  # Every candidate is now examined rather than the first one found: a plaintext
+  # key left behind beside a sealed keystore is precisely the residue #206 was
+  # closed to remove, and stopping at the keystore would have hidden it.
+  ember_key_dirs=()
+  for kdir in \
+    "${EMBER_MINER_DATA:-}" \
+    "${CF_APPHOST_MINER_KEYS:-/home/savvaniss/dev/cloudsforge/miner-keys}/$EMBER_NETWORK" \
+    "${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/$EMBER_NETWORK" \
+    "$HOME/.cloudsforge/ember-$EMBER_NETWORK/miner" \
+    "$HOME/.cloudsforge/ember-testnet/miner"
+  do
+    [ -n "$kdir" ] && [ -d "$kdir" ] || continue
+    # Physical path, so the same directory reached by two names is one entry —
+    # `ember-testnet/miner` is listed twice on purpose, once for the network and
+    # once as the historic default, and must not be reported twice.
+    kdir=$(cd "$kdir" 2>/dev/null && pwd -P) || continue
+    for seen in ${ember_key_dirs[@]+"${ember_key_dirs[@]}"}; do
+      [ "$seen" = "$kdir" ] && { kdir=; break; }
+    done
+    [ -n "$kdir" ] && ember_key_dirs+=("$kdir")
+  done
+
+  ember_keys_found=0
+  for kdir in ${ember_key_dirs[@]+"${ember_key_dirs[@]}"}; do
+    for kname in coinbase-keystore.json coinbase-key.json; do
+      EMBER_KEY="$kdir/$kname"
+      [ -f "$EMBER_KEY" ] || continue
+      ember_keys_found=$((ember_keys_found + 1))
+      # 1. OUTSIDE EVERY WORK TREE. Not "ignored" — absent, so no edit to any
+      #    .gitignore and no `git add -A` anywhere can ever reach it.
+      if (cd "$kdir" && git rev-parse --show-toplevel >/dev/null 2>&1); then
+        bad "THE MINER'S KEY IS INSIDE A GIT WORK TREE ($EMBER_KEY). One 'git add -A' publishes it, and a published key cannot be unpublished"
+      else
+        ok "$EMBER_KEY is outside every git work tree — no ignore rule stands between it and a commit"
+      fi
+      # 2. 0600. `evmnode.js` and the #206 sealing both write it that way; this
+      #    catches a later chmod. An encrypted keystore still earns 0600: the
+      #    passphrase is one directory up, and a reader who has both has the key.
+      kmode=$(stat -f '%Lp' "$EMBER_KEY" 2>/dev/null || stat -c '%a' "$EMBER_KEY" 2>/dev/null)
+      [ "$kmode" = 600 ] && ok "…and is mode 600" \
+        || bad "…but is mode ${kmode:-unknown}, not 600 — anything running as another user on this machine can read it"
+      # 3. It is not empty of the thing that makes it a key. Checked by SHAPE, so
+      #    nothing here ever holds the material: a file whose secret went missing
+      #    is a miner that will silently generate a NEW key on next start and
+      #    mine to an address the owner does not know about. `address` is read
+      #    and printed because a keystore carries it IN THE CLEAR by design —
+      #    that is the field's purpose — and knowing which address the estate
+      #    mines to is the whole point of the line.
+      if python3 -c "import json,sys
+d=json.load(open('$EMBER_KEY'))
+secret = d.get('ciphertext') if 'ciphertext' in d else d.get('privateKey')
+sys.exit(0 if isinstance(secret,str) and secret and str(d.get('address','')).lower().startswith('0x') else 1)" 2>/dev/null
+      then
+        ok "…and still carries the key for $(python3 -c "import json;print(json.load(open('$EMBER_KEY'))['address'])" 2>/dev/null)"
+      else
+        bad "$EMBER_KEY has no usable secret/address; the next start would silently mine to a NEW address"
+      fi
+      # 4. THE SEALING HELD. micro-org#206 replaced the plaintext key with the
+      #    keystore; a plaintext key sitting BESIDE a keystore is the copy that
+      #    was supposed to be shredded, and it makes the encryption decorative.
+      #    Alone it is legitimate — `ember-miner.sh` writes it for a local dev
+      #    chain — so this fires only when both are present.
+      if [ "$kname" = coinbase-key.json ] && [ -f "$kdir/coinbase-keystore.json" ]; then
+        bad "A PLAINTEXT COINBASE KEY SURVIVES BESIDE THE SEALED KEYSTORE ($EMBER_KEY). micro-org#206 sealed this key; the unsealed copy makes that sealing decorative. Shred it once the keystore is proven to unlock"
+      fi
+    done
+  done
+
+  if [ "$ember_keys_found" = 0 ]; then
+    # NOT a quiet informational line. The chain above is answering, which means
+    # SOMETHING is mining with a key; if this machine cannot see it, this check
+    # is not verifying the estate's most irreversible secret and must not imply
+    # that it is. Searched paths are named so the answer is one export away.
+    bad "no coinbase key or keystore found in any known location, yet an EMBER $EMBER_NETWORK is mining — this check is verifying NOTHING about the estate's most irreversible secret. Searched: ${ember_key_dirs[*]:-'no candidate directory exists on this machine'}. Point EMBER_MINER_DATA, CF_APPHOST_MINER_KEYS or CF_MINER_KEYS at the real one, or run this on the host that mines"
   fi
 
   # And the ignore rule this repository does carry, checked rather than trusted.
