@@ -3950,6 +3950,31 @@ services:
   # the environment's half of it.
   hub-web:
     <<: *web-defaults
+    # ── AND THE SAME ONE THING, FOR THE SAME REASON (micro-org#406) ──────────
+    #
+    # `hub-web` serves `/mine`, which reads `GET /v1/pool` from `pool.<apex>` —
+    # the service that does not exist on an estate without the `pool` profile.
+    # MEASURED 2026-08-11: `hub-testnet.cloudsforge.online/mine` could not load
+    # pool status, and the page rendered a full-page failure for it, so EMBER —
+    # mined in the tab against hearth, nothing to do with micro-pool — was
+    # unreachable behind an error about micro-pool. On the one network where
+    # EMBER is the only thing a browser can usefully mine.
+    #
+    # Same variable, same document, same asymmetry as `pool-web` below: this
+    # container's nginx renders `/deployment.json` from it at start, only the
+    # exact string `absent` means "no pool here", and the IMAGE defaults to
+    # `present` so an estate that has never heard of the flag is unchanged. The
+    # full argument — why not a profile, why not a build arg, why the default
+    # cannot live in the template — is at `pool-web`.
+    #
+    # WHAT IT CHANGES HERE IS SMALLER, AND DELIBERATELY SO. `pool-web` has
+    # nothing to be without a pool; this surface has a wallet, a portfolio and
+    # an EMBER miner. `absent` replaces one panel with an explanation and a link
+    # to the network that does run a pool, and stops two doomed cross-origin
+    # requests — the page's and the mining bar's, the second of which fires on
+    # every address in the app. It removes nothing else.
+    environment:
+      POOL_API_PRESENCE: "${POOL_API_PRESENCE:-present}"
     build:
       context: ../../hub-web
       additional_contexts: *web-contexts
@@ -4841,6 +4866,47 @@ services:
   # configured, not the page that describes it.
   pool-web:
     <<: *web-defaults
+    # ── THE ONE THING THIS CONSOLE CANNOT WORK OUT FOR ITSELF (micro-org#406) ──
+    #
+    # The paragraph above says a bundle with nothing behind it "renders its own
+    # named holes rather than crashing". It did not. MEASURED 2026-08-11:
+    # `pool-testnet.cloudsforge.online/` served the console with a 200 and every
+    # `/v1/…` under it answered a Traefik 502 — there is no `pool` container on
+    # this estate to forward to — so `/`, `/workers` and `/blocks` each rendered
+    # "The pool did not answer" with a **Try again** button that could never
+    # succeed. Three pages of an incident that was not happening, on a network
+    # that is behaving exactly as this file intends.
+    #
+    # A 502 is indistinguishable from an outage to a client that has never been
+    # told the difference, and nothing had ever told it. THIS LINE IS THAT
+    # TELLING. `absent` makes the container's own nginx answer
+    # `GET /deployment.json` with `{"poolApi":"absent"}`; the bundle reads it
+    # above its router, renders a branded explanation with a link to the mainnet
+    # pool in place of every console page, and — the half that matters here —
+    # issues NO `/v1` request at all.
+    #
+    # ── WHY IT IS NOT A PROFILE ON THIS SERVICE ───────────────────────────────
+    #
+    # Because `gateway/dynamic/estate-web.yml` points `cf-web-pool` at
+    # `http://pool-web:8080` and its router matches the whole Host. Take the
+    # container away and Traefik answers 502 for the ENTIRE hostname — `/`,
+    # `/workers`, `/blocks`, and `robots.txt` with the `Disallow: /` that keeps a
+    # testnet pool console out of search results. That is strictly worse than
+    # today, not better: an unbranded gateway error instead of a page.
+    #
+    # ── WHY IT IS AN ENVIRONMENT VARIABLE AND NOT A BUILD ARG ─────────────────
+    #
+    # The paragraph above is right that a static bundle's configuration is baked
+    # at build time — for the BUNDLE. This is read by the container's nginx, not
+    # by the bundle: the stock entrypoint expands a template into
+    # `/etc/nginx/conf.d/` when the container starts. One image, one digest,
+    # promoted unchanged from mainnet to testnet, which is the rule this estate
+    # pins releases by. The image defaults it to `present`, so a host that has
+    # never heard of this variable is unaffected — and it must default in the
+    # IMAGE rather than here, because envsubst leaves an unset variable in the
+    # config verbatim and nginx then refuses to start.
+    environment:
+      POOL_API_PRESENCE: "${POOL_API_PRESENCE:-present}"
     build:
       context: ../../pool-web
       additional_contexts: *web-contexts
