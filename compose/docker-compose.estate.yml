@@ -424,6 +424,38 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"
 # same family, same auth scheme — so it is worth fixing before those are wired
 # rather than discovering it three more times.
 #
+# ── `btc` IS SET, AND UNLIKE `ltc` IT WAS NEVER THE NODE THAT WAS MISSING ────
+#
+# Bitcoin is the third key on this map and the first one added after the estate
+# split across two hosts. Measured on the chain host 2026-08-11:
+# `bitcoind 27.0` from `/etc/rc.local` on `-datadir=/data/chains/bitcoin`, block
+# 961,956, headers equal, `initialblockdownload:false`, `pruned:false`,
+# `txindex=1`, 866G on disk. So the node that DOGE is still waiting to become,
+# Bitcoin already is.
+#
+# What was missing was narrower and much quieter. `BTC_RPC_URL` is set in
+# `compose/estate/tokens.env`, MAINNET ONLY, exactly as `LTC_RPC_URL` is — but
+# the credential the INDEXER held for the same node had never matched
+# `bitcoin.conf`'s `rpcauth`, so bitcoind had answered it 401 on every poll since
+# the chain host was stood up. Nothing surfaced: the retry logs at `warn`, and an
+# address with no observed rows reads exactly like an address with no coins. Both
+# credentials were rotated together on 2026-08-11 (micro-org#383) and the node
+# restarted cleanly to pick the new `rpcauth` up; `rpcauth` is read once at
+# daemon startup and nowhere else.
+#
+# ── AND THE KEY ALONE WOULD STILL NOT HAVE BUILT A TRANSACTION ───────────────
+#
+# Every node in this estate runs `disablewallet=1` — verified on the chain host
+# 2026-08-11 for `bitcoin.conf`, `litecoin.conf` and `dogecoin.conf`. `listunspent`
+# is a WALLET rpc, so all three answer it `-32601 Method not found`, and a
+# bitcoin-family sweep built on it would have found nothing to spend no matter how
+# synced the chain was or how correct the credential. micro-org#382 moved the
+# proposal to the indexer and left the ADJUDICATION on the node: settlement asks
+# the indexer which outpoints an address has, then re-reads each one with
+# `gettxout` (chainstate, no wallet) and signs the node's value, script and depth
+# rather than the record's. Shipped in `micro-settlement 2.5.21` /
+# `micro-indexer 2.5.20`. This key is what those two releases spend.
+#
 # ── `doge` AND `etc`, WIRED AND DELIBERATELY UNSET (micro-settlement#8) ───────
 #
 # micro-settlement#8 gave both chains a real adapter — DOGE reuses `bitcoin.ts`
@@ -484,12 +516,12 @@ x-wallet-fee-quotes: &wallet-fee-quotes '{"EMBER":"21000000000000","LTC":"10000"
 # service, taking settlement down for the chains that ARE configured. A stray
 # comma is worse still — the value stops being JSON at all and the same import
 # throws before anything else is read. `scripts/check-settlement-rpc-urls.py`
-# renders this anchor through real `docker compose` in all eight combinations of
-# the three optional variables and asserts every one is valid JSON with no empty
+# renders this anchor through real `docker compose` in all sixteen combinations
+# of the four optional variables and asserts every one is valid JSON with no empty
 # value, because the failure it guards is one nobody sees until a container will
 # not start.
 x-settlement-rpc-urls: &settlement-rpc-urls
-  '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}${DOGE_RPC_URL:+,"doge":"$DOGE_RPC_URL"}${ETC_RPC_URL:+,"etc":"$ETC_RPC_URL"}}'
+  '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${BTC_RPC_URL:+,"btc":"$BTC_RPC_URL"}${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}${DOGE_RPC_URL:+,"doge":"$DOGE_RPC_URL"}${ETC_RPC_URL:+,"etc":"$ETC_RPC_URL"}}'
 
 # ══════════════════════════════════════════════════════════════════════════════
 # WHICH NETWORK THE MONEY TIER THINKS IT IS ON — AND IT WAS NOT THIS ONE.
