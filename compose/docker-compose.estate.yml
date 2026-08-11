@@ -2293,6 +2293,46 @@ services:
       # variable and same spelling as LEDGER_RECONCILE_NETWORK above, so the two
       # cannot drift apart.
       MINT_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
+      # ── WITHOUT THIS, NOTHING MINT ACCEPTS CAN EVER BE MINTED ────────────
+      #
+      # `MINT_RPC_URLS` was never set here — not in this file, not in either
+      # `*.env`, not in the tokens files. `env.ts` defaults it to `'{}'`, and
+      # `index.ts`'s `rpc()` throws `no JSON-RPC endpoint configured for ember`
+      # for anything in it. So mint took orders, priced them, would have taken
+      # payment for them, and could not have deployed one. Read off the running
+      # containers on 2026-08-11, mainnet AND testnet said the same thing at
+      # boot:
+      #
+      #   chains: [{"chain":"ember","implemented":true,"endpoint":false},
+      #            {"chain":"eth",  "implemented":true,"endpoint":false}, …]
+      #
+      # `implemented: true, endpoint: false` — the code was there and the node
+      # was not. mint logs exactly that pair at boot for exactly this reason
+      # ("A chain with a family but no endpoint is the failure most likely to be
+      # a deploy mistake"), and it went unread for as long as nothing tried to
+      # deploy. The estate seeder is what tried, and reported it as a skip:
+      # "MINT_RPC_URLS is unset in the estate compose file and mint refuses
+      # rather than falling back to a public node nobody chose".
+      #
+      # ── THE SAME EXPRESSION AS FORESIGHT'S, DELIBERATELY ────────────────
+      #
+      # `FORESIGHT_RPC_URLS` two thousand lines below is character-for-character
+      # this, and it must stay that way: both services sign EMBER transactions
+      # against the same node, and a second spelling is a second thing to move
+      # when the chain host moves. `EMBER_RPC_URL` is the estate's one name for
+      # where the chain is — `testnet.env` sets it to :8745, the tokens files
+      # pin it per host, and `verify-chain-backing.sh` asserts what answers.
+      #
+      # `eth` is deliberately absent rather than given a public endpoint. mint
+      # will keep answering `endpoint: false` for it, which is true: this estate
+      # runs no Ethereum node, and pointing it at somebody else's would make the
+      # platform's deploys depend on a service nobody here chose or pays for.
+      #
+      # This does NOT open mainnet deploys. `server.ts:562` refuses any mainnet
+      # deploy whose owner is not in `MINT_MAINNET_ALLOWLIST`, which is empty and
+      # stays empty until the owner puts a subject in it. That gate is about who
+      # may spend real gas; this variable is about whether the wire exists at all.
+      MINT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
       INSTANCE_ID: mint-estate
     env_file: *outbox-secrets
     ports:
