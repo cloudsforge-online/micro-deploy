@@ -223,11 +223,15 @@ echo "── the databases this estate declares are the databases it HAS ──�
 # WHY HERE AND NOT ONLY AS A `release-deploy.sh` PRE-FLIGHT. This runs per estate
 # on a schedule, so it answers the question when nobody is deploying anything —
 # which is the moment the answer is cheap. It also reaches the estate a deploy
-# pre-flight would not: at the time of writing, testnet is deliberately stopped
-# so bitcoind can finish IBD, and since `initdb.sql` ran once per estate with
-# whatever list it held on that estate's first boot, and the two estates were
-# bootstrapped at different times, testnet is the MORE likely of the two to have
-# drifted. A check that only runs during a deploy would never ask it.
+# pre-flight would not. `initdb.sql` ran once per estate with whatever list it
+# held on that estate's first boot, and the two estates were bootstrapped at
+# different times, so testnet is the MORE likely of the two to have drifted —
+# and testnet is deployed to far less often, so a check that only runs during a
+# deploy would ask it least where it matters most. (This paragraph used to say
+# testnet was stopped for bitcoind's IBD. Bitcoin reached its tip on 2026-08-10
+# and testnet now runs on the app host, 48 containers healthy on 2026-08-11. The
+# argument never depended on that; the drift does not care whether anyone is
+# looking.)
 #
 # ── THE FAILURE POLICY, WHICH IS THE ONLY REAL DECISION HERE ─────────────────
 #

@@ -90,7 +90,24 @@ set -uo pipefail
 PROJECT="${1:-cf-testnet}"
 REF_PREFIX="${2:-design-system/}"
 ESTATE="${CLOUDSFORGE_ESTATE:-$HOME/dev/personal/cloudsforge-micro}"
-HOST="${CLOUDSFORGE_HOST:-malf@192.168.1.42}"
+
+# ── THE DEFAULT HOST MOVED, AND POINTING AT THE OLD ONE FAILS SILENTLY-ISH ───────────────────────
+#
+# Until 2026-08-10 this defaulted to `malf@192.168.1.42`, which then held everything. The app stack
+# moved to `savva@192.168.1.129` and 192.168.1.42 kept only the UTXO daemons, which run as host
+# processes rather than containers. So the old default now reaches a host with no estate containers
+# on it at all, and this script's answer for that is `exit 2` with "no containers running" — a
+# message that reads as "the estate is down" when what happened is that the question went to the
+# wrong machine. Checked on 2026-08-11: asking for `2026.08.16` against the old default said no
+# containers were running, while 47 of the 48 manifest digests were in fact live on the app host.
+#
+# `docker` is not on the Windows host's PATH in the shell ssh lands in — the estate runs inside
+# WSL — so the command has to be routed through `wsl -d Ubuntu-24.04`. `CLOUDSFORGE_DOCKER_PREFIX`
+# exists so the chain host, which is plain Linux, can still be targeted by clearing it:
+#
+#   CLOUDSFORGE_HOST=malf@192.168.1.42 CLOUDSFORGE_DOCKER_PREFIX= scripts/check-running-provenance.sh
+HOST="${CLOUDSFORGE_HOST:-savva@192.168.1.129}"
+DOCKER_PREFIX="${CLOUDSFORGE_DOCKER_PREFIX-wsl -d Ubuntu-24.04 -- }"
 
 # The label `scripts/release-render.py` writes beside every digest-pinned image, holding the
 # `image:tag` reference the digest was resolved from. One spelling, in both files.
@@ -104,11 +121,14 @@ TAG_LABEL="online.cloudsforge.release.tag"
 # the two are then directly comparable, which is what lets a label naming a DIFFERENT service than
 # the image it sits on be caught below rather than silently believed.
 running=$(ssh -o BatchMode=yes "$HOST" \
-  "docker ps --no-trunc --filter name=$PROJECT --format '{{.Image}}\t{{.Label \"$TAG_LABEL\"}}'" 2>/dev/null |
-  sed 's|ghcr.io/cloudsforge-online/micro-||g' | sort -u)
+  "${DOCKER_PREFIX}docker ps --no-trunc --filter name=$PROJECT --format '{{.Image}}\t{{.Label \"$TAG_LABEL\"}}'" 2>/dev/null |
+  tr -d '\r' | sed 's|ghcr.io/cloudsforge-online/micro-||g' | sort -u)
 
 if [ -z "$running" ]; then
+  # Name the host in the failure, because the most likely cause of an empty set is asking the wrong
+  # machine rather than an estate that is down — see the note on the default above.
   echo "error: no containers running under $PROJECT on $HOST" >&2
+  echo "       if that host is not where the estate runs, set CLOUDSFORGE_HOST" >&2
   exit 2
 fi
 
