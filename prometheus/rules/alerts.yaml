@@ -871,6 +871,53 @@ groups:
             one costs.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-at-floor.md
 
+      - alert: EmberDifficultySustainedFarAboveFloor
+        # THE OPPOSITE END OF THE AXIS FROM THE RULE ABOVE, and an arm-signal
+        # rather than a fault. `EmberDifficultyAtFloor` notices too little
+        # hashrate; this notices one miner with far too much — measured
+        # 2026-08-12, a single browser tab held difficulty at ~14,000 (55x the
+        # floor) and 15 of 16 consecutive blocks. The chain itself is FINE in
+        # that state: hearth#13's emergency rule bounds the worst block at
+        # ~2 minutes however high difficulty goes. What stops working is
+        # browser PARTICIPATION, and micro-org#451's plan gates its later
+        # phases (pool aggregation, the PoW-hardness redesign) on exactly this
+        # condition being sustained rather than a tab left open over lunch.
+        #
+        # `/ 256` is the same floor constant `<= 256` above reads, for the same
+        # reason and with the same insurance direction: if hearth ever lowers
+        # the floor this expression OVERSTATES the multiple and fires earlier,
+        # which is the failure direction to want. The named recording rule
+        # `cf:ember:difficulty_over_floor` (rules/mining.yaml) is this same
+        # arithmetic for dashboards; the alert repeats it inline so it can be
+        # tested with this file alone and cannot break if the rule files load
+        # in a different order.
+        #
+        # `for: 6h`, derived from the observed pattern rather than picked: the
+        # operator's own mining tab produced exactly this signature for ~3 h on
+        # 2026-08-12 and then stopped. A human's session ends; a rented rig or
+        # a farmed GPU does not go home in the evening. Six hours filters the
+        # first without meaningfully delaying the second — the response is
+        # reading a plan, not restarting a service, so hours of latency cost
+        # nothing.
+        expr: indexer_chain_difficulty{chain="ember"} / 256 > 100
+        for: 6h
+        labels:
+          severity: ticket
+          team: chain
+          service: indexer
+          sev: "4"
+        annotations:
+          summary: "EMBER {{ $labels.network }} difficulty has been over 100x the floor for six hours"
+          description: >-
+            A miner far larger than the browsers has been setting EMBER's
+            difficulty for six hours. The chain is healthy — the emergency rule
+            bounds the worst block at about two minutes — but browser miners
+            cannot win blocks at this level, which is the condition the
+            micro-org#451 plan gates its later phases on. Nothing is broken and
+            nothing needs restarting; the runbook says what decision is due and
+            where the plan lives.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-sustained.md
+
       # ── AND DELIBERATELY NO PAGE FOR EITHER OF THESE ────────────────────────
       #
       # The case for paging on a stalled EMBER tip is real and was argued rather

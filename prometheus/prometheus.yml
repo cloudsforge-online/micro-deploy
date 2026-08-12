@@ -16,6 +16,7 @@ global:
 rule_files:
   - /etc/prometheus/rules/slo.yaml
   - /etc/prometheus/rules/alerts.yaml
+  - /etc/prometheus/rules/mining.yaml
 
 alerting:
   alertmanagers:
