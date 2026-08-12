@@ -11,9 +11,16 @@
 # This file is the other half: promtool feeds the rules a synthetic series and
 # asserts what comes out. `make check-rule-tests` runs it, and so does CI.
 #
-# It covers three alerts today. That is not the intended end state — every rule
-# in alerts.yaml belongs here eventually — but a test file with three honest
-# cases in it is worth more than a plan for twenty-eight.
+# It covers a handful of the 34 alerts today, and grows by whichever rule was
+# most recently written or most recently found unfireable. That is not the
+# intended end state — every rule in alerts.yaml belongs here eventually — but a
+# file of honest cases is worth more than a plan for all of them.
+#
+# The rules that end up here first are the ones NOTHING IN THE ESTATE CAN
+# OBSERVE: a disk that never logs an ext4 error, a coinbase key that is backed up
+# now, a corpus that has not been replayed for a day and a half. A rule whose
+# firing condition a healthy estate cannot produce is a rule that has never been
+# executed, and this file is the only place it ever will be.
 #
 # The `rule_files` path is relative to THIS file, which is why the test lives
 # beside the rules rather than under a tests/ directory. `prometheus.yml` names
@@ -903,3 +910,103 @@ tests:
                 runner looked. Losing that key abandons the balance at the address;
                 no other artefact in the set has that property.
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-miner-coinbase-key-backup.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ConformanceCorpusStale — micro-org#439, the half that outlives the ticket.
+  #
+  # `ConformanceCorpusNeverReplayed` was the rule that caught the original bug:
+  # both ends of the conformance gate were built on 2026-08-04 and nothing
+  # anywhere called either of them, so `conformance_runs` was empty and
+  # `HearthConformanceVectorsFailing` was green for its entire life by never
+  # having been asked a question. A scheduled runner closed that on 2026-08-12 —
+  # and in closing it made the never-ran rule permanently unfireable, because
+  # `sum(beacon_conformance_suites) == 0` cannot come back once eight suites have
+  # passed once.
+  #
+  # THAT IS THE UNFIREABLE SHAPE THIS FILE EXISTS FOR, arriving by success rather
+  # than by a typo. Beacon's suite gauge is `distinct on (suite) ... order by
+  # suite, ts desc` — the newest row per suite and nothing about its age — so a
+  # runner that dies leaves eight `pass` suites standing for ever and every
+  # conformance rule stays green off a measurement that stopped. This rule is
+  # what notices, and NOTHING IN THE ESTATE CAN OBSERVE IT FIRING except a
+  # synthetic series: it needs a day and a half of a runner not running.
+  #
+  # The values are unix timestamps in SECONDS, which is what makes `time() - x`
+  # an age. promtool starts its clock at 0, so "the last run was at t=0" and the
+  # age at any eval_time is the eval_time itself — which is precisely the arithmetic
+  # the rule does, and a rule written in milliseconds would fail here.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # One run at the epoch and never again — the runner published once and
+      # stopped. The label set is beacon's scrape job: `instance` is pinned in
+      # prometheus.yml, `suite` comes from the metric itself.
+      - series: 'beacon_conformance_last_run_timestamp_seconds{suite="chain",instance="beacon:4000",job="beacon",service="beacon",team="platform",tier="2"}'
+        values: "0+0x2300"
+
+    alert_rule_test:
+      # 30h old. Silent, and asserted so: a threshold accidentally written in
+      # minutes, or against `24 * 3600`, would fire here and page on an estate
+      # whose daily replay merely landed late.
+      - eval_time: 30h
+        alertname: ConformanceCorpusStale
+        exp_alerts: []
+
+      # 36h30m. The expression is true — it crossed at 36h — and `for: 1h` has
+      # not elapsed. This case is what stops a slow install or a restart at the
+      # wrong moment raising a ticket, and it is asserted so that dropping `for`
+      # cannot pass.
+      - eval_time: 36h30m
+        alertname: ConformanceCorpusStale
+        exp_alerts: []
+
+      # 37h30m: over the threshold for a full hour. Every label and annotation
+      # spelled out for the reason the ext4 case gives — routing matches on
+      # `severity` and `team`, the paging tier is `sev`, and check-runbooks.py
+      # only proves the runbook FILE exists. `{{ $labels.suite }}` in particular
+      # has to render: a template naming a label the series does not carry comes
+      # out empty rather than failing, which is how the `{{ $labels.chain }}`
+      # defect this file was written for survived.
+      - eval_time: 37h30m
+        alertname: ConformanceCorpusStale
+        exp_alerts:
+          - exp_labels:
+              alertname: ConformanceCorpusStale
+              suite: chain
+              instance: beacon:4000
+              job: beacon
+              tier: "2"
+              severity: ticket
+              team: chain
+              service: beacon
+              sev: "4"
+            exp_annotations:
+              summary: "Conformance suite chain has not been replayed in over 36h"
+              description: >-
+                The scheduled runner replays every suite daily. This one's last
+                published run is older than a missed cycle, so its status — and the
+                HearthConformanceVectorsFailing rule beside it — is reporting a
+                measurement that stopped happening rather than a comparison that
+                passed. Find the runner, not the divergence.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-conformance-corpus-never-replayed.md
+
+  # The healthy half: a runner doing exactly what it is configured to do. Daily
+  # replays mean the age sawtooths between 0 and 24h and never reaches 36 — so a
+  # rule that fired here would fire on every correctly-running estate every day,
+  # which is how a ticket queue teaches people to close things unread.
+  - interval: 1m
+    input_series:
+      - series: 'beacon_conformance_last_run_timestamp_seconds{suite="chain",instance="beacon:4000",job="beacon",service="beacon",team="platform",tier="2"}'
+        values: "0+0x1440 86400+0x900"
+
+    alert_rule_test:
+      # 23h: nearly a full cycle old, and correct.
+      - eval_time: 23h
+        alertname: ConformanceCorpusStale
+        exp_alerts: []
+
+      # 30h — six hours after the second replay landed. The age fell back to
+      # zero, which is the one thing `beacon_conformance_suites` could never say.
+      - eval_time: 30h
+        alertname: ConformanceCorpusStale
+        exp_alerts: []
