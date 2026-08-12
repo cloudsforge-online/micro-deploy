@@ -19,7 +19,7 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
         check-prometheus-target-ambiguity check-compose-ports \
         check-token-resolution check-custody-backup-guard check-backup \
         check-secret-backups check-stray-secrets \
-        prometheus-targets \
+        prometheus-targets prometheus-config-drift \
         dashboards estate clean
 
 help:
@@ -186,6 +186,19 @@ prometheus-targets: ## Re-render the scrape list from a release by hand. RELEASE
 	@python3 scripts/render-prometheus-targets.py "../org/releases/$(RELEASE).yaml" \
 		--env-file compose/mainnet.env --env-file compose/estate/tokens.env \
 		--out prometheus/targets/services.yaml
+
+prometheus-config-drift: ## Is the RUNNING Prometheus reading this checkout's prometheus.yml? FIX=1 to repair
+	@# Not in `check`. Every other target here answers a question about the tree
+	@# and can therefore be answered in CI; this one is about a container on a
+	@# host, and a check that can only ever pass in CI is noise in CI. It is run
+	@# by estate-up.sh, which is where the mistake actually gets made.
+	@#
+	@# `prometheus.yml` is a SINGLE-FILE bind mount, and on this host that is a
+	@# snapshot taken at container-create time — an in-place append that did not
+	@# change the inode was still invisible inside the container. `POST /-/reload`
+	@# then re-reads the snapshot and returns 200; the failure mode is a
+	@# successful no-op, which is why it needs measuring (micro-org#438).
+	@./scripts/check-prometheus-config-live.sh $(if $(FIX),--fix,)
 
 check-secrets: ## No secret is a placeholder, too short, or already in a transcript
 	@# CI guards a secret that is COMMITTED. Neither failure this catches is a

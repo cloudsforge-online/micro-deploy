@@ -78,3 +78,52 @@ the targets, so `instance` is left to the address.
 `scripts/check-prometheus-target-ambiguity.py` refuses any target in this
 directory or in `prometheus.yml` that is a bare service name, so the next person
 to attach Prometheus to another network cannot reintroduce this quietly.
+
+## How a change here reaches the container, and how a `prometheus.yml` change does not
+
+Three paths, not two, and the third is the one that bites:
+
+| path | mount | how a change arrives |
+|---|---|---|
+| `prometheus/targets/` | directory | `file_sd`, re-read every 30s — writing the file deploys it |
+| `prometheus/rules/` | directory | read at start-up and on reload — needs `POST /-/reload` |
+| `prometheus/prometheus.yml` | **single file** | **needs a container recreate** |
+
+On this host a single-file bind mount is a **snapshot taken when the container
+was created** — not a live view of the file. Nothing done to the file afterwards
+reaches the container: not a rewrite, not a rename, not an in-place append.
+
+That is stronger than the story a person will reach for, which is worth saying
+because the weaker story suggests a fix that would not work. On native Linux a
+single-file bind is pinned to the *inode*, so `git checkout` breaks it (it
+replaces a tracked file by rename) while an in-place write still shows through.
+Under Docker Desktop's WSL2 indirection the mount source is not the checkout at
+all — it is a path under `/run/desktop/mnt/host/wsl/docker-desktop-bind-mounts/`
+— so neither propagates.
+
+Measured on the app host on 2026-08-12:
+
+| probe | container sees it |
+|---|---|
+| single file, in-place append, **same inode** (41304 → 41304) | **no** |
+| directory mount, in-place append to a file inside it | yes |
+| directory mount, brand new file created inside it | yes |
+| this file mid-deploy of #437: `grep -c 'cloudsforge-estate-'` | checkout 5, container **0** |
+
+The first probe is the one that settles it: same inode, still invisible. And the
+middle two are why `targets/` and `rules/` are fine.
+
+Nothing you would reach for catches it. `POST /-/reload` re-reads
+`--config.file`, which resolves to the snapshot, parses it and **returns 200** —
+measured, against a file the checkout had already changed. It is a no-op that
+*succeeds*. `promtool check config` reads the host's file, which is the correct
+one, so it is green for the same reason it is useless. `docker compose up -d`
+does not fix it either: compose recreates on a change to the config hash or the
+image, and neither moves when only the content behind an unchanged mount spec
+has changed.
+
+    make prometheus-config-drift          # report
+    make prometheus-config-drift FIX=1    # report and recreate
+
+`estate-up.sh` runs it with `--fix` straight after bringing telemetry up, which
+is where the mistake gets made (micro-org#438).
