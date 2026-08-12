@@ -69,6 +69,41 @@ while IFS= read -r d; do
 done < <(find . -type d -name secrets \
               -not -path './.git/*' -not -path './node_modules/*' 2>/dev/null | sort)
 
+# And the credential sets that are NOT under this checkout at all.
+#
+# Every root above is relative to the repository, which quietly made this check a
+# check about ONE MACHINE. The chain daemons keep their RPC credentials in
+# `rpcauth=` / `rpcpassword=` lines inside `bitcoin.conf`, `litecoin.conf` and
+# `dogecoin.conf` on the chain host, in a directory this repository has no path
+# to — so every backup taken there was outside the only guard that looks for
+# backups. On 2026-08-12 that directory held **fifteen** of them, spanning three
+# daemons and four operations, the oldest four days old. One was byte-for-byte
+# the same size as the live `bitcoin.conf` beside it, which is the 2026-08-05
+# `tokens.env` finding again: not a fragment of a retired credential set, a
+# complete second copy of the current one. micro-org#429.
+#
+# `/data/chains` is traversable without sudo (the directories are 0755 and owned
+# by the operator; the `.conf` files themselves are 0600) and this check reads
+# nothing, so it needs no privilege to do its job here.
+#
+# These roots are scanned NARROWLY, and the reason is worth stating, because the
+# obvious implementation is wrong. `/data/chains` is a datadir: below it sit the
+# block files and two LevelDB stores, and LevelDB keeps a file called `LOG.old`
+# beside a live database. A first cut of this scan reported
+# `dogecoin/chainstate/LOG.old` as a credential backup and told the operator to
+# `shred -u` it — advice that would corrupt nothing but reads as authoritative,
+# on a check whose whole value is that its findings are true. A guard that cries
+# wolf is not a stricter guard, it is a guard that stops being read, which is the
+# failure this file's own header describes.
+#
+# So under a node root a hit must be backup-SHAPED **and** config-shaped: the
+# name has to contain `.conf`, and the search stops at depth 2, which is where
+# every daemon config on this host actually lives.
+#
+# CF_SECRET_BACKUP_NODE_ROOTS extends the list without editing the script — for a
+# host that keeps a credential set somewhere neither convention predicted.
+declare -a NODE_ROOTS=(/data/chains ${CF_SECRET_BACKUP_NODE_ROOTS:-})
+
 # Deduplicate, preserving order: `compose/secrets` is named above AND found by
 # the sweep, and a path reported twice reads as two findings.
 declare -a SCAN=()
@@ -106,10 +141,20 @@ done
 declare -a FOUND=()
 declare -a PRESENT=()
 declare -a ABSENT=()
+declare -a UNREADABLE=()
 
 for root in "${SCAN[@]}"; do
   if [ ! -d "$root" ]; then
     ABSENT+=("$root")
+    continue
+  fi
+  # A root that exists and cannot be traversed produces an empty `find` and an
+  # error this script sends to /dev/null, which is indistinguishable from a clean
+  # scan. That is the same silent hole as scanning nothing at all, so it is named
+  # rather than swallowed. It is not fatal — some hosts genuinely refuse — but it
+  # is never reported as `ok`.
+  if [ ! -x "$root" ] || [ ! -r "$root" ]; then
+    UNREADABLE+=("$root")
     continue
   fi
   PRESENT+=("$root")
@@ -131,6 +176,28 @@ for root in "${SCAN[@]}"; do
   while IFS= read -r hit; do
     [ -n "$hit" ] && FOUND+=("${hit#./}")
   done < <(find "$parent" -maxdepth 1 -name "$base.*" \( "${expr_args[@]}" \) 2>/dev/null | sort)
+done
+
+# The node config roots, scanned narrowly for the reason given where they are
+# declared: backup-shaped AND config-shaped, depth 2, `-L` because
+# `/data/chains/litecoin` is a symlink onto the second disk and a scan without it
+# misses every litecoind backup — six of the fifteen found on 2026-08-12.
+for root in ${NODE_ROOTS[@]+"${NODE_ROOTS[@]}"}; do
+  if [ ! -d "$root" ]; then
+    ABSENT+=("$root")
+    continue
+  fi
+  if [ ! -x "$root" ] || [ ! -r "$root" ]; then
+    UNREADABLE+=("$root")
+    continue
+  fi
+  PRESENT+=("$root")
+
+  while IFS= read -r hit; do
+    [ -z "$hit" ] && continue
+    case "$hit" in *.conf*) FOUND+=("$hit") ;; esac
+  done < <(find -L "$root" -maxdepth 2 \( -type f -o -type l \) \
+                \( "${expr_args[@]}" \) 2>/dev/null | sort)
 done
 
 if [ ${#FOUND[@]} -gt 0 ]; then
@@ -181,4 +248,8 @@ printf 'ok: no backup-shaped file beside a live secrets file — %d name pattern
   "${#PATTERNS[@]}" "$scanned"
 if [ ${#ABSENT[@]} -gt 0 ]; then
   printf '    not present on this host, so not scanned: %s\n' "$(join "${ABSENT[@]}")"
+fi
+if [ ${#UNREADABLE[@]} -gt 0 ]; then
+  printf '    PRESENT AND NOT TRAVERSABLE, so NOT scanned: %s\n' "$(join "${UNREADABLE[@]}")" >&2
+  echo   '    The ok line above does not cover these. Re-run where you can read them.' >&2
 fi
