@@ -17,7 +17,12 @@ that state say something.
 The ledger's stated RPO is zero. Read this alert as "the RPO is currently
 unbounded", because that is what it measures.
 
-## The measured state, 2026-08-10
+## The first time: the measured state, 2026-08-09 ~23:55Z
+
+Both of this runbook's occurrences carry the date 2026-08-10 and they are hours
+apart, so the times matter. This one is the day it was written, before any
+backup had ever succeeded anywhere. The first successful set finished at
+2026-08-10T00:17:30Z, twenty-two minutes after the commit.
 
 Against the mainnet Prometheus and the deploy host, not assumed:
 
@@ -32,14 +37,51 @@ So on the day this runbook was written the answer to every question below was
 "the runner has never been started". If that is still true, skip to *Starting the
 runner*.
 
+## The second time: 2026-08-10T10:36Z to 2026-08-12T02:50Z (micro-org#434)
+
+The rule fired again at **2026-08-10T10:36:21Z**, fourteen minutes after the app
+stack was cut over from the chain host to the Windows/WSL host, and went on
+firing correctly for **43 hours**. Nothing in the alerting plane was broken. The
+estate had no backup and the only thing saying so was this ticket, unread.
+
+Read that as the honest lesson: every fix below works, and none of them helps if
+the alert is the only thing that knows. `scripts/estate-verify.sh` now asserts
+the runner is up, scraped, fresh and verified, at the end of every deploy — the
+one moment somebody is definitely looking. It is the same fact, said where it
+gets read.
+
+What actually happened is state 1 below, arrived at a new way: the runner was
+**deployed and working** on the old host, and the migration moved everything a
+deploy renders. `compose/docker-compose.backup.yml` is named by no release
+manifest and composed by no script, so it was the one container left behind. Its
+destination and miner-keys paths were compose defaults pointing at the OLD host,
+which is why they are now required variables in `compose/mainnet.env` and
+`compose/testnet.env` with no defaults at all.
+
+Two things that closing it did not fix, both worth knowing before you trust the
+green:
+
+- **The six historical sets stayed behind on the chain host** and were relayed
+  across afterwards. All eight sets now in `/home/savvaniss/cloudsforge-backups`
+  were re-checked artefact by artefact against their own `MANIFEST.json`
+  checksums on 2026-08-12 — 264 of 264 matching, zero failures — so the copy is
+  proven and not assumed. If you move hosts again, move this directory *before*
+  you conclude the migration is done.
+- **The backups now share a machine with the data they protect.** The old layout
+  had them on a different physical machine for free; this one does not. That is
+  knowingly temporary and it is micro-org#338 item 6. Until it is closed, read
+  `backup_last_success_unixtime` as protection against deletion and corruption,
+  and not against losing the host.
+
 ## Establish which of the three states you are in first
 
 They have nothing in common except the empty vector, and two of them are not
 about backups at all.
 
 1. **No runner.** `docker ps -a --filter name=backup-runner` is empty. The
-   container has never existed, or it existed and was removed. This is a deploy
-   gap, not a failure.
+   container has never existed, or it existed and was removed — or, as in
+   micro-org#434, the estate moved host and this one overlay did not come with
+   it. This is a deploy gap, not a failure.
 
 2. **A runner nobody scrapes.** The container is up and
    `up{job="backup-runner"} == 0`. Check that first — from inside the Prometheus
@@ -75,7 +117,7 @@ docker compose -p cloudsforge-estate \
   --env-file compose/mainnet.env --env-file compose/estate/tokens.env \
   -f compose/docker-compose.estate.yml \
   -f compose/docker-compose.backup.yml \
-  up -d backup-runner
+  up -d --no-deps backup-runner
 ```
 
 Both `--env-file` flags, always. `--env-file` REPLACES the default rather than
@@ -84,9 +126,28 @@ every service credential or the estate's public hostnames, and both fail
 silently. And never omit the trailing service name — a bare `up -d` against these
 files re-creates the whole estate.
 
-`CF_BACKUP_ENVIRONMENT` has no default and the overlay refuses to interpolate
-without it. That is deliberate: it is one half of the cross-environment restore
-refusal and must never be guessed.
+`--no-deps` for a related reason. The overlay declares `depends_on: postgres`,
+and without the flag compose reconciles the RUNNING postgres against what this
+checkout says — which is not what the estate deployed, because
+`release-deploy.sh` renders a pinned overlay that is not on this command line.
+The flag is the difference between starting one container and recreating the
+estate's database.
+
+Three variables have **no default** and the overlay refuses to interpolate
+without them. That is deliberate in each case, and two of the three are
+micro-org#434:
+
+- `CF_BACKUP_ENVIRONMENT` — one half of the cross-environment restore refusal.
+- `CF_BACKUP_DESTINATION` — where the sets are written. It defaulted to
+  `/home/malf/cloudsforge-backups`, a path on the CHAIN host, and stayed correct
+  only until the estate stopped running there.
+- `CF_MINER_KEYS` — same story, sharper edge: the two hosts do not hold the same
+  miner-key files, so a default that silently resolved to an absent one would
+  read as "backed up" to anybody who did not go looking.
+
+A default is a guess about which host this is, and this container writes the
+estate's only recovery point. All three answers live in `compose/mainnet.env`
+and `compose/testnet.env`, tracked, where a host migration has to walk past them.
 
 ### The three ways it will refuse to start, all of them correct
 
@@ -98,11 +159,18 @@ from, so read a refusal as the design working.
   keyring available; the vault and the keyring on one medium is a plaintext key
   store with extra steps.
 - **An implausible destination.** It writes a canary and checks the filesystem
-  size. Docker here is the canonical snap and cannot see `/data` at all, so a
-  bind of a path it cannot see silently becomes an ephemeral directory in which
-  every write succeeds and nothing survives the container. The destination is
-  `/home/malf/cloudsforge-backups` — the same bytes, reached through a path the
-  daemon can see.
+  size, because a bind of a path the daemon cannot see does not fail — the
+  container gets an empty directory in its own ephemeral layer, every write
+  "succeeds", pg_dump exits 0, the checksums are correct and `backup_runs` says
+  `succeeded`. Nothing in the runner would notice; the canary is what does.
+
+  The mechanism worth knowing is snap confinement, and it is **not** the current
+  host's: the OLD estate host ran the canonical snap docker, whose confinement
+  grants `docker:home` but not `removable-media`, so binds outside `$HOME` were
+  swallowed. That is why the destination was under `/home/...` there and is under
+  `/home/savvaniss/...` here. Keep it inside the deploy user's home on any snap
+  host; on this one (Docker Desktop 29.1.2) the constraint does not apply and the
+  canary is still the check.
 - **A `pg_dump` that does not match the server.** A version-skewed client does
   not produce worse backups; it produces files that look like backups and cannot
   be restored.

@@ -2,9 +2,27 @@
 # THE BACKUP RUNNER — the DATA PLANE of estate backup and restore.
 #
 #   mainnet   docker compose -p cloudsforge-estate \
+#               --env-file compose/mainnet.env --env-file compose/estate/tokens.env \
 #               -f compose/docker-compose.estate.yml \
-#               -f compose/docker-compose.backup.yml up -d backup-runner
-#   testnet   docker compose -p cf-testnet ... (same, with the testnet env file)
+#               -f compose/docker-compose.backup.yml up -d --no-deps backup-runner
+#   testnet   docker compose -p cf-testnet ... (same, with the testnet env files)
+#
+# BOTH `--env-file` FLAGS, ALWAYS. `--env-file` replaces the default rather than adding to it
+# (micro-org#158), and since micro-org#434 three of this file's variables have no default at all —
+# a bare invocation now REFUSES rather than mounting the wrong machine's directories.
+#
+# `--no-deps` because `depends_on: postgres` would otherwise let compose reconcile a running
+# postgres against whatever this checkout says, and this checkout is not what the estate deployed:
+# `release-deploy.sh` renders a pinned overlay that is not on this command line.
+#
+# ── NO DEPLOY PATH RENDERS THIS FILE, WHICH IS HOW IT WENT MISSING FOR 43 HOURS ────────────────
+#
+# It is named by no release manifest and `release-deploy.sh` never composes it, so a deploy neither
+# starts nor stops it. The 2026-08-10 host migration moved everything a deploy renders and silently
+# dropped this. `BackupNeverRun` fired fourteen minutes later and was correct for two days
+# (micro-org#434). `estate-verify.sh` now ends with a section that asserts this container exists in
+# the project, answers /metrics, has a success inside the 36h page threshold and has had a set
+# restored — so the next deploy says it out loud instead of leaving it to a ticket queue.
 #
 # It leases `backup.*` jobs out of admin_api's `jobs` table. admin-api owns the catalogue, the
 # authority to start a run and the approval a live restore needs; this owns the bytes and nothing
@@ -74,25 +92,34 @@ services:
 
     volumes:
       # ══════════════════════════════════════════════════════════════════════════════════════
-      # **THE DESTINATION IS /home/malf/cloudsforge-backups, NOT /data/cloudsforge-backups.**
+      # **THE DESTINATION HAS NO DEFAULT, AND THAT IS THE WHOLE OF micro-org#434.**
       #
-      # The bytes are the same bytes: /home/malf/cloudsforge-backups is a bind mount of
-      # /data/cloudsforge-backups, made permanent in /etc/fstab with `nofail`, and `findmnt` shows
-      # `/dev/sdb1[/cloudsforge-backups]` with the full 1.4 TB behind it.
+      # It defaulted to `/home/malf/cloudsforge-backups` — a path on the CHAIN host — from the day
+      # this file was written until 2026-08-12. That was correct while the estate ran there. After
+      # the 2026-08-10 cutover it was a default naming a machine that no longer runs anything this
+      # container backs up, and nothing anywhere said so: the runner drained with the migration, was
+      # never brought up beside the data, and the estate went 43 hours with no backup.
       #
-      # The reason for the indirection is that Docker here is the CANONICAL SNAP (29.3.1, rev 3505).
-      # Snap confinement grants `docker:home` but not `removable-media`, so the daemon cannot see
-      # /data at all — and a bind of a path it cannot see does not fail. The container gets an empty
-      # directory in its own ephemeral layer, every write "succeeds", and the artefacts are
-      # destroyed with the container. Verified on the host 2026-08-05: a canary written through a
-      # /data bind was absent afterwards; the same write through /home/malf was present.
+      # A default is a guess about which host this is. This container writes the estate's only
+      # recovery point and reads a key vault; it should not guess. So the variable is REQUIRED, and
+      # `compose/mainnet.env` and `compose/testnet.env` carry the answer for this host in a tracked
+      # file where a host migration has to walk past it.
+      #
+      # THE OTHER FAILURE MODE IS STILL LIVE AND STILL WORSE, so keep reading it. On the old host
+      # docker was the CANONICAL SNAP (29.3.1, rev 3505), whose confinement grants `docker:home` but
+      # not `removable-media` — so the daemon could not see /data at all, and a bind of a path it
+      # cannot see does not fail. The container gets an empty directory in its own ephemeral layer,
+      # every write "succeeds", and the artefacts are destroyed with the container. Verified on that
+      # host 2026-08-05: a canary written through a /data bind was absent afterwards; the same write
+      # through /home/malf was present.
       #
       # Nothing in the runner would notice: pg_dump exits 0, the checksums are correct, the manifest
       # is written and backup_runs says `succeeded`. That is why src/disk.ts writes a canary and
-      # checks the filesystem size at boot and REFUSES to run if the destination is implausible. If
-      # this line is ever edited back to /data, the container will not start.
+      # checks the filesystem size at boot and REFUSES to run if the destination is implausible.
+      # That check is what stands between this variable and a destination that swallows writes,
+      # which is the reason a wrong value here is caught and a wrong value is still not fine.
       # ══════════════════════════════════════════════════════════════════════════════════════
-      - ${CF_BACKUP_DESTINATION:-/home/malf/cloudsforge-backups}:/backups
+      - ${CF_BACKUP_DESTINATION:?set it in the environment's env file; it has no default because a default is a guess about which host this is, and micro-org#434 is what that guess cost}:/backups
 
       # READ-ONLY, all four sources. This process copies; it has no business writing to any of them,
       # and a `:ro` mount is the difference between a bug that fails and a bug that eats the vault.
@@ -103,7 +130,15 @@ services:
       # The miner coinbase keys: 240-byte plaintext private keys, mode 0600, holding real mined
       # coin at 0x980d…5b45 on mainnet. They are read, encrypted to BACKUP_AGE_RECIPIENT, and only
       # the ciphertext is written. If no recipient is configured they are not read at all.
-      - ${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}:/miner-keys:ro
+      #
+      # REQUIRED for the same reason as the destination, and with a sharper edge: this default also
+      # named the chain host, and the two hosts do not hold the same files. `src/env.ts` takes
+      # `<dir>/<env>/coinbase-key.json` — the PLAINTEXT key — and the app host's miner-keys
+      # directory holds only the sealed `coinbase-keystore.json`, because micro-org#206 sealed it
+      # there and never created a plaintext copy. So on this host the backup path and the sealing
+      # path point at different files, and a default that quietly resolved to an absent one would
+      # read as "backed up" to anybody who did not go looking. It is recorded in micro-org#434.
+      - ${CF_MINER_KEYS:?set it in the environment's env file; the two hosts do not hold the same miner-key files and a default cannot tell which host this is}:/miner-keys:ro
 
     # ── NO DOCKER SOCKET, AND THAT IS A DESIGN DECISION RATHER THAN AN OMISSION.
     #
@@ -147,11 +182,16 @@ services:
     # way.
     #
     # ══════════════════════════════════════════════════════════════════════════════════════════
-    # **THE ESTATE HOST CANNOT HONOUR IT, AND `mainnet.env` TURNS IT OFF (micro-org#329).**
+    # **THE OPT-OUT IS NO LONGER TAKEN. THE OLD HOST COULD NOT HONOUR IT (micro-org#329).**
     #
-    # Docker here is the canonical SNAP, 29.3.1 rev 3505. On that build `no-new-privileges` makes
-    # the container fail to exec ANYTHING. Measured on the host 2026-08-10, with no compose file
-    # involved at all:
+    # `mainnet.env` and `testnet.env` set `no-new-privileges:false` from 2026-08-10 to 2026-08-12
+    # and no longer do. The estate now runs on Docker Desktop 29.1.2, where the same one-line probe
+    # below prints `ok` — measured 2026-08-12 — so the hardened default applies again.
+    #
+    # The measurement is kept because the mechanism is not obvious and the next snap host will hit
+    # it. Docker on the OLD estate host was the canonical SNAP, 29.3.1 rev 3505. On that build
+    # `no-new-privileges` makes the container fail to exec ANYTHING. Measured 2026-08-10, with no
+    # compose file involved at all:
     #
     #   docker run --rm --security-opt no-new-privileges:true node:22-slim node -e 1
     #     -> exec /usr/local/bin/docker-entrypoint.sh: operation not permitted
