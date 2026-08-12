@@ -131,7 +131,11 @@ if [ ${#FOUND[@]} -gt 0 ]; then
   printf '         shred -u %s\n' "${FOUND[@]}" >&2
   echo "" >&2
   echo "       A scratch copy of the deploy tree is a reasonable thing to want." >&2
-  echo "       Carrying a live tokens.env into it is not. micro-org#430." >&2
+  echo "       Carrying a live tokens.env into it is not: a scratch tree is a" >&2
+  echo "       CLONE, not a cp -r, and a clone cannot carry a credential because" >&2
+  echo "       none of them is tracked. README.md, 'A second copy of this tree'," >&2
+  echo "       has the rule and what to do when you genuinely need a filled one." >&2
+  echo "       micro-org#430." >&2
   exit 1
 fi
 
