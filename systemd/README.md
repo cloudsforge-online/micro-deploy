@@ -1,4 +1,23 @@
-# The chain host's daemons, and what happens when it reboots
+# The units, on both hosts
+
+This directory holds systemd units for **two different machines**, and which
+installer you run is which machine you are on:
+
+| Installer | Host | What it installs | Starts anything? |
+| --- | --- | --- | --- |
+| `install-chain-units.sh` | chain, 192.168.1.42 | `bitcoind`, `litecoind`, `dogecoind` | **no** — enable only |
+| `install-app-units.sh` | app, inside WSL | `conformance-replay` service + timer | yes, the timer |
+
+The asymmetry is deliberate and is explained where each is described: the chain
+units supervise 1.25 TB of live chain state and starting one is an announced
+event; the app timer schedules a read-only comparison and leaving it unstarted
+would reproduce the bug it was written to fix.
+
+The chain host's half comes first because it is the older and the larger of the
+two. The app host's is at the bottom, under
+[The app host](#the-app-host-a-schedule-rather-than-supervision).
+
+## The chain host's daemons, and what happens when it reboots
 
 `bitcoind`, `litecoind` and `dogecoind` on **192.168.1.42** are not containers
 and never were. Until 2026-08-12 they were also not supervised by anything: three
@@ -24,7 +43,7 @@ which copies the units to `/etc/systemd/system`, the wait helper to
 verifies each copy with `cmp`, runs `systemd-analyze verify`, and **enables
 without starting**.
 
-## Decision 1: `Type=simple`, so no `-daemon`
+### Decision 1: `Type=simple`, so no `-daemon`
 
 Every one of these daemons has been started with `-daemon` since the day it was
 installed, and the units drop it. Three things follow, and each is a reason:
@@ -51,7 +70,7 @@ regardless of the flag, which is the only output anybody wants from these units.
 SIGKILLed part-way through comes back wanting a reindex — hours on a `txindex=1`
 chain, during which every alert this file exists to prevent is firing.
 
-## Decision 2: enabled, not started
+### Decision 2: enabled, not started
 
 The installer never starts, stops or restarts a daemon, and `systemctl is-active`
 saying `inactive` beside a running node is the expected state after it runs.
@@ -83,7 +102,7 @@ would cross 90s, be SIGKILLed, and come back wanting a reindex — the default i
 close enough to the real number to be dangerous, which is worse than being
 obviously wrong.
 
-### Do not `systemctl start` bitcoind or litecoind today
+#### Do not `systemctl start` bitcoind or litecoind today
 
 Until one of them has been taken over, `systemctl start litecoind` does not
 adopt the running node — it starts a **second** one, which finds the datadir
@@ -106,7 +125,7 @@ after ten failures inside an hour `StartLimitBurst` gives up and leaves the unit
 node is untouched throughout, which is the confusing part: the unit is red and
 the chain is fine. Stop the hand-started process first.
 
-### Taking a live daemon over without a reboot
+#### Taking a live daemon over without a reboot
 
 When you do want to, one at a time, announced:
 
@@ -129,7 +148,7 @@ Then confirm the node is answering before you move to the next one — the CLI
 first, then a caller. `runbook-chain-node-unreachable.md` has the HTTP probe and
 the reason the CLI answering is not sufficient.
 
-## The reboot hazard these units expose rather than create
+### The reboot hazard these units expose rather than create
 
 All three confs bind RPC on addresses this machine does not own at boot:
 
@@ -163,7 +182,7 @@ over a docker bridge any more, only over `wg0` from `10.10.0.2` — and it is no
 done here because it needs a restart of each live daemon to take effect. Do it
 during the next announced restart, in the same window as the takeover above.
 
-## What these units do not do
+### What these units do not do
 
 - **They do not monitor.** A node that starts and then wedges is
   `ChainNodeTemplateStale`, and `Restart=on-failure` will not fire for it because
@@ -177,3 +196,86 @@ during the next announced restart, in the same window as the takeover above.
   owner, not an unattended agent. Until one happens, what is proven is: all three
   units parse (`systemd-analyze verify`), all three are enabled, and one of them
   has genuinely started and stopped its daemon.
+
+---
+
+## The app host: a schedule rather than supervision
+
+`conformance-replay.service` and `conformance-replay.timer` run inside the WSL
+distro on the app host. They supervise nothing. They exist because a mechanism
+that was complete and correct was never invoked by anything, which is a
+different failure from a process that died.
+
+micro-org#439: the conformance corpus, the comparator, the publisher, beacon's
+`POST /v1/conformance` and the per-suite release gate were all built by
+2026-08-04 and `conformance_runs` was empty, because no caller existed anywhere
+— not in `micro-conformance`, not in a CI workflow, not in a deploy script.
+`HearthConformanceVectorsFailing` was green for its whole life by never having
+been asked a question, and the gate the release policy names had no input.
+
+Install and start:
+
+```sh
+sudo bash ~/dev/cloudsforge/deploy/systemd/install-app-units.sh
+```
+
+### Why this runs on the host and not in CI
+
+`scripts/conformance-replay.sh` needs the estate's `tokens.env` — the harness
+resolves recorded secret literals against it so that a corpus cannot come to
+contain one — the internal CA for `NODE_EXTRA_CA_CERTS`, and a route onto
+`cloudsforge-estate_default` to reach beacon by its compose alias. Giving a
+public runner the estate's secret file so it can replay a corpus is a far worse
+trade than running the replay on the machine the estate is already on.
+`micro-conformance/.github/workflows/ci.yml` runs the pure half — typecheck and
+the comparator's own tests — and says so in its header.
+
+### What it does and does not measure
+
+It compares `corpus-micro/` against the `micro` base — **mainnet only**. There
+is one corpus and it was recorded against mainnet; chain id is contract rather
+than gauge in it (`0x1cf3` mainnet, `0x1cf4` testnet), so pointing this at
+testnet would report a breaking difference that means nothing beyond "wrong
+estate". Testnet needs its own recorded corpus first.
+
+One run is posted **per scenario**, which is the grain the gate reads. Beacon
+derives `pass`/`fail`/`skip` from the counts itself and two CHECK constraints
+refuse a `pass` with zero comparisons or alongside a breaking difference, so
+neither this script nor a hand replay can produce a green row without having
+actually compared something.
+
+### When it fails
+
+`compare` exits non-zero **only** on a breaking difference — a benign one is a
+difference the normaliser expected — and the script passes that status through
+unaltered rather than swallowing it. So a failed unit means the estate diverged
+from the corpus, and `runbook-conformance-corpus-never-replayed.md` is the wrong
+runbook for that: it covers the absence of the check, not a difference the check
+found. Read the journal, which has the per-suite verdict:
+
+```sh
+systemctl status conformance-replay.service --no-pager
+journalctl -u conformance-replay -n 60 --no-pager
+```
+
+To run one now without waiting for 04:30, or to compare without publishing:
+
+```sh
+sudo systemctl start conformance-replay.service
+~/dev/cloudsforge/deploy/scripts/conformance-replay.sh --no-publish
+```
+
+### The account it signs in as
+
+Five of the eight suites sign in, and without an account they skip — recorded as
+a skip, never as a pass. The script takes `CONFORMANCE_ACCOUNT` from
+`tokens.env` if it is set there, and otherwise borrows the last of beacon's
+provisioned journey accounts. The borrow is temporary and is recorded as a
+follow-up on micro-org#439: the harness should have an account of its own, so
+that pruning beacon's pool cannot silently turn five suites into skips. Because
+the fallback reads `tokens.env` first, giving it one is a one-line change to a
+secret file and no change to this script.
+
+The password is exported into the environment and passed to the container by
+name (`docker run -e CONFORMANCE_ACCOUNT`). It never appears in `argv`, where
+`ps` would show it to every user on the host and the journal would keep it.

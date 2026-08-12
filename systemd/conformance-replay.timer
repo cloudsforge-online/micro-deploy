@@ -1,0 +1,33 @@
+[Unit]
+Description=Replay the conformance corpus daily (cloudsforge app host)
+Documentation=https://github.com/cloudsforge-online/micro-org/issues/439
+
+[Timer]
+# ── DAILY, BECAUSE THE QUESTION THE GATE ASKS IS PER-RELEASE ──────────────────────────────────
+#
+# The release policy names the conformance gate, so the question an operator actually has is "has
+# the corpus been replayed since the last release". This estate cuts a release most days. A weekly
+# replay would answer that question wrongly most of the time while looking like a schedule, and an
+# hourly one would spend eight authenticated sign-ins an hour to re-measure something that only
+# changes when a deploy lands. Daily is the cadence the release train already runs at.
+#
+# 04:30 with half an hour of jitter: after the backup runner's window and long before anybody
+# deploys, so a replay is never comparing an estate that is halfway through a rollout.
+OnCalendar=*-*-* 04:30:00
+RandomizedDelaySec=30m
+
+# ── Persistent, AND IT IS NOT OPTIONAL ON THIS HOST ───────────────────────────────────────────
+#
+# The app host is a Windows machine running the estate inside WSL, and WSL is not always up: the
+# distro is shut down with the machine and started when somebody logs in. Without `Persistent=`
+# every replay scheduled while it was down is simply skipped, and the schedule would be silently
+# thinner than it reads — which is a subtler version of the bug this whole unit exists to fix.
+# With it, the first boot after a missed window runs the replay.
+Persistent=true
+
+# The estate needs to be up to be compared against, and at boot it is not yet. Docker starting its
+# 46 containers takes longer than this timer does to fire.
+OnBootSec=15m
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,66 @@
+[Unit]
+# Replay the conformance corpus against the running estate. micro-org#439.
+#
+# This is the caller that did not exist. The corpus, the comparator, the publisher, beacon's
+# `POST /v1/conformance` and the per-suite release gate were all built and complete on 2026-08-04;
+# `conformance_runs` was empty because nothing anywhere invoked them, which is why the gate that
+# blocks a Hearth release was green for its entire life without ever comparing anything.
+#
+# Oneshot and NOT a daemon. A replay is a batch that takes about a minute and then has an answer;
+# a long-running container that sleeps between runs would have to reimplement `Persistent=` and
+# would report itself healthy while doing nothing, which is the exact failure this is fixing.
+#
+# See systemd/README.md for what installs it, and runbook-conformance-corpus-never-replayed.md for
+# what to do when it fails.
+Description=Replay the conformance corpus against the estate (cloudsforge app host)
+Documentation=https://github.com/cloudsforge-online/micro-org/issues/439
+Documentation=file:///etc/cloudsforge/README.systemd.md
+
+# The estate has to be up to be compared against, and the harness reaches it both publicly (over
+# the apex, through the gateway) and internally (beacon by its compose alias on the estate
+# network). Ordering after docker is necessary and not sufficient — a docker that has just started
+# has not necessarily finished recreating its networks — so a failed run right after a boot is
+# expected and is why `Restart=on-failure` is set with a gap long enough to matter.
+After=network-online.target docker.service
+Wants=network-online.target
+
+# In [Unit] and not [Service], which is where systemd has wanted these since v229 and where the
+# chain units put them. `Restart=on-failure` is legal for a oneshot; `always` and `on-success` are
+# not, and neither would be right here — a replay that succeeded is finished.
+StartLimitIntervalSec=3600
+StartLimitBurst=3
+
+[Service]
+Type=oneshot
+User=savvaniss
+Group=savvaniss
+
+# `%h` and not a literal /home/savvaniss: the unit is installed for a named user above and should
+# not also hard-code where that user lives.
+WorkingDirectory=%h/dev/cloudsforge/deploy
+ExecStart=%h/dev/cloudsforge/deploy/scripts/conformance-replay.sh
+
+# A minute of comparison, plus a `pnpm install` on a cold store and an image pull on a host that
+# has never run it. Ten minutes is generous for all three; a replay that has not finished in ten
+# is wedged, and a wedged batch job that never times out is a schedule that quietly stops.
+TimeoutStartSec=600
+
+# Twice, and then leave it failed where `systemctl --failed` can see it. This is a MEASUREMENT,
+# and a measurement that retries forever against a real breaking difference turns a ticket into a
+# loop. Two attempts covers the transient half — a gateway mid-reload, a service restarting under
+# a deploy — and nothing else.
+Restart=on-failure
+RestartSec=300
+
+SyslogIdentifier=conformance-replay
+
+# ── NO ProtectHome ─────────────────────────────────────────────────────────────────────────────
+# This reads the estate's `tokens.env` and the beacon journey accounts file, both under this
+# user's home. `ProtectHome=` of any value hides them and the run fails with a missing-file error
+# that reads like a broken checkout.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
