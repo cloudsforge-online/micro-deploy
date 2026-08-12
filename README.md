@@ -766,6 +766,52 @@ process table.
 to the Beacon incident receiver — a degradation you can see (no acknowledgement,
 no escalation) rather than a failure that stops the plane from starting.
 
+### A second copy of this tree carries no credentials
+
+Wanting a scratch copy of this tree is reasonable. Validating a gateway change
+against a config you are free to break, reproducing a deploy failure without
+touching the checkout that deploys, keeping a known-good tree beside a suspect
+one — all of it is ordinary. **Copying the credential files into it is not, and
+`cp -r` does exactly that.**
+
+`/home/malf/gwvalidate/` was that copy, taken on 2026-08-05 to validate a gateway
+change. No `.git`, so nothing would ever reconcile it. Nothing referenced it — no
+process, no cron entry, no mount. It carried `compose/estate/tokens.env`, ten
+`compose/env/*.env`, both Alertmanager webhook files and a `beacon_token`, and it
+sat there for a week on a network-reachable host.
+
+It held nothing live by the time it was found, and that was luck rather than
+design: postgres, the custody keyring, the administrator password and bitcoind's
+`rpcauth` had all rotated in the intervening week for unrelated reasons. Before
+the first of those it was a second live copy of every service token and the
+operator password (micro-org#430).
+
+**The rule: a scratch tree is a clone, not a copy.**
+
+```sh
+git clone https://github.com/cloudsforge-online/micro-deploy /home/you/scratch
+```
+
+A clone cannot carry a credential, because none of them is tracked — that is the
+whole point of the section above. Everything a scratch tree is usually wanted for
+works without them:
+
+| you want to | you do not need secrets, because |
+| --- | --- |
+| validate a gateway or compose change | `docker compose config` renders with `${VAR}` unset; the check targets in the `Makefile` all run against an unfilled tree |
+| diff a suspect tree against a known-good one | `git diff` against a tag or a remote branch reads the tracked files, which is where changes live |
+| reproduce a deploy failure | `release-deploy.sh` reads its env from `ESTATE_ENV`/`TOKENS_FILE`, so point them at the live paths rather than copying the files inward |
+
+If you genuinely need a filled tree — the case is rarer than it feels — it is a
+**second live copy of the estate's credentials** and it has to be treated as one:
+made deliberately, `chmod 700`, and destroyed with `shred -u` the moment the task
+that needed it is finished, not the next time somebody notices it.
+
+`make check-stray-secrets` is what notices. It looks for the thirteen names the
+live credential set uses anywhere outside this tree, reads nothing, and prints
+paths only, so it is safe to run anywhere and safe in a public log. It is in
+`make check` and it is in CI, and it runs on both hosts as part of a rotation.
+
 ### Beacon costs one thing more than AD-20 predicted
 
 AD-20: *"Beacon emits Prometheus format explicitly so that adopting a scraper
