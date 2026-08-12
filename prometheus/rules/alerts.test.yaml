@@ -1010,3 +1010,52 @@ tests:
       - eval_time: 30h
         alertname: ConformanceCorpusStale
         exp_alerts: []
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # EmberDifficultySustainedFarAboveFloor — micro-org#451 Phase 0.
+  #
+  # A single browser tab held mainnet difficulty at ~14,000 (55x the floor) on
+  # 2026-08-12 — below this rule's 100x line, deliberately: a lone laptop tab
+  # is the case the rule must NOT ticket. The firing case below is 128x, the
+  # signature of GPU-class hashrate that does not go home in the evening.
+  #
+  # Three moments assert the shape of `for: 6h`: quiet at 3h however high the
+  # value, quiet at 6h when the level is high-but-human (55x), firing at 6h30m
+  # when 128x has stood the whole window. The 55x series is the measured tab
+  # from the audit, used as the negative control on the VALUE axis exactly as
+  # 3h is the negative control on the TIME axis.
+  - interval: 5m
+    input_series:
+      # 128x the floor (difficulty 32,768), flat for the whole window.
+      - series: 'indexer_chain_difficulty{chain="ember", network="mainnet", instance="indexer:4000", job="cf-services"}'
+        values: "32768+0x100"
+      # The measured 2026-08-12 tab: 55x (difficulty 14080), flat — never fires.
+      - series: 'indexer_chain_difficulty{chain="ember", network="testnet", instance="cf-testnet-indexer-1:4000", job="cf-indexer-testnet"}'
+        values: "14080+0x100"
+    alert_rule_test:
+      - eval_time: 3h
+        alertname: EmberDifficultySustainedFarAboveFloor
+        exp_alerts: []
+      - eval_time: 6h30m
+        alertname: EmberDifficultySustainedFarAboveFloor
+        exp_alerts:
+          - exp_labels:
+              chain: ember
+              network: mainnet
+              instance: indexer:4000
+              job: cf-services
+              severity: ticket
+              team: chain
+              service: indexer
+              sev: "4"
+            exp_annotations:
+              summary: "EMBER mainnet difficulty has been over 100x the floor for six hours"
+              description: >-
+                A miner far larger than the browsers has been setting EMBER's
+                difficulty for six hours. The chain is healthy — the emergency rule
+                bounds the worst block at about two minutes — but browser miners
+                cannot win blocks at this level, which is the condition the
+                micro-org#451 plan gates its later phases on. Nothing is broken and
+                nothing needs restarting; the runbook says what decision is due and
+                where the plan lives.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-sustained.md

@@ -1,0 +1,60 @@
+# Mining observability — micro-org#451 Phase 0.
+#
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# WHY THESE SERIES EXIST, AND WHAT THEY ARM
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+#
+# The #451 audit ended with a phased plan whose later phases are GATED ON MEASUREMENT: the
+# operational resizing of the server miners (Phase 1) reads the observed network hashrate, and the
+# only consensus change with a real case — a hardware-resistant PoW — has a trigger written in
+# terms of one miner's sustained share. None of those numbers existed as a series. They were
+# computed by hand, over SSH, with a node one-liner against the RPC, every time somebody asked —
+# which is how the 2026-08-10 wedge went unmeasured until it was 19 minutes old.
+#
+# Everything here derives from two series the indexer already exports for both estates:
+# `indexer_chain_difficulty` and `indexer_tip_height`. Nothing new is scraped.
+#
+# What Phase 0 wants and CANNOT get from these two series — the eased-block counter (a block whose
+# header committed the floor target under the hearth#13 rule) and the per-coinbase block share —
+# needs the indexer to say something per-block, and is filed as the indexer half of #451 rather
+# than half-built here from what happens to be lying around.
+#
+# `chain="ember"` on every expression: the indexer exports the same names for btc and ltc, where
+# "difficulty x block rate" is a number with a different meaning and nobody reading an EMBER
+# dashboard should be offered it by accident.
+#
+# THE ALERT THIS FILE FEEDS LIVES IN alerts.yaml, NOT HERE. scripts/check-runbooks.py reads
+# alerts.yaml by name, so an alert defined in this file would silently escape the estate's
+# every-alert-has-a-runbook invariant — found by running the checker against a draft that had the
+# alert here, and watching it keep saying "34 alerts".
+
+groups:
+  - name: cf.record.mining
+    interval: 30s
+    rules:
+      # Blocks per second, over an hour. An hour rather than something snappier because the tip
+      # advances ~4/min at target: a 5m window holds ~20 samples and the estimate whipsaws, and
+      # every consumer below is asking a question about SUSTAINED state.
+      - record: cf:ember:block_rate_1h
+        expr: rate(indexer_tip_height{chain="ember"}[1h])
+
+      # ── THE NETWORK HASHRATE ESTIMATE, AND ITS ONE HONEST CAVEAT ──────────────────────────────
+      #
+      # hashrate ≈ difficulty × block rate. Difficulty here is the LWMA target the node reports
+      # (`nextTarget()` — deliberately NOT the emergency-eased value, see blockchain.js), so during
+      # a hashrate collapse this series lags high for the window's length. That is the right bias:
+      # the number is read to size the SERVER miners, and sizing against the pre-collapse figure is
+      # conservative in exactly the direction that keeps blocks coming.
+      #
+      # Sanity anchors, measured 2026-08-12: difficulty 256 at 1/15s ≈ 17 H/s (the floor figure the
+      # miners-apphost derivation was built on); difficulty 14,035 at 1/20.4s ≈ 688 H/s (one
+      # browser tab holding 97% of blocks).
+      - record: cf:ember:network_hashrate
+        expr: indexer_chain_difficulty{chain="ember"} * on (chain, network, instance) cf:ember:block_rate_1h
+
+      # How many multiples of the floor the chain is currently asking for. 1 = the floor itself.
+      # This is the axis every #451 trigger is written on, so it gets a name instead of every
+      # dashboard hand-copying "/ 256".
+      - record: cf:ember:difficulty_over_floor
+        expr: indexer_chain_difficulty{chain="ember"} / 256
+
