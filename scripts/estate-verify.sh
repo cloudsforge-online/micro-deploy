@@ -3848,5 +3848,74 @@ else
   esac
 fi
 
+echo
+echo "── the backup runner, which no deploy path renders ──────────────────────"
+#
+# ── WHY THIS IS HERE AND NOT LEFT TO PROMETHEUS (micro-org#434) ───────────────
+#
+# `BackupNeverRun` and `BackupAgeExceeded` already measure this, correctly, and
+# on 2026-08-10 one of them did: the alert fired fourteen minutes after the host
+# migration and went on firing, accurately, for 43 hours. Nothing was broken in
+# the alerting plane. The estate simply had no backup and the only thing saying
+# so was a SEV3 ticket in a queue nobody read that weekend.
+#
+# So this is not a second opinion about the metric. It is the same fact said at
+# the one moment somebody is definitely looking — the end of a deploy — because
+# the failure this catches is SPECIFIC TO DEPLOY: `backup-runner` is defined only
+# in `compose/docker-compose.backup.yml`, which is named by no release manifest
+# and composed by no script. `release-deploy.sh` neither starts it nor stops it,
+# so it is the one container in the estate that a migration can leave behind
+# while every green check above stays green.
+#
+# It is also why this section cannot use `docker compose -f "$COMPOSE" ps` like
+# the faucet check above: the overlay is not $COMPOSE and never will be. The
+# project LABEL is what the two files share, so that is what is asked.
+BACKUP_RUNNING=$(docker ps --filter "label=com.docker.compose.project=${CF_PROJECT:-cloudsforge-estate}" \
+  --filter "label=com.docker.compose.service=backup-runner" --format '{{.Names}}' 2>/dev/null | grep -c . || true)
+
+if [ "${BACKUP_RUNNING:-0}" -eq 0 ]; then
+  bad "NO backup-runner container in project ${CF_PROJECT:-cloudsforge-estate}. This estate has no recovery point and nothing on this host is writing one — every service above can be green while the RPO is unbounded, which is exactly the 43 hours micro-org#434 records. Start it with the command in compose/docker-compose.backup.yml's header (both --env-file flags, and --no-deps)"
+else
+  ok "a backup-runner container is running in project ${CF_PROJECT:-cloudsforge-estate}"
+
+  # 4147 on the host, 4130 in the container — see the ports block in the overlay
+  # for why they differ. Prometheus scrapes 4130 over the estate network and does
+  # not come through this publish; reading the same /metrics through the host
+  # mapping is deliberate, because a runner that is up and unreachable from the
+  # host is the state the overlay's own header calls "a runner nobody scrapes".
+  BACKUP_METRICS=$(curl -s --max-time 5 "http://127.0.0.1:${PB}147/metrics" 2>/dev/null)
+  backup_last=$(printf '%s\n' "$BACKUP_METRICS" | sed -n 's/^backup_last_success_unixtime \([0-9][0-9]*\).*/\1/p' | head -1)
+
+  if [ -z "$BACKUP_METRICS" ]; then
+    bad "the backup-runner container is up but http://127.0.0.1:${PB}147/metrics answered nothing — it is running and unscrapable, so BackupNeverRun will fire on a host that is in fact backing itself up and the ticket will send the next reader looking for the wrong thing"
+  elif [ -z "$backup_last" ]; then
+    # The runner publishes NO sample until a run has succeeded, on purpose: a zero
+    # would be a series claiming the last backup finished in 1970, which satisfies
+    # every staleness threshold and therefore reads as a backup that once happened.
+    bad "the backup-runner is up and scraped and publishes no backup_last_success_unixtime — no run has ever succeeded here. runbooks/runbook-backup-never-run.md, 'When runs are failing'; backup_runs.error carries the reason"
+  else
+    backup_age=$(( $(date +%s) - backup_last ))
+    # 129600s = 36h, the same threshold BackupAgeExceeded pages on. Matching it is
+    # the point: this must not be a stricter check that goes red on an estate the
+    # page considers healthy, and it must not be a looser one that lets a deploy
+    # bless a set the page is about to call stale.
+    if [ "$backup_age" -gt 129600 ]; then
+      bad "the last successful backup finished ${backup_age}s ago (>36h). BackupAgeExceeded is either firing now or about to; the schedule is enqueueing and failing, or backup_settings.schedule_enabled is false — which re-enqueues, skips, and is honest about it while still producing no backup"
+    else
+      ok "backup_last_success_unixtime is ${backup_age}s old, inside the 36h BackupAgeExceeded threshold"
+    fi
+
+    # A set nobody has restored is a hypothesis. `backup.verify` restores the
+    # newest set into a scratch database and stamps this; it is the only metric
+    # here that distinguishes a backup from a directory of large files.
+    backup_verified=$(printf '%s\n' "$BACKUP_METRICS" | sed -n 's/^backup_last_verified_unixtime \([0-9][0-9]*\).*/\1/p' | head -1)
+    if [ -z "$backup_verified" ]; then
+      bad "no backup_last_verified_unixtime — sets are being written and none has been restored, so nothing here has established that any of them can be. The gauge appears the first time a backup.verify job succeeds; it runs itself every 24h, so an absent one means the job is dead-lettered rather than merely young"
+    else
+      ok "a backup set has been restored into a scratch database and verified, $(( $(date +%s) - backup_verified ))s ago"
+    fi
+  fi
+fi
+
 [ "$fails" -eq 0 ] && { echo; echo "all seams verified"; exit 0; }
 echo; echo "$fails check(s) failed"; exit 1
