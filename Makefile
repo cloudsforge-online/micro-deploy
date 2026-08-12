@@ -17,7 +17,7 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
         check-alert-job-labels check-alertmanager \
         check-collector check-runbooks check-prometheus-targets check-compose-ports \
         check-token-resolution check-custody-backup-guard check-backup \
-        check-secret-backups \
+        check-secret-backups check-stray-secrets \
         prometheus-targets \
         dashboards estate clean
 
@@ -52,7 +52,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-secret-backups check-siblings check-release-deploy check-backup ## Run every check
+check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-secret-backups check-stray-secrets check-siblings check-release-deploy check-backup ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -217,6 +217,27 @@ check-secret-backups: ## No backup copy of a secrets file is lingering beside th
 	@# in a way `check-secrets` and `check-residue` are not. On a CI runner none of
 	@# the roots exists and it says so by name rather than reporting a bare `ok`.
 	@./scripts/check-no-secret-backups.sh
+
+check-stray-secrets: ## No file NAMED like a live secrets file outside the tree that owns it
+	@# The third question, and the one nothing here could answer until 2026-08-12.
+	@# `check-secret-backups` asks whether a backup-SHAPED name is sitting beside a
+	@# live secrets file. `check-residue` asks whether any file holds a value that
+	@# is live RIGHT NOW. Neither sees a whole second copy of the credential set
+	@# under its ORDINARY name in an unexpected directory, once its values are
+	@# stale — the first because the name is correct rather than backup-shaped, the
+	@# second because a superseded value is not a live one, deliberately.
+	@#
+	@# `/home/malf/gwvalidate/` was exactly that: the deploy tree copied on
+	@# 2026-08-05, no `.git`, nothing referencing it, carrying `tokens.env` and
+	@# fourteen other credential files. `check-residue` over it returned `ok`, and
+	@# that `ok` was luck — four unrelated rotations had retired every value in it
+	@# in the intervening week. For the days before the first of them it was a
+	@# second live copy of every service token and the operator password, and
+	@# nothing in this Makefile would have said a word (micro-org#430).
+	@#
+	@# In `check` for the same reason as the target above: it reads NOTHING. Names
+	@# only, so it is safe in a public log. ROOTS=<dirs> to widen it past $$HOME.
+	@ROOTS="$(or $(ROOTS),$(HOME))" ./scripts/check-no-stray-secret-files.sh
 
 check-residue: ## Does any file on this host still hold a live estate secret? ROOTS=<dirs>
 	@# THE LAST STEP OF EVERY ROTATION, and the one that was being skipped because

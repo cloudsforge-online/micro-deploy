@@ -159,6 +159,41 @@ jobs:
       - name: Every alert carries a runbook, and every runbook exists
         run: make check-runbooks
 
+  # ── THE TWO NAME-ONLY CREDENTIAL CHECKS, WHICH CI HAS NEVER RUN ────────────
+  #
+  # Both of these were written for an incident, cited by a runbook, and wired
+  # into `make check` — and `make check` IS NOT A CI JOB. This workflow runs
+  # `check-rules`, `check-rule-tests`, `check-runbooks` and `check-restart` by
+  # name and nothing else, so "it is in `check`" has meant "a person runs it when
+  # they already remember the problem", which is the exact failure that let
+  # fifteen credential-bearing backups pile up on the chain host (micro-org#429)
+  # and a whole second copy of the credential set sit in /home/malf/gwvalidate
+  # for a week (micro-org#430). Putting a guard in an aggregate nobody invokes is
+  # putting it nowhere; I did that in micro-deploy#90 and this is the correction.
+  #
+  # These two are the ONLY credential checks that belong in a public log. They
+  # read nothing — names in, paths out. `check-secrets` and `check-residue` open
+  # files and print variable names and modes, so they stay host-only and stay out
+  # of here.
+  #
+  # A runner has none of the roots, so both report ABSENT BY NAME rather than a
+  # bare `ok`. That is deliberate and it is most of the value of the job: if the
+  # scan ever becomes vacuous, the log says which roots it did not look at
+  # instead of going quietly green.
+  secret-file-placement:
+    name: No credential file is in the wrong place
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No backup copy beside a live secrets file
+        run: make check-secret-backups
+
+      - name: No secrets file outside the tree that owns it
+        run: make check-stray-secrets
+
   drift:
     name: The registry and the gateway agree
     runs-on: ubuntu-latest
