@@ -99,7 +99,14 @@ services:
 
       # The same credential Prometheus and Alertmanager present. Passed by NAME into the process
       # environment and never as `--beacon-token` on a command line, where `ps` would show it.
-      BEACON_TOKEN: ${CF_BEACON_TOKEN:?the runner cannot publish without it, and a replay nobody records is the bug this container exists to fix}
+      #
+      # `BEACON_TOKEN` and not `CF_BEACON_TOKEN`: the runbook names the latter because that is what
+      # it is called in `deploy/.env` on the OTHER estate host, but this estate's
+      # `compose/estate/tokens.env` — the file on the `--env-file` line above — defines
+      # `BEACON_TOKEN`, and compose interpolates from the env files, not from the container
+      # environment it is about to write. Naming the wrong one fails the bring-up outright, which
+      # is the good outcome of `:?` and is how this was caught.
+      BEACON_TOKEN: ${BEACON_TOKEN:?the runner cannot publish without it, and a replay nobody records is the bug this container exists to fix; it is BEACON_TOKEN in compose/estate/tokens.env}
 
       # The compose service alias and the port beacon listens on IN the container — not the
       # published 127.0.0.1:4142. This runs on the estate network as a peer of beacon.
