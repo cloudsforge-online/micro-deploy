@@ -927,8 +927,42 @@ if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d ${PULL_POLICY[@]
   # anything moved. But it says so loudly, because an estate nothing is scraping
   # is the state micro-org#308 exists about and it lasted as long as it did by
   # being quiet.
+  #
+  # ── THIS DIRECTORY BELONGS TO MAINNET, AND ONLY MAINNET ────────────────────
+  #
+  # `cf-services` reads `/etc/prometheus/targets/*.yaml` and this wrote one
+  # fixed `services.yaml`, so two estates shared a filename: whichever deployed
+  # LAST owned it, and the other silently vanished from monitoring.
+  #
+  # Measured 2026-08-12: a testnet deploy at 12:40 left the file describing 28
+  # testnet containers and 0 mainnet ones. For the next hour Prometheus scraped
+  # testnet under mainnet's job — `AssetWithdrawalsFrozen` paged for a frozen
+  # TESTNET asset while mainnet's own `ledger_assets_frozen` sat at 0 and unread
+  # — and mainnet had no monitoring at all, on the afternoon it went public.
+  # micro-org#398 for the third time.
+  #
+  # THE FIX IS NOT A FILENAME PER ESTATE. That was tried here first and is
+  # worse: `render-prometheus-targets.py` pins `instance` to `<service>:<port>`
+  # deliberately (micro-org#437), so both files describe `ledger:4000` under
+  # `job=cf-services` and loading them together collides every series instead of
+  # replacing it — the same wrong number, arrived at concurrently.
+  #
+  # So the globbed directory has one owner. Testnet renders beside it, where
+  # nothing reads it: the file is still written, because it is the input a
+  # future testnet scrape job needs and generating it is free, but it cannot
+  # blind mainnet by existing. Testnet's real monitoring is the explicit
+  # `cf-indexer-testnet` job in prometheus.yml, which carries `estate: testnet`
+  # and names its container outright.
+  estate_name=$(basename "$ESTATE_ENV" .env)
+  if [ "$estate_name" = "mainnet" ]; then
+    targets_out="prometheus/targets/services.yaml"
+  else
+    targets_out="prometheus/targets-$estate_name/services.yaml"
+    mkdir -p "$(dirname "$targets_out")"
+    echo "  $estate_name renders to $targets_out — the scraped directory is mainnet's alone"
+  fi
   if ! printf '%s' "$config_json" | python3 scripts/render-prometheus-targets.py \
-    "$manifest" --compose-json - --out prometheus/targets/services.yaml; then
+    "$manifest" --compose-json - --out "$targets_out"; then
     echo >&2
     echo "THE RELEASE IS DEPLOYED AND PROMETHEUS'S TARGET LIST WAS NOT UPDATED." >&2
     echo "It is still describing the previous release. Re-run the renderer by hand:" >&2
