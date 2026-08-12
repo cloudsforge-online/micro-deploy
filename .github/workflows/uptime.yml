@@ -1,0 +1,93 @@
+name: Uptime
+
+# ── THE MONITOR THAT IS NOT INSIDE THE THING IT MONITORS ────────────────────────────────────────
+#
+# On 2026-08-11 the app host rebooted at 03:54. Docker Desktop needs an interactive Windows
+# session, there was none, and the engine never came back: every hostname on cloudsforge.online
+# answered 502 for thirty-five minutes and NOTHING TOLD ANYBODY. It was found by an unrelated
+# release build, whose `site` job asserts that the site answers on the public internet.
+#
+# The reason no monitor caught it is structural, not a misconfiguration. Prometheus, Alertmanager,
+# blackbox and beacon all run AS CONTAINERS ON THE HOST THEY MONITOR. When the engine died they
+# died with it, and a monitor that is gone reports nothing — which looks exactly like a monitor
+# with nothing to report. micro-org#431 item 1 is the outage; item 2 is why it lasted thirty-five
+# minutes instead of two, and this file is item 2.
+#
+# ── WHY THE ALERT IS THIS WORKFLOW'S OWN FAILURE ────────────────────────────────────────────────
+#
+# GitHub emails the repository owner when a SCHEDULED workflow fails. That is the whole alerting
+# path: no PAT, no webhook URL, no secret to rotate, no Alertmanager, and — the point — nothing
+# that shares a power supply, a hypervisor or a Docker engine with the estate. An alert channel
+# that can die with its subject is not an alert channel.
+#
+# So this workflow does not post anywhere and deliberately has no `permissions:` beyond read. Its
+# output is its exit code.
+#
+# ── WHY EVERY 15 MINUTES, AND WHY THAT IS NOT THE REAL NUMBER ───────────────────────────────────
+#
+# `schedule:` is best-effort on GitHub's shared queue and skews under load, sometimes badly. Five
+# minutes is the floor the platform accepts and would mostly be honoured as ten. Fifteen is chosen
+# because the thing being detected is A HOST THAT IS GONE — an outage measured in tens of minutes,
+# not a latency regression — and because a probe that is late is still thirty minutes earlier than
+# the mechanism that found the last one, which was a human deciding to cut a release.
+#
+# ── WHAT IT DOES NOT DO ─────────────────────────────────────────────────────────────────────────
+#
+# It does not assert content, does not log in, and holds no credential. `estate-verify.sh` does all
+# of that, from beside the estate where it can read the containers. This asks one question of each
+# of the fifty public hostnames — did anything answer — and finishes in about eight seconds.
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Probe one environment only (mainnet or testnet). Empty probes both.'
+        required: false
+        default: ''
+  # On pushes that touch the prober or the rules it reads, so a change to either is proved against
+  # the live estate once, immediately, rather than at whatever minute the next schedule lands on.
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/probe-public-estate.py'
+      - 'gateway/dynamic/**'
+      - 'compose/env/traefik*.env'
+      - '.github/workflows/uptime.yml'
+
+# A run in flight is a run whose answer is still the current answer. Cancelling it for a newer one
+# is right for CI and wrong here: the older run may be the one that catches the outage.
+concurrency:
+  group: uptime
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    name: Every public hostname answers
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      # No sibling checkout, no Node, no pnpm, no pip. The prober is standard-library Python and
+      # reads two directories of this repository — which is deliberate: every dependency is another
+      # thing that can fail and be mistaken for the estate failing.
+      #
+      # The dispatch input reaches the shell as an ENVIRONMENT VARIABLE and is matched against a
+      # closed set before it is used. `${{ }}` interpolated into a `run:` is textual substitution
+      # into the script before bash ever sees it, so any input that reaches one is an injection
+      # site regardless of how trusted the trigger is — and a workflow that probes production is a
+      # poor place to keep an exception.
+      - name: Probe the public estate
+        env:
+          CF_PROBE_ENV: ${{ github.event.inputs.environment }}
+        run: |
+          case "${CF_PROBE_ENV:-}" in
+            "")               set -- ;;
+            mainnet|testnet)  set -- --env "$CF_PROBE_ENV" ;;
+            *) echo "FAIL: environment must be 'mainnet', 'testnet' or empty."; exit 1 ;;
+          esac
+          python3 scripts/probe-public-estate.py "$@"
