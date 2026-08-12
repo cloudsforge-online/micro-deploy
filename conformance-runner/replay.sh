@@ -54,10 +54,41 @@ replay_once() {
   ref=$(git -C "$REPO" rev-parse --short HEAD 2>/dev/null || echo unknown)
   log "$BASE against $CORPUS at $ref (apex ${CONFORMANCE_MICRO_APEX:-unset})"
 
+  # ── THE PACKAGE MANAGER IS PINNED BY THE REPOSITORY, NOT BY THIS IMAGE ────────────────────
+  #
+  # `corepack pnpm` was the first thing tried and it fails outright here:
+  #
+  #   This project is configured to use 11.9.0 of pnpm. Your current pnpm is v11.21.0
+  #   pnpm does not switch versions when running under corepack
+  #
+  # `node:22-bookworm` ships whatever corepack pin was current when the tag was rebuilt, and that
+  # floats underneath us; the repository's `packageManager` field does not. Reading the version out
+  # of the checkout and asking npm for exactly it means the tree is installed by the same pnpm the
+  # lockfile was written by, and a base-image refresh cannot change what a replay resolves.
+  #
+  # Not `--pm-on-fail=ignore`, which would have been one flag: that installs with a package manager
+  # nobody chose, and a replay whose dependency tree drifted is a comparison against a base that is
+  # not quite the one the corpus was recorded under.
+  local pm
+  pm=$(node -p "require('$REPO/package.json').packageManager" 2>/dev/null || echo '')
+  case "$pm" in
+    pnpm@*) ;;
+    *)
+      log "cannot read a pnpm version from $REPO/package.json (got '${pm:-nothing}') — not guessing one"
+      return 70
+      ;;
+  esac
+
   # `--frozen-lockfile`, so a replay can never quietly resolve a different dependency tree than
   # the one the corpus was recorded under.
-  if ! corepack pnpm install --frozen-lockfile --dir "$REPO" >/dev/null 2>&1; then
-    log "pnpm install failed — see the container log; not comparing against a half-installed tree"
+  #
+  # The output goes to a file and is TAILED ON FAILURE. It used to go to /dev/null under a message
+  # that said "see the container log", which is the log it had just discarded — and that cost a
+  # diagnostic round trip the first time this failed.
+  local install_log=${HOME:-/tmp}/pnpm-install.log
+  if ! npx --yes "$pm" install --frozen-lockfile --dir "$REPO" > "$install_log" 2>&1; then
+    log "pnpm install failed ($pm); not comparing against a half-installed tree. Last lines:"
+    tail -n 20 "$install_log" >&2
     return 70
   fi
 
