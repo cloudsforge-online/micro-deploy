@@ -237,6 +237,66 @@ compose_services = compose_model.get("services") or {}
 if not compose_services:
     fail("the compose model defines no services. Refusing to write an empty scrape list.")
 
+# ---------------------------------------------------------------------------
+# THE ADDRESS IS THE CONTAINER NAME, NOT THE SERVICE NAME (micro-org#437).
+#
+# `indexer:4000` is not an address on this host. It is a QUESTION, and since
+# 2026-08-11T23:59:45Z it has had two answers: Prometheus is attached to
+# `cloudsforge-estate_default` AND `cf-testnet_default`, because reaching one
+# testnet container for the `cf-indexer-testnet` job (micro-org#398) meant
+# joining a whole network. Docker's embedded DNS resolves a bare name against
+# the container's networks in name order, `cf-testnet_default` sorts first, and
+# every one of these targets silently became the TESTNET container — while the
+# series kept the mainnet job's labels. Measured: three mainnet chains stop and
+# testnet starts in the SAME 15s sample, and ten consecutive probes of
+# `http://indexer:4000/metrics` from inside Prometheus answered testnet ten
+# times. Deterministic, which is worse than flapping: nothing looked broken.
+#
+# Container names are unique per host across projects, so they are the one form
+# of this address that cannot acquire a second answer. `cf-indexer-testnet` in
+# `prometheus.yml` has always named `cf-testnet-indexer-1` for this reason; the
+# generated list is now consistent with the job beside it.
+#
+# The project is read off the compose model — the same document the deploy uses
+# to decide what to bring up — and never typed. A hand-written project name here
+# would be a second answer to "what is running" of exactly the kind this file's
+# docstring exists to refuse.
+# ---------------------------------------------------------------------------
+project = str(compose_model.get("name") or "").strip()
+if not project:
+    fail(
+        "the compose model carries no project `name`, so a container name cannot be\n"
+        "       derived. `docker compose config --format json` has emitted one since v2;\n"
+        "       a model without it is not the document this expects, and guessing the\n"
+        "       project is how a scrape target acquires a second answer (micro-org#437)."
+    )
+
+
+def container_names(name, spec):
+    """The container(s) compose will create for this service, in scrape order.
+
+    `container_name:` wins when a service pins one, because then compose creates
+    exactly that and the numbered form would not resolve. Otherwise it is
+    `<project>-<service>-<n>`, which is compose's own naming and the reason
+    `docker ps` reads the way it does.
+
+    Replicas are handled rather than assumed away: AD-17 makes `deploy.replicas`
+    legal, and a service with three of them has three containers, each with its
+    own /metrics. Measured on mainnet 2026-08-12 — every container is `-1`, so
+    this returns a single name today and the loop below is not speculative
+    machinery, it is the reason a second replica would be scraped instead of
+    dropped.
+    """
+    pinned = spec.get("container_name")
+    if pinned:
+        return [str(pinned)]
+    replicas = ((spec.get("deploy") or {}).get("replicas")) or 1
+    try:
+        replicas = max(1, int(replicas))
+    except (TypeError, ValueError):
+        replicas = 1
+    return [f"{project}-{name}-{index}" for index in range(1, replicas + 1)]
+
 
 def environment(spec):
     """Compose renders `environment` as a map or a list depending on how it was written."""
@@ -289,8 +349,19 @@ for line in prom_path.read_text().split("\n"):
         continue
     for entry in inside.group(1).split(","):
         host = entry.strip().strip("\"'").split(":")[0]
-        if host:
-            already_scraped.add(host)
+        if not host:
+            continue
+        # Those jobs name CONTAINERS now, for the reason argued above, and this
+        # set is compared against MANIFEST SERVICE NAMES. Without this the match
+        # stops working the moment `prometheus.yml` is pinned — and the failure
+        # is not loud: `beacon` would fall through into the generated list and
+        # be scraped a second time, anonymously, 401ing forever beside the
+        # credentialed job that works. That is the exact outcome the `fail()`
+        # below was written to prevent, so the normalisation lives here with it.
+        stem = re.sub(rf"^{re.escape(project)}-", "", host)
+        stem = re.sub(r"-\d+$", "", stem)
+        already_scraped.add(host)
+        already_scraped.add(stem)
 if not already_scraped:
     # Not a pass. The three credentialed jobs are in that file today; finding
     # none means the parse stopped matching, and the consequence is an anonymous
@@ -402,6 +473,11 @@ lines = [
     "# no restart and there is no window in which the scrape list and the running",
     "# estate disagree by more than half a minute.",
     "#",
+    "# Each target is a CONTAINER NAME, not a service name, and carries an explicit",
+    "# `instance` that keeps the old `<service>:<port>` series identity. A bare service",
+    "# name resolves to whichever project's container Docker's DNS reaches first, and on",
+    "# this host that is the testnet one — see micro-org#437 and the generator.",
+    "#",
     "# A service is here because ITS OWN HEALTH CHECK probes /readyz on this port, and",
     "# rule 4 of docs/ecosystem/03 §2 makes /livez, /readyz and /metrics one obligation.",
     "# Nothing below is hand-typed and nothing is hand-excluded; see the generator.",
@@ -421,8 +497,25 @@ for label, names in (
 lines.append("")
 
 for name, port, tier in emitted:
-    lines.append(f'- targets: ["{name}:{port}"]')
+    hosts = container_names(name, compose_services[name])
+    lines.append("- targets: [" + ", ".join(f'"{host}:{port}"' for host in hosts) + "]")
     lines.append("  labels:")
+    # `instance` is PINNED to the old `<service>:<port>` rather than left to
+    # default to the address. The address had to change (micro-org#437); the
+    # series identity must not. Every recording rule, every dashboard panel and
+    # every alert annotation built on these series keys on labels that include
+    # `instance`, and letting it become the container name would orphan all of
+    # them to fix a resolution bug they have nothing to do with. It is also the
+    # stable value: a container name carries a replica ordinal that changes when
+    # a replica is rescheduled, which is the churn the `cf-services` relabel
+    # block below already argues against.
+    #
+    # With replicas the ordinal is exactly what distinguishes the targets, so a
+    # single pinned `instance` would collapse them into one series. Pin only
+    # when there is one container, and let the address be the identity when
+    # there is more than one.
+    if len(hosts) == 1:
+        lines.append(f"    instance: {name}:{port}")
     lines.append(f"    __meta_cf_service: {name}")
     # The manifest records no owning team, so the team IS the service until it
     # does. That is the shape the file's original worked example used

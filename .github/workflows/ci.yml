@@ -392,6 +392,21 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-prometheus-targets-render.py
 
+      # ── and every address in it means one container ──────────────────────────
+      #
+      # The check above asks whether the right SERVICES are listed. This asks
+      # whether the addresses resolve to the estate being monitored. On
+      # 2026-08-11 they stopped: Prometheus was attached to `cf-testnet_default`
+      # to reach one container for the testnet chain job (micro-org#398), that
+      # network sorts before `cloudsforge-estate_default`, and Docker's DNS
+      # answered every bare service name with the TESTNET container — while the
+      # samples kept the mainnet job's labels. Every target stayed `up`, every
+      # number stayed plausible, and the whole alert plane was evaluating the
+      # wrong network for four hours (micro-org#437).
+      - name: No scrape target is a bare service name
+        working-directory: deploy
+        run: python3 scripts/check-prometheus-target-ambiguity.py
+
       # ── The two projects stay renderable, and mainnet stays unchanged ────────
       #
       # `compose/testnet.env` is six variables that turn these files into a second

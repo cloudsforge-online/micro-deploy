@@ -15,7 +15,8 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
 .DEFAULT_GOAL := help
 .PHONY: help up down gateway logs ps config check check-rules check-rule-tests \
         check-alert-job-labels check-alertmanager \
-        check-collector check-runbooks check-prometheus-targets check-compose-ports \
+        check-collector check-runbooks check-prometheus-targets \
+        check-prometheus-target-ambiguity check-compose-ports \
         check-token-resolution check-custody-backup-guard check-backup \
         check-secret-backups check-stray-secrets \
         prometheus-targets \
@@ -52,7 +53,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-secret-backups check-stray-secrets check-siblings check-release-deploy check-backup ## Run every check
+check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-prometheus-target-ambiguity check-compose-ports check-token-resolution check-custody-backup-guard check-secret-backups check-stray-secrets check-siblings check-release-deploy check-backup ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -166,6 +167,16 @@ check-prometheus-targets: ## The scrape list is generated from the release, and 
 	@# watched, and a target that cannot be scraped sits down for ever and teaches
 	@# the on-call that some of the red is normal.
 	@python3 scripts/check-prometheus-targets-render.py
+
+check-prometheus-target-ambiguity: ## No scrape target is a bare service name (micro-org#437)
+	@# `check-prometheus-targets` above asks whether the right SERVICES are in the
+	@# list. This asks whether the addresses in it mean anything on this host. They
+	@# did not for four hours on 2026-08-11: Prometheus is attached to both estate
+	@# networks, `cf-testnet_default` sorts first, and every bare service name in
+	@# the file resolved to the TESTNET container while the samples were stored
+	@# under the mainnet job's labels. Nothing was down, no target went red, and
+	@# every alert in the estate was evaluating the wrong network.
+	@python3 scripts/check-prometheus-target-ambiguity.py
 
 prometheus-targets: ## Re-render the scrape list from a release by hand. RELEASE=2.5.8
 	@# release-deploy.sh does this on every deploy and every rollback. This target

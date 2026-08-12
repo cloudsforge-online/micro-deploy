@@ -28,6 +28,39 @@ the same service block, which *is* a long-lived `cfsc_…` identity credential �
 Three names, two kinds, one service. Rotating the wrong one leaves the leak open
 and takes the trial-balance journey down.
 
+## BEFORE YOU ROTATE ANYTHING: a 401 may not be about the token
+
+`BeaconScrapeFailing` fires on a scrape that 401s, and the obvious reading — the
+token in `secrets/beacon_token` and the one in Beacon's environment disagree —
+is one of **two** causes. The other is that Prometheus is presenting the right
+token to the **wrong estate's** Beacon, which refuses it correctly.
+
+That is not hypothetical: it is what happened for four hours on 2026-08-11.
+Prometheus is attached to both estates' networks, `cf-testnet_default` sorts
+before `cloudsforge-estate_default`, and the target then read `beacon:4000` —
+which Docker answered with the testnet container (micro-org#437).
+
+**Rotating in that state does not fix it and does real harm.** The new value
+goes into the four homes below, the scrape still 401s because it is still asking
+testnet, and the break-glass token has been changed during an incident for no
+reason.
+
+Two commands separate them, and both are read-only:
+
+```sh
+# 1. Which container is this target?
+docker exec cfmicro-prometheus-1 wget -qO- --server-response \
+  http://<the-target-host>:4000/metrics 2>&1 | head -3
+
+# 2. Does the address name a container, or a service?
+python3 scripts/check-prometheus-target-ambiguity.py
+```
+
+If the second one fails, the address is the fault. Fix it there and do not open
+this runbook's rotation section. A fingerprint comparison — `sha256sum | cut -c1-12`
+of the file against the container's variable, never the values themselves —
+settles the remaining case.
+
 ## THE FOUR HOMES, AND WHY YOU MUST NOT GREP FOR THEM
 
     compose/estate/tokens.env            BEACON_TOKEN         mode 600
