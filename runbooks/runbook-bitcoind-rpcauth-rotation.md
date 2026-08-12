@@ -191,6 +191,28 @@ it, and `make check-residue` finds it months later as a permanent red.
 `shred -u` them as the **last step of every rotation**, and let
 `scripts/check-no-secret-backups.sh` be the half a person cannot forget to run.
 
+**And the trap inside the trap: the chain host keeps its own copies, and the
+check could not see them.** Every root that script scanned was relative to this
+checkout, which quietly made it a check about the app host. `bitcoin.conf`,
+`litecoin.conf` and `dogecoin.conf` hold `rpcauth=` lines, they live in
+`/data/chains`, and this repository had no path to that directory — so every
+backup taken there was outside the only guard that looks for backups. On
+2026-08-12 there were **fifteen**, spanning three daemons and four operations,
+the oldest four days old and four of them world-readable. One was byte-for-byte
+the same size as the live `bitcoin.conf` beside it: the `tokens.env` finding
+again, in a different directory, for the same reason.
+
+All fifteen are destroyed and the script now scans `/data/chains` as well
+(micro-org#429), narrowly — a hit there must be backup-shaped **and**
+config-shaped, because a first cut reported LevelDB's `chainstate/LOG.old` and
+told the operator to shred a live database file. `make check-secret-backups`
+runs it, and `make check` runs that, so it is no longer a script only the person
+who already remembers the problem thinks to run.
+
+**Run it on both hosts.** It is one machine's answer about one machine's disk;
+the ok line names what it scanned and names what was not there, so a run that
+saw nothing cannot be mistaken for a clean one.
+
 ## Rotating it — the ordered operation
 
 Nothing below is destructive until step 4. Steps 1–3 can be abandoned at any
@@ -384,10 +406,13 @@ Only after verification passes:
 
     shred -u "$HOME/.btc-rpc-new" "$HOME/.btc-curlrc" <the old-value file> …
 
-on **both** hosts, and then, in the checkout:
+on **both** hosts, and then, in the checkout **on both hosts**:
 
-    ./scripts/check-no-secret-backups.sh
+    make check-secret-backups     # or ./scripts/check-no-secret-backups.sh
     make check-residue
+
+On the chain host that sweep now covers `/data/chains` too, which is where the
+node's own config backups accumulate — see trap (e).
 
 Trap (e). A rotation is not finished when the containers are green; it is
 finished when the retired value is not on either disk.

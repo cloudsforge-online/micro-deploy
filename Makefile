@@ -17,6 +17,7 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
         check-alert-job-labels check-alertmanager \
         check-collector check-runbooks check-prometheus-targets check-compose-ports \
         check-token-resolution check-custody-backup-guard check-backup \
+        check-secret-backups \
         prometheus-targets \
         dashboards estate clean
 
@@ -51,7 +52,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-siblings check-release-deploy check-backup ## Run every check
+check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-compose-ports check-token-resolution check-custody-backup-guard check-secret-backups check-siblings check-release-deploy check-backup ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -203,6 +204,19 @@ check-secrets: ## No secret is a placeholder, too short, or already in a transcr
 	@# 2026-08-11, micro-org#340). A check that errors is a check that is off.
 	@python3 scripts/check-secret-hygiene.py \
 		--files compose/secrets/*.env compose/estate/tokens*.env compose/.env .env
+
+check-secret-backups: ## No backup copy of a secrets file is lingering beside the live one
+	@# A guard nothing invokes is a guard that does not exist. This script was
+	@# written during the 2026-08-11 rpcauth rotation, was cited by two runbooks,
+	@# and was in no target and no workflow — so the only thing that ever ran it was
+	@# a person who already remembered the problem. Fifteen credential-bearing
+	@# config backups accumulated on the chain host while it sat there (micro-org#429).
+	@#
+	@# It is in `check` rather than in the host-only targets because it reads
+	@# NOTHING. It looks at names and prints paths, so it is safe in a public CI log
+	@# in a way `check-secrets` and `check-residue` are not. On a CI runner none of
+	@# the roots exists and it says so by name rather than reporting a bare `ok`.
+	@./scripts/check-no-secret-backups.sh
 
 check-residue: ## Does any file on this host still hold a live estate secret? ROOTS=<dirs>
 	@# THE LAST STEP OF EVERY ROTATION, and the one that was being skipped because
