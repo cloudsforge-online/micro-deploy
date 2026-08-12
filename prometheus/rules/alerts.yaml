@@ -1448,6 +1448,57 @@ groups:
             diverged. Find the runner, not the divergence.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-conformance-corpus-never-replayed.md
 
+      - alert: ConformanceCorpusStale
+        # THE RULE ABOVE STOPPED BEING ABLE TO CATCH ANYTHING ON 2026-08-12.
+        #
+        # It asks whether a suite has EVER completed, and on that day one did:
+        # micro-org#439 was closed by a `conformance-runner` container that
+        # replays the corpus on start and daily after that, and eight suites went
+        # to `pass`. `sum(beacon_conformance_suites) == 0` can never be true again
+        # short of a database restore — and beacon's suite gauge is
+        # `distinct on (suite) ... order by suite, ts desc`, THE NEWEST ROW PER
+        # SUITE AND NOTHING ABOUT ITS AGE. So a runner that dies, loses its
+        # account, or wedges mid-replay leaves eight `pass` suites standing for
+        # ever, and every conformance rule in this group stays green off a
+        # measurement that stopped happening. That is the same failure the ticket
+        # was about, reached by a second route, and the never-ran rule cannot see
+        # it.
+        #
+        # `beacon_conformance_last_run_timestamp_seconds{suite}` is the series
+        # that can: ONLY A REAL PUBLISHED RUN MOVES IT. It is also why the runner
+        # has no healthcheck of its own — a container that reports itself healthy
+        # while publishing nothing is precisely the bug, and a timestamp it cannot
+        # advance without having compared something is not.
+        #
+        # 36h, against a 24h schedule. One whole missed replay plus half a day of
+        # slack, so a slow install, a restart, or a deploy that happens to land at
+        # the wrong moment does not raise a ticket, while a runner that has truly
+        # stopped is noticed within a day and a half. `for: 1h` on top of that,
+        # for the same reason the rule above carries it: a replay is a scheduled
+        # batch, not a continuous signal.
+        #
+        # PER SUITE, deliberately. A suite dropped or renamed in the corpus keeps
+        # its last row in `conformance_runs` for ever and will go stale on its own
+        # while the rest stay fresh — which is a true and useful thing to be told,
+        # because a suite that silently stopped being covered is a gate that
+        # quietly narrowed. The fix is to delete the row, not to widen this.
+        expr: time() - beacon_conformance_last_run_timestamp_seconds > 36 * 3600
+        for: 1h
+        labels:
+          severity: ticket
+          team: chain
+          service: beacon
+          sev: "4"
+        annotations:
+          summary: "Conformance suite {{ $labels.suite }} has not been replayed in over 36h"
+          description: >-
+            The scheduled runner replays every suite daily. This one's last
+            published run is older than a missed cycle, so its status — and the
+            HearthConformanceVectorsFailing rule beside it — is reporting a
+            measurement that stopped happening rather than a comparison that
+            passed. Find the runner, not the divergence.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-conformance-corpus-never-replayed.md
+
       - alert: BeaconTargetDown
         # Beacon's own hysteresis has already been applied here — this is the
         # reported state, the same value the status grid shows, so a `for:` of

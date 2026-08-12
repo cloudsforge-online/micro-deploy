@@ -1,0 +1,153 @@
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+# THE CONFORMANCE RUNNER — the caller that never existed.
+#
+#   docker compose -p cloudsforge-estate \
+#     --env-file compose/mainnet.env --env-file compose/estate/tokens.env \
+#     -f compose/docker-compose.estate.yml \
+#     -f compose/docker-compose.conformance.yml up -d --no-deps conformance-runner
+#
+# BOTH `--env-file` FLAGS, ALWAYS — `--env-file` replaces the default rather than adding to it
+# (micro-org#158) — and `--no-deps`, so compose does not reconcile a running estate against this
+# checkout, which is not what the estate deployed: `release-deploy.sh` renders a pinned overlay
+# that is not on this command line.
+#
+# ── WHAT THIS IS FOR (micro-org#439) ─────────────────────────────────────────────────────────
+#
+# Both ends of the conformance gate were built and were never joined. The corpus, the comparator,
+# `conformance/src/publish.ts`, beacon's `POST /v1/conformance` and the per-suite gate input were
+# all complete and correct on 2026-08-04, and `conformance_runs` was empty because nothing
+# anywhere called any of it — not in micro-conformance, not in a CI workflow, not in a deploy
+# script. `HearthConformanceVectorsFailing` was therefore green for its entire life by never
+# having been asked a question, and the gate the release policy names had no input.
+#
+# ── WHY A CONTAINER AND NOT A systemd TIMER ──────────────────────────────────────────────────
+#
+# A timer was written first and thrown away, because this host cannot honour one. The app host is
+# Windows running the estate inside WSL: `loginctl enable-linger` fails there with `No such device
+# or address`, so a USER timer dies with the last login session, and a SYSTEM timer needs root on
+# a machine where the estate is otherwise operated entirely through the docker group. A container
+# with `restart: unless-stopped` is started by the docker daemon at boot with no session and no
+# root, which is strictly more reliable here — and it is already the estate's idiom for periodic
+# work, which is what `backup-runner` is.
+#
+# ── WHY NOT CI ───────────────────────────────────────────────────────────────────────────────
+#
+# The harness needs the estate's `tokens.env` (it resolves recorded secret literals so that a
+# corpus cannot come to contain one), the internal CA, and a route onto this network to reach
+# beacon by its compose alias. Handing a public runner the estate's secret file so that it can
+# replay a corpus is a far worse trade than replaying it where the estate already is.
+# `micro-conformance/.github/workflows/ci.yml` runs the pure half and says so in its header.
+#
+# ── THIS RUNNER IS NOT MONITORED, AND THAT IS THE DESIGN ─────────────────────────────────────
+#
+# There is no healthcheck and no /metrics here, deliberately. A runner that reported itself
+# healthy while publishing nothing is the failure this ticket IS. What is monitored is the
+# FRESHNESS OF THE RESULT — `beacon_conformance_last_run_timestamp_seconds`, which only a real
+# published run can move — so a runner that dies, wedges, loses its account or silently stops
+# comparing is caught by the same alert, without this container having to be honest about itself.
+# ══════════════════════════════════════════════════════════════════════════════════════════════
+
+services:
+  conformance-runner:
+    restart: unless-stopped
+
+    # A stock image and no build. This container runs a checkout of micro-conformance that it
+    # updates itself; baking it into an image would add a publish step between a corpus commit and
+    # the replay that reads it, and the corpus is the thing that is supposed to move.
+    #
+    # `-bookworm` and not `-bookworm-slim`: the slim image has no `git`, and pinning the checkout
+    # to `origin/main` before every replay is the whole reason anybody can say afterwards which
+    # corpus was compared.
+    image: node:22-bookworm
+
+    # ── uid 1000, WHICH IS THE HOST USER AND ALSO `node` IN THIS IMAGE ────────────────────────
+    #
+    # Not hardening for its own sake. This bind-mounts a git checkout that a human also uses, and
+    # a container writing into it as root leaves a tree whose owner cannot `git pull` it — which
+    # happened on 2026-08-12 and produced dozens of `Permission denied` lines and a rebase that
+    # could not detach HEAD. Running as the same uid that owns the checkout is the fix that does
+    # not need a `chown` afterwards.
+    user: "1000:1000"
+
+    entrypoint: ["/opt/cloudsforge/replay.sh"]
+    command: ["loop"]
+
+    environment:
+      # ── THE APEX IS THE ESTATE THIS COMPARES AGAINST ────────────────────────────────────────
+      # It is what turns `<sub>.<apex>` into a real address. Mainnet only — see replay.sh for why
+      # a testnet replay of THIS corpus is a false alarm rather than a configuration.
+      CONFORMANCE_MICRO_APEX: ${CF_CONFORMANCE_APEX:-cloudsforge.online}
+
+      # Read by the harness to resolve recorded secret literals, so that a value that IS a secret
+      # is redacted out of the corpus rather than compared. Mounted read-only below.
+      CONFORMANCE_SECRETS_FILE: /estate/tokens.env
+      NODE_EXTRA_CA_CERTS: /estate/ca.crt
+
+      # ── THE ACCOUNT IS REQUIRED, AND A SKIP IS WHY ──────────────────────────────────────────
+      #
+      # Five of the eight suites sign in. Without an account they SKIP — beacon refuses to derive
+      # `pass` from zero comparisons, so the run stays honest — and the estate ends up with a
+      # replay that runs daily, publishes, clears every alert, and compares barely anything. That
+      # is a subtler restatement of micro-org#439 and it must not be reachable by leaving a
+      # variable unset.
+      #
+      # It currently borrows the last of beacon's provisioned journey accounts. The harness should
+      # have one of its own — recorded as a follow-up on micro-org#439 — and because this reads a
+      # variable, giving it one is a one-line change to `tokens.env` and no change to any file
+      # here.
+      CONFORMANCE_ACCOUNT: ${CF_CONFORMANCE_ACCOUNT:?set it in compose/estate/tokens.env to email:password of an already-verified account; without one, five of the eight suites skip and the replay certifies almost nothing}
+
+      # The same credential Prometheus and Alertmanager present. Passed by NAME into the process
+      # environment and never as `--beacon-token` on a command line, where `ps` would show it.
+      #
+      # `BEACON_TOKEN` and not `CF_BEACON_TOKEN`: the runbook names the latter because that is what
+      # it is called in `deploy/.env` on the OTHER estate host, but this estate's
+      # `compose/estate/tokens.env` — the file on the `--env-file` line above — defines
+      # `BEACON_TOKEN`, and compose interpolates from the env files, not from the container
+      # environment it is about to write. Naming the wrong one fails the bring-up outright, which
+      # is the good outcome of `:?` and is how this was caught.
+      BEACON_TOKEN: ${BEACON_TOKEN:?the runner cannot publish without it, and a replay nobody records is the bug this container exists to fix; it is BEACON_TOKEN in compose/estate/tokens.env}
+
+      # The compose service alias and the port beacon listens on IN the container — not the
+      # published 127.0.0.1:4142. This runs on the estate network as a peer of beacon.
+      CF_BEACON_URL: ${CF_CONFORMANCE_BEACON_URL:-http://beacon:4000}
+
+      # Daily. The question the gate actually asks is "has the corpus been replayed since the last
+      # release", and this estate cuts a release most days. `replay.sh loop` also runs once on
+      # start, so a deploy — which restarts this container — is immediately followed by the replay
+      # that certifies it.
+      CF_CONFORMANCE_INTERVAL: ${CF_CONFORMANCE_INTERVAL:-86400}
+
+    volumes:
+      # ── THE CHECKOUT HAS NO DEFAULT ─────────────────────────────────────────────────────────
+      #
+      # For the reason micro-org#434 cost 43 hours of backups: a default here is a guess about
+      # which host this is and where somebody cloned a repository on it, and a wrong guess would
+      # present an empty directory that the runner would report as a missing corpus at 04:30 to
+      # nobody. `compose/mainnet.env` carries the answer for this host, in a tracked file that a
+      # host migration has to walk past.
+      - ${CF_CONFORMANCE_DIR:?set it in the environment's env file to a micro-conformance checkout; it has no default because a default is a guess about which host this is}:/workspace
+
+      # READ-ONLY, both. This process compares; it has no business writing to the estate's secret
+      # file or its CA.
+      - ${CF_TOKENS_FILE:-./estate/tokens.env}:/estate/tokens.env:ro
+      - ${CF_CA_FILE:-../gateway/certs/ca.crt}:/estate/ca.crt:ro
+      - ../conformance-runner/replay.sh:/opt/cloudsforge/replay.sh:ro
+
+      # pnpm's store and corepack's download, kept across restarts. Without it every restart of
+      # this container re-downloads a package manager before it can compare anything, which turns
+      # a fast replay into a slow one for no reason.
+      - conformance-cache:/home/node
+
+    depends_on:
+      beacon:
+        condition: service_healthy
+
+    # No docker socket, no published port, no database. This container reads a corpus, makes HTTP
+    # requests to surfaces that are already public, and POSTs a summary to beacon. Anything more
+    # than that is a privilege it has no use for.
+    security_opt:
+      - ${CF_CONFORMANCE_SECURITY_OPT:-no-new-privileges:true}
+
+volumes:
+  conformance-cache:
