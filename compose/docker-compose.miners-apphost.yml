@@ -51,23 +51,40 @@
 # This host has 28 cores at load average 2.6 and, measured here on 2026-08-10 at
 # throttle 0.25, does ~30 H/s — four times the chain host's 7–8.
 #
-# ── THE THROTTLE IS 0.10, AND THE NUMBER IS DERIVED RATHER THAN PICKED ───────
+# ── THE THROTTLE IS 0.10, AND WHAT THE NUMBER MEANS HAS CHANGED (micro-org#451) ─
 #
-# To hold a 15 s block AT THE FLOOR the chain needs difficulty/target ≈ 256/15 ≈
-# 17 H/s in total. The chain host supplies 7–8. 0.10 of a core here measured
-# ~12 H/s, for a total of ~19–20 H/s.
+# The figure was derived for a world where these two miners SET the difficulty:
+# to hold a 15 s block AT THE FLOOR the chain needs ≈ 256/15 ≈ 17 H/s, the chain
+# host supplies 7–8, and 0.10 of a core here measured ~12, for ~19–20 total. The
+# original argument then said more would be worse — extra hashrate buys higher
+# difficulty, not faster blocks, and difficulty is what a surviving miner clears
+# alone when the other stops.
 #
-# MORE WOULD BE WORSE, WHICH IS THE WHOLE ARGUMENT. Above ~17 H/s the extra
-# hashrate does not buy faster blocks — a retarget always returns block time to
-# 15 s — it buys HIGHER DIFFICULTY, and difficulty is precisely what a surviving
-# miner has to clear alone when the other one stops. At ~19 H/s difficulty settles
-# just above GENESIS_TARGET, so losing this container returns the chain to the
-# 29–50 s blocks it had this morning and cannot wedge it: difficulty is already at
-# its minimum and has nowhere further to fall. Sized for a comfortable margin
-# instead, this file would have manufactured the exact failure it exists to fix.
+# THAT PREMISE DIED ON 2026-08-12. An outside miner (one browser tab, ~670 H/s,
+# 97% of blocks) set difficulty to 55x the floor; these two containers held 1.9%
+# and 1.0% of the network and won nothing. Whenever anyone else mines, the
+# difficulty is THEIRS, and no throttle reachable by this file (hearth-mine is
+# one core per process — hearth#20) changes that.
 #
-# Raise it only against a fresh measurement of the tip interval, and only after
-# reading micro-org#363 — the durable fix is a retarget change in hearth's
+# So the number keeps its value and changes its meaning: 0.10 is no longer "what
+# the chain needs", it is the FLOOR-KEEPER'S share. These miners exist so the
+# chain keeps moving when everyone else leaves, and since hearth#13 that takes
+# almost nothing — a block more than 120 s late may be mined at the floor, so
+# ~19 H/s bounds the worst gap at ~2 minutes however high an outsider drove
+# difficulty first. Chasing outside hashrate from here would be strictly worse:
+# it cannot win (one core against GPUs) and every hash it adds raises the
+# difficulty each BROWSER miner must clear, which is the estate's one
+# distinctive first action being made worse to no effect.
+#
+# The measurements that used to require an SSH loop are series now:
+# cf:ember:network_hashrate and cf:ember:difficulty_over_floor (rules/mining.yaml),
+# indexer_chain_dominant_miner_share (micro-indexer#31). Re-derive against those,
+# not against a hand-run RPC walk.
+#
+# Raise it only against a fresh reading of those series, and only after
+# reading micro-org#451 — the durable fix for browser participation under an
+# outside miner is the pool question (Phase 2) or the PoW redesign (Phase 3),
+# both argued there, and micro-org#363 — the retarget half is done: hearth's
 # consensus, which is a hard fork and the owner's call. This is the operational
 # half that does not need one.
 #
