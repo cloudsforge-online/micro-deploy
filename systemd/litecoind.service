@@ -1,0 +1,66 @@
+[Unit]
+# Litecoin Core on the chain host (192.168.1.42). micro-org#338 §5.4.
+#
+# The busiest of the three: LTC is in POOL_CHAINS, it is the chain merge-mined
+# DOGE rides on, and it backs deposits, withdrawals and the indexer. It is also
+# the one that has actually been down for a race this unit removes - a
+# `litecoin-cli stop` returns, the pid leaves `ps`, and the datadir lock is
+# still held, so a restart issued by hand seconds later loses and the node stays
+# down with nobody watching. `systemctl restart` cannot lose that race, because
+# Type=simple means stop does not return until the process has been reaped.
+#
+# See systemd/README.md for the two decisions this file makes and why.
+Description=Litecoin Core daemon (cloudsforge chain host)
+Documentation=https://github.com/cloudsforge-online/micro-org/issues/338
+Documentation=file:///etc/cloudsforge/README.systemd.md
+
+# 10.10.0.1 is wg0 and 172.20.0.1 / 172.31.0.1 are docker bridges, so this
+# daemon cannot start before wg-quick and dockerd have. Ordering is necessary
+# and not sufficient - dockerd is "started" before its networks are all back -
+# which is what ExecStartPre is for.
+After=network-online.target wg-quick@wg0.service snap.docker.dockerd.service
+Wants=network-online.target
+
+# Ten failures in an hour - with RestartSec=30 that is five minutes of trying -
+# and the unit gives up and sits in `failed` where `systemctl --failed` can see
+# it. The alternative, systemd's effectively-infinite default here, is a node
+# retrying quietly forever against a cause that is never going to clear on its
+# own. The most likely such cause is an operator starting this unit while the
+# hand-started daemon still holds the datadir lock; see systemd/README.md.
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+# Type=simple, and therefore NOT `-daemon`. See bitcoind.service for the full
+# argument; the short form is that systemd supervises the real process, stop
+# waits for the lock to be released, and there is no PIDFile to go stale.
+Type=simple
+User=malf
+Group=malf
+WorkingDirectory=/home/malf
+
+ExecStartPre=/usr/local/lib/cloudsforge/wait-for-rpcbind /data/chains/litecoin/litecoin.conf 180
+
+# `-printtoconsole=0`: a non-daemonised Core logs to console by default, which
+# would write every debug.log line into the journal as well. Startup errors
+# still reach the journal - Core writes InitError to stderr regardless.
+ExecStart=/data/docs/litecoin-0.21.5.6/bin/litecoind -datadir=/data/chains/litecoin -printtoconsole=0
+
+Restart=on-failure
+RestartSec=30
+
+# Long enough for a clean chainstate flush, short enough that it is not a hang.
+# A node SIGKILLed part-way through comes back wanting a reindex, and this one
+# runs txindex=1.
+KillSignal=SIGTERM
+TimeoutStopSec=1200
+
+LimitNOFILE=16384
+SyslogIdentifier=litecoind
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

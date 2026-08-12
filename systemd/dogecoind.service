@@ -1,0 +1,78 @@
+[Unit]
+# Dogecoin Core on the chain host (192.168.1.42). micro-org#338 §5.4.
+#
+# The one with nothing downstream of it, which is why it is the one the unit
+# shape was PROVEN on rather than reasoned about. Measured 2026-08-12: DOGE is
+# in no estate `POOL_CHAINS`, no surface reads it, and the node is still ~870k
+# blocks from the tip, so stopping and restarting it under systemd cost the
+# estate nothing and answered the only question that matters - does a Core fork
+# from 2013's codebase behave under Type=simple. It does: MainPID matched the
+# real process, the node served RPC and advanced 5,333,510 -> 5,333,524, and
+# `systemctl restart` took 77 SECONDS to return because systemd waited for the
+# shutdown rather than racing it. Seventy-seven is 13 short of systemd's default
+# TimeoutStopSec, which is why this file does not use the default.
+#
+# BTC and LTC carry the identical file and were enabled without being restarted
+# into, because both are live. The first time they run under it will be the next
+# reboot, and this daemon is the reason that is a measurement rather than a hope.
+#
+# See systemd/README.md for the two decisions this file makes and why.
+Description=Dogecoin Core daemon (cloudsforge chain host)
+Documentation=https://github.com/cloudsforge-online/micro-org/issues/338
+Documentation=file:///etc/cloudsforge/README.systemd.md
+
+# 10.10.0.1 is wg0 and 172.20.0.1 / 172.31.0.1 are docker bridges, so this
+# daemon cannot start before wg-quick and dockerd have. Ordering is necessary
+# and not sufficient - dockerd is "started" before its networks are all back -
+# which is what ExecStartPre is for.
+After=network-online.target wg-quick@wg0.service snap.docker.dockerd.service
+Wants=network-online.target
+
+# Ten failures in an hour - with RestartSec=30 that is five minutes of trying -
+# and the unit gives up and sits in `failed` where `systemctl --failed` can see
+# it. The alternative, systemd's effectively-infinite default here, is a node
+# retrying quietly forever against a cause that is never going to clear on its
+# own. The most likely such cause is an operator starting this unit while the
+# hand-started daemon still holds the datadir lock; see systemd/README.md.
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+# Type=simple, and therefore NOT `-daemon`. See bitcoind.service for the full
+# argument; the short form is that systemd supervises the real process, stop
+# waits for the lock to be released, and there is no PIDFile to go stale.
+Type=simple
+User=malf
+Group=malf
+WorkingDirectory=/home/malf
+
+ExecStartPre=/usr/local/lib/cloudsforge/wait-for-rpcbind /data/chains/dogecoin/dogecoin.conf 180
+
+# The three tuning flags are on the command line and not in dogecoin.conf
+# because that is where the hand-started process carried them, and this unit's
+# job on day one was to reproduce that process exactly. They are what let a
+# 1.14.x node make progress through the initial block download on this machine:
+# a 1.2 GB dbcache, script verification pinned to the default thread count, and
+# a connection ceiling that keeps the peer set from crowding out the other two
+# daemons. Moving them into the conf is fine and is a separate change, because
+# it would also alter what a manual start does.
+ExecStart=/data/docs/dogecoin-1.14.9/bin/dogecoind -datadir=/data/chains/dogecoin -printtoconsole=0 -dbcache=1200 -par=0 -maxconnections=24
+
+Restart=on-failure
+RestartSec=30
+
+# Long enough for a clean chainstate flush. A node SIGKILLed part-way through
+# comes back wanting a reindex, and on a chain that is still in IBD that is the
+# difference between resuming and starting again.
+KillSignal=SIGTERM
+TimeoutStopSec=1200
+
+LimitNOFILE=16384
+SyslogIdentifier=dogecoind
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

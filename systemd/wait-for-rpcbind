@@ -1,0 +1,91 @@
+#!/bin/sh
+# Wait until every address a node's conf tells it to bind actually exists on this
+# machine, and say which one is missing when it does not.
+#
+# ── WHY A CHAIN DAEMON NEEDS THIS AND MOST SERVICES DO NOT ────────────────────
+#
+# Bitcoin Core and its forks treat an unavailable `rpcbind` address as a FATAL
+# init error, not a warning:
+#
+#   Error: Unable to bind to 172.20.0.1:50001 on this computer. Bitcoin Core is
+#   probably already running.
+#
+# The message names the wrong cause — nothing is already running; the address
+# does not exist yet — and it is the message an operator will be handed at 03:00
+# after a reboot. That is the entire reason this script exists: to fail with a
+# sentence that is true.
+#
+# All three of this host's nodes bind addresses that BELONG TO OTHER SERVICES:
+#
+#   127.0.0.1     loopback, always there
+#   10.10.0.1     wg0, created by wg-quick@wg0.service
+#   172.31.0.1    the `cf-testnet_default` docker bridge
+#   172.20.0.1    the `cloudsforge-estate_default` docker bridge
+#
+# The units order themselves After= all three of those, which is necessary and
+# is not sufficient: dockerd reports itself started before it has finished
+# recreating every persisted network, so "after docker" and "after the bridge
+# exists" are different moments. This closes that gap.
+#
+# ── THE LANDMINE IT IS ALSO THERE TO NAME ─────────────────────────────────────
+#
+# `cloudsforge-estate_default` (172.20.0.1) has had NO containers on it since
+# the app stack moved to the Windows/WSL host on 2026-08-10. It survives only
+# because nobody has run `docker network prune`. The day somebody does, bitcoind
+# and litecoind stop being able to start — with a message about already running —
+# and nothing else on the machine changes. Deleting those `rpcbind=`/`rpcallowip=`
+# lines from the confs is the real fix and it needs a daemon restart to take,
+# which is a live-surface change; see `systemd/README.md`.
+#
+# usage: wait-for-rpcbind <conf-file> [timeout-seconds, default 120]
+set -eu
+
+conf=${1:?usage: wait-for-rpcbind <conf-file> [timeout-seconds]}
+timeout=${2:-120}
+
+[ -r "$conf" ] || { echo "wait-for-rpcbind: cannot read $conf" >&2; exit 1; }
+
+# `rpcbind=ADDR`, `rpcbind=ADDR:PORT`, `rpcbind=[::1]:PORT`. Comments and
+# leading whitespace are stripped; anything after a `#` on the line is not.
+# Core does not accept trailing comments on a conf line either, so matching its
+# parser is the correct strictness.
+#   1. drop the `rpcbind=` prefix
+#   2. `[v6]` or `[v6]:port` -> the address between the brackets
+#   3. on any line that is NOT a bare IPv6 (two or more colons), drop a
+#      trailing `:port`, which leaves a bare IPv4 or a hostname alone
+#
+# Done with sed and no `case`, because a `case` inside a `$( )` is what bash 3.2
+# cannot parse, and this file wants to stay checkable on a Mac as well as
+# runnable under dash on the host.
+addrs=$(sed -n 's/^[[:space:]]*rpcbind=//p' "$conf" \
+  | sed -e 's/^\[\([^]]*\)\].*$/\1/' -e '/:.*:/! s/:[0-9]*$//' \
+  | sort -u)
+
+# No rpcbind at all is not an error: Core then binds loopback, which is always
+# present. Saying so beats a silent success.
+if [ -z "$addrs" ]; then
+  echo "wait-for-rpcbind: $conf names no rpcbind address; nothing to wait for"
+  exit 0
+fi
+
+waited=0
+while :; do
+  missing=
+  for a in $addrs; do
+    ip -o addr show 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | grep -qxF "$a" \
+      || missing="$missing $a"
+  done
+  [ -z "$missing" ] && break
+
+  if [ "$waited" -ge "$timeout" ]; then
+    echo "wait-for-rpcbind: after ${timeout}s these addresses from $conf still do not exist on this host:${missing}" >&2
+    echo "wait-for-rpcbind: the daemon would refuse to start and would blame itself for already running." >&2
+    echo "wait-for-rpcbind: 10.10.0.1 is wg0; 172.x.0.1 addresses are docker bridges - check 'docker network ls'." >&2
+    exit 1
+  fi
+  [ "$waited" -eq 0 ] && echo "wait-for-rpcbind: waiting up to ${timeout}s for:${missing}"
+  sleep 2
+  waited=$((waited + 2))
+done
+
+echo "wait-for-rpcbind: all rpcbind addresses from $conf are present after ${waited}s"

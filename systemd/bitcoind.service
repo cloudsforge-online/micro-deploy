@@ -1,0 +1,72 @@
+[Unit]
+# Bitcoin Core on the chain host (192.168.1.42). micro-org#338 §5.4.
+#
+# Until 2026-08-12 this daemon was a process somebody started by hand in an SSH
+# session, holding ~700 GB of state, with nothing that would bring it back after
+# a reboot. The app host reaches it over WireGuard for the pool, the indexer and
+# settlement, so a reboot of THIS machine is a full outage of every BTC surface
+# on the estate — and nothing in the app stack would be able to say why.
+#
+# See systemd/README.md for the two decisions this file makes and why.
+Description=Bitcoin Core daemon (cloudsforge chain host)
+Documentation=https://github.com/cloudsforge-online/micro-org/issues/338
+Documentation=file:///etc/cloudsforge/README.systemd.md
+
+# 10.10.0.1 is wg0 and 172.20.0.1 / 172.31.0.1 are docker bridges, so this
+# daemon cannot start before wg-quick and dockerd have. Ordering is necessary
+# and not sufficient - dockerd is "started" before its networks are all back -
+# which is what ExecStartPre is for.
+After=network-online.target wg-quick@wg0.service snap.docker.dockerd.service
+Wants=network-online.target
+
+# Ten failures in an hour - with RestartSec=30 that is five minutes of trying -
+# and the unit gives up and sits in `failed` where `systemctl --failed` can see
+# it. The alternative, systemd's effectively-infinite default here, is a node
+# retrying quietly forever against a cause that is never going to clear on its
+# own. The most likely such cause is an operator starting this unit while the
+# hand-started daemon still holds the datadir lock; see systemd/README.md.
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+# Type=simple, and therefore NOT `-daemon`. Three things follow from that and
+# each is the reason:
+#   - systemd supervises the real process, so Restart= works on the thing that
+#     crashed rather than on a launcher that exited 0 long ago;
+#   - `systemctl stop` returns when the process is GONE, which is the fix for
+#     the datadir-lock race that has left litecoind down before now (the pid
+#     leaves `ps` before the lock is released, so a quick manual restart loses);
+#   - no PIDFile= to go stale, and no version-dependent `-daemonwait`, which
+#     litecoin 0.21 and dogecoin 1.14 do not have.
+Type=simple
+User=malf
+Group=malf
+WorkingDirectory=/home/malf
+
+ExecStartPre=/usr/local/lib/cloudsforge/wait-for-rpcbind /data/chains/bitcoin/bitcoin.conf 180
+
+# `-printtoconsole=0` because a non-daemonised Core logs to console by DEFAULT,
+# and every line of debug.log would be written twice - once to the file and once
+# into the journal, for a chain that logs continuously. Startup errors still
+# reach the journal; Core writes InitError to stderr regardless of this flag.
+ExecStart=/data/docs/bitcoin-27.0/bin/bitcoind -datadir=/data/chains/bitcoin -printtoconsole=0
+
+Restart=on-failure
+RestartSec=30
+
+# A clean shutdown flushes the chainstate cache, and being SIGKILLed part-way
+# through is how a node comes back wanting a reindex - hours, on a txindex
+# chain, during which every alert this unit exists to prevent is firing. Twenty
+# minutes is longer than any measured flush here and far shorter than a reindex.
+KillSignal=SIGTERM
+TimeoutStopSec=1200
+
+LimitNOFILE=16384
+SyslogIdentifier=bitcoind
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target
