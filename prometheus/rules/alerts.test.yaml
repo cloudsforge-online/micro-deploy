@@ -804,3 +804,102 @@ tests:
                 attachment to the testnet compose network, which a `docker compose
                 up` of the telemetry stack restores; the runbook has the check.
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-testnet-chain-scrape-down.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # MinerCoinbaseKeyUnbacked — micro-org#206.
+  #
+  # This rule exists because the condition it watches went undetected for weeks
+  # while the two alerts beside it stayed green, so a synthetic test is the only
+  # way to see it fire before it matters. The estate cannot produce the firing
+  # state on demand: doing so means deleting the miner's key or unsetting the
+  # age recipient on a live host, which is the failure itself.
+  #
+  # THE ASSERTION THAT CARRIES THE WEIGHT IS THE 1-VALUED ONE. `== 0` against a
+  # gauge is trivially easy to write as `!= 1`, or as `< 1`, or to leave as the
+  # `absent()` that the rule directly above it uses — and every one of those
+  # variants passes a syntax check and two of them fire permanently on a healthy
+  # estate. The transition at 20m below is what separates them.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 1m
+    input_series:
+      # No `device`, and no label the annotations interpolate: the summary and
+      # description on this rule are deliberately static, because the gauge is
+      # one estate's one answer and has nothing to name. The labels here are the
+      # scrape config's, matching the `backup_destination_fs_errors` case above.
+      #
+      # 0 for twenty minutes, then 1 — a runner that has been finding no key,
+      # and then an operator who set BACKUP_AGE_RECIPIENT or fixed the mount.
+      # The recovery half is asserted because this is a gauge and not a
+      # superblock counter: unlike the ext4 case it CAN go back, and a rule that
+      # stayed firing after the key was backed up would be telling the estate
+      # its fix did not work.
+      - series: 'backup_secrets_included{instance="backup-runner:4130",job="backup-runner",service="backup-runner",team="platform"}'
+        values: "0+0x19 1+0x20"
+
+    alert_rule_test:
+      # 0 since the first scrape, pending — `for: 30m` has to ride out a
+      # redeploy of the runner, and 10m into a nightly gap is not a ticket.
+      - eval_time: 10m
+        alertname: MinerCoinbaseKeyUnbacked
+        exp_alerts: []
+
+      # Still pending one minute short. Same role as the 14m case in the ext4
+      # test: without it a rule carrying no `for:` at all would still pass.
+      - eval_time: 29m
+        alertname: MinerCoinbaseKeyUnbacked
+        exp_alerts: []
+
+      # 30m. The gauge went to 1 at 20m, so the pending period was BROKEN and
+      # this is still silent — which is the point. An expression written `!= 1`
+      # or `< 1` would agree with the two cases above and disagree here only if
+      # the series had stayed at 0; it is the recovery that distinguishes them.
+      - eval_time: 30m
+        alertname: MinerCoinbaseKeyUnbacked
+        exp_alerts: []
+
+      # And it stays silent for the rest of the series. A backed-up key is not
+      # an alerting condition, and a rule that fired here would fire on every
+      # healthy estate for ever.
+      - eval_time: 39m
+        alertname: MinerCoinbaseKeyUnbacked
+        exp_alerts: []
+
+  # The firing half, as a second series that never recovers — the state the
+  # mainnet estate was actually in from the seal until this release: backups
+  # running, 264 artefacts, and zero of them the coinbase key.
+  - interval: 1m
+    input_series:
+      - series: 'backup_secrets_included{instance="backup-runner:4130",job="backup-runner",service="backup-runner",team="platform"}'
+        values: "0+0x45"
+
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: MinerCoinbaseKeyUnbacked
+        exp_alerts: []
+
+      # Thirty minutes at zero. Every label and annotation is spelled out for
+      # the reason the ext4 case gives: routing matches on `severity` and
+      # `team`, the paging tier is `sev`, and check-runbooks.py only proves the
+      # runbook FILE exists — this is what proves the annotation reaches the
+      # alert.
+      - eval_time: 30m
+        alertname: MinerCoinbaseKeyUnbacked
+        exp_alerts:
+          - exp_labels:
+              alertname: MinerCoinbaseKeyUnbacked
+              instance: backup-runner:4130
+              job: backup-runner
+              severity: ticket
+              team: platform
+              service: backup-runner
+              sev: "3"
+            exp_annotations:
+              summary: "The last backup contained no miner coinbase key — the one artefact that cannot be rebuilt"
+              description: >-
+                Backups are running and green, and the encrypted coinbase key is not
+                in them. Either BACKUP_AGE_RECIPIENT is unset — in which case there
+                is no path that writes a key at all, by design — or neither
+                coinbase-keystore.json nor coinbase-key.json was found where the
+                runner looked. Losing that key abandons the balance at the address;
+                no other artefact in the set has that property.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-miner-coinbase-key-backup.md

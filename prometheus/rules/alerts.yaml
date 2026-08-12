@@ -1048,6 +1048,73 @@ groups:
             touching anything.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-never-run.md
 
+      - alert: MinerCoinbaseKeyUnbacked
+        # A GREEN BACKUP THAT CONTAINS NO KEY, WHICH IS THE ONLY ARTEFACT IN THE
+        # SET THAT CANNOT BE REBUILT FROM ANYTHING (micro-org#206).
+        #
+        # Every other artefact this runner writes has a second source of truth
+        # somewhere. A database dump can be re-dumped, a volume re-archived, a
+        # vault blob re-read. The miner coinbase key is the one file whose loss
+        # is permanent and priced: the mainnet address `0x980d…5b45` and the
+        # app host's second miner between them hold 65,099.909467 EMBER, and
+        # `docs/custody-backup-restore.md` §4.2 step 6 states the key "cannot be
+        # rotated without abandoning the balance at the address".
+        #
+        # ── WHY THIS NEEDED AN ALERT AND NOT A BETTER LOG LINE ────────────────
+        #
+        # It has already failed silently once, for weeks, in the state that looks
+        # most like success. `run.ts` asked for `coinbase-key.json` by name; the
+        # seal that closed the plaintext-at-rest half of #206 left only
+        # `coinbase-keystore.json`; the read took the ENOENT branch, whose
+        # warning was *"nothing to encrypt"* and whose comment read *"On an
+        # estate with no miner this is normal."* The estate has two miners.
+        # Measured on mainnet 2026-08-12: `backup_artefacts` held 264 rows — 240
+        # `database`, 16 `files`, 8 `vault` — and ZERO of kind `secrets`, ever,
+        # the whole time `BackupAgeExceeded` and `BackupNeverRun` were satisfied.
+        #
+        # That is the precise failure both existing backup rules are blind to by
+        # construction: they watch WHETHER a run finished and HOW OLD it is, and
+        # a run that quietly omits the one irreplaceable file finishes on time.
+        #
+        # `== 0` AND NOT `absent()`, which inverts the reasoning in
+        # `BackupNeverRun` directly above and is worth stating because the two
+        # rules sit adjacent. Absence here is not the bad state — the runner
+        # publishes no sample for this gauge until a full run has classified the
+        # key, so absent means "not yet known", which `BackupNeverRun` already
+        # covers from the other side. Zero is a positive claim by the runner that
+        # it looked and there was nothing to encrypt. The one exception is seeded
+        # explicitly: with `BACKUP_AGE_RECIPIENT` unset the runner sets this to 0
+        # at boot, because that configuration guarantees no key will ever be in a
+        # set and there is no reason to make the estate wait a night to hear it.
+        #
+        # TICKET AT SEV3, matching `BackupNeverRun`. It is a standing exposure,
+        # not an outage — nothing is broken while it fires, and everything that
+        # fixes it (generate an age identity off-host, set the recipient, check
+        # the mount) is a daylight change made by a human with the identity in
+        # hand. Paging on it at three in the morning teaches an operator to
+        # silence a group that also contains the money pages.
+        #
+        # `for: 30m` for the same reason as the rule above: long enough that a
+        # redeploy of the runner cannot fire it, short enough that a set which
+        # came back without the key is noticed the same morning.
+        expr: backup_secrets_included == 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: platform
+          service: backup-runner
+          sev: "3"
+        annotations:
+          summary: "The last backup contained no miner coinbase key — the one artefact that cannot be rebuilt"
+          description: >-
+            Backups are running and green, and the encrypted coinbase key is not
+            in them. Either BACKUP_AGE_RECIPIENT is unset — in which case there
+            is no path that writes a key at all, by design — or neither
+            coinbase-keystore.json nor coinbase-key.json was found where the
+            runner looked. Losing that key abandons the balance at the address;
+            no other artefact in the set has that property.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-miner-coinbase-key-backup.md
+
   # ====================================================== TICKET — SLO ======
   - name: cf.ticket.slo
     rules:

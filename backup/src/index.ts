@@ -76,6 +76,20 @@ const metrics = registerJobMetrics(new Metrics())
   // having to know which of the two spellings any future gauge here follows.
   .register({ name: 'backup_last_success_unixtime', help: 'When the last successful run finished', kind: 'gauge' })
   .register({ name: 'backup_last_verified_unixtime', help: 'When a restore last proved a set', kind: 'gauge' })
+  // 1 when the last full set contained the age-encrypted miner coinbase key, 0 when it did not.
+  //
+  // A BOOLEAN GAUGE AND NOT A COUNTER, because the question is about the CURRENT set rather than
+  // about how many sets have ever had one. "The last nine backups included it and today's did not"
+  // has to read as 0, and a counter would still be rising.
+  //
+  // See the comment where it is set in `run.ts` for why this exists at all. Short version: on
+  // mainnet it would have been 0 from the day the runner started until 2026-08-12, while every
+  // other backup metric was green (micro-org#206).
+  .register({
+    name: 'backup_secrets_included',
+    help: 'Whether the last full backup contained the encrypted miner coinbase key (1) or not (0)',
+    kind: 'gauge',
+  })
   .register({ name: 'backup_retained_bytes', help: 'Bytes retained after the last prune', kind: 'gauge' })
   .register({ name: 'backup_destination_free_bytes', help: 'Free space at the destination', kind: 'gauge' })
   // The backup disk has NO SMART — `/dev/sdb` is a Marvell 88SE9230 firmware array behind `ahci`,
@@ -196,6 +210,23 @@ const lastSuccess = await lastSucceededAt(admin, env.env).catch((err: unknown) =
 })
 if (lastSuccess) {
   metrics.set('backup_last_success_unixtime', Math.floor(lastSuccess.getTime() / 1000))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+// AND SEED `backup_secrets_included` TO ZERO WHEN THERE IS NO RECIPIENT, WITHOUT WAITING FOR A RUN.
+//
+// This one case is knowable at boot and is the case that was actually true on mainnet: with
+// `BACKUP_AGE_RECIPIENT` unset there is no code path that can produce a `secrets` artefact, so the
+// next run's answer is already 0 and there is no reason to let the nightly schedule decide when the
+// operator finds out. `MinerCoinbaseKeyUnbacked` fires within the hour of a deploy that lost the
+// variable rather than within a day.
+//
+// NOTHING IS PUBLISHED WHEN A RECIPIENT *IS* SET, which is the same convention as the gauge above:
+// absent means "no full run has reported yet", which is a different fact from "the last run left the
+// key out", and a 1 seeded on hope would be the exact false green this metric exists to remove.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+if (!env.ageRecipient) {
+  metrics.set('backup_secrets_included', 0)
 }
 logger.info('last successful backup', {
   environment: env.env,
