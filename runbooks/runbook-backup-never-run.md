@@ -69,7 +69,9 @@ green:
   you conclude the migration is done.
 - **The backups now share a machine with the data they protect.** The old layout
   had them on a different physical machine for free; this one does not. That is
-  knowingly temporary and it is micro-org#338 item 6. Until it is closed, read
+  knowingly temporary and it is micro-org#338 **§6**, the section on the backup
+  runner and its destination disk. (Not that issue's sixth summary bullet, which
+  is the EMBER miner — the two are easy to confuse.) Until it is closed, read
   `backup_last_success_unixtime` as protection against deletion and corruption,
   and not against losing the host.
 
