@@ -3726,6 +3726,11 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
+      # The migrator never dials notify — it runs migrations and exits — but it boots through
+      # the same env parser as the service, which REQUIRES this. Learned on the 2026.08.30
+      # deploy: the service block got NOTIFY_URL, this block did not, the migrate job refused
+      # to start, and admin-api sat in Created on BOTH networks until this line existed.
+      NOTIFY_URL: http://notify:4000
       # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
       # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
       # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
