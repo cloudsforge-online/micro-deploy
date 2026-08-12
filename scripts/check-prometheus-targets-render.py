@@ -63,6 +63,7 @@ Exit non-zero on failure, print nothing but the verdict on success.
 """
 import json
 import pathlib
+import re
 import subprocess
 import sys
 import tempfile
@@ -105,6 +106,18 @@ services:
     image: ghcr.io/example/elsewhere-svc
     tag: "9.9.9"
     commit: "4444444444444444444444444444444444444444"
+  - name: replica-svc
+    repo: micro-replica-svc
+    kind: service
+    image: ghcr.io/example/replica-svc
+    tag: "9.9.9"
+    commit: "5555555555555555555555555555555555555555"
+  - name: pinned-svc
+    repo: micro-pinned-svc
+    kind: service
+    image: ghcr.io/example/pinned-svc
+    tag: "9.9.9"
+    commit: "6666666666666666666666666666666666666666"
 absent:
 """
 
@@ -113,6 +126,11 @@ absent:
 # own type system) is not a missing service, and a renderer that emitted a target
 # for it would point Prometheus at a hostname that does not resolve.
 COMPOSE_MODEL = {
+    # The compose PROJECT, which is what makes a container name a container name.
+    # `docker compose config --format json` emits this; the renderer refuses to
+    # run without it rather than guessing, because a guessed project produces a
+    # target that resolves somewhere — just not necessarily here (micro-org#437).
+    "name": "fixture-estate",
     "services": {
         "money-svc": {
             "environment": {"PORT": "4000"},
@@ -138,7 +156,27 @@ COMPOSE_MODEL = {
                 "test": ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz"]
             },
         },
-    }
+        # AD-17 makes `deploy.replicas` legal, and two replicas are two
+        # containers with two /metrics. The renderer must emit both and must NOT
+        # pin `instance` for them — one pinned value across two targets collapses
+        # them into a single series that flaps between two containers' numbers.
+        "replica-svc": {
+            "environment": {"PORT": "4000"},
+            "deploy": {"replicas": 2},
+            "healthcheck": {
+                "test": ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/readyz')\""]
+            },
+        },
+        # A service that pins its own `container_name` is not called
+        # `<project>-<service>-1` and the derived form would not resolve.
+        "pinned-svc": {
+            "container_name": "legacy-name",
+            "environment": {"PORT": "4000"},
+            "healthcheck": {
+                "test": ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:4000/readyz')\""]
+            },
+        },
+    },
 }
 
 PROMETHEUS_YML = """\
@@ -152,7 +190,7 @@ scrape_configs:
         files:
           - /etc/prometheus/secrets/gated_token
     static_configs:
-      - targets: ["gated-svc:4000"]
+      - targets: ["fixture-estate-gated-svc-1:4000"]
 """
 
 # EVERY MANIFEST ENTRY IS TIERED HERE, INCLUDING THE TWO THAT MUST NOT BE
@@ -168,6 +206,8 @@ odd-port-svc: "2"
 gated-svc: "2"
 pretty-web: "2"
 elsewhere-svc: "2"
+replica-svc: "2"
+pinned-svc: "2"
 """
 
 
@@ -182,8 +222,14 @@ def fail(message):
 # nothing, which is this repository's most-repeated defect.
 if "/healthz" not in json.dumps(COMPOSE_MODEL):
     fail("the fixture has no /healthz health check, so the front-end exclusion proves nothing.")
-if "gated-svc:4000" not in PROMETHEUS_YML:
+if "fixture-estate-gated-svc-1:4000" not in PROMETHEUS_YML:
     fail("the fixture scrape config names no gated target, so the own-job exclusion proves nothing.")
+# The gated job names a CONTAINER, as the real one now does (micro-org#437), so
+# this fixture also proves the renderer still recognises an already-scraped
+# service through that form. If it did not, `gated-svc` would fall into the
+# generated list and be scraped a second time, anonymously, 401ing for ever.
+if "gated-svc:4000" in PROMETHEUS_YML.replace("fixture-estate-gated-svc-1:4000", ""):
+    fail("the fixture scrape config still names the gated service by bare name.")
 if "4021" not in json.dumps(COMPOSE_MODEL):
     fail("the fixture has no non-4000 service, so the port derivation proves nothing.")
 
@@ -232,35 +278,67 @@ with tempfile.TemporaryDirectory() as tmp:
     # reading the file can see what was left out and why, and a substring search
     # for `pretty-web` matched that comment — which would let a renderer that
     # emitted every front end pass the exclusion test with its own documentation.
-    targets = [
-        line[len("- targets: [\"") : -len("\"]")]
-        for line in out.split("\n")
-        if line.startswith('- targets: ["')
-    ]
+    #
+    # A `targets:` line holds more than one address when a service has replicas,
+    # so the addresses are parsed rather than sliced off the ends of the line.
+    targets = []
+    for line in out.split("\n"):
+        if line.startswith("- targets: ["):
+            targets += re.findall(r'"([^"]+)"', line)
 
-    if sorted(targets) != ["money-svc:4000", "odd-port-svc:4021"]:
+    expected = [
+        "fixture-estate-money-svc-1:4000",
+        "fixture-estate-odd-port-svc-1:4021",
+        "fixture-estate-replica-svc-1:4000",
+        "fixture-estate-replica-svc-2:4000",
+        "legacy-name:4000",
+    ]
+    if sorted(targets) != sorted(expected):
         fail(
             "the render emits the wrong target set.\n"
-            f"       expected: ['money-svc:4000', 'odd-port-svc:4021']\n"
+            f"       expected: {sorted(expected)}\n"
             f"       got:      {sorted(targets)}\n\n{out}"
+        )
+
+    # ── EVERY ADDRESS IS A CONTAINER, AND EVERY SERIES KEEPS ITS NAME ─────────
+    # micro-org#437: a bare service name has as many answers as there are compose
+    # projects on the host, and between 2026-08-11T23:59Z and the fix the answer
+    # Docker gave was the testnet container — stored under the mainnet job's
+    # labels, so nothing looked wrong. Both halves are asserted: the ADDRESS must
+    # be a container, and `instance` must still be the old `<service>:<port>` so
+    # the fix does not orphan every rule and dashboard built on these series.
+    if any("/" in t or t.startswith("money-svc:") for t in targets):
+        fail(f"a target is still a bare service name (micro-org#437).\n\n{out}")
+    for service, port in (("money-svc", 4000), ("odd-port-svc", 4021), ("pinned-svc", 4000)):
+        if f"    instance: {service}:{port}" not in out:
+            fail(
+                f"`instance: {service}:{port}` is not pinned. The address had to change to fix\n"
+                f"       micro-org#437; the series identity must not, or every recording rule and\n"
+                f"       dashboard panel keyed on it is orphaned.\n\n{out}"
+            )
+    replica_block = out.split('- targets: ["fixture-estate-replica-svc-1:4000"')[1].split("- targets:")[0]
+    if "instance:" in replica_block:
+        fail(
+            "`instance` was pinned on a service with two replicas, which collapses two\n"
+            f"       containers into one series that flaps between their values.\n\n{out}"
         )
 
     # Named individually as well as as a set, so a failure says which rule broke
     # rather than only that something did.
-    if "pretty-web:8080" in targets or any(t.startswith("pretty-web") for t in targets):
+    if any("pretty-web" in t for t in targets):
         fail("a static front end was emitted. It serves no /metrics and would sit down for ever.")
-    if any(t.startswith("gated-svc") for t in targets):
+    if any("gated-svc" in t for t in targets):
         fail(
             "a service with its own credentialed job was emitted into the file_sd list too.\n"
             "       Prometheus attaches headers per job, so this target would 401 permanently\n"
             "       beside a working scrape of the same service."
         )
-    if any(t.startswith("elsewhere-svc") for t in targets):
+    if any("elsewhere-svc" in t for t in targets):
         fail(
             "a manifest entry this environment does not define was emitted. Prometheus would\n"
             "       be pointed at a hostname that does not resolve."
         )
-    if "odd-port-svc:4021" not in targets:
+    if "fixture-estate-odd-port-svc-1:4021" not in targets:
         fail(
             "the port was not taken from the service's own health check. Assuming 4000 puts\n"
             "       two of the estate's real services (foresight, tessera) permanently down."
@@ -271,7 +349,7 @@ with tempfile.TemporaryDirectory() as tmp:
     # stamped every target Tier 1.
     if '    tier: "1"' not in out or '    tier: "2"' not in out:
         fail(f"both tiers must appear as labels; the SLO rules select on them.\n\n{out}")
-    money_block = out.split('- targets: ["money-svc:4000"]')[1]
+    money_block = out.split('- targets: ["fixture-estate-money-svc-1:4000"]')[1]
     if '    tier: "1"' not in money_block.split("- targets:")[0]:
         fail(f"money-svc is Tier 1 in the map and is not labelled Tier 1.\n\n{out}")
 
@@ -283,5 +361,19 @@ with tempfile.TemporaryDirectory() as tmp:
     stderr = render("tier-map-missing-money-svc", expect_failure=True)
     if "money-svc" not in stderr:
         fail(f"the refusal does not name the untiered service, so it is unactionable:\n{stderr}")
+
+    # ── THE PROJECTLESS-MODEL TEST (micro-org#437) ────────────────────────────
+    # A compose model with no project name is the one input from which a
+    # container name cannot be derived. The renderer must REFUSE it, because the
+    # alternative — falling back to the bare service name — is precisely the
+    # address that had two answers and silently picked the testnet one. A
+    # fallback here would be indistinguishable from the bug it fixes.
+    tiers.write_text(TIERS)
+    nameless = dict(COMPOSE_MODEL)
+    nameless.pop("name")
+    compose_json.write_text(json.dumps(nameless))
+    stderr = render("compose-model-with-no-project-name", expect_failure=True)
+    if "name" not in stderr:
+        fail(f"the refusal does not say what is missing, so it is unactionable:\n{stderr}")
 
 print("ok: the scrape list is rendered from the release and excludes what cannot be scraped")

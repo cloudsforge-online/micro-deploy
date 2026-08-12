@@ -136,8 +136,17 @@ scrape_configs:
       # Reached over the estate's own network, which Prometheus joins as an
       # external network. The estate's compose file is not modified and does not
       # know this exists.
-      - targets: ["beacon:4000"]
+      #
+      # BY CONTAINER NAME, NOT SERVICE NAME (micro-org#437). `beacon:4000` had
+      # two answers from here between 2026-08-11T23:59Z and this change, and the
+      # one Docker picked was the TESTNET Beacon — which is why this target read
+      # `401 Unauthorized` and why `BeaconScrapeFailing` fired. It was never a
+      # token problem: the mainnet token was being presented to a service that
+      # was right to refuse it. `instance` is pinned so the series survives the
+      # address changing. See the `cf-services` job for the full argument.
+      - targets: ["cloudsforge-estate-beacon-1:4000"]
         labels:
+          instance: beacon:4000
           team: platform
           service: beacon
           tier: "2"
@@ -168,6 +177,12 @@ scrape_configs:
   #
   # Each token file is 0 bytes in a fresh checkout, which means these targets 401
   # until an operator writes the service's own token into them. See README §Beacon.
+  #
+  # A FILLED TOKEN FILE ALSO 401s IF THE TARGET IS THE WRONG ESTATE, and these
+  # three did exactly that from 2026-08-11T23:59Z (micro-org#437). "401" here has
+  # meant both "no token yet" and "right token, wrong container", and the second
+  # reading is the one that cost four hours of alerting. Both are addressed by
+  # naming the container: a `401` from now on is a token, not an address.
   - job_name: analytics
     scheme: http
     http_headers:
@@ -175,8 +190,9 @@ scrape_configs:
         files:
           - /etc/prometheus/secrets/analytics_token
     static_configs:
-      - targets: ["analytics:4000"]
+      - targets: ["cloudsforge-estate-analytics-1:4000"]
         labels:
+          instance: analytics:4000
           team: platform
           service: analytics
           tier: "2"
@@ -188,8 +204,9 @@ scrape_configs:
         files:
           - /etc/prometheus/secrets/lantern_token
     static_configs:
-      - targets: ["lantern:4000"]
+      - targets: ["cloudsforge-estate-lantern-1:4000"]
         labels:
+          instance: lantern:4000
           team: platform
           service: lantern
           tier: "2"
@@ -272,8 +289,15 @@ scrape_configs:
   # an empty vector.
   - job_name: backup-runner
     static_configs:
-      - targets: ["backup-runner:4130"]
+      # The one estate target that was NOT ambiguous while micro-org#437 was
+      # open, and by luck rather than design: testnet runs no backup runner, so
+      # `backup-runner` had one answer when every other bare name had two. It is
+      # named by container anyway. "Unique today" is not a property of an
+      # address, it is a property of what happens to be deployed, and the day
+      # testnet grows a backup runner this target would move estates in silence.
+      - targets: ["cloudsforge-estate-backup-runner-1:4130"]
         labels:
+          instance: backup-runner:4130
           team: platform
           service: backup-runner
 
@@ -343,7 +367,13 @@ scrape_configs:
   # target that is absent rather than down is exactly what `absent()` alerts on.
   - job_name: traefik
     static_configs:
-      - targets: ["gateway:8082"]
+      # `gateway` is ambiguous too — the testnet stack has one, in project
+      # `cf-testnet` (micro-org#257), and it answered this scrape while
+      # micro-org#437 was open. Traefik's config-reload and entrypoint counters
+      # were the testnet gateway's, which is a particularly quiet way to be
+      # wrong: both gateways are healthy, so nothing looked like a failure.
+      - targets: ["cloudsforge-estate-gateway-1:8082"]
         labels:
+          instance: gateway:8082
           team: platform
           service: gateway

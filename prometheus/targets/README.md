@@ -50,3 +50,31 @@ scrapes them in a job of their own, which is where a per-job token can live.
 
 The reasoning, the measurements behind it and the `tier` label are all in
 `scripts/render-prometheus-targets.py` and `prometheus/tiers.yaml`.
+
+## Why every target is a container name and carries an `instance` label
+
+`indexer:4000` is a question, not an address. Prometheus is attached to
+`cloudsforge-estate_default` **and** `cf-testnet_default` — the second because
+reaching one testnet container for the `cf-indexer-testnet` job meant joining its
+whole network (micro-org#398) — and Docker resolves a bare name against those in
+name order. `cf-testnet_default` sorts first.
+
+So from 2026-08-11T23:59:45Z every target in this directory was answered by the
+**testnet** container, and the samples were stored under the mainnet job's
+labels. Three mainnet chain series stop and testnet starts in the same 15-second
+sample. Every target stayed `up` and every number stayed plausible; the alert
+plane simply evaluated the wrong network (micro-org#437).
+
+Container names are unique per host across compose projects, which is the one
+property a scrape address needs, so the generator emits
+`<project>-<service>-<n>:<port>` with the project read off the compose model.
+
+`instance` is pinned to the old `<service>:<port>`. The address had to change;
+the series identity must not, or every recording rule and dashboard panel keyed
+on it would be orphaned to fix a resolution bug they have nothing to do with. A
+service with replicas is the exception — there the ordinal is what distinguishes
+the targets, so `instance` is left to the address.
+
+`scripts/check-prometheus-target-ambiguity.py` refuses any target in this
+directory or in `prometheus.yml` that is a bare service name, so the next person
+to attach Prometheus to another network cannot reintroduce this quietly.
