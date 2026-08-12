@@ -345,6 +345,33 @@ if ! docker compose -p "$TELEMETRY_PROJECT" -f "$TELEMETRY" up -d; then
   exit 1
 fi
 
+# ── AND THE up -d ABOVE DOES NOT DELIVER A prometheus.yml CHANGE (micro-org#438)
+#
+# `prometheus.yml` is a SINGLE-FILE bind mount, and on this host that is a
+# snapshot taken when the container was created rather than a live view of the
+# file. Measured: an in-place append that did NOT change the inode (41304 both
+# sides) was still invisible inside the container, while the same append to a
+# file under the `targets/` DIRECTORY mount showed up immediately. So this is not
+# the inode hazard, and avoiding renames would not have helped.
+#
+# `up -d` does not correct it. Compose recreates a container when its config hash
+# or image changes, and neither moves when only the CONTENT behind an unchanged
+# mount spec has changed. So the line above reports the telemetry plane up, and
+# it IS up, running the previous config.
+#
+# Nor would a reload: `POST /-/reload` re-reads `--config.file`, resolves the
+# snapshot, parses it and returns 200 — the failure mode is a successful no-op,
+# which is why this measures instead of trusting. `--fix` because a warning here
+# would be read after the deploy that needed it, and recreating Prometheus costs
+# ten seconds against a named volume.
+#
+# Not fatal. The estate coming up matters more than the monitoring plane being a
+# version behind, and the script says so loudly either way.
+if ! ./scripts/check-prometheus-config-live.sh --fix; then
+  echo "PROMETHEUS IS RUNNING A STALE CONFIG AND COULD NOT BE RECREATED (micro-org#438)." >&2
+  echo "The estate is up. What is watching it is a prometheus.yml behind." >&2
+fi
+
 echo
 echo "── 3b. the gateway, wired to the estate's network and bound to 443 ──────"
 # ── THE GATEWAY IS IN THE ESTATE'S PROJECT, AND WAS NOT (micro-org#257) ───────
