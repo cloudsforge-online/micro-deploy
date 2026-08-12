@@ -33,6 +33,20 @@ BASE=micro
 REPO=/workspace
 BEACON_URL=${CF_BEACON_URL:-http://beacon:4000}
 
+# ── THIS IS CI, AND pnpm HAS TO BE TOLD ─────────────────────────────────────────────────────
+#
+# The checkout is bind-mounted from a host where a human's pnpm installed `node_modules`. When the
+# store layout underneath it does not match, pnpm wants to remove the directory and rebuild it, and
+# it will not do that unattended:
+#
+#   [ERR_PNPM_ABORTED_REMOVE_MODULES_DIR_NO_TTY] Aborted removal of modules directory due to no TTY
+#
+# There is no TTY here and there is never going to be one. `CI=true` is pnpm's own documented
+# answer, and it is true: nothing about this container is interactive. Purging the tree is also the
+# right outcome rather than a cost to avoid — a replay that reused a `node_modules` some other pnpm
+# built is exactly the drift `--frozen-lockfile` exists to prevent.
+export CI=true
+
 log() { printf '%s conformance-replay: %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*"; }
 
 replay_once() {
