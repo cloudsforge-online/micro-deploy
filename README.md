@@ -103,9 +103,16 @@ make clean                # stop and delete all telemetry history
 
 `make up` runs `up.sh`, which writes the two credential files, regenerates the
 dashboards from the validated palette, warns if the existing estate is not
-running, and then brings compose up. Bare `docker compose -f
-compose/docker-compose.telemetry.yml up -d` also works once `up.sh` has run
-once — it is the credential files that need creating, not the containers.
+running, and then brings compose up.
+
+**Bring the telemetry plane up with `up.sh`, not with a bare `docker compose`.**
+The bare form fails on `required variable CF_GRAFANA_ADMIN_PASSWORD is missing a
+value`, and the variable it names is not the problem: compose takes its project
+directory from the first `-f`, so it reads `.env` from **`compose/`** — and
+`compose/.env` is a symlink to `estate/tokens.env`. It does not miss this
+directory's `.env` so much as silently load a different file, one that has never
+carried a Grafana password. `up.sh` sources `.env` into the environment first.
+If you must run compose by hand, pass `--env-file .env` explicitly.
 
 ---
 
@@ -126,7 +133,10 @@ or by hand, in the one order that works:
 export CF_WEB_APEX=cloudsforge.localtest.me
 docker compose -f compose/docker-compose.estate.yml up -d --build --wait
 ./scripts/estate-bootstrap.sh      # THE MANUAL ADMIN UPDATE, then the tokens
-docker compose -p cfmicro -f compose/docker-compose.telemetry.yml up -d
+docker compose --env-file .env -p cfmicro \
+  -f compose/docker-compose.telemetry.yml up -d
+# --env-file is not optional: compose would otherwise read compose/.env, which
+# is a symlink to estate/tokens.env and carries no CF_GRAFANA_ADMIN_PASSWORD.
 # The gateway is in the ESTATE's project, not the telemetry plane's, so that
 # `docker compose -p cloudsforge-estate ps` lists it — micro-org#257.
 docker compose -p cloudsforge-estate \
