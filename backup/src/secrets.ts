@@ -46,6 +46,51 @@
  * one, and that procedure's entire value is that the keyring is never in the same set as the
  * vault — which this process also writes. `keyring.ts` refuses to boot if a custody secret is in
  * this process's environment at all, and `archive.ts` refuses to tar anything credential-shaped.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **THE SOURCE IS NO LONGER A PLAINTEXT FILE, AND FOR A WHILE THIS MODULE DID NOT KNOW THAT.**
+ *
+ * Everything above was written when `coinbase-key.json` — `{ address, privateKey, warning }` in
+ * the clear — was the only thing on disk. micro-org#206 has since been half-fixed: the miners on
+ * both hosts now run from `coinbase-keystore.json`, scrypt + AES-256-GCM, with the private key
+ * never in the clear at rest. That is the outcome this whole issue wanted.
+ *
+ * It also silently broke the backup, and the way it broke is worth stating because the symptom
+ * looks like success. `run.ts` asked for `<dir>/<env>/coinbase-key.json` by name. On the app host
+ * the seal left only the keystore, so the read took the `ENOENT` branch — whose warning is
+ * *"nothing to encrypt"* and whose comment reads *"On an estate with no miner this is normal."*
+ * The estate has two miners. Measured on mainnet 2026-08-12: `backup_artefacts` held 264 rows,
+ * 240 `database` + 16 `files` + 8 `vault`, and **zero** of kind `secrets`, ever.
+ *
+ * So this module now resolves its source rather than being told it:
+ *
+ *     coinbase-keystore.json   preferred — the file the miner actually reads
+ *     coinbase-key.json        fallback  — still present on the chain host, still the only
+ *                                          recovery path until the keystore is provably restorable
+ *
+ * Both carry a plaintext `address` field, so `readPublicAddress` works against either unchanged
+ * and the `public_ref` constraint is satisfied either way.
+ *
+ * ── AND THE PASSPHRASE TRAVELS WITH IT, WHICH IS A DELIBERATE CHOICE ──────────────────────────
+ *
+ * **A keystore backup without the passphrase is a backup of nothing.** Each passphrase is 64 bytes
+ * in one file at mode 0600 on one machine, covered by no cron, no timer and no runner. Backing up
+ * the keystore alone would produce a green `secrets` artefact that cannot be opened — which is a
+ * worse failure than no artefact, because it reads as recovered until the day it is needed.
+ *
+ * So one artefact holds both, as a self-describing JSON envelope (`MINER_ENVELOPE_FORMAT`), and
+ * `age` encrypts the envelope. This does collapse two factors into one, and that is the trade
+ * being made on purpose: the passphrase's protection becomes the age recipient alone. It is the
+ * right trade here because the recipient's private half never exists on this host — so the pair is
+ * no more reachable from a host compromise than the keystore alone was — and because the
+ * alternative is a durability control that does not work. §1.5's rule is that an artefact and the
+ * key that opens it must not share a MEDIUM; both halves being unopenable ciphertext on the backup
+ * disk satisfies that, where "keystore on the backup disk, passphrase only on the mining host"
+ * satisfies it by losing the money instead.
+ *
+ * A passphrase-less source is still backed up, with a warning that says the envelope cannot be
+ * opened without a passphrase held elsewhere. Refusing outright would leave the estate with no
+ * backup at all, which is the state this is fixing.
  * ══════════════════════════════════════════════════════════════════════════════════════════════
  *
  * **NOTHING IN THIS FILE PRINTS, LOGS OR RETURNS PLAINTEXT.** The only value that leaves it is the
@@ -98,9 +143,79 @@ export const NO_LOCAL_DECRYPT_WARNING =
   'A real proof of recovery is to decrypt off-host, re-derive the address from the recovered key, and compare it to ' +
   'the artefact publicRef — compare addresses, never keys'
 
+/**
+ * The one warning that says the artefact exists and still cannot be used.
+ *
+ * Louder than the others on purpose. A `secrets` row in the catalogue and a `publicRef` that
+ * matches the miner is exactly what a successful backup looks like from the outside, so the fact
+ * that nothing in the set can open it has to travel inside the manifest.
+ */
+export const NO_PASSPHRASE_WARNING =
+  'this envelope holds an ENCRYPTED KEYSTORE AND NO PASSPHRASE: no passphrase file was found beside the key. ' +
+  'Recovering it needs the scrypt passphrase from wherever the operator keeps it — if that is one 0600 file on the ' +
+  'mining host, this artefact does not make the coinbase key recoverable and micro-org#206 is not closed by it'
+
+/**
+ * The envelope written inside the `age` ciphertext, versioned so a restore two years from now does
+ * not have to guess.
+ *
+ * A format string rather than a bare pair of fields because the recovery procedure is *"decrypt,
+ * parse, write these two files back"* and every one of those steps needs to know what it is
+ * looking at. `v1` holds `keystore` + `passphrase`; a plaintext-sourced set holds `key` instead of
+ * both, and the `source` field is what distinguishes them without inspecting the contents.
+ */
+export const MINER_ENVELOPE_FORMAT = 'cloudsforge.miner-coinbase.v1'
+
+/**
+ * Where to look, in order. Resolved rather than configured for the reason `env.ts` already gives
+ * about `minerKeysDir`: a path derived from `BACKUP_ENVIRONMENT` cannot be pointed at the other
+ * network's key by a settings edit.
+ *
+ * `passphrasePaths` is a LIST because the two hosts name the file differently and one runner image
+ * has to run on both. Measured 2026-08-12:
+ *
+ *     app host    miner-keys/secrets/coinbase-passphrase        64 bytes 0600, ONE file, both networks
+ *     chain host  /home/malf/secrets/ember-coinbase-<env>.pass  64 bytes 0600, one per network
+ *
+ * Note where the chain host's lives: `/home/malf/secrets`, a sibling of `dev/`, NOT under the
+ * miner-keys tree. So `<minerKeysDir>/secrets/ember-coinbase-<env>.pass` is a CONTAINER path that
+ * only resolves if a runner deployed there also bind-mounts `/home/malf/secrets` to
+ * `/miner-keys/secrets`. There is no runner on the chain host today (which is its own gap — see
+ * `runbooks/runbook-miner-coinbase-key-backup.md`); this entry is what makes one work when there is.
+ *
+ * Trying all three beats a variable nobody sets correctly on the second host.
+ */
+export interface MinerKeySources {
+  readonly keystorePath: string
+  readonly plaintextPath: string
+  readonly passphrasePaths: readonly string[]
+}
+
+export function minerKeySources(minerKeysDir: string, environment: Environment): MinerKeySources {
+  return {
+    keystorePath: `${minerKeysDir}/${environment}/coinbase-keystore.json`,
+    plaintextPath: `${minerKeysDir}/${environment}/coinbase-key.json`,
+    passphrasePaths: [
+      `${minerKeysDir}/secrets/coinbase-passphrase`,
+      `${minerKeysDir}/secrets/ember-coinbase-${environment}.pass`,
+      `${minerKeysDir}/${environment}/coinbase-passphrase`,
+    ],
+  }
+}
+
 export interface SecretsResult {
   readonly artefact: ArtefactEntry | null
   readonly warnings: readonly string[]
+}
+
+/** `null` when absent, so a caller can tell "not there" from "there and unreadable" (which throws). */
+async function readIfPresent(path: string): Promise<Buffer | null> {
+  try {
+    return await readFile(path)
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw new SecretsError(`could not read ${path}: ${errorText(err)}`)
+  }
 }
 
 /**
@@ -110,7 +225,7 @@ export interface SecretsResult {
  * but its 0600 original: the only thing this function creates under `/backups` is ciphertext.
  */
 export async function backupMinerCoinbaseKey(options: {
-  readonly sourcePath: string
+  readonly sources: MinerKeySources
   readonly destination: string
   readonly relPath: string
   readonly environment: Environment
@@ -130,55 +245,124 @@ export async function backupMinerCoinbaseKey(options: {
 
   const recipient = assertAgeRecipient(options.recipient)
 
-  let plaintext: Buffer
-  try {
-    plaintext = await readFile(options.sourcePath)
-  } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code === 'ENOENT') {
-      // Absent rather than unreadable. On an estate with no miner this is normal, and a warning
-      // that says so is more useful than a failed run that says nothing about why.
-      return {
-        artefact: null,
-        warnings: [`no miner coinbase key at ${options.sourcePath} for ${options.environment}; nothing to encrypt`],
-      }
+  // KEYSTORE FIRST. It is what the miner reads today, and preferring the plaintext would keep
+  // backing up a file that is on its way to being deleted while the operative one goes uncovered.
+  const keystore = await readIfPresent(options.sources.keystorePath)
+  const plaintext = keystore ? null : await readIfPresent(options.sources.plaintextPath)
+  const key = keystore ?? plaintext
+
+  if (!key) {
+    return {
+      artefact: null,
+      warnings: [
+        // Deliberately not the old "nothing to encrypt", which read as benign. An estate with a
+        // running miner and neither file is a broken mount or a moved directory, and the manifest
+        // is where a restorer finds out that a set they are trusting has no key in it.
+        `NO MINER COINBASE KEY IN THIS SET for ${options.environment}: neither ` +
+          `${options.sources.keystorePath} nor ${options.sources.plaintextPath} exists. That is normal only on an ` +
+          `estate that runs no miner — if one is running, its key is unmounted or has moved and nothing is ` +
+          `backing it up (micro-org#206).`,
+      ],
     }
-    // `errorText` and not the raw error: an EACCES from `readFile` names the path, which is fine,
-    // but everything from this module goes through redaction on principle.
-    throw new SecretsError(`could not read the miner coinbase key: ${errorText(err)}`)
   }
 
-  try {
-    // The ADDRESS only. `privateKey` is never destructured, never named in a variable, and never
-    // touched except as an opaque byte range inside `plaintext` on its way into `age`'s stdin.
-    const address = readPublicAddress(plaintext)
+  const passphrase = keystore ? await firstPresent(options.sources.passphrasePaths) : null
+  const warnings: string[] = []
 
-    const digest = await encryptToFile({
-      plaintext,
-      recipient,
-      destination: options.destination,
-      timeoutMs: options.timeoutMs,
+  try {
+    // The ADDRESS only. The key material is never destructured, never named in a variable, and
+    // never touched except as an opaque byte range on its way into `age`'s stdin.
+    const address = readPublicAddress(key)
+
+    const envelope = buildMinerEnvelope({
+      environment: options.environment,
+      address,
+      key,
+      fromKeystore: keystore !== null,
+      passphrase,
     })
 
-    return {
-      artefact: {
-        kind: 'secrets',
-        name: `miner-coinbase-${options.environment}`,
-        relPath: options.relPath,
-        // OF THE CIPHERTEXT. There is no digest of the plaintext anywhere in this system: a digest
-        // of a 240-byte file with a known structure is a meaningful brute-force target.
-        bytes: digest.bytes,
-        sha256: digest.sha256,
-        publicRef: address,
-      },
-      warnings: [PLAINTEXT_SOURCE_WARNING, NO_LOCAL_DECRYPT_WARNING],
+    try {
+      const digest = await encryptToFile({
+        plaintext: envelope,
+        recipient,
+        destination: options.destination,
+        timeoutMs: options.timeoutMs,
+      })
+
+      if (!keystore) warnings.push(PLAINTEXT_SOURCE_WARNING)
+      if (keystore && !passphrase) warnings.push(NO_PASSPHRASE_WARNING)
+      warnings.push(NO_LOCAL_DECRYPT_WARNING)
+
+      return {
+        artefact: {
+          kind: 'secrets',
+          name: `miner-coinbase-${options.environment}`,
+          relPath: options.relPath,
+          // OF THE CIPHERTEXT. There is no digest of the plaintext anywhere in this system: a digest
+          // of a small file with a known structure is a meaningful brute-force target.
+          bytes: digest.bytes,
+          sha256: digest.sha256,
+          publicRef: address,
+        },
+        warnings,
+      }
+    } finally {
+      envelope.fill(0)
     }
   } finally {
     // Best-effort, and worth doing anyway. V8 may hold copies this cannot reach — a Buffer is not a
-    // guarantee of single-copy — but leaving a private key sitting in a long-lived process's heap
+    // guarantee of single-copy — but leaving key material sitting in a long-lived process's heap
     // for the rest of a nightly run is a choice, and this is the other one.
-    plaintext.fill(0)
+    key.fill(0)
+    passphrase?.contents.fill(0)
   }
+}
+
+/**
+ * Build the envelope that goes inside the ciphertext. Pure, and separate from the encryption for
+ * one reason: it is the part with a format contract, and a format contract that can only be
+ * exercised by a test with `age` installed is a format contract nothing checks.
+ *
+ * Returns a Buffer the caller is expected to zero.
+ */
+export function buildMinerEnvelope(options: {
+  readonly environment: Environment
+  readonly address: string
+  readonly key: Buffer
+  readonly fromKeystore: boolean
+  readonly passphrase: { path: string; contents: Buffer } | null
+}): Buffer {
+  return Buffer.from(
+    JSON.stringify({
+      format: MINER_ENVELOPE_FORMAT,
+      environment: options.environment,
+      address: options.address,
+      source: options.fromKeystore ? 'keystore' : 'plaintext',
+      // Verbatim file contents, so recovery is "write this string back to that path" and needs no
+      // knowledge of either file's internal format.
+      ...(options.fromKeystore
+        ? { keystore: options.key.toString('utf8') }
+        : { key: options.key.toString('utf8') }),
+      ...(options.passphrase
+        ? { passphrase: options.passphrase.contents.toString('utf8'), passphraseFrom: options.passphrase.path }
+        : {}),
+      recovery:
+        'age -d -i <identity> this file, parse the JSON, write `keystore` back to coinbase-keystore.json and ' +
+        '`passphrase` to the path named by passphraseFrom (mode 0600). Verify by re-deriving the address and ' +
+        'comparing it to `address` — never by printing a key.',
+    }),
+    'utf8',
+  )
+}
+
+/** First candidate that exists, with the path it came from — the manifest records which one won. */
+async function firstPresent(paths: readonly string[]): Promise<{ path: string; contents: Buffer } | null> {
+  for (const path of paths) {
+    const contents = await readIfPresent(path)
+    if (contents) return { path, contents }
+  }
+  return null
 }
 
 /**

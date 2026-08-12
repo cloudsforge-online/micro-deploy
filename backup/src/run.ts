@@ -53,7 +53,7 @@ import {
 } from './manifest.ts'
 import { databaseSize, dsnFor, exactRowCount, readClusterFacts, startDump, type ClusterConnection } from './pg.ts'
 import { assertSafeRootPath, errorText, resolveWithin } from './paths.ts'
-import { backupMinerCoinbaseKey } from './secrets.ts'
+import { backupMinerCoinbaseKey, minerKeySources } from './secrets.ts'
 
 export const BACKUP_RUN = 'backup.run'
 
@@ -358,7 +358,11 @@ export async function performBackup(deps: RunnerDeps, options: BackupOptions): P
   //    coinbase ciphertext exists for no gain, and each copy is one more thing to destroy later.
   const secrets = includeFiles
     ? await backupMinerCoinbaseKey({
-        sourcePath: `${deps.env.minerKeysDir}/${deps.env.env}/coinbase-key.json`,
+        // Resolved, not named. The seal of micro-org#206 replaced `coinbase-key.json` with
+        // `coinbase-keystore.json` on both hosts and this line kept asking for the old name, so
+        // every run since took the "absent, nothing to encrypt" branch and the estate's only
+        // money-bearing key went unbacked with a green result. See `secrets.ts`.
+        sources: minerKeySources(deps.env.minerKeysDir, deps.env.env),
         destination: resolveWithin(directory, `secrets/miner-coinbase-${deps.env.env}.json.age`),
         relPath: `secrets/miner-coinbase-${deps.env.env}.json.age`,
         environment: deps.env.env,
@@ -415,6 +419,19 @@ export async function performBackup(deps: RunnerDeps, options: BackupOptions): P
   // Set AFTER `completeRun`, so the gauge cannot claim a success the catalogue has not recorded.
   // The reverse order would publish a number that a boot-time reseed then contradicts.
   deps.metrics.set('backup_last_success_unixtime', Math.floor(now().getTime() / 1000))
+  // ── THE ONE ARTEFACT THAT IS MONEY, AS A NUMBER RATHER THAN A MANIFEST WARNING ────────────────
+  //
+  // Every gauge above answers "did a backup run" and "how big was it". None of them could answer
+  // "is the coinbase key in it", and on mainnet the answer was NO for the entire life of the
+  // runner: 264 artefacts, zero of kind `secrets`, while `BackupAgeExceeded` stayed satisfied.
+  // A backup that omits the only irreplaceable thing in the estate is not a degraded backup, it is
+  // the failure this whole subsystem exists to prevent, and it was visible only in a manifest
+  // field and a log line nobody reads.
+  //
+  // Written on the SUCCESS path beside the other two so it cannot claim more than the catalogue
+  // does, and only for a FULL run — `includeFiles` is false for a pre-restore copy, whose omission
+  // of the key is deliberate (see §4) and must not read as the estate being unprotected.
+  if (includeFiles) deps.metrics.set('backup_secrets_included', secrets.artefact ? 1 : 0)
   deps.logger.info('backup complete', {
     backupRunId: options.backupRunId,
     directory,
