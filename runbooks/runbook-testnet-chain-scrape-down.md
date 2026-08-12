@@ -56,12 +56,32 @@ If the last is absent:
 ```sh
 cd /home/savvaniss/dev/cloudsforge/deploy
 export DOCKER_CONFIG=/home/savvaniss/.docker-nocreds
-docker compose -p cfmicro -f compose/docker-compose.telemetry.yml up -d prometheus
+./up.sh                      # or: make up
 ```
 
-That is the fix, and it is idempotent. Do **not** attach the network by hand with
-`docker network connect` — it works, it clears the alert, and it is lost on the
-next recreate, which is exactly the failure mode you are standing in.
+That is the fix, and it is idempotent — `up.sh` recreates Prometheus with every
+network the telemetry file declares.
+
+Bring the telemetry plane up **with `up.sh`, not with a bare `docker compose`**.
+
+```sh
+# this fails, on the app host, every time:
+docker compose -p cfmicro -f compose/docker-compose.telemetry.yml up -d prometheus
+#   required variable CF_GRAFANA_ADMIN_PASSWORD is missing a value
+```
+
+The reason is worth knowing, because the error names a variable and the variable
+is not the problem. Compose takes its project directory from the first `-f`, so
+it looks for `.env` in **`compose/`** — and `compose/.env` is a symlink to
+`estate/tokens.env`. A bare invocation does not merely miss `deploy/.env`; it
+silently loads the estate's tokens file instead, which has never carried a
+Grafana password. `up.sh` sources `deploy/.env` into the environment before it
+calls compose, so interpolation resolves. `--env-file .env` also works and is
+the right escape hatch if you must run compose by hand. Measured 2026-08-12.
+
+Do **not** attach the network by hand with `docker network connect` — it works,
+it clears the alert, and it is lost on the next recreate, which is exactly the
+failure mode you are standing in.
 
 ## The other cause: the container name changed
 
