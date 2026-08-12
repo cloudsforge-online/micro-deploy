@@ -3771,6 +3771,12 @@ services:
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
+      # The operator mail view (GET /v1/mail, POST /v1/mail/:id/resend). Unlike the four above,
+      # this one is called with the OPERATOR's own bearer rather than admin-api's service token:
+      # notify's /admin/deliveries routes are requireAdmin and refuse a service principal, and
+      # resending somebody's mail should be recorded against the human who asked for it. So there
+      # is no grant to derive and no credential to rotate for this peer — only an address.
+      NOTIFY_URL: http://notify:4000
       # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
       # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
       # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
