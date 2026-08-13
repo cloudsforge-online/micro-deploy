@@ -4710,49 +4710,6 @@ services:
       postgres:
         condition: service_healthy
 
-  # ════════════════════════════════════════════════════════════════════════════════════════════
-  # stratum-endpoint — owns the address hardware miners dial (micro-org#457)
-  #
-  # Runs beside the pool and watches the public WAN address. It exists because a residential line
-  # moves, and `POOL_STRATUM_PUBLIC_HOST` is read once at container start and rendered into the
-  # public API that miners configure firmware against. A stale value is worse than none: null makes
-  # `pool-web` say "contact the administrator", stale makes a miner dial a socket that refuses.
-  #
-  # WATCHING BY DEFAULT. `STRATUM_PUBLISH` is not "true", so it observes, counts and exports
-  # metrics and writes NOTHING. That is deliberate and it is what makes deploying this before the
-  # NAT rule harmless: `pool/src/env.ts` refuses to boot when a public host is set and no chain
-  # declares a public port, so a service that published on first start would take the pool down on
-  # a deployment where the ports had not been decided. The owner turns publishing on once, after
-  # `nc -vz <wan> 3334` answers from outside.
-  #
-  # THE DOCKER SOCKET is mounted because applying a change means recreating exactly one service.
-  # That is a real privilege and it is bounded by what the code does with it: `up -d --no-deps
-  # pool`, never `release-deploy.sh` (a WAN address must not roll the estate) and never a bare
-  # `compose up` (which drops `mainnet.env`).
-  stratum-endpoint:
-    profiles: ["pool"]
-    <<: *service-defaults
-    build:
-      context: ../stratum-endpoint
-    environment:
-      <<: *common-env
-      STRATUM_PUBLISH: "${CF_STRATUM_PUBLISH:-false}"
-      STRATUM_APPLY: "${CF_STRATUM_APPLY:-true}"
-      STRATUM_ENV_FILE: /estate/compose/generated/stratum.env
-      STRATUM_COMPOSE_FILE: /estate/compose/docker-compose.estate.yml
-      STRATUM_COMPOSE_PROJECT: "${COMPOSE_PROJECT_NAME:-cloudsforge-estate}"
-      STRATUM_INTERVAL_MS: "${CF_STRATUM_INTERVAL_MS:-300000}"
-    volumes:
-      # The estate checkout, so it can write the generated file and address the compose project.
-      - ../..:/estate
-      - /var/run/docker.sock:/var/run/docker.sock
-    healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/livez').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-
   pool:
     profiles: ["pool"]
     <<: *service-defaults
