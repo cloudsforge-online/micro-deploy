@@ -124,6 +124,26 @@ http:
     # A REDIRECT rather than a second router onto `cf-web-site`: serving one site on two hostnames
     # splits its search ranking between them and gives every page two addresses, which is a second
     # defect wearing the first one's clothes. 301 so it is cached, and so the apex is canonical.
+    # ── CROSS-ESTATE READS FOR THE IN-APP NETWORK SWITCHER (micro-org#459 stage 3) ─────────────
+    #
+    # A reader on explorer.<apex> viewing the OTHER network fetches the sibling estate's public
+    # chain index cross-origin. The requests are anonymous by construction — the surface drops the
+    # authorization header for cross-estate calls (explorer-web/src/lib/viewed.ts), so these are
+    # simple GETs and this middleware only has to answer the Origin check; no preflight, no
+    # credentials, no headers allowance.
+    #
+    # BOTH sibling spellings are allowed from BOTH estates, deliberately: this one file serves the
+    # two gateways, each request carries exactly one Origin, and Traefik echoes an origin only
+    # when it is on the list — so the mainnet gateway allowing the mainnet origin is a no-op, not
+    # a hole. Scoped to the PUBLIC READ routers only; nothing that verifies a token carries this.
+    cf-cors-sibling-explorer:
+      headers:
+        accessControlAllowOriginList:
+          - "https://explorer.cloudsforge.online"
+          - "https://explorer-testnet.cloudsforge.online"
+        accessControlAllowMethods: [GET]
+        addVaryHeader: true
+
     cf-www-to-apex:
       redirectRegex:
         regex: '^https?://www\.(.+)'
@@ -494,6 +514,7 @@ http:
       rule: 'Host(`explorer{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
+      middlewares: [cf-cors-sibling-explorer]
       service: cf-svc-indexer
 
     # ────────────────────────────────────── developers (micro-devportal-web) ──
