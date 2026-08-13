@@ -1486,7 +1486,23 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify
-      NOTIFY_PUBLIC_URL: http://localhost:4110
+      # ── EVERY LINK IN EVERY NOTIFICATION EMAIL WAS POINTING AT localhost ────────────────────
+      #
+      # A template declares a RELATIVE `path` — `/wallet`, `/settings/security/exports`,
+      # `/developers/keys` — and notify resolves it against this. The value here was the dev
+      # default, hardcoded rather than interpolated, on BOTH estates. So the welcome mail arrived
+      # with a link to `http://localhost:4110/`, and so would every other templated link; the
+      # verification mail was the one exception, because it carries a `verifyUrl` identity built
+      # from `IDENTITY_ACCOUNT_URL` and never touches this.
+      #
+      # It went unseen because almost no mail was ever sent: the welcome mail could not be
+      # addressed at all until micro-org#447, and the first one delivered after that fix is what
+      # exposed this. Found by the owner, in an inbox, which is the only place it was visible.
+      #
+      # `hub`, because every path in `notify/src/templates.ts` is a hub-web route. Same shape as
+      # `IDENTITY_ACCOUNT_URL` two hundred lines up, so the two agree about where an account
+      # lives, and the localtest.me fallback keeps a bare `docker compose up` working.
+      NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: notify-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -1501,7 +1517,23 @@ services:
     environment:
       <<: [*common-env, *identity-trust]
       NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify
-      NOTIFY_PUBLIC_URL: http://localhost:4110
+      # ── EVERY LINK IN EVERY NOTIFICATION EMAIL WAS POINTING AT localhost ────────────────────
+      #
+      # A template declares a RELATIVE `path` — `/wallet`, `/settings/security/exports`,
+      # `/developers/keys` — and notify resolves it against this. The value here was the dev
+      # default, hardcoded rather than interpolated, on BOTH estates. So the welcome mail arrived
+      # with a link to `http://localhost:4110/`, and so would every other templated link; the
+      # verification mail was the one exception, because it carries a `verifyUrl` identity built
+      # from `IDENTITY_ACCOUNT_URL` and never touches this.
+      #
+      # It went unseen because almost no mail was ever sent: the welcome mail could not be
+      # addressed at all until micro-org#447, and the first one delivered after that fix is what
+      # exposed this. Found by the owner, in an inbox, which is the only place it was visible.
+      #
+      # `hub`, because every path in `notify/src/templates.ts` is a hub-web route. Same shape as
+      # `IDENTITY_ACCOUNT_URL` two hundred lines up, so the two agree about where an account
+      # lives, and the localtest.me fallback keeps a bare `docker compose up` working.
+      NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       # ── SMTP: PASSED THROUGH, NEVER WRITTEN HERE ─────────────────────────────
       #
       # Unconfigured is still a supported mode and still the default: every value
