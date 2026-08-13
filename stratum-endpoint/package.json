@@ -1,0 +1,15 @@
+{
+  "name": "@cloudsforge/stratum-endpoint",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Owns one fact: the address hardware miners should dial. Observes the public WAN address behind a resolver quorum, republishes it only when it changes and is provably usable, and refuses — loudly and without clearing the live value — whenever it cannot tell. micro-org#457.",
+  "license": "MIT",
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node --import tsx src/index.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test src/*.test.ts",
+    "check": "pnpm typecheck && pnpm test"
+  }
+}
