@@ -54,7 +54,12 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
     ports:
       # Loopback only. Prometheus scrapes it over the host, and nothing outside needs it.
-      - "127.0.0.1:4147:4000"
+      #
+      # 4148 and not 4147: 4147 is `backup-runner`. Checked against the running host rather than
+      # picked from the file, because this compose project is not part of the estate's and
+      # `check-compose-host-ports.py` cannot see across the two — a collision here would have
+      # bound silently in one project and refused in the other.
+      - "127.0.0.1:4148:4000"
     healthcheck:
       test:
         - CMD
