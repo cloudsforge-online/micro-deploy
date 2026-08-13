@@ -113,6 +113,23 @@ http:
         # frameDeny would break it. Matches what every frontend's nginx.conf already sends.
         customFrameOptionsValue: "SAMEORIGIN"
 
+    # ── www.<apex> IS A HOSTNAME PEOPLE TYPE, AND IT ANSWERED NOTHING (micro-org#404) ──────────
+    #
+    # Eighteen of nineteen public hostnames answered 200; `www` was the missing one, and it is the
+    # one a person types out of habit or a mail client linkifies. With no DNS record it was `000` —
+    # the browser's own "can't find the server" page, no branding and nothing to click. Once the
+    # record existed it became a 404 from HERE, because Traefik routes by Host and no router
+    # claimed that name.
+    #
+    # A REDIRECT rather than a second router onto `cf-web-site`: serving one site on two hostnames
+    # splits its search ranking between them and gives every page two addresses, which is a second
+    # defect wearing the first one's clothes. 301 so it is cached, and so the apex is canonical.
+    cf-www-to-apex:
+      redirectRegex:
+        regex: '^https?://www\.(.+)'
+        replacement: 'https://${1}'
+        permanent: true
+
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
     # `rpc.<apex>` and `p2p.<apex>` are the only two hostnames in this estate that
@@ -310,6 +327,16 @@ http:
     # `site` has an EMPTY subdomain in the registry, so it is the bare apex rather than
     # `site.<apex>`. A router matching `Host(`.<apex>`)` would be the empty-host bug wearing a
     # different hat.
+    # The `www` spelling of the apex, redirected to it. Same priority as the apex router: the two
+    # rules match different hostnames and never compete. Traefik requires a service even when a
+    # middleware answers first, so it names the one this redirects TO.
+    cf-web-www:
+      rule: 'Host(`www.{{ env "CF_SITE_HOST" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-www-to-apex]
+      service: cf-web-site
+
     cf-web-site:
       rule: 'Host(`{{ env "CF_SITE_HOST" }}`)'
       priority: 500
