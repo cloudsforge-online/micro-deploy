@@ -1788,7 +1788,20 @@ services:
       # An empty value is not "everything" — indexer's env.ts refuses it,
       # because a set matching nothing sums to zero over zero addresses, which
       # is "we did not look" reported as "the chain holds nothing".
-      INDEXER_CUSTODY_LABEL_PREFIXES: "deposit:,treasury:"
+      # `pool:` joins the set for micro-org#302. It is added AHEAD of any pool address actually
+      # being registered, and that order is deliberate and safe: this variable decides which
+      # labels the custody set will ADMIT, so a prefix with no addresses behind it admits nothing
+      # and changes no balance. The reverse order is the one that fails — registering an address
+      # under a label the indexer does not admit leaves it observed by nothing while the pool
+      # believes it is backed.
+      #
+      # Registering the address itself is NOT this line and must not follow it casually. LTC is a
+      # walked-balance chain: `deriveBalances` requires every address in the custody set to carry a
+      # `history_from_height` at or below the record's lowest walked height and THROWS FOR THE
+      # WHOLE ASSET when one cannot, so a badly-registered pool address freezes LTC reconciliation
+      # estate-wide rather than under-reporting itself. See the four prerequisites in
+      # `pool/src/payouts.ts` and the measurements on micro-org#302.
+      INDEXER_CUSTODY_LABEL_PREFIXES: "deposit:,treasury:,pool:"
       # Above this the route answers 503 rather than summing a page. A page of a
       # custody set is a partial sum, and a partial sum freezes withdrawals.
       INDEXER_CUSTODY_MAX_ADDRESSES: "2000"
