@@ -219,3 +219,7 @@ prometheus/secrets/*
 alertmanager/secrets/*
 !prometheus/secrets/.gitkeep
 !alertmanager/secrets/.gitkeep
+
+# Written by stratum-endpoint (micro-org#457): the observed public address. Generated, never
+# hand-edited, and not a secret — a WAN address is public by definition.
+compose/generated/

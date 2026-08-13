@@ -51,6 +51,22 @@ const PROJECT = process.env['STRATUM_COMPOSE_PROJECT'] ?? 'cloudsforge-estate'
 const INTERVAL_MS = Number(process.env['STRATUM_INTERVAL_MS'] ?? 300_000)
 const APPLY = process.env['STRATUM_APPLY'] !== 'false'
 
+/**
+ * The gate that makes running this service BEFORE the NAT rule exists harmless.
+ *
+ * Off by default. While off, the loop observes, counts and exports metrics, and writes NOTHING —
+ * so the generated file stays absent, `pool` reads no `POOL_STRATUM_PUBLIC_HOST`, and the API goes
+ * on reporting `stratumEndpoint: null`, which is the honest answer until a miner can actually
+ * connect.
+ *
+ * That ordering matters more than it looks. `pool/src/env.ts` REFUSES TO BOOT when a public host
+ * is set and no chain declares a `POOL_<CHAIN>_STRATUM_PUBLIC_PORT` — the two are meaningless
+ * apart. So a service that published a host the moment it started would take the pool down on a
+ * deployment where the ports had not been decided yet. Publishing is therefore something the
+ * owner turns on once, deliberately, after `nc -vz <wan> 3334` answers from outside.
+ */
+const PUBLISH = process.env['STRATUM_PUBLISH'] === 'true'
+
 const KEY = 'CF_STRATUM_PUBLIC_HOST'
 
 /** Counters, exported on /metrics. Named so a change is visible after the fact, not only live. */
@@ -121,6 +137,20 @@ async function tick(): Promise<void> {
     return
   }
 
+  if (!PUBLISH) {
+    // Watching, not publishing. Recorded at info because it is the intended state before the NAT
+    // rule exists, and because an operator turning STRATUM_PUBLISH on wants to see what it WOULD
+    // have written first.
+    log('info', 'observed a new public address; not publishing (STRATUM_PUBLISH is not true)', {
+      from: decision.previous,
+      to: decision.address,
+    })
+    current = decision.address
+    counters.changes += 1
+    lastChangeAt = Date.now()
+    return
+  }
+
   log('info', 'the public address changed; republishing the stratum endpoint', {
     from: decision.previous,
     to: decision.address,
@@ -164,9 +194,12 @@ function metrics(): string {
     '# HELP stratum_public_host_last_change_timestamp_seconds When the address last changed.',
     '# TYPE stratum_public_host_last_change_timestamp_seconds gauge',
     `stratum_public_host_last_change_timestamp_seconds ${Math.floor(lastChangeAt / 1000)}`,
-    '# HELP stratum_public_host_known Whether an address is currently published.',
+    '# HELP stratum_public_host_known Whether an address is currently observed.',
     '# TYPE stratum_public_host_known gauge',
     `stratum_public_host_known ${current ? 1 : 0}`,
+    '# HELP stratum_publishing Whether this service is allowed to write the endpoint (0 = watching only).',
+    '# TYPE stratum_publishing gauge',
+    `stratum_publishing ${PUBLISH ? 1 : 0}`,
     '',
   ].join('\n')
 }
@@ -179,7 +212,10 @@ const server = createServer((req, res) => {
   }
   if (req.url === '/livez' || req.url === '/readyz') {
     res.writeHead(200, { 'content-type': 'application/json' })
-    res.end(JSON.stringify({ ok: true, published: current }))
+    // `observed`, not `published`. They are the same value only when STRATUM_PUBLISH is on, and
+    // a service whose entire purpose is refusing to advertise an address it cannot stand behind
+    // must not use the word "published" for one it has deliberately withheld.
+    res.end(JSON.stringify({ ok: true, observed: current, publishing: PUBLISH }))
     return
   }
   res.writeHead(404)
@@ -187,7 +223,12 @@ const server = createServer((req, res) => {
 })
 
 server.listen(Number(process.env['PORT'] ?? 4000), () => {
-  log('info', 'stratum-endpoint started', { resolvers: RESOLVERS.length, intervalMs: INTERVAL_MS, apply: APPLY })
+  log('info', 'stratum-endpoint started', {
+    resolvers: RESOLVERS.length,
+    intervalMs: INTERVAL_MS,
+    publish: PUBLISH,
+    apply: APPLY,
+  })
 })
 
 for (;;) {
