@@ -35,10 +35,17 @@ Two documents already pointed here before this file existed. That is why it exis
 The keyring holds **every** version, and `CUSTODY_KEY_VERSION` names the one used for new writes:
 
 ```
-CUSTODY_MASTER_SECRET_V3=<old, still needed to READ existing ciphertext>
-CUSTODY_MASTER_SECRET_V4=<new>
+CUSTODY_MASTER_SECRET_V3="<old, still needed to READ existing ciphertext>"
+CUSTODY_MASTER_SECRET_V4="<the new value>"
 CUSTODY_KEY_VERSION=4
 ```
+
+> The quotes above are not decoration and not shell syntax advice. The CI guard that keeps a
+> keyring out of this repository greps for `CUSTODY_MASTER_SECRET_V<digits>` followed by `=` and
+> anything that is not a quote, a `$`, a `%` or a `#` — because everything else is a literal value
+> and is the defect. An unquoted placeholder in a *document* matches that pattern exactly, and the
+> first version of this runbook turned the guard red. The guard was right: it cannot tell a real
+> secret from a convincing example, and a rule that tried to would be a rule with a hole in it.
 
 Removing the old version before the backlog is drained makes every row still encrypted under it
 **permanently unreadable**. That is the one irreversible mistake available here, and step 5 exists
