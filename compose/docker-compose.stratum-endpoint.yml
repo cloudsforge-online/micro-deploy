@@ -1,0 +1,70 @@
+# THE SERVICE THAT OWNS THE ADDRESS HARDWARE MINERS DIAL (micro-org#457).
+#
+#   cd deploy && docker compose -p cf-stratum -f compose/docker-compose.stratum-endpoint.yml up -d --build
+#
+# Run this ON THE APP HOST (192.168.1.129, inside WSL), beside the estate rather than inside it.
+#
+# ── WHY IT IS NOT IN `docker-compose.estate.yml` ──────────────────────────────────────────────
+#
+# It was, briefly, and the release render refused it — correctly. A service the release manifest
+# does not pin, but which carries a `build:`, is a deploy that ends in a builder on a host that may
+# not have the source; `release-render.py` refuses that by name, before anything is written, and
+# `release-deploy.sh` deliberately does not pass `--allow-unpinned-build`. Working around that
+# guard for one service would have made every future deploy of the estate depend on a flag
+# somebody had to remember.
+#
+# So it takes the shape `docker-compose.miners-apphost.yml` already established: its own compose
+# project, brought up on its own, alongside a release-managed stack it does not belong to. That is
+# also what it IS — this watches an ISP's behaviour, not the estate's, and its lifecycle has
+# nothing to do with a release version.
+#
+# ── WHAT IT DOES TO THE ESTATE, WHICH IS ALMOST NOTHING ───────────────────────────────────────
+#
+# It writes `compose/generated/stratum.env`, which `pool` reads via `env_file: required: false`.
+# While `STRATUM_PUBLISH` is not "true" it writes nothing at all, so the file stays absent, `pool`
+# reads no public host, and `GET /v1/pool` reports `stratumEndpoint: null` — the honest answer
+# while no miner can connect.
+#
+# Turn publishing on ONLY after the NAT rule exists and `nc -vz <wan-address> 3334` answers from
+# outside. Knowing the WAN address does not prove the port-forward works, and `pool/src/env.ts`
+# refuses to boot on a public host with no chain port declared beside it.
+
+name: cf-stratum
+
+services:
+  stratum-endpoint:
+    build:
+      context: ../stratum-endpoint
+    restart: unless-stopped
+    environment:
+      # Off by default, and this is the interlock rather than a preference. See the header.
+      STRATUM_PUBLISH: "${CF_STRATUM_PUBLISH:-false}"
+      STRATUM_APPLY: "${CF_STRATUM_APPLY:-true}"
+      STRATUM_ENV_FILE: /estate/deploy/compose/generated/stratum.env
+      STRATUM_COMPOSE_FILE: /estate/deploy/compose/docker-compose.estate.yml
+      # The estate's project, because the service it recreates lives there — not in this one.
+      STRATUM_COMPOSE_PROJECT: "${CF_ESTATE_PROJECT:-cloudsforge-estate}"
+      STRATUM_INTERVAL_MS: "${CF_STRATUM_INTERVAL_MS:-300000}"
+    volumes:
+      # The checkout, so it can write the generated file and address the estate's compose project.
+      - ../..:/estate
+      # A real privilege, and bounded by what the code does with it: `up -d --no-deps pool`, never
+      # `release-deploy.sh` (a WAN address must not roll the estate) and never a bare `compose up`
+      # (which drops `mainnet.env` and degrades public hostnames to localtest.me).
+      - /var/run/docker.sock:/var/run/docker.sock
+    ports:
+      # Loopback only. Prometheus scrapes it over the host, and nothing outside needs it.
+      - "127.0.0.1:4147:4000"
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/livez').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }

@@ -68,6 +68,19 @@ It never writes a secret. A WAN address is public by definition, which is why th
 is not yet reading it, so the API still advertises the OLD address. That is the safe direction, and
 it is not the intended state.
 
+## Running it
+
+Its own compose project, beside the estate rather than inside it — the shape
+`docker-compose.miners-apphost.yml` already established. It is not in the release manifest on
+purpose: a service the manifest does not pin but which carries a `build:` is refused by
+`release-render.py`, correctly, and working around that for one service would make every future
+deploy depend on a flag somebody had to remember.
+
+```sh
+cd deploy
+docker compose -p cf-stratum -f compose/docker-compose.stratum-endpoint.yml up -d --build
+```
+
 ## Before it can help
 
 **Knowing the WAN address does not prove the NAT rule exists.** Sequence:
