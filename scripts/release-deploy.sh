@@ -1068,13 +1068,52 @@ if docker compose "${ENVSET[@]}" -f "$BASE" -f "$OVERLAY" up -d ${PULL_POLICY[@]
   #
   # It runs BEFORE check-tunnel-origin.sh below, so the reachability check that
   # ends every deploy is also the proof that the gateway came back.
+  #
+  # ── AND A CYCLE IS A RESTART, WHICH KEEPS THE OLD ENVIRONMENT ───────────────
+  #
+  # `docker restart` drops the connection pool, which is everything the section
+  # above asks for, and it re-reads NOTHING. The container keeps the environment
+  # it was created with, however long ago that was and whatever `env_file` says
+  # now. The gateway is the one container in the estate where that matters,
+  # because `gateway/dynamic/*.yml` are Go templates rendered from its own
+  # environment: an unset name renders as the empty string and the block guarded
+  # by it is simply absent from the served config.
+  #
+  # Measured on 2026-08-14: `CF_VIEW_ORIGIN_SUFFIX` was added to
+  # compose/env/traefik.testnet.env, the release was cut, this script deployed it
+  # and reported "cycled cf-testnet-gateway-1", and the testnet API went on
+  # answering every preflight with no `Access-Control-Allow-Origin` — the exact
+  # reader-reported failure the release was cut to fix. The variable was in the
+  # file. The container had been created before the file changed.
+  #
+  # So: compare names first (check-gateway-env.sh — names only, never values). No
+  # drift, restart, which is the cheaper of the two and all #428 needs. Drift,
+  # RECREATE, which subsumes the restart and is the only thing that adopts the
+  # file. Neither branch is a judgement about what the variable does.
   case "$ESTATE_ENV" in
-    *testnet*) default_gateway=cf-testnet-gateway-1 ;;
-    *)         default_gateway=cloudsforge-estate-gateway-1 ;;
+    *testnet*) default_gateway=cf-testnet-gateway-1
+               gateway_env=testnet; gateway_recreate="estate-gateway-testnet" ;;
+    *)         default_gateway=cloudsforge-estate-gateway-1
+               gateway_env=mainnet; gateway_recreate="estate-gateway" ;;
   esac
   gateway_container="${GATEWAY_CONTAINER:-$default_gateway}"
   if docker inspect "$gateway_container" >/dev/null 2>&1; then
-    if docker restart "$gateway_container" >/dev/null 2>&1; then
+    if ! ./scripts/check-gateway-env.sh "$gateway_env" --quiet; then
+      echo "  $gateway_container is missing variables its env file sets — recreating"
+      echo "  rather than cycling, because a restart cannot adopt a changed env_file:"
+      ./scripts/check-gateway-env.sh "$gateway_env" 2>&1 | sed 's/^/  /'
+      if make "$gateway_recreate"; then
+        echo "  recreated $gateway_container — it now carries its env file, and the"
+        echo "  connection pool is dropped, which is what the cycle was for"
+      else
+        echo >&2
+        echo "THE RELEASE IS DEPLOYED AND THE GATEWAY WAS NOT RECREATED." >&2
+        echo "It is serving a config rendered without the variables listed above," >&2
+        echo "and it is still holding pooled connections from before this deploy:" >&2
+        echo "  make $gateway_recreate" >&2
+        echo "  ./scripts/estate-verify.sh" >&2
+      fi
+    elif docker restart "$gateway_container" >/dev/null 2>&1; then
       echo "  cycled $gateway_container — no pooled connection can outlive this deploy"
     else
       echo >&2

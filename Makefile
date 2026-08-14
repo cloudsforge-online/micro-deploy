@@ -19,6 +19,7 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
         check-prometheus-target-ambiguity check-compose-ports \
         check-token-resolution check-custody-backup-guard check-backup \
         check-secret-backups check-stray-secrets \
+        check-gateway-env check-gateway-env-testnet check-gateway-env-guard \
         prometheus-targets prometheus-config-drift \
         dashboards estate clean
 
@@ -157,6 +158,20 @@ check-release-deploy: ## A release is pulled in full before any container is rep
 	@# cannot run fails EVERY pull, which the retry loop treated as a blip and
 	@# re-asked ~50 times at 45s each — eighteen minutes of silence on 2026-08-10.
 	@python3 scripts/check-release-deploy-pulls-before-switching.py
+
+check-gateway-env-guard: ## The deploy compares the gateway's env file to the running gateway (micro-org#459)
+	@# `docker restart` does not re-read `env_file`, and the gateway renders its
+	@# routers from its own environment — so a variable added to the file, released
+	@# and deployed is simply absent from the served config, with no error anywhere.
+	@# That cost release 2026.08.39: the combined view's CORS grant was merged,
+	@# shipped and cycled, and the testnet API went on refusing every preflight.
+	@python3 scripts/check-gateway-env-guard.py
+
+check-gateway-env: ## Does the RUNNING mainnet gateway carry every variable its env file sets?
+	@./scripts/check-gateway-env.sh mainnet
+
+check-gateway-env-testnet: ## The same question of the TESTNET gateway
+	@./scripts/check-gateway-env.sh testnet
 
 check-prometheus-targets: ## The scrape list is generated from the release, and excludes what cannot be scraped
 	@# `prometheus/targets/services.yaml` was the literal `[]` from the telemetry
