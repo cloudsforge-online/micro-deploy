@@ -847,11 +847,28 @@ http:
     # at priority 600 would therefore answer a person's pasted link with JSON, which is the
     # emberkin defect exactly inverted and no better.
     #
-    # `/ideas`, `/categories`, `/image-config` and `/stake-assets` have no such collision: none is
-    # in `ROUTES`, so nginx already 404s them "on purpose, so that a wrong address answers 404
-    # rather than 200" — and THAT 404 is the one the operator panel used to get, because it calls
-    # this host's API cross-origin and nothing here answered. Those four are routed
+    # `/ideas`, `/categories`, `/image-config`, `/stake-assets` and `/me` have no such collision:
+    # none is in `ROUTES`, so nginx already 404s them "on purpose, so that a wrong address answers
+    # 404 rather than 200" — and THAT 404 is the one the operator panel used to get, because it
+    # calls this host's API cross-origin and nothing here answered. Those five are routed
     # unconditionally.
+    #
+    # **`/me` IS THE FIFTH, AND THE CHECK FOUND IT BEFORE A USER DID.** `GET /me/stake-balances`
+    # answers a signed-in reader "here is what you hold, per asset, in smallest units", and it is
+    # what fills the holdings list in `foresight-web/src/components/custodialstake.tsx` — the row
+    # you press to choose which coin to stake. Unrouted, the fetch is answered by the bundle,
+    # `parseStakeBalances` returns null, and the panel renders a chooser with no amounts and no way
+    # to press "stake all". Same silence as the two below, one release later.
+    #
+    # The difference this time is who noticed: `scripts/check-gateway-covers-api-paths.py`, written
+    # after `/stake-assets`, failed on `/me` the first time it ran against the service's new route
+    # table — before the release that carries the route reached anyone. That is the whole point of
+    # reading the list from the side that cannot drift.
+    #
+    # `PathPrefix(/me)` rather than the exact path, deliberately. `/me/...` is the shape of "about
+    # the caller", every route under it is authenticated by the service, and a second one — a
+    # reader's own positions, say — should be reachable the day it is written rather than the day
+    # somebody remembers this file. It cannot swallow a client route: `ROUTES` has no `me`.
     #
     # **`/stake-assets` WAS THE FOURTH ONE AND WAS MISSING, AND IT COST A WHOLE PRODUCT PATH.**
     # This is `/image-config` again — same shape, same silence, larger blast radius, and worth
@@ -915,7 +932,7 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-foresight
     cf-api-foresight-resources:
-      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`) || PathPrefix(`/image-config`) || PathPrefix(`/stake-assets`))'
+      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`) || PathPrefix(`/image-config`) || PathPrefix(`/stake-assets`) || PathPrefix(`/me`))'
       priority: 600
       entryPoints: [websecure, tunnel]
       service: cf-svc-foresight
