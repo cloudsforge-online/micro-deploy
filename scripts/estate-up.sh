@@ -216,6 +216,61 @@ if [ "$gateway_api_host" != "$expected_api_host" ]; then
 fi
 echo "  public API host is this environment's own: $gateway_api_host"
 
+# ── PREFLIGHT 2b: CF_VIEW_ORIGIN_SUFFIX grants ANOTHER environment's frontends ─
+#
+# The only variable in this repository that hands a CREDENTIALED read to pages
+# served from hostnames this estate does not own. `gateway/dynamic/policy.yml`
+# renders `https://hub`, `https://explorer` and `https://network` against it into
+# the `cf-cors` allowlist, beside `allowCredentials: true`, so every character of
+# it is reachable from a browser holding a reader's bearer token.
+#
+# It exists because micro-org#459 retired the testnet FRONTENDS and kept the
+# testnet ESTATE: a reader opens `hub.cloudsforge.online`, picks Testnet in the
+# bar, and the same bundle reads `hub-testnet.cloudsforge.online` cross-origin.
+# Unset is the ordinary case and grants nothing — a dev estate and the mainnet
+# estate both leave it unset, and the block renders empty.
+#
+# TWO WAYS TO SET IT WRONG, AND NEITHER ANNOUNCES ITSELF:
+#
+#   1. Set to THIS environment's own suffix. Every origin it produces is already
+#      in the list above it, so the grant is a no-op — and it READS like the
+#      cross-environment grant is configured, which is worse than absent. The
+#      combined view then fails exactly as it did before the variable existed:
+#      a preflight answered 200 with no `access-control-allow-origin`, a page
+#      saying "cannot reach the server", and nothing logged anywhere.
+#   2. Set to a suffix outside this estate's zone. That is a credentialed
+#      cross-origin read granted to a domain nobody here controls, which is the
+#      whole of the CORS threat model in one line. `.cloudsforge.online` is the
+#      apex both environments share; anything not under it is not ours to trust.
+#
+# Checked, never rewritten, for the reason preflight 2 gives: this script has no
+# business editing a committed env file. It says which line to change.
+view_origin_suffix=$(envval CF_VIEW_ORIGIN_SUFFIX)
+if [ -n "$view_origin_suffix" ]; then
+  if [ "$view_origin_suffix" = "$CF_WEB_SUFFIX" ]; then
+    echo "FATAL: CF_VIEW_ORIGIN_SUFFIX is this environment's OWN suffix." >&2
+    echo "         CF_VIEW_ORIGIN_SUFFIX : $view_origin_suffix" >&2
+    echo "         CF_WEB_SUFFIX         : $CF_WEB_SUFFIX" >&2
+    echo "       It names the frontends of ANOTHER environment that may read this one. Set to" >&2
+    echo "       your own suffix it grants nothing new — every origin it renders is already in" >&2
+    echo "       the allowlist above it — while reading like the cross-environment grant is" >&2
+    echo "       configured. Set it to the OTHER environment's suffix, or delete the line." >&2
+    exit 1
+  fi
+  case "$view_origin_suffix" in
+    *".$CF_WEB_APEX") ;;
+    *)
+      echo "FATAL: CF_VIEW_ORIGIN_SUFFIX is outside this estate's zone." >&2
+      echo "         CF_VIEW_ORIGIN_SUFFIX : $view_origin_suffix" >&2
+      echo "         CF_WEB_APEX           : $CF_WEB_APEX" >&2
+      echo "       policy.yml renders it into cf-cors beside allowCredentials: true, so this" >&2
+      echo "       would let pages on a domain this estate does not control make credentialed" >&2
+      echo "       reads with a signed-in reader's bearer token." >&2
+      exit 1 ;;
+  esac
+  echo "  cross-environment viewers allowed from: <surface>$view_origin_suffix"
+fi
+
 # ── PREFLIGHT 3: the registry and the gateway must agree about what exists ────
 #
 # `scripts/surface-routes.py` compares `ui/packages/ui/src/surfaces.ts` against

@@ -251,6 +251,43 @@ file serves, and `estate-verify.sh` drives the whole hand-off — mint at Hub,
 redeem at Market, and prove a code minted for one origin is refused from
 another.
 
+### The combined view, and the one grant that leaves the estate
+
+micro-org#459 retired the testnet **frontends** and kept the testnet **estate**.
+There is one set of bundles now: a reader opens `hub.cloudsforge.online`, picks
+Testnet in the bar, and the same bundle re-points its reads at
+`hub-testnet.cloudsforge.online`. Three bundles do this — hub, explorer and
+network — and each has a `src/lib/viewed.ts` that decides where a read goes.
+Every other surface switches network by **navigating**, so its reads are
+same-origin wherever it lands.
+
+Those three reads are cross-origin, carry the reader's bearer, and come from a
+hostname of the *other* environment — which nothing in the `cf-cors` allowlist
+named, by construction: that list is "every surface on **this** environment's own
+hostnames". So the testnet gateway answered the preflight `HTTP/2 200` with
+`access-control-allow-credentials: true` and **no** `access-control-allow-origin`,
+every testnet page in the merged frontend read "cannot reach the server", and the
+services behind them were healthy throughout. Nothing server-side records a
+refusal, because the refusal happens in the browser.
+
+`CF_VIEW_ORIGIN_SUFFIX` closes it, and it is the only value in this repository
+that grants a credentialed read to pages on hostnames the estate rendering it does
+not serve. **It is set in `compose/env/traefik.testnet.env` and nowhere else.**
+The asymmetry is the security property: testnet accepts reads from the mainnet
+frontends; mainnet accepts nothing from testnet, because a page on a
+worthless-coin hostname reading a credentialed mainnet response moves real value
+and has no product reason to exist. Deriving it from `CF_WEB_SUFFIX` instead
+would grant both directions from one edit in a file both gateways mount, which is
+what the deleted hard-coded mainnet block already was.
+
+Three guards hold it, because one line in the wrong file is a live grant:
+
+| where | what it refuses |
+| --- | --- |
+| `surface-routes.py` check 10 | an origin that is not a `servesUi` surface, not already in this environment's own allowlist, or not a bundle with a `viewed.ts` — checked in both directions, so a fourth bundle that gains one fails here before anybody opens it |
+| `surface-routes.py` check 6 | the variable set in any file other than its own, or missing from that one. `ENV_VARS_SET_IN_ONE_FILE` inverts the usual rule and asserts the asymmetry rather than tolerating it |
+| `estate-up.sh` preflight 2b | a suffix equal to this environment's own — a no-op that reads like a grant — or one outside `CF_WEB_APEX`, which would hand a signed-in reader's token to a domain nobody here controls |
+
 ### One Postgres, a database per service — and why that is dev-only
 
 `compose/estate/initdb.sql` creates one database per service on a **single**
@@ -1131,6 +1168,12 @@ Both of these were live in this repository, and neither is visible from reading 
 
 `make check-gateway` catches both statically, and goes red if either is reintroduced. It is not a
 substitute for booting Traefik; it is what makes booting it optional for a small change.
+
+It asks (2) of **every** `compose/env/traefik*.env`, not of mainnet's alone, and the difference is
+`CF_VIEW_ORIGIN_SUFFIX`: a variable that is per-environment by design was reported as a dead route
+because this check knew one environment. *Which* file each variable belongs in is
+`surface-routes.py` check 6's question — it asks every variable of every file, and inverts itself
+for the ones in `ENV_VARS_SET_IN_ONE_FILE` — so there is no second, weaker copy of that rule here.
 
 **Copy to a fresh directory first.** Bind-mounting the working tree directly gave a reproducible
 false failure: Docker Desktop's file sharing served a stale cached view of a directory that had been
