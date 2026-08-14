@@ -238,6 +238,23 @@ EXPECTED_UNROUTED = {
     # `account-web` among the sibling repositories. The address a person is
     # actually sent to sign in is the `signin` row, which rides on `hub`.
     "account": "no repository serves it; the registry row reserves the hostname and says so",
+    # Forge Exchange: a plan, publicly stated, with no code anywhere. The registry
+    # row carries `servesUi: false` and says as much in full, and the marketing
+    # site publishes the plan as a card — which is why the key has to exist at all,
+    # since the site's content model refuses a page whose key the registry does not
+    # know.
+    #
+    # A ROUTER WOULD BE THE WRONG ANSWER HERE, and that is the reason this entry is
+    # an entry rather than four lines of YAML. There is no upstream to name, so a
+    # router could only point at some other service: `exchange.<apex>` would then
+    # answer 200 with a bundle that is not Forge Exchange, or 502, and both are
+    # worse than the 404 a plan honestly earns. The 404 is also what every other
+    # unbuilt thing in this estate returns, so nothing has to explain it.
+    #
+    # THIS ENTRY IS DELETED IN THE SAME COMMIT THAT ADDS THE ROUTER. Check 1 fails
+    # on a stale entry in the other direction too, so the day something serves this
+    # hostname, this line is what fails and points at itself.
+    "exchange": "planned, and nothing serves it: the registry row says `servesUi: false` and no repository exists",
     # `keyvault` is the registry key; `vault` is its subdomain. Routed under that
     # name — this entry exists so the key/subdomain mismatch is stated once rather
     # than looking like a gap.

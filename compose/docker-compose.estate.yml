@@ -3190,9 +3190,17 @@ services:
   #
   # ── WHAT IS DELIBERATELY ABSENT, BECAUSE ABSENT IS A DECLARED MODE ──────────
   #
-  # `foresight/src/env.ts` names three groups whose absence its header calls a
-  # supported mode rather than an error, and all three stay unset:
+  # `foresight/src/env.ts` names four groups whose absence its header calls a
+  # supported mode rather than an error, and all four stay unset:
   #
+  #   * `FORESIGHT_CUSTODIAL_ADDRESS`. The platform address the custodial pool
+  #     share is staked from, and the only thing `server.ts` reads to decide
+  #     whether `GET /stake-assets` says staking is available at all. It stays
+  #     unset for a reason the environment section below states in full: the
+  #     lifecycle after `accepted` has no route, so setting it would escrow a
+  #     stranger's coins with no way to stake, refund or settle them. Unlike the
+  #     three below, this one is not a mode anybody chose — it is a switch that
+  #     must not be thrown until micro-foresight can finish what it starts.
   #   * `FORESIGHT_HOUSE_ADDRESS` (21 §5). The house seed address must hold its
   #     own key OUTSIDE this estate's custody — `houseseed.ts` explains that
   #     custody has no transaction shape that can call `stake(uint8)` at all — and
@@ -3264,6 +3272,24 @@ services:
       # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
       # silently — a control that reports success while doing nothing.
       FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
+      # The published address the CUSTODIAL pool share is staked from — the second way to bet,
+      # with coins already deposited here rather than a browser wallet. `server.ts` derives
+      # `custodialStakingAvailable` from nothing but this being set, so setting it is what turns
+      # the whole intake on.
+      #
+      # IT IS MAPPED HERE AND LEFT UNSET ON PURPOSE, and mapping it unset is the point: it was
+      # readable only by `foresight/src/env.ts` before this line, so an operator who set it in an
+      # env file would have got no error and no effect — the same trap `docs/house-seed.md` §3.1
+      # records for the line above. A variable that cannot be set is also a variable whose absence
+      # nobody can prove.
+      #
+      # DO NOT SET IT YET. `custodialstakes.ts` exports the whole lifecycle — `markStaked`,
+      # `markRefunded`, `markSettled`, and the three posting builders — and `server.ts` calls
+      # exactly one of them, `acceptStake`. So today this switch opens an intake that moves a
+      # stranger's BTC from available to escrow and then has no route to stake it, refund it or
+      # settle it. Unset, the panel does not render and nobody's money is taken; set, it is taken
+      # and stranded. Wire the lifecycle routes first (micro-org, custodial-stake-lifecycle).
+      FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: foresight-migrate
@@ -3342,6 +3368,24 @@ services:
       # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
       # silently — a control that reports success while doing nothing.
       FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
+      # The published address the CUSTODIAL pool share is staked from — the second way to bet,
+      # with coins already deposited here rather than a browser wallet. `server.ts` derives
+      # `custodialStakingAvailable` from nothing but this being set, so setting it is what turns
+      # the whole intake on.
+      #
+      # IT IS MAPPED HERE AND LEFT UNSET ON PURPOSE, and mapping it unset is the point: it was
+      # readable only by `foresight/src/env.ts` before this line, so an operator who set it in an
+      # env file would have got no error and no effect — the same trap `docs/house-seed.md` §3.1
+      # records for the line above. A variable that cannot be set is also a variable whose absence
+      # nobody can prove.
+      #
+      # DO NOT SET IT YET. `custodialstakes.ts` exports the whole lifecycle — `markStaked`,
+      # `markRefunded`, `markSettled`, and the three posting builders — and `server.ts` calls
+      # exactly one of them, `acceptStake`. So today this switch opens an intake that moves a
+      # stranger's BTC from available to escrow and then has no route to stake it, refund it or
+      # settle it. Unset, the panel does not render and nobody's money is taken; set, it is taken
+      # and stranded. Wire the lifecycle routes first (micro-org, custodial-stake-lifecycle).
+      FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: foresight-estate

@@ -8,7 +8,7 @@
 #   apex        : cloudsforge.online
 #   env label   : (none — the unadorned form)
 #   tunnel      : cf-mainnet-public
-#   hostnames   : 22
+#   hostnames   : 23
 #
 # Fill in `tunnel:` and `credentials-file:` from `cloudflared tunnel create`.
 # They are the only two values in this file that are not derived, because they
@@ -98,6 +98,8 @@ ingress:
   - hostname: developers.cloudsforge.online
     service: http://127.0.0.1:9081
   - hostname: emberkin.cloudsforge.online
+    service: http://127.0.0.1:9081
+  - hostname: exchange.cloudsforge.online
     service: http://127.0.0.1:9081
   - hostname: explorer.cloudsforge.online
     service: http://127.0.0.1:9081

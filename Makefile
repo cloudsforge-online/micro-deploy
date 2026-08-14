@@ -482,6 +482,11 @@ check-surfaces: ## Every registry surface has a gateway route, and every route a
 	@# Each was introduced by an edit to a DIFFERENT file from the one that was
 	@# wrong, which is exactly why a comment could never have caught it.
 	@python3 scripts/surface-routes.py
+	@# The check above resolves a whole HOST. It cannot see a resource missing from
+	@# the list inside one host's API rule, and a missing one does not 404 — the
+	@# SPA catch-all answers it 200 with an HTML body. `/image-config` (#195) and
+	@# `/stake-assets` were both lost that way, on the same hostname.
+	@python3 scripts/check-gateway-covers-api-paths.py
 
 gateway-reload: ## Validate gateway/dynamic in a throwaway Traefik, then reload the live one
 	@# NOT `docker compose restart gateway`. That reloads whatever is on disk,

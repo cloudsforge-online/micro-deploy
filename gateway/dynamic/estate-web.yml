@@ -135,8 +135,12 @@ http:
     # carries `!PathPrefix(`/v1`)` and sits at priority 550 — above the bundles (500), below the
     # APIs (600).
     #
-    # Rendered ONLY when CF_WEB_RETIRED is set (testnet.env, at the flip). Unset — mainnet, and
-    # testnet until the shared identity is verified — this whole block renders to nothing.
+    # Rendered ONLY when CF_WEB_RETIRED is `true` in the GATEWAY's own environment
+    # (`compose/env/traefik.testnet.env`, at the flip — not `compose/testnet.env`, which the
+    # gateway never reads and which cost the flip deploy several live minutes). Mainnet says
+    # `false` in `compose/env/traefik.env` and this whole block renders to nothing there. Both
+    # files state an answer; neither is allowed to be silent. See the conditional itself for why
+    # the test compares a value instead of testing for emptiness.
     cf-retired-sub-to-mainnet:
       redirectRegex:
         regex: '^https?://([a-z0-9-]+)-testnet\.cloudsforge\.online/(.*)'
@@ -354,7 +358,16 @@ http:
     # The `www` spelling of the apex, redirected to it. Same priority as the apex router: the two
     # rules match different hostnames and never compete. Traefik requires a service even when a
     # middleware answers first, so it names the one this redirects TO.
-{{ if env "CF_WEB_RETIRED" }}
+{{ if eq (env "CF_WEB_RETIRED") "true" }}
+    # `eq (env …) "true"` RATHER THAN A BARE `if env …`, and the reason is check 6.
+    # `scripts/surface-routes.py` requires every variable this directory reads to carry a NON-EMPTY
+    # value in every `compose/env/traefik*.env`, because an empty value and an unset one are the
+    # same thing to the file provider and that is how the whole public API once rendered as
+    # ``Host(``)``. Under a bare `if`, mainnet's only way to drop these routers was to leave the
+    # variable out — which is exactly what check 6 refuses, and deploy CI was red on it. Comparing
+    # a value lets both environments STATE their answer: `true` on testnet, `false` on mainnet.
+    # Neither file can now be silent about whether this estate is retired.
+    #
     # The retirement routers (micro-org#459 step 5) — see the middlewares above for the whole
     # argument. 302 rather than 301 while the retirement beds in: a cached permanent redirect is
     # the one thing that cannot be rolled back. `!PathPrefix` keeps every `/v1` API answering,
@@ -795,10 +808,35 @@ http:
     # at priority 600 would therefore answer a person's pasted link with JSON, which is the
     # emberkin defect exactly inverted and no better.
     #
-    # `/ideas`, `/categories` and `/image-config` have no such collision: none is in `ROUTES`, so
-    # nginx already 404s them "on purpose, so that a wrong address answers 404 rather than 200" —
-    # and THAT 404 is the one the operator panel used to get, because it calls this host's API
-    # cross-origin and nothing here answered. Those three are routed unconditionally.
+    # `/ideas`, `/categories`, `/image-config` and `/stake-assets` have no such collision: none is
+    # in `ROUTES`, so nginx already 404s them "on purpose, so that a wrong address answers 404
+    # rather than 200" — and THAT 404 is the one the operator panel used to get, because it calls
+    # this host's API cross-origin and nothing here answered. Those four are routed
+    # unconditionally.
+    #
+    # **`/stake-assets` WAS THE FOURTH ONE AND WAS MISSING, AND IT COST A WHOLE PRODUCT PATH.**
+    # This is `/image-config` again — same shape, same silence, larger blast radius, and worth
+    # writing down at length because the shape has now shipped twice.
+    #
+    # `foresight/src/server.ts` defines `GET /stake-assets`: what a bettor may bring, which is
+    # the door into the CUSTODIAL stake path. `foresight-web/src/components/custodialstake.tsx`
+    # fetches it on mount and — deliberately, and correctly — renders NOTHING at all if the fetch
+    # fails: "a registry this app cannot read is a panel that does not appear. It is NOT a panel
+    # with a guessed list of assets in it."
+    #
+    # With no router the fetch was answered by `cf-web-foresight` with the app shell, so it never
+    # parsed, so the panel returned null on every market page on both estates, silently, since
+    # the day it was written. What a signed-in reader with no browser extension saw was
+    # `StakePanel`'s "Connect a wallet to go on" and no second option — the estate demanding a
+    # MetaMask of a user whose money it is already holding. `29-native-assets.md` §6.5 exists to
+    # close exactly that gap ("a custodial user cannot stake at all"), the service side of it was
+    # built and tested, and one missing line here kept it off the screen.
+    #
+    # The lesson `/image-config` should have taught and did not: a JSON path served the SPA shell
+    # is undetectable from the browser — 200 or 404, the body is HTML either way and the client
+    # reports "could not read", never "not routed". `scripts/check-gateway-covers-api-paths.py`
+    # now reads the service's own `define('METHOD', '/path')` calls and fails when a top-level
+    # resource no router here matches appears, so the third instance cannot be found by a user.
     #
     # **`/image-config` WAS THE THIRD ONE AND WAS MISSING (#195).** It matched neither router, so it
     # fell through to `cf-web-foresight` and every caller was served the SPA shell with a 200 — the
@@ -838,7 +876,7 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-foresight
     cf-api-foresight-resources:
-      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`) || PathPrefix(`/image-config`))'
+      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`) || PathPrefix(`/image-config`) || PathPrefix(`/stake-assets`))'
       priority: 600
       entryPoints: [websecure, tunnel]
       service: cf-svc-foresight
