@@ -186,6 +186,57 @@ http:
           # Whoever mounts the bar here must add it there too.
           - https://pool{{ env "CF_WEB_SUFFIX" }}
 {{ end }}
+{{ if env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # ══ THE COMBINED VIEW: THREE ORIGINS ON THE *OTHER* ENVIRONMENT ══════════════════════
+          #
+          # micro-org#459 retired the testnet FRONTENDS and kept the testnet ESTATE. A reader now
+          # opens `hub.cloudsforge.online`, chooses Testnet in the bar, and the same bundle reads
+          # `hub-testnet.cloudsforge.online` — so the request is cross-origin, it carries the
+          # reader's bearer, and the origin it comes from is a hostname of the OTHER environment.
+          # Nothing above names such an origin, by construction: the block above is "every surface
+          # on THIS environment's own hostnames", which is exactly what it should be.
+          #
+          # THE OBSERVED FAILURE. `curl -X OPTIONS https://hub-testnet.cloudsforge.online/v1/portfolio
+          # -H 'Origin: https://hub.cloudsforge.online'` answered `HTTP/2 200` with
+          # `access-control-allow-credentials: true` and NO `access-control-allow-origin`. A browser
+          # reads that as a refusal, so every testnet read from the merged frontend failed at the
+          # preflight and the pages rendered "that did not load, cannot reach the server" — which
+          # is the bug as the reader reported it.
+          #
+          # ── WHY A SEPARATE VARIABLE, AND WHY IT IS SET IN ONE ENVIRONMENT ONLY ────────────────
+          #
+          # THE ASYMMETRY IS THE SECURITY PROPERTY. `CF_VIEW_ORIGIN_SUFFIX` is set in
+          # `compose/env/traefik.testnet.env` and NOWHERE ELSE, so the testnet estate accepts reads
+          # from the mainnet frontends and the mainnet estate accepts nothing from testnet. A page
+          # on a testnet hostname must never read a credentialed mainnet response — that direction
+          # moves real value and has no product reason to exist, and `allowCredentials: true` is
+          # what makes the distinction matter. Deriving this from `CF_WEB_SUFFIX` instead (say, "the
+          # other environment's suffix") would grant BOTH directions from one edit, in a file both
+          # gateways mount, which is the exact defect the deleted hard-coded block above was.
+          #
+          # Unset renders nothing, and unset is the safe reading: an environment nobody views from
+          # somewhere else needs no entry here. `scripts/estate-up.sh` refuses to start if it is set
+          # to this environment's own suffix, because a viewer suffix equal to your own is a no-op
+          # that looks like a grant.
+          #
+          # ── WHY THESE THREE AND NOT THE SEVENTEEN ABOVE ───────────────────────────────────────
+          #
+          # These are the bundles that can VIEW another network in place — each has a `lib/viewed.ts`
+          # and re-points its reads at the sibling estate when the reader switches:
+          #
+          #   hub       hub-web/src/lib/viewed.ts       balances, deposits, mining, the wallet
+          #   explorer  explorer-web/src/lib/viewed.ts  blocks, transactions, addresses
+          #   network   network-site/src/lib/viewed.ts  the chain's own state
+          #
+          # Every other surface switches network by NAVIGATING (`NetworkSwitcher` with no
+          # `onSelect`), so its reads are same-origin on whichever hostname it lands, and an entry
+          # here would grant a cross-environment read nothing performs. `scripts/surface-routes.py`
+          # check 9 holds both halves: each name must be a `servesUi` surface in the registry, and
+          # this list must stay a STRICT SUBSET of the block above.
+          - https://hub{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://explorer{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://network{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+{{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:
           - content-type

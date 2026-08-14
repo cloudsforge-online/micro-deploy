@@ -77,6 +77,64 @@ WHAT IT CHECKS
      Traefik's file provider merges a directory into one map per section and
      keeps the FIRST definition of a name, so a second one does not conflict,
      does not error and does not override — it is DROPPED. See below.
+  9. The `websecure` and `tunnel` entrypoints carry the SAME middleware chain.
+     `tunnel` is the only path a real user traverses and no local check drives
+     it. See below.
+ 10. Every origin granted on `CF_VIEW_ORIGIN_SUFFIX` — another environment's
+     frontends, reading this one with the reader's bearer — is a UI surface here
+     and a bundle that can actually view another network in place. See below.
+
+THE PATH EVERY REAL USER TAKES IS THE ONE NOTHING DRIVES
+--------------------------------------------------------
+Check 9 was added the way checks 4 and 7 were: the claim was already written
+down, in `compose/docker-compose.gateway.yml`, and it named a check that did not
+exist —
+
+    # `scripts/surface-routes.py` check 9 fails when the two lists differ.
+
+— which is precisely the defect check 4 exists for, one directory over, where
+check 4 does not look. (It reads `gateway/dynamic/*.yml` and matches
+`cf-(api|web|svc)-*` names; middleware names are deliberately outside it, and so
+is every compose file.)
+
+The claim is worth keeping, so it was made true instead of deleted. A router
+listed on two entrypoints becomes one runtime router PER ENTRYPOINT, each with
+its own entrypoint's middleware chain, so `websecure` and `tunnel` are two
+independent lists of the same intent. `websecure` is :443 — which every check in
+this repository drives, because every check runs on the host. `tunnel` is :81,
+reached only through cloudflared, which is THE ONLY PATH A BROWSER ON THE
+INTERNET TAKES. Drop `cf-cors@file` from that line and the estate stays green
+locally, `curl -k https://hub.<apex>` still answers with an allowlist, and every
+real visitor's cross-origin call is refused by their own browser.
+
+CROSS-ENVIRONMENT ORIGINS ARE THE ONE GRANT THAT LEAVES THE ESTATE
+------------------------------------------------------------------
+Check 10 guards `CF_VIEW_ORIGIN_SUFFIX`, which exists because micro-org#459
+retired the testnet FRONTENDS and kept the testnet ESTATE. A reader opens
+`hub.cloudsforge.online`, picks Testnet in the bar, and the same bundle reads
+`hub-testnet.cloudsforge.online` — cross-origin, carrying their bearer, from a
+hostname of the OTHER environment. Nothing in the main allowlist names such an
+origin by construction: that block is "every surface on THIS environment's own
+hostnames", which is what it should be. So the testnet gateway answered the
+preflight `HTTP/2 200` with `access-control-allow-credentials: true` and NO
+`access-control-allow-origin`, every testnet page in the merged frontend read
+"cannot reach the server", and the services behind them were healthy throughout.
+
+The grant that fixes it is the only one in this repository pointed at hostnames
+the estate rendering it does not serve, and it sits beside `allowCredentials`.
+So it is fenced from three sides:
+
+  * HERE, by check 10: an origin must be a `servesUi` surface in the registry,
+    must already be in the main allowlist (so this can only ever RE-grant an
+    existing surface on another environment's hostname, never introduce one),
+    and must be a bundle that can view another network IN PLACE — which is a
+    fact on disk, `src/lib/viewed.ts`, checked in both directions.
+  * By check 6, which normally demands every gateway variable in every env file
+    and here demands the opposite: set in ONE file, absent from the others. The
+    asymmetry is the security property, so it is asserted rather than tolerated.
+  * By `scripts/estate-up.sh` preflight 2b, which refuses a suffix equal to this
+    environment's own (a grant that reads like one and is a no-op) or outside
+    `CF_WEB_APEX` (a credentialed read granted to a domain nobody here owns).
 
 A HEADER MISSING FROM THE CORS LIST IS A ROUTE NO BROWSER CAN CALL
 ------------------------------------------------------------------
@@ -220,6 +278,7 @@ API_MAP = ROOT / "gateway" / "dynamic" / "public-api.yml"
 POLICY = ROOT / "gateway" / "dynamic" / "policy.yml"
 TRAEFIK_ENV = ROOT / "compose" / "env" / "traefik.env"
 ESTATE = ROOT / "compose" / "docker-compose.estate.yml"
+GATEWAY_COMPOSE = ROOT / "compose" / "docker-compose.gateway.yml"
 
 fails = []
 
@@ -645,6 +704,36 @@ TEMPLATE_ENV_RE = re.compile(r'\benv\s+"([A-Z0-9_]+)"')
 ENV_DIR = ROOT / "compose" / "env"
 
 
+# ── the variables that are SET IN ONE ENVIRONMENT ON PURPOSE ─────────────────
+#
+# Check 6's rule is "every variable this directory reads is set in EVERY gateway
+# env file", and its reason is a good one: a variable added to a template and to
+# one environment is a router that exists in one of the two estates, which is the
+# hardest kind of difference to see.
+#
+# This table is for the case where that difference is the POINT, and it does not
+# weaken the check — it inverts it. An entry does not mean "stop looking"; it
+# means the variable must be set in the named file AND ABSENT FROM EVERY OTHER
+# ONE, which is a stronger claim than check 6 makes about anything else. It is
+# checked in both directions like every other table here: an entry for a variable
+# `gateway/dynamic/` no longer reads is a stale exemption, and it fails too.
+#
+# Keep it at one or two entries. Every line here is an environment difference
+# somebody has to hold in their head, and the reason has to be worth that.
+ENV_VARS_SET_IN_ONE_FILE = {
+    "CF_VIEW_ORIGIN_SUFFIX": (
+        "traefik.testnet.env",
+        "it grants ANOTHER environment's frontends a credentialed cross-origin read of this "
+        "one, and the direction is the security property. micro-org#459 retired the testnet "
+        "FRONTENDS and kept the testnet ESTATE, so the mainnet bundles read testnet in place "
+        "and testnet must allow them; the reverse — a page on a worthless-coin hostname "
+        "reading a credentialed mainnet response — moves real value and has no product reason "
+        "to exist. Setting it in traefik.env would open that direction in one line, in a file "
+        "both gateways mount",
+    ),
+}
+
+
 def env_vars_are_set():
     """── 6: every variable this directory READS is SET in every gateway env file ──
 
@@ -670,6 +759,11 @@ def env_vars_are_set():
     given a value in each `compose/env/traefik*.env`. That is the intended cost: a
     variable added to a template and to one environment is a router that exists in
     one of the two estates, which is the hardest kind of difference to see.
+
+    THE ONE EXCEPTION IS ASSERTED, NOT WAIVED. `ENV_VARS_SET_IN_ONE_FILE` names
+    the variables whose whole purpose is to differ between environments, and for
+    those this check runs the OTHER WAY ROUND: set in the named file, absent from
+    every other. See that table for why one line in the wrong file is a grant.
     """
     directory = WEB_MAP.parent
     if not directory.is_dir():
@@ -698,10 +792,46 @@ def env_vars_are_set():
         bad(f"no traefik*.env in {ENV_DIR} — the gateway's environment cannot be checked, and "
             f"every conditional router in {directory.name}/ would go unverified")
         return
+    # A per-environment entry for a variable this directory has stopped reading is
+    # a waiver granting an asymmetry nothing needs, and it would go on passing.
+    for name, (owner, _why) in sorted(ENV_VARS_SET_IN_ONE_FILE.items()):
+        if name not in wanted:
+            bad(
+                f"ENV_VARS_SET_IN_ONE_FILE names {name} as set only in {owner}, and nothing in "
+                f"{directory.name}/ reads it any more. The entry is stale — delete it, and delete "
+                f"the line in {owner} with it"
+            )
+        elif not (ENV_DIR / owner).exists():
+            bad(
+                f"ENV_VARS_SET_IN_ONE_FILE says {name} lives in {owner}, which does not exist in "
+                f"{ENV_DIR}. The variable is then set NOWHERE and the block it guards renders "
+                f"nothing, silently"
+            )
+
     for path in files:
         text = path.read_text()
         for name, site in sorted(wanted.items()):
             m = re.search(rf"^{re.escape(name)}=(.*)$", text, re.M)
+            owner = ENV_VARS_SET_IN_ONE_FILE.get(name, (None, None))[0]
+            if owner is not None:
+                # Inverted on purpose: this variable must be in its own file and in
+                # no other. Both halves are failures, and the second is the one that
+                # matters — a value in the wrong file is a live grant.
+                if path.name == owner:
+                    if m is None or not m.group(1).strip():
+                        why = ENV_VARS_SET_IN_ONE_FILE[name][1]
+                        bad(
+                            f"{path.name} does not set {name}, and it is the ONE file that must: "
+                            f"{why}. {site} reads it, and an unset variable renders that block "
+                            f"empty with nothing logged"
+                        )
+                elif m is not None and m.group(1).strip():
+                    why = ENV_VARS_SET_IN_ONE_FILE[name][1]
+                    bad(
+                        f"{path.name} sets {name}, which belongs in {owner} and NOWHERE ELSE: "
+                        f"{why}. Delete the line"
+                    )
+                continue
             if m is None:
                 bad(
                     f"{path.name} does not set {name}, which {site} reads. Traefik's file "
@@ -871,6 +1001,199 @@ def cors_headers_drift():
         )
 
 
+ENTRYPOINT_CHAIN_RE = re.compile(
+    r"--entrypoints\.(?P<entrypoint>[a-z]+)\.http\.middlewares=(?P<chain>\S+)"
+)
+
+# The entrypoints that must carry the same middleware chain, and why each is in
+# the pair. Not "every entrypoint": `web` is a 301 to `websecure` and carries no
+# chain at all, and `metrics` is an internal listener on :8082.
+PAIRED_ENTRYPOINTS = {
+    "websecure": ":443, the path every check in this repository drives, because every check "
+                 "runs on the host",
+    "tunnel": ":81 through cloudflared, THE ONLY PATH A BROWSER ON THE INTERNET TAKES, and the "
+              "one no check drives",
+}
+
+
+def entrypoint_chains_match():
+    """── 9: `websecure` and `tunnel` carry the SAME middleware chain ───────────
+
+    An entrypoint's middleware chain is PER ENTRYPOINT: Traefik splits a router
+    listed on two entrypoints into one runtime router each and applies the model of
+    ITS OWN entrypoint to each half. So these two flags are two independent lists
+    of one intent, and the compose file's own comment — which named this check
+    before it existed — says what happens when they diverge: "the tunnel path,
+    WHICH IS THE ONLY PATH REAL USERS TRAVERSE, silently loses request-id, the
+    security headers and the CORS allowlist, while :443 keeps all three and every
+    local check stays green, because every local check drives :443."
+
+    Order is compared as well as membership. `cf-request-id@file` first is what
+    puts a request id on the security headers and the CORS response of the SAME
+    request; a chain with the same names in another order is a different chain.
+    """
+    if not GATEWAY_COMPOSE.exists():
+        bad(f"{GATEWAY_COMPOSE} does not exist — the entrypoint-chain check cannot run")
+        return
+    chains = {}
+    for lineno, line in enumerate(GATEWAY_COMPOSE.read_text().splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        m = ENTRYPOINT_CHAIN_RE.search(line)
+        if m and m.group("entrypoint") in PAIRED_ENTRYPOINTS:
+            chains[m.group("entrypoint")] = (m.group("chain").split(","), lineno)
+    for name, what in sorted(PAIRED_ENTRYPOINTS.items()):
+        if name not in chains:
+            bad(
+                f"the `{name}` entrypoint ({what}) has no `--entrypoints.{name}.http.middlewares` "
+                f"flag in {GATEWAY_COMPOSE.name}. An entrypoint with no chain applies NO "
+                f"middleware — no request id, no security headers and no CORS allowlist — to "
+                f"every request that arrives on it"
+            )
+    if len(chains) < len(PAIRED_ENTRYPOINTS):
+        return
+    (a, (chain_a, line_a)), (b, (chain_b, line_b)) = sorted(chains.items())
+    if chain_a != chain_b:
+        bad(
+            f"the `{a}` and `{b}` entrypoints carry DIFFERENT middleware chains "
+            f"({GATEWAY_COMPOSE.name}:{line_a} and :{line_b}) —\n"
+            f"           {a}: {','.join(chain_a)}\n"
+            f"           {b}: {','.join(chain_b)}\n"
+            f"       and only one of them is reachable from the internet. `tunnel` is the path "
+            f"cloudflared uses and nothing local drives it, so whatever it is missing is missing "
+            f"for every real visitor while every check on this host stays green"
+        )
+
+
+VIEW_ORIGIN_RE = re.compile(
+    r'^\s*-\s*https://([a-z0-9-]+)\{\{\s*env\s+"CF_VIEW_ORIGIN_SUFFIX"\s*\}\}\s*$'
+)
+
+# ── the bundles that can view ANOTHER network in place, and the file that proves it ──
+#
+# Every other surface switches network by NAVIGATING (`NetworkSwitcher` with no
+# `onSelect`), so its reads are same-origin on whichever hostname it lands and a
+# cross-environment origin would grant a read nothing performs. These three
+# re-point their reads at the sibling estate instead, and each one has a module
+# that does it. The witness is that module: a claim about a bundle, checked
+# against the bundle, rather than three names in a list nobody revisits.
+VIEWING_BUNDLES = {
+    "hub": "hub-web/src/lib/viewed.ts",
+    "explorer": "explorer-web/src/lib/viewed.ts",
+    "network": "network-site/src/lib/viewed.ts",
+}
+
+
+def view_origin_drift(surfaces):
+    """── 10: every cross-environment origin is a surface here and a viewer there ─
+
+    THE ONLY GRANT IN THIS REPOSITORY POINTED AT HOSTNAMES THIS ESTATE DOES NOT
+    SERVE, and it sits beside `allowCredentials: true`. See the module docstring
+    for the failure it was written for. What is asserted, and why each half:
+
+      * The grant list equals `VIEWING_BUNDLES` exactly. A name here that cannot
+        view another network in place grants a credentialed cross-environment read
+        that nothing makes; a viewing bundle NOT here is the original bug — its
+        preflight is answered 200 with no `access-control-allow-origin` and its
+        page says "cannot reach the server" while the service is healthy.
+      * Each is a `servesUi` host surface in the registry, for the reason check 5
+        gives: an origin written from a repository name rather than the registry
+        is the `mint`/`devportal` defect, and it is worse here.
+      * Each is ALREADY in the main allowlist, and the two lists are not equal.
+        That makes this block strictly weaker than the one above it — it can only
+        re-grant a surface this estate already serves, on the other environment's
+        hostname — so a new surface can never enter the estate through it.
+
+    ── THE WITNESS HALF IS BEST-EFFORT, AND SAYS SO OUT LOUD ────────────────────
+
+    `src/lib/viewed.ts` is checked in the sibling checkouts that are PRESENT. CI
+    checks out `deploy`, `ui`, `foresight` and `billing`, and a deploy host clones
+    no frontend at all (`scripts/provision-siblings.sh`), so in both of those the
+    witness cannot be read — and the run prints which corroboration it did not
+    perform rather than reporting a check it did not make. The three assertions
+    above need nothing but `policy.yml` and the registry, and they always run.
+
+    In a full checkout the witness runs in BOTH directions, and the second is the
+    one that ends this class of bug: a fourth bundle that gains `viewed.ts` and no
+    entry here fails, before anybody opens it in a browser.
+    """
+    if not POLICY.exists():
+        bad(f"{POLICY} does not exist — the cross-environment origins cannot be checked")
+        return
+    granted = {m.group(1) for line in POLICY.read_text().splitlines()
+               if (m := VIEW_ORIGIN_RE.match(line))}
+    declared = set(VIEWING_BUNDLES)
+
+    for sub in sorted(declared - granted):
+        bad(
+            f"'{sub}' views another network IN PLACE ({VIEWING_BUNDLES[sub]}) and has NO origin "
+            f"on CF_VIEW_ORIGIN_SUFFIX in {POLICY.name}. Its cross-environment reads are answered "
+            f"200 with no `access-control-allow-origin`, so the browser refuses them and the page "
+            f"reads 'cannot reach the server' with the service behind it healthy — and nothing "
+            f"server-side records that anything was refused"
+        )
+    for sub in sorted(granted - declared):
+        bad(
+            f"the cf-cors allowlist grants 'https://{sub}<CF_VIEW_ORIGIN_SUFFIX>' — a CREDENTIALED "
+            f"cross-origin read from ANOTHER environment's hostname — and '{sub}' is not in "
+            f"VIEWING_BUNDLES, so no bundle of that name reads across environments at all. Either "
+            f"it gained a src/lib/viewed.ts and belongs in the table, or the grant is unearned"
+        )
+
+    if granted:
+        ui_hosts = {s["subdomain"] for s in surfaces if not s["basePath"] and s["servesUi"]}
+        for sub in sorted(granted - ui_hosts):
+            bad(
+                f"the cross-environment origin 'https://{sub}<CF_VIEW_ORIGIN_SUFFIX>' names '{sub}', "
+                f"which is not a registry surface that serves a UI. There is no page on that "
+                f"hostname in EITHER environment, so the entry grants an origin nothing loads"
+            )
+        allowed = cors_allowlist()
+        if allowed is not None:
+            for sub in sorted(granted - allowed):
+                bad(
+                    f"'{sub}' is granted on CF_VIEW_ORIGIN_SUFFIX but is NOT in this environment's "
+                    f"own CORS allowlist. The cross-environment block may only re-grant a surface "
+                    f"this estate already serves; a name that appears in one list and not the "
+                    f"other lets a hostname in through the weaker door"
+                )
+            if allowed and granted >= allowed:
+                bad(
+                    f"the cross-environment origins are not a STRICT subset of the CORS allowlist "
+                    f"({len(granted)} of {len(allowed)}). Every surface in the estate would accept "
+                    f"credentialed reads from the other environment, which is not what the "
+                    f"combined view needs — three bundles view in place and the rest navigate"
+                )
+
+    # The witness, where it can be read. Absence of a checkout is REPORTED, not
+    # passed over: this file's rule is that a check which cannot run says so.
+    unread = []
+    for sub, witness in sorted(VIEWING_BUNDLES.items()):
+        repo = MICRO / witness.split("/", 1)[0]
+        if not repo.is_dir():
+            unread.append(repo.name)
+            continue
+        if not (MICRO / witness).exists():
+            bad(
+                f"VIEWING_BUNDLES claims '{sub}' views another network in place via {witness}, "
+                f"and that file does not exist. Either the bundle stopped viewing in place — in "
+                f"which case its cross-environment origin is an unearned credentialed grant and "
+                f"goes with it — or the module moved and this table has stopped being checkable"
+            )
+    for path in sorted(MICRO.glob("*/src/lib/viewed.ts")):
+        witness = f"{path.parent.parent.parent.name}/src/lib/viewed.ts"
+        if witness not in VIEWING_BUNDLES.values():
+            bad(
+                f"{witness} exists, so that bundle re-points its reads at the sibling estate, and "
+                f"it is not in VIEWING_BUNDLES. Every read it makes across environments will be "
+                f"refused by the browser at the preflight — the exact failure micro-org#459 shipped "
+                f"— unless it is added here AND granted an origin in {POLICY.name}"
+            )
+    if unread:
+        print(f"  note check 10's witness files were not read for {', '.join(unread)} — not "
+              f"checked out here. The allowlist, registry and subset assertions all ran.")
+
+
 def main():
     surfaces = registry_surfaces()
     routers = gateway_routers()
@@ -974,6 +1297,12 @@ def main():
 
     # ── 8: every header a bundle sends cross-origin is allowlisted ────────────
     cors_headers_drift()
+
+    # ── 9: the tunnel entrypoint carries what websecure carries ───────────────
+    entrypoint_chains_match()
+
+    # ── 10: the cross-environment origins are earned, and strictly narrower ───
+    view_origin_drift(surfaces)
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:

@@ -60,7 +60,26 @@ text = MAP.read_text()
 #
 # Both are checked statically here so that neither needs a running Traefik to
 # catch — though `make check-gateway` is not a substitute for booting one.
-GATEWAY_ENV = ROOT / "compose" / "env" / "traefik.env"
+# ── EVERY GATEWAY ENV FILE, NOT `traefik.env` ALONE ─────────────────────────
+#
+# This read mainnet's file only, which made "is the variable defined?" a question
+# about ONE ENVIRONMENT while the directory it is asked about is mounted by both.
+# It broke on the first variable that is per-environment BY DESIGN:
+# `CF_VIEW_ORIGIN_SUFFIX` is set in `traefik.testnet.env` and deliberately absent
+# from `traefik.env`, because it grants the mainnet frontends a credentialed
+# cross-origin read of testnet and the reverse must not exist. This script
+# reported that correct configuration as a dead route.
+#
+# WHICH file each variable belongs in is `surface-routes.py` check 6's question,
+# and it answers it in both directions — every variable in every file, except the
+# ones in `ENV_VARS_SET_IN_ONE_FILE`, which must be in their own file and in no
+# other. That is a stronger claim than this script makes and there is no reason to
+# keep a second, weaker copy of it here. So this asks only what its own failure
+# mode needs: is the variable defined ANYWHERE in this estate's gateway
+# environment? A variable defined nowhere renders empty in every environment,
+# which is the `Host(``)` defect described above.
+GATEWAY_ENV_DIR = ROOT / "compose" / "env"
+GATEWAY_ENVS = sorted(GATEWAY_ENV_DIR.glob("traefik*.env"))
 preflight = []
 
 for path in sorted((ROOT / "gateway" / "dynamic").glob("*.yml")):
@@ -74,21 +93,26 @@ for path in sorted((ROOT / "gateway" / "dynamic").glob("*.yml")):
             )
 
 declared = set()
-if GATEWAY_ENV.exists():
-    for line in GATEWAY_ENV.read_text().split("\n"):
-        line = line.strip()
-        if line and not line.startswith("#") and "=" in line:
-            declared.add(line.split("=", 1)[0].strip())
+if GATEWAY_ENVS:
+    for env_path in GATEWAY_ENVS:
+        for line in env_path.read_text().split("\n"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                declared.add(line.split("=", 1)[0].strip())
 else:
-    preflight.append(f"{GATEWAY_ENV} does not exist, so no templated variable can be shown to be defined.")
+    preflight.append(
+        f"no traefik*.env in {GATEWAY_ENV_DIR}, so no templated variable can be shown to be defined."
+    )
 
 referenced = set()
 for path in sorted((ROOT / "gateway" / "dynamic").glob("*.yml")):
     referenced |= set(re.findall(r'\{\{\s*env\s+\\?"([A-Z0-9_]+)\\?"\s*\}\}', path.read_text()))
 for name in sorted(referenced - declared):
     preflight.append(
-        f"{name} is templated into a gateway rule but is not set in {GATEWAY_ENV.name}. "
-        "It renders empty, the rule becomes Host(``), and the route matches nothing — silently."
+        f"{name} is templated into a gateway rule and is set in NONE of "
+        f"{', '.join(p.name for p in GATEWAY_ENVS)}. It renders empty in every environment, the "
+        "rule becomes Host(``), and the route matches nothing — silently. "
+        "(WHICH file it belongs in is surface-routes.py check 6's question, and it is stricter.)"
     )
 
 if preflight:
