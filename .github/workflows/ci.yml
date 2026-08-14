@@ -895,6 +895,24 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-release-deploy-pulls-before-switching.py
 
+      # ── A DEPLOYED FIX THAT IS NOT IN THE SERVED CONFIG (micro-org#459) ──────
+      #
+      # The gateway renders `gateway/dynamic/*.yml` from its OWN environment, and
+      # `env "X"` on an unset name renders the empty string — so a block guarded
+      # by `{{ if env "X" }}` is silently absent, in valid YAML, with no error.
+      # This deploy script cycles the gateway with `docker restart`, and a
+      # restart keeps the environment the container was created with.
+      #
+      # Release 2026.08.39 paid for that. `CF_VIEW_ORIGIN_SUFFIX` was added to
+      # compose/env/traefik.testnet.env to grant the combined view's origins; the
+      # release was cut, deployed, and reported `cycled cf-testnet-gateway-1`;
+      # and every preflight went on answering without an
+      # `Access-Control-Allow-Origin`, which a browser reads as a refusal. The
+      # merged, released, deployed fix was not live, and every log was green.
+      - name: The deploy proves the gateway carries its env file before cycling it
+        working-directory: deploy
+        run: python3 scripts/check-gateway-env-guard.py
+
       # ── A FRESH HOST CANNOT BE PROVISIONED FROM DOCUMENTATION (micro-org#350) ─
       #
       # This repository reads files out of SIBLING repositories, under directory
