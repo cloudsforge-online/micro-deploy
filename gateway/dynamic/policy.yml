@@ -219,23 +219,71 @@ http:
           # to this environment's own suffix, because a viewer suffix equal to your own is a no-op
           # that looks like a grant.
           #
-          # ── WHY THESE THREE AND NOT THE SEVENTEEN ABOVE ───────────────────────────────────────
+          # ── IT WAS THREE. IT IS NOW EVERY FRONTEND, AND THAT CHANGE IS THE FIX ────────────────
           #
-          # These are the bundles that can VIEW another network in place — each has a `lib/viewed.ts`
-          # and re-points its reads at the sibling estate when the reader switches:
+          # It used to be `hub`, `explorer` and `network` — the three bundles that then carried a
+          # `lib/viewed.ts`. Everything else was expected to switch network by NAVIGATING, so its
+          # reads would be same-origin on whichever hostname it landed on. That expectation was
+          # already false when it was written, because micro-org#459 had retired the `-testnet` web
+          # hostnames there was nowhere left to navigate TO. The owner's report:
           #
-          #   hub       hub-web/src/lib/viewed.ts       balances, deposits, mining, the wallet
-          #   explorer  explorer-web/src/lib/viewed.ts  blocks, transactions, addresses
-          #   network   network-site/src/lib/viewed.ts  the chain's own state
+          #     "i see basically that in every page when you press testnet it take you to network
+          #      page testet and if you switch product its reset to mainnet"
           #
-          # Every other surface switches network by NAVIGATING (`NetworkSwitcher` with no
-          # `onSelect`), so its reads are same-origin on whichever hostname it lands, and an entry
-          # here would grant a cross-environment read nothing performs. `scripts/surface-routes.py`
-          # check 9 holds both halves: each name must be a `servesUi` surface in the registry, and
-          # this list must stay a STRICT SUBSET of the block above.
+          # Both halves are one defect. A surface that could not view got an escape route to Forge
+          # Network on testnet, which answers a different question than the reader asked; and having
+          # arrived on a bundle that COULD view, every onward product link went to one that could
+          # not, so the choice evaporated at the next click.
+          #
+          # The fix is that every frontend views in place. Each of the eighteen now has a
+          # `src/lib/viewed.ts` built from `createNetworkView` in `@cloudsforge/ui/network-view`,
+          # and each one's `apiBase()` reads `viewedHosts()`. So each one, on the mainnet estate,
+          # can now issue a credentialed read to its own `-testnet` sibling — and every one of those
+          # reads needs its mainnet origin named HERE or the browser refuses the preflight.
+          #
+          # THE OBSERVED SHAPE OF THAT REFUSAL, before this list was widened:
+          #   curl -X OPTIONS https://market-testnet.cloudsforge.online/v1/listings \
+          #     -H 'Origin: https://market.cloudsforge.online' -H 'Access-Control-Request-Method: GET'
+          #   → HTTP/2 200, `access-control-allow-credentials: true`, and NO
+          #     `access-control-allow-origin`. Hub, being in this list, got one. That was the gap.
+          #
+          # ── WHAT IS STILL *NOT* HERE, AND WHY THAT IS NOT AN OVERSIGHT ────────────────────────
+          #
+          #   wallet, signin, faucet   registry rows with a `basePath` INSIDE hub and network. Their
+          #                            bundle is hub-web / network-site, which is already named, and
+          #                            an entry of their own would be a duplicate subdomain in this
+          #                            list rather than a new grant.
+          #   nimbus, account          identity. Pinned in `NETWORK_PINNED_SURFACES`: one identity is
+          #                            the PREMISE of the combined view, so a session refresh never
+          #                            crosses to the estate that did not mint it.
+          #   the API surfaces         `api`, `foresight-api` and friends serve no UI, so no browser
+          #                            ever sends an Origin header FROM one.
+          #
+          # `scripts/surface-routes.py` check 10 derives this list from the registry now rather than
+          # from a hard-coded copy: every `viewsAnyNetwork` surface must appear, every name here must
+          # be one, the repository named on each row must actually contain the `src/lib/viewed.ts`
+          # that performs it, and this list must stay a subset of the same-environment block above.
+          # The subset is the load-bearing half — it is what stops a surface entering the estate
+          # through the weaker door — and it is a plain subset rather than a strict one now, because
+          # every UI surface views and a strict subset would just be a headcount that always fails.
+          - https://{{ env "CF_VIEW_SITE_HOST" }}
           - https://hub{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://market{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://create{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://trade{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://worlds{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://explorer{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://network{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://developers{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://admin{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://status{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://foresight{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://emberkin{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://aetherholm{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://tessera{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://lantern{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://beacon{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          - https://pool{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:
