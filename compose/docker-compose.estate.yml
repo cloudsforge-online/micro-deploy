@@ -3847,7 +3847,9 @@ services:
       # `CF_EMBER_NETWORK` is set to `testnet` by compose/testnet.env and unset for
       # mainnet, so the two environments cannot both claim to be the same one.
       ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
-      IDENTITY_URL: http://identity:4000
+      # No `IDENTITY_URL`: it comes from `*identity-trust` above, so this block
+      # follows `CF_IDENTITY_URL` per estate. See the long note in `hub-api`
+      # for what overriding it here cost on testnet.
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
@@ -3897,7 +3899,7 @@ services:
       # `CF_EMBER_NETWORK` is set to `testnet` by compose/testnet.env and unset for
       # mainnet, so the two environments cannot both claim to be the same one.
       ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
-      IDENTITY_URL: http://identity:4000
+      # No `IDENTITY_URL`: it comes from `*identity-trust` above. See `hub-api`.
       LEDGER_URL: http://ledger:4000
       BILLING_URL: http://billing:4000
       MARKET_URL: http://market:4000
@@ -3955,7 +3957,32 @@ services:
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
-      IDENTITY_URL: http://identity:4000
+      # ── NO `IDENTITY_URL` HERE, AND ITS ABSENCE IS THE FIX ─────────────────
+      #
+      # It used to be `http://identity:4000`, written as the first of the
+      # upstream URLs below and years older than the anchor above. A key that
+      # appears in a mapping AFTER a merge key overrides what the merge brought,
+      # silently, so `*identity-trust` set `IDENTITY_URL` from `CF_IDENTITY_URL`
+      # and this line put the local container back — on the one estate where
+      # that is the wrong identity.
+      #
+      # MEASURED 2026-08-14 on testnet, and it is what "wallet could not be
+      # reached" turned out to be. `tokens.testnet.env` holds credentials minted
+      # in the MAINNET identity with `network: testnet` (the combined view's
+      # whole point: one identity, and the row carries the estate). The testnet
+      # identity has never seen them, so `POST /service-tokens/exchange` answered
+      # 401 "the service credential presented is not valid" — and a token
+      # provider that cannot mint throws `ServiceTokenUnavailableError`, which is
+      # not an `HttpError`, so hub-api's `describeFault` fell through to its last
+      # arm and reported EVERY upstream as unreachable. Eleven tiles, one
+      # credential, no network fault anywhere: `fetch` from this container to
+      # `wallet:4000` answered fine throughout.
+      #
+      # The same line sent the reader's own bearer — minted by the mainnet
+      # identity, because there is only one login — to the testnet identity for
+      # `GET /auth/me`, which rejected it as `bad_signature`. Both faults are one
+      # line, and the line is gone. `scripts/check-identity-trust.py` now fails
+      # the build if any service block writes one again.
       LEDGER_URL: http://ledger:4000
       WALLET_URL: http://wallet:4000
       BILLING_URL: http://billing:4000
@@ -3994,6 +4021,29 @@ services:
       # which mints per upstream from the one credential below. Passing them
       # anyway meant this deploy minted six live JWTs nothing would ever present.
       HUB_API_IDENTITY_CREDENTIAL: ${HUB_API_IDENTITY_CREDENTIAL:-}
+      # ── THE SAME DEPLOY FACT hub-web's NGINX RENDERS, HANDED TO THE BFF ───
+      #
+      # `GET /v1/deployment` answers "does THIS estate run a mining pool", and
+      # it exists because the combined view made the question cross-estate.
+      # hub-web has always read `/deployment.json` from its own container, which
+      # is the right answer to "does the estate serving this page run a pool"
+      # and the wrong answer to the question a reader viewing the other network
+      # is actually asking. Testnet runs no micro-pool — the `pool` profile is
+      # mainnet's, and a pool on that estate's regtest litecoind would refuse to
+      # boot — so a mainnet-served page viewing testnet asked `pool-testnet` for
+      # `/v1/pool`, got the 502 that mechanism exists to avoid rendering, and
+      # showed "The pool could not be read" over an EMBER miner that works.
+      #
+      # A WEB path cannot answer it: every `-testnet` web hostname 302s to its
+      # mainnet sibling, so reading the other estate's `/deployment.json` reads
+      # this one's. `/v1` is the half of those hostnames that still answers from
+      # the other estate, which is why the fact is served by the BFF.
+      #
+      # Same variable, same default, same asymmetry as `hub-web` and `pool-web`:
+      # only the exact string `absent` means "no pool here", and the image
+      # defaults to `present` so an estate that has never heard of the flag is
+      # unchanged.
+      POOL_API_PRESENCE: "${POOL_API_PRESENCE:-present}"
       INSTANCE_ID: hub-api-estate
     ports:
       - "127.0.0.1:${CF_PORT_BASE:-4}119:4000"

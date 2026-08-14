@@ -959,6 +959,31 @@ jobs:
           python3 -m pip install --quiet pyyaml
           python3 scripts/check-service-credential-wiring.py
 
+      # ── A MERGE KEY DOES NOT WIN, AND COMPOSE SAYS NOTHING ────────────────────
+      #
+      # `x-identity-trust` is what makes ONE identity serve both estates: testnet
+      # verifies against the mainnet JWKS and exchanges its credentials at the
+      # mainnet identity, by interpolation, per env file. A key written after
+      # `<<:` REPLACES what the merge brought, with no warning and no diff from
+      # the anchor — so one stale literal opts one service out of the mechanism
+      # on the one estate where it matters.
+      #
+      # MEASURED 2026-08-14: `hub-api`, `admin-api` and `admin-api-migrate` each
+      # still carried `IDENTITY_URL: http://identity:4000` from before the anchor
+      # existed. On testnet the credential exchange went to the testnet identity,
+      # which has never held those rows (they are minted in the mainnet identity
+      # carrying `network: testnet`), so it answered 401 — and a provider that
+      # cannot mint throws `ServiceTokenUnavailableError`, which is not an
+      # `HttpError`, so hub-api reported EVERY upstream as "could not be reached"
+      # while the network between the containers was perfectly healthy. The
+      # reader's wallet page said the wallet was unreachable on all three panels.
+      #
+      # Nothing in this workflow could see it: the anchor was right, both env
+      # files were right, and only the rendered container was wrong.
+      - name: Identity trust comes from the anchor, on every service, on both estates
+        working-directory: deploy
+        run: python3 scripts/check-identity-trust.py
+
       # ── ONE ESTATE'S ENV FILE, THE OTHER ESTATE'S TOKENS, AND NO COMPLAINT ───
       #
       # Bringing an estate up takes TWO `--env-file` paths, and until micro-org#238
