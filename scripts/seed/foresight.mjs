@@ -768,6 +768,18 @@ function reportHouseSeed() {
  * A failure to attach a cover is NOT a failure of the seeding run. A question
  * without a picture is still a question; a bootstrap that aborted because an
  * image did not render would be a worse trade than a plain page.
+ *
+ * ── IT IS GIVEN EVERY MARKET, NOT THIS RUN'S CREATIONS ──────────────────────
+ *
+ * This used to be handed `seeded` — the markets the current run had just made.
+ * That is the wrong set, and testnet is the proof: on 2026-08-14 it ran twenty
+ * markets of which nine had covers, because the eleven in the 2026H2 batch were
+ * seeded on a day when there was no committed art for them, and no later run
+ * would ever look at them again. A cover is a property of a QUESTION, not of the
+ * run that happened to create it, so the set to consider is every market the
+ * registry holds. The loop's first act is to read the market back and skip it if
+ * it already carries an image, so a covered estate costs one GET per market and
+ * changes nothing.
  */
 async function coverImages(markets, userToken) {
   if (markets.length === 0) return
@@ -822,7 +834,14 @@ export async function seedForesight(userToken) {
 
   await deployAndOpen(seeded, userToken, signingChain())
 
-  await coverImages(seeded, userToken)
+  // Every market still missing a cover, not just the ones this run created — see
+  // `coverImages`. A void artefact is left alone: it is not on the browse page,
+  // so a picture on it would be an image generated for nobody.
+  const covered = await allMarkets()
+  await coverImages(
+    covered.filter((m) => m.status !== 'void' && !isTestArtefact(m.question)),
+    userToken,
+  )
 
   reportHouseSeed()
 
