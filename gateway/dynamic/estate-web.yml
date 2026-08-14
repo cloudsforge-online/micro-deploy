@@ -373,8 +373,47 @@ http:
     # the one thing that cannot be rolled back. `!PathPrefix` keeps every `/v1` API answering,
     # which the combined view's cross-estate reads depend on. The service names a real one because
     # Traefik requires it; the middleware answers before it is consulted.
+    #
+    # ── THE SECOND NEGATIVE, AND WHY IT IS NOT BELT-AND-BRACES ────────────────────────────────
+    #
+    # WHAT IT DID. `^[a-z0-9-]+-testnet\.` matches EVERY testnet hostname, and this router's 550
+    # outranks the 500 that most routers carry — so it did not retire the testnet FRONTENDS, it
+    # retired the testnet ESTATE'S FRONT DOOR. Measured, not reasoned:
+    #
+    #     GET  https://rpc-testnet.cloudsforge.online/   → 302 https://rpc.cloudsforge.online/
+    #     POST …/  {"method":"eth_chainId"}  (following) → {"result":"0x1cf3"}
+    #
+    # `0x1cf3` is 7411. MAINNET. Testnet is 7412. So chain 7412 had NO PUBLIC JSON-RPC AT ALL,
+    # and — the part that makes this worse than an outage — a wallet, a deploy script or a dapp
+    # pointed at the testnet RPC got a healthy 200 carrying MAINNET STATE. Every `curl` said
+    # working. `p2p-testnet` went the same way: a 302 is not an upgrade, so peer gossip over the
+    # tunnel could not open at all. Only `cf-api-mining` survived, and only because it happens to
+    # sit at 600.
+    #
+    # WHY `!PathPrefix(`/v1`)` DID NOT ALREADY COVER IT. That negative spares the estate's HTTP
+    # APIs, which are versioned and live under `/v1`. The chain endpoints are not HTTP APIs in
+    # that sense: hearth's `jsonrpc/server.js` has no path dispatch whatsoever and answers JSON-RPC
+    # at `/`, and the p2p WebSocket lands on `/p2p`. A path negative cannot spare a service that
+    # serves the root, so the exclusion has to be by HOSTNAME.
+    #
+    # WHAT IT EXCLUDES, AND WHERE THE LIST COMES FROM. Exactly the registry rows with
+    # `servesUi: false` — `ui/packages/ui/src/surfaces.ts`. That is the same predicate the CORS
+    # allowlist (check 5) and the cross-environment origins (check 10) are already keyed on, and
+    # it is the correct one here for the reason the retirement exists: this redirect says "the
+    # PAGE you wanted is now served on mainnet". A hostname with no page has no such answer to
+    # give, so redirecting it is always wrong, whatever it happens to serve instead.
+    #
+    # `surface-routes.py` check 11 asserts this alternation EQUALS that set, in both directions —
+    # a new service hostname that is not here fails CI rather than silently answering as mainnet,
+    # and a name here that starts serving a UI fails too. The list is not maintained by hand; it
+    # is maintained by the check.
+    #
+    # THE FAILURE DIRECTION IS DELIBERATE. Excluding too much means a retired frontend keeps
+    # serving its own testnet bundle — the pre-#459 behaviour, visibly wrong to a reader. Failing
+    # to exclude means a service answers with ANOTHER NETWORK'S STATE, which is invisible. When a
+    # regex here has to be wrong, it should be wrong in the direction someone notices.
     cf-retired-web-sub:
-      rule: 'HostRegexp(`^[a-z0-9-]+-testnet\.cloudsforge\.online$`) && !PathPrefix(`/v1`)'
+      rule: 'HostRegexp(`^[a-z0-9-]+-testnet\.cloudsforge\.online$`) && !HostRegexp(`^(?:account|api|exchange|nimbus|p2p|pay|rpc|studio|vault)-testnet\.cloudsforge\.online$`) && !PathPrefix(`/v1`)'
       priority: 550
       entryPoints: [websecure, tunnel]
       middlewares: [cf-retired-sub-to-mainnet]

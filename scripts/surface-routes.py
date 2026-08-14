@@ -1194,6 +1194,112 @@ def view_origin_drift(surfaces):
               f"checked out here. The allowlist, registry and subset assertions all ran.")
 
 
+RETIRED_ROUTER = "cf-retired-web-sub"
+RETIRED_SPARED_RE = re.compile(r'!HostRegexp\(`\^\(\?:([a-z0-9|-]+)\)-testnet\\\.')
+
+
+def retirement_spares_services(surfaces):
+    """── 11: the retirement redirect catches PAGES, and nothing but pages ───────
+
+    THE DEFECT, MEASURED. `cf-retired-web-sub` matched `^[a-z0-9-]+-testnet\\.` at
+    priority 550, over the 500 that most routers carry. It therefore did not
+    retire the testnet FRONTENDS; it retired every testnet hostname that had not
+    been given a higher number, chain endpoints included:
+
+        GET  https://rpc-testnet.cloudsforge.online/   -> 302 rpc.cloudsforge.online
+        POST (following) {"method":"eth_chainId"}      -> {"result":"0x1cf3"}
+
+    `0x1cf3` is 7411 — MAINNET. Chain 7412 had no public JSON-RPC for the whole
+    life of the retirement, and anything pointed at the testnet RPC was answered
+    200 with mainnet state. `p2p-testnet` was redirected the same way, which a
+    WebSocket cannot survive. Nothing 5xx'd, nothing was logged as refused, and
+    every probe in this repository stayed green: the estate was answering, just
+    for the other network.
+
+    WHY THE EXISTING NEGATIVE MISSED IT. `!PathPrefix(`/v1`)` spares the estate's
+    HTTP APIs because those are versioned. The chain endpoints are not: hearth's
+    `jsonrpc/server.js` has no path dispatch at all and serves JSON-RPC at `/`.
+    A path negative cannot spare a service that serves the root.
+
+    WHAT IS ASSERTED. The rule's second negative — its alternation of spared
+    hostnames — EQUALS the registry's `servesUi: false` subdomains, both
+    directions:
+
+      * A non-UI subdomain missing from the alternation is the bug above,
+        recurring: that hostname answers as the other network, invisibly.
+      * A name in the alternation whose registry row DOES serve a UI is a
+        frontend that quietly escaped the retirement — it keeps serving its own
+        testnet bundle at a hostname micro-org#459 said would redirect.
+
+    `servesUi` is the right predicate rather than a proxy for one. The redirect's
+    whole message is "the PAGE you wanted is served on mainnet now"; a hostname
+    with no page has no such answer to give, whatever else it serves. It is also
+    the same predicate checks 5 and 10 key on, so the three cannot disagree about
+    what a surface is.
+
+    THE CHECK IS SKIPPED, LOUDLY, IF THE RULE STOPS BEING PARSEABLE, because a
+    silently-zero comparison here would restore exactly the state this was
+    written for.
+    """
+    if not WEB_MAP.exists():
+        bad(f"{WEB_MAP} does not exist — the retirement rule cannot be checked")
+        return
+    lines = WEB_MAP.read_text().splitlines()
+    rule = None
+    for i, line in enumerate(lines):
+        if line.strip() == f"{RETIRED_ROUTER}:":
+            for follow in lines[i + 1: i + 4]:
+                m = RULE_RE.match(follow)
+                if m:
+                    rule = m.group("rule")
+            break
+    if rule is None:
+        # Not a failure: mainnet renders no retirement router, and the block is
+        # inside `{{ if eq (env "CF_WEB_RETIRED") "true" }}` — but the FILE always
+        # contains it, so absence here means the router was renamed or removed.
+        print(f"  note check 11 found no '{RETIRED_ROUTER}' rule in {WEB_MAP.name} — "
+              f"if the retirement was lifted, delete this check with it")
+        return
+    m = RETIRED_SPARED_RE.search(rule)
+    if m is None:
+        bad(
+            f"'{RETIRED_ROUTER}' has no `!HostRegexp(...)` alternation sparing the estate's "
+            f"non-UI hostnames. Its `^[a-z0-9-]+-testnet\\.` matches EVERY testnet hostname at "
+            f"priority 550, so `rpc-testnet` 302s to the mainnet RPC and a caller reading chain "
+            f"7412 is answered chain 7411 with a 200 — measured, and the reason this check exists"
+        )
+        return
+    spared = set(m.group(1).split("|"))
+    services = {
+        s["subdomain"] for s in surfaces
+        if s["subdomain"] and not s["basePath"] and not s["servesUi"]
+    }
+
+    for sub in sorted(services - spared):
+        bad(
+            f"'{sub}' serves no UI (registry `servesUi: false`) and is NOT spared by "
+            f"'{RETIRED_ROUTER}'. Every request to '{sub}-testnet.<apex>' outside `/v1` is 302'd "
+            f"to the MAINNET hostname of the same name, so that endpoint answers with the wrong "
+            f"network's state and returns 200 doing it — no error, no log line, nothing red"
+        )
+    for sub in sorted(spared - services):
+        row = next((s for s in surfaces if s["subdomain"] == sub and not s["basePath"]), None)
+        if row is None:
+            bad(
+                f"'{RETIRED_ROUTER}' spares '{sub}-testnet.<apex>' and NO registry surface "
+                f"declares subdomain '{sub}'. Nothing composes that address, so the exclusion "
+                f"protects a hostname that does not exist — the same dead-configuration failure "
+                f"check 2 catches on the other side"
+            )
+        else:
+            bad(
+                f"'{RETIRED_ROUTER}' spares '{sub}-testnet.<apex>', but surface '{row['key']}' "
+                f"SERVES A UI there. micro-org#459 retired the testnet frontends; this one still "
+                f"serves its own testnet bundle at its own hostname, which is the state the "
+                f"retirement was supposed to end"
+            )
+
+
 def main():
     surfaces = registry_surfaces()
     routers = gateway_routers()
@@ -1303,6 +1409,9 @@ def main():
 
     # ── 10: the cross-environment origins are earned, and strictly narrower ───
     view_origin_drift(surfaces)
+
+    # ── 11: the retirement redirect catches pages, not chain endpoints ────────
+    retirement_spares_services(surfaces)
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:
