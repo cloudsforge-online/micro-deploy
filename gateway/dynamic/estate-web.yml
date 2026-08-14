@@ -124,6 +124,30 @@ http:
     # A REDIRECT rather than a second router onto `cf-web-site`: serving one site on two hostnames
     # splits its search ranking between them and gives every page two addresses, which is a second
     # defect wearing the first one's clothes. 301 so it is cached, and so the apex is canonical.
+    # ── THE TESTNET FRONTENDS ARE RETIRED; THEIR HOSTNAMES REDIRECT (micro-org#459 step 5) ─────
+    #
+    # The combined view serves both networks from ONE set of frontends on the mainnet hostnames:
+    # the in-app switcher (stages 1/3) carries the data, one identity carries the login (stage 2),
+    # and the `-testnet` WEB bundles retire. Their hostnames do not die — an old link, a bookmark,
+    # a mail from last week all land on the mainnet sibling, same path, where the switcher can
+    # show testnet data in place. THE API ROUTERS ARE UNTOUCHED: the combined view's cross-estate
+    # reads are served by `/v1` on these very hostnames, which is why the retirement router below
+    # carries `!PathPrefix(`/v1`)` and sits at priority 550 — above the bundles (500), below the
+    # APIs (600).
+    #
+    # Rendered ONLY when CF_WEB_RETIRED is set (testnet.env, at the flip). Unset — mainnet, and
+    # testnet until the shared identity is verified — this whole block renders to nothing.
+    cf-retired-sub-to-mainnet:
+      redirectRegex:
+        regex: '^https?://([a-z0-9-]+)-testnet\.cloudsforge\.online/(.*)'
+        replacement: 'https://${1}.cloudsforge.online/${2}'
+        permanent: false
+    cf-retired-apex-to-mainnet:
+      redirectRegex:
+        regex: '^https?://testnet\.cloudsforge\.online/(.*)'
+        replacement: 'https://cloudsforge.online/${1}'
+        permanent: false
+
     cf-www-to-apex:
       redirectRegex:
         regex: '^https?://www\.(.+)'
@@ -330,6 +354,25 @@ http:
     # The `www` spelling of the apex, redirected to it. Same priority as the apex router: the two
     # rules match different hostnames and never compete. Traefik requires a service even when a
     # middleware answers first, so it names the one this redirects TO.
+{{ if env "CF_WEB_RETIRED" }}
+    # The retirement routers (micro-org#459 step 5) — see the middlewares above for the whole
+    # argument. 302 rather than 301 while the retirement beds in: a cached permanent redirect is
+    # the one thing that cannot be rolled back. `!PathPrefix` keeps every `/v1` API answering,
+    # which the combined view's cross-estate reads depend on. The service names a real one because
+    # Traefik requires it; the middleware answers before it is consulted.
+    cf-retired-web-sub:
+      rule: 'HostRegexp(`^[a-z0-9-]+-testnet\.cloudsforge\.online$`) && !PathPrefix(`/v1`)'
+      priority: 550
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-retired-sub-to-mainnet]
+      service: cf-web-site
+    cf-retired-web-apex:
+      rule: 'Host(`testnet.cloudsforge.online`) && !PathPrefix(`/v1`)'
+      priority: 550
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-retired-apex-to-mainnet]
+      service: cf-web-site
+{{ end }}
     cf-web-www:
       rule: 'Host(`www.{{ env "CF_SITE_HOST" }}`)'
       priority: 500
