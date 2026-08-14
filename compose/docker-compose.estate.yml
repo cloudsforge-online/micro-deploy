@@ -1171,7 +1171,7 @@ services:
          "custody":["policy:decide"],
          "emberkin":["billing:read","ledger:post","worlds:title"],
          "faucet":["custody:sign:treasury"],
-         "foresight":["admin:read","custody:address:create","custody:sign:deployer","indexer:read","indexer:write","ledger:post","policy:decide"],
+         "foresight":["admin:read","custody:address:create","custody:sign:deployer","indexer:read","indexer:write","ledger:post","ledger:read","policy:decide"],
          "hub-api":["billing:read","ledger:read","notify:read","policy:decide","pricing:read","wallet:read"],
          "ledger":["indexer:read"],
          "market":["indexer:read","ledger:post","policy:decide"],
@@ -3194,13 +3194,25 @@ services:
   # supported mode rather than an error, and all four stay unset:
   #
   #   * `FORESIGHT_CUSTODIAL_ADDRESS`. The platform address the custodial pool
-  #     share is staked from, and the only thing `server.ts` reads to decide
-  #     whether `GET /stake-assets` says staking is available at all. It stays
-  #     unset for a reason the environment section below states in full: the
-  #     lifecycle after `accepted` has no route, so setting it would escrow a
-  #     stranger's coins with no way to stake, refund or settle them. Unlike the
-  #     three below, this one is not a mode anybody chose — it is a switch that
-  #     must not be thrown until micro-foresight can finish what it starts.
+  #     share is staked from, when there is one. It stays unset, and since
+  #     micro-foresight#22 that is an ordinary mode rather than a switch nobody
+  #     is allowed to throw.
+  #
+  #     It used to be the ONE thing `server.ts` read to decide whether
+  #     `GET /stake-assets` reported custodial staking available at all, and it
+  #     was held unset on purpose: the lifecycle after `accepted` had no route,
+  #     so setting it would have escrowed a stranger's coins with no way to
+  #     stake, refund or settle them. Migration 12 built that route — a fifth
+  #     terminal state, `paid`, settled out of the ledger and constrained to
+  #     carry no `tx_hash` — because `custody/src/gates.ts` signs only for
+  #     `deployer`, `treasury` and `deposit`, and `stake(uint8)` is a
+  #     value-bearing CALL with calldata that no key in this estate can make.
+  #
+  #     A `paid` stake never reaches the chain, so it needs no address, and
+  #     migration 13 ties `platform_address` to the two states that assert the
+  #     chain saw the stake. Availability no longer reads this variable. Set it
+  #     only if the platform ever holds a key that can place the aggregate
+  #     position itself.
   #   * `FORESIGHT_HOUSE_ADDRESS` (21 §5). The house seed address must hold its
   #     own key OUTSIDE this estate's custody — `houseseed.ts` explains that
   #     custody has no transaction shape that can call `stake(uint8)` at all — and
@@ -3272,23 +3284,30 @@ services:
       # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
       # silently — a control that reports success while doing nothing.
       FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
-      # The published address the CUSTODIAL pool share is staked from — the second way to bet,
-      # with coins already deposited here rather than a browser wallet. `server.ts` derives
-      # `custodialStakingAvailable` from nothing but this being set, so setting it is what turns
-      # the whole intake on.
+      # The published address the CUSTODIAL pool share is staked from, when there is one — the
+      # second way to bet, with coins already deposited here rather than a browser wallet.
       #
-      # IT IS MAPPED HERE AND LEFT UNSET ON PURPOSE, and mapping it unset is the point: it was
-      # readable only by `foresight/src/env.ts` before this line, so an operator who set it in an
-      # env file would have got no error and no effect — the same trap `docs/house-seed.md` §3.1
-      # records for the line above. A variable that cannot be set is also a variable whose absence
-      # nobody can prove.
+      # IT IS MAPPED HERE AND LEFT UNSET, and mapping it unset is still the point: it was readable
+      # only by `foresight/src/env.ts` before this line, so an operator who set it in an env file
+      # would have got no error and no effect — the same trap `docs/house-seed.md` §3.1 records for
+      # the line above. A variable that cannot be set is also a variable whose absence nobody can
+      # prove.
       #
-      # DO NOT SET IT YET. `custodialstakes.ts` exports the whole lifecycle — `markStaked`,
-      # `markRefunded`, `markSettled`, and the three posting builders — and `server.ts` calls
-      # exactly one of them, `acceptStake`. So today this switch opens an intake that moves a
-      # stranger's BTC from available to escrow and then has no route to stake it, refund it or
-      # settle it. Unset, the panel does not render and nobody's money is taken; set, it is taken
-      # and stranded. Wire the lifecycle routes first (micro-org, custodial-stake-lifecycle).
+      # WHAT CHANGED (micro-foresight#22): this is no longer the switch. `server.ts` used to derive
+      # `custodialStakingAvailable` from nothing but this being set, and the instruction here was DO
+      # NOT SET IT YET — because `server.ts` called one of the lifecycle functions `custodialstakes.ts`
+      # exports, so the intake moved a stranger's BTC from available to escrow and then had no route
+      # to stake, refund or settle it.
+      #
+      # Migration 12 built the route: `paid`, a fifth terminal state settled out of the ledger and
+      # constrained to carry no `tx_hash`. It exists because `custody/src/gates.ts` signs only for
+      # `deployer`, `treasury` and `deposit`, and `stake(uint8)` is a value-bearing CALL with
+      # calldata — so no key in this estate can place the platform's aggregate position, and waiting
+      # for one would have been waiting forever. A `paid` stake never reaches the chain and needs no
+      # address; migration 13 ties `platform_address` to the states that assert the chain saw it.
+      #
+      # So availability is now `true` and this stays unset. Set it only if the platform ever holds a
+      # key that can stake the aggregate itself.
       FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
@@ -3368,23 +3387,30 @@ services:
       # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
       # silently — a control that reports success while doing nothing.
       FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
-      # The published address the CUSTODIAL pool share is staked from — the second way to bet,
-      # with coins already deposited here rather than a browser wallet. `server.ts` derives
-      # `custodialStakingAvailable` from nothing but this being set, so setting it is what turns
-      # the whole intake on.
+      # The published address the CUSTODIAL pool share is staked from, when there is one — the
+      # second way to bet, with coins already deposited here rather than a browser wallet.
       #
-      # IT IS MAPPED HERE AND LEFT UNSET ON PURPOSE, and mapping it unset is the point: it was
-      # readable only by `foresight/src/env.ts` before this line, so an operator who set it in an
-      # env file would have got no error and no effect — the same trap `docs/house-seed.md` §3.1
-      # records for the line above. A variable that cannot be set is also a variable whose absence
-      # nobody can prove.
+      # IT IS MAPPED HERE AND LEFT UNSET, and mapping it unset is still the point: it was readable
+      # only by `foresight/src/env.ts` before this line, so an operator who set it in an env file
+      # would have got no error and no effect — the same trap `docs/house-seed.md` §3.1 records for
+      # the line above. A variable that cannot be set is also a variable whose absence nobody can
+      # prove.
       #
-      # DO NOT SET IT YET. `custodialstakes.ts` exports the whole lifecycle — `markStaked`,
-      # `markRefunded`, `markSettled`, and the three posting builders — and `server.ts` calls
-      # exactly one of them, `acceptStake`. So today this switch opens an intake that moves a
-      # stranger's BTC from available to escrow and then has no route to stake it, refund it or
-      # settle it. Unset, the panel does not render and nobody's money is taken; set, it is taken
-      # and stranded. Wire the lifecycle routes first (micro-org, custodial-stake-lifecycle).
+      # WHAT CHANGED (micro-foresight#22): this is no longer the switch. `server.ts` used to derive
+      # `custodialStakingAvailable` from nothing but this being set, and the instruction here was DO
+      # NOT SET IT YET — because `server.ts` called one of the lifecycle functions `custodialstakes.ts`
+      # exports, so the intake moved a stranger's BTC from available to escrow and then had no route
+      # to stake, refund or settle it.
+      #
+      # Migration 12 built the route: `paid`, a fifth terminal state settled out of the ledger and
+      # constrained to carry no `tx_hash`. It exists because `custody/src/gates.ts` signs only for
+      # `deployer`, `treasury` and `deposit`, and `stake(uint8)` is a value-bearing CALL with
+      # calldata — so no key in this estate can place the platform's aggregate position, and waiting
+      # for one would have been waiting forever. A `paid` stake never reaches the chain and needs no
+      # address; migration 13 ties `platform_address` to the states that assert the chain saw it.
+      #
+      # So availability is now `true` and this stays unset. Set it only if the platform ever holds a
+      # key that can stake the aggregate itself.
       FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
