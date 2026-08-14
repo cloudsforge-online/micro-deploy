@@ -82,6 +82,7 @@ import {
 import {
   FORESIGHT_QUESTIONS,
   TEST_ARTEFACT_VOID_REASON,
+  coverSlug,
   isTestArtefact,
 } from './foresight-questions.mjs'
 import { adoptExisting, generateCover, reportImageBackend, studioReachable } from './images.mjs'
@@ -768,21 +769,6 @@ function reportHouseSeed() {
  * without a picture is still a question; a bootstrap that aborted because an
  * image did not render would be a worse trade than a plain page.
  */
-/**
- * The filename a question's committed cover is stored under.
- *
- * Derived from the question rather than recorded beside it, so a cover cannot drift away from the
- * market it belongs to: rewording a question changes the slug, the adopt misses, and the fallback
- * generates a new one rather than silently attaching the old picture to a different question.
- */
-function coverSlug(question) {
-  return question
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 60)
-}
-
 async function coverImages(markets, userToken) {
   if (markets.length === 0) return
   await reportImageBackend()

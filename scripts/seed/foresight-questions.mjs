@@ -783,6 +783,412 @@ export const QUESTIONS_2026H2 = [
 ]
 
 /**
+ * Twelve short-horizon questions, researched 2026-08-14 — micro-foresight
+ * `seed/questions-short-202608.mjs`, exported there as
+ * `FORESIGHT_QUESTIONS_SHORT_202608`.
+ *
+ * Copied entry for entry, including every `observed` note, for the reason given
+ * above `QUESTIONS_2026H2`: the note IS the evidence that a threshold was set to
+ * be uncertain rather than set to be already true.
+ *
+ * **What this batch is for.** Measured against the live registry on 2026-08-14,
+ * the twenty markets the estate ran had an earliest close of 2026-08-21 and a
+ * median months out. That is a book a visitor can stake in and then has no
+ * reason to return to for a season, and it exercises almost none of the
+ * resolution machinery. Every entry here closes between 2026-08-25 and
+ * 2026-09-15.
+ *
+ * The three things a reader of THIS file needs, with the argument at length in
+ * the micro-foresight header:
+ *
+ *   * **No duplicates of the twenty above, checked one by one.** Six finished
+ *     candidates were dropped for colliding with a question the estate already
+ *     runs or with each other — a second Roman Space Telescope launch deadline
+ *     that the existing one strictly implies, a second Bitcoin block-height
+ *     threshold, a second Bitcoin difficulty question, a Bank of Japan rate
+ *     decision that only a PDF could settle, a third release-tag question, and a
+ *     second Formula 1 race. The two crypto spot entries survived because the
+ *     nearest existing price market closes 48 days out and these close in 25 and
+ *     32 — a different instrument to a trader, and the specific gap this batch
+ *     fills.
+ *
+ *   * **A measured trap in the GitHub API**, because two entries resolve from
+ *     it. `GET /git/refs/tags/{name}` answers HTTP 200 with an ARRAY of prefix
+ *     matches when the exact tag is absent — verified on 2026-08-14 against
+ *     `kubernetes/kubernetes` `v1.37.0`, which answers 200 today while 1.37 is
+ *     unreleased. "200 means the tag exists" would have settled that market YES
+ *     on the day it opened. Both criteria require a JSON OBJECT whose `ref` is
+ *     the exact string.
+ *
+ *   * **Deadline questions close before the first opportunity, not on the
+ *     deadline.** MTG-I2 targets 27 August and its question runs to 3 September,
+ *     but the market closes 27 August at 14:00Z. Nobody stakes on a launch they
+ *     have watched, and an ordinary scrub still resolves YES — so the question
+ *     is about whether the programme is ready rather than about one afternoon's
+ *     weather.
+ *
+ * @type {readonly SeedQuestion[]}
+ */
+export const QUESTIONS_SHORT_202608 = [
+  // ── protocol_network ───────────────────────────────────────────────────────
+  {
+    question:
+      'Will the Bitcoin mining difficulty in effect at block height 963,648 be below 124,000,000,000,000?',
+    cover:
+      'a heavy mechanical governor with weights on hinged arms, settling to a lower position',
+    resolutionCriteria:
+      'YES if the difficulty in effect for the retarget epoch beginning at block height 963,648 is ' +
+      'strictly less than 124000000000000. NO if it is equal to or greater than that figure. The ' +
+      'reading is taken from the source endpoint, which returns an array of retarget records: take ' +
+      'the element whose second field equals 963648 and read its third field, the difficulty. If ' +
+      'that element is absent, the same difficulty as reported by the block at height 963,648 on ' +
+      'any two independent Bitcoin block explorers settles it, because difficulty is a property of ' +
+      'the chain and not of the endpoint. Only Bitcoin mainnet counts; no testnet and no fork.',
+    category: 'protocol_network',
+    resolutionSourceKind: 'block_explorer',
+    resolutionSourceRef: 'https://mempool.space/api/v1/mining/difficulty-adjustments/3m',
+    closeTime: '2026-08-28T00:00:00.000Z',
+    disputeWindowSeconds: ONE_DAY,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14: tip height 962,462; difficulty 127,479,855,693,691.4, set at height 961,632 ' +
+      'on 2026-08-08. The epoch was 41.2% elapsed with 1,186 blocks left and mempool.space projected ' +
+      'the next adjustment at -2.61%, which lands ABOVE the threshold; Luxor\'s Hashrate Index ' +
+      'roundup of 2026-08-10 projected -3.07%, which lands below it. The threshold of 124T is -2.73% ' +
+      'from current and therefore sits BETWEEN the two published forecasts. In block-time terms YES ' +
+      'needs the remaining blocks to average 617.4s or slower; the epoch to date had averaged 616.8s. ' +
+      'A tenth of a percent of headroom, with two reputable forecasts on opposite sides of it.',
+  },
+  {
+    question: 'Will the Solana mainnet-beta cluster be in epoch 1025 or higher at 2026-09-01T00:00:00Z?',
+    cover: 'a ring of evenly spaced notches with a single marker advancing around it',
+    resolutionCriteria:
+      'YES if a getEpochInfo call to the Solana mainnet-beta JSON-RPC endpoint named as the source, ' +
+      'made once at or after the close time, returns a result.epoch of 1025 or higher. NO if it ' +
+      'returns 1024 or lower. Equivalently and identically, YES if result.absoluteSlot is at least ' +
+      '442800000, since epoch N begins at slot N times 432000; the two readings cannot disagree. ' +
+      'Only the mainnet-beta cluster counts; devnet and testnet do not. If that endpoint does not ' +
+      'answer, the same epoch number from any two independent Solana RPC providers settles it, ' +
+      'because the epoch is a property of the cluster and not of the endpoint.',
+    category: 'protocol_network',
+    resolutionSourceKind: 'chain_rpc',
+    resolutionSourceRef: 'https://api.mainnet-beta.solana.com',
+    closeTime: '2026-09-01T00:00:00.000Z',
+    disputeWindowSeconds: ONE_DAY,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14T17:48Z from that endpoint: epoch 1016, absoluteSlot 439,272,053, slotIndex ' +
+      '360,053 of 432,000. Epoch 1025 begins at slot 442,800,000, so 3,527,947 slots have to pass in ' +
+      'the 1,491,084 seconds to close — an average of 0.42264 s/slot. Measured over the last ten ' +
+      'full epochs the cluster ran at 0.42143 s/slot, which is faster than required by 0.29%, or ' +
+      'about 1.2 hours of slack across a 17-day horizon. Nine of the last ten epoch windows would ' +
+      'have made it and one would not. Slot time is not a constant here: it moves with client ' +
+      'releases, and Anza shipped agave v4.2.0 on 2026-08-07 and v4.2.1 on 2026-08-13.',
+  },
+  {
+    question:
+      'Will the tag v32.0rc1 exist in the bitcoin/bitcoin GitHub repository at 2026-09-12T00:00:00Z?',
+    cover: 'a paper tag on a short string, tied to the topmost of a stack of layered plates',
+    resolutionCriteria:
+      'YES if the source endpoint, read once at or after the close time, answers HTTP 200 AND the ' +
+      'response body is a JSON object whose ref field is exactly the string refs/tags/v32.0rc1. NO ' +
+      'in every other case, which specifically includes HTTP 404 and includes an HTTP 200 whose body ' +
+      'is a JSON ARRAY: that route returns an array of prefix matches when the exact tag is absent, ' +
+      'so a 200 alone does not mean the tag exists. The neighbouring git/matching-refs route ' +
+      'prefix-matches by design and does not substitute for this one. A tag that exists and is ' +
+      'deleted before the close reads NO, and a tag created after the close does not count, because ' +
+      'the question asks about the state of the repository at one named instant. If GitHub cannot be ' +
+      'reached for 48 hours after the close, the same tag listed on any two independent mirrors of ' +
+      'the repository settles it.',
+    category: 'protocol_network',
+    resolutionSourceKind: 'protocol_publication',
+    resolutionSourceRef: 'https://api.github.com/repos/bitcoin/bitcoin/git/refs/tags/v32.0rc1',
+    closeTime: '2026-09-12T00:00:00.000Z',
+    disputeWindowSeconds: ONE_DAY,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14: that endpoint answers HTTP 404 — the tag does not exist — and the repository ' +
+      'has branches 28.x through 31.x with no 32.x. Bitcoin Core issue #35122 ("Release Schedule for ' +
+      '32.0", opened 2026-04-20) states under the heading 2026-09-10: "Split off 32.x branch from ' +
+      'master" and "Start RC cycle, tag and release v32.0rc1". The close is two days after that ' +
+      'target, and the project\'s record against its own published rc1 dates is the reason this is ' +
+      'uncertain rather than decided: 28.0 shipped rc1 on the day, 29.0 slipped 7 days, 30.0 shipped ' +
+      'on the day, 31.0 slipped 2 days. Two of the last four cycles would have resolved YES here.',
+  },
+
+  // ── market_prices ──────────────────────────────────────────────────────────
+  {
+    question:
+      'Will the US Consumer Price Index for All Urban Consumers (CPI-U, all items, US city average, not seasonally adjusted) for the August 2026 reference month be at or above 334.667?',
+    cover: 'a shopping basket drawn as simple stacked geometric solids, rising on one side of a beam',
+    resolutionCriteria:
+      'YES if the value the Bureau of Labor Statistics publishes for series CUUR0000SA0 at year 2026 ' +
+      'period M08 is greater than or equal to 334.667. NO if it is strictly less. The figure is read ' +
+      'from the source API as the value field of the matching element of Results.series[0].data. ' +
+      '334.667 is exactly a 3.3 percent twelve-month increase on the published August 2025 value of ' +
+      '323.976; the question is asked in index points rather than as a percentage because BLS rounds ' +
+      'the published percentage change to one decimal and the index is published to three, so the ' +
+      'index cannot be argued about. The FIRST value published for August 2026 settles the market; a ' +
+      'later revision or a rebasing does not reopen it. If BLS delays the release beyond 2026-10-11 ' +
+      'or does not publish an August 2026 value at all, as happened during the 2025 lapse in ' +
+      'appropriations, the market is voided and stakes are returned.',
+    category: 'market_prices',
+    resolutionSourceKind: 'price_index',
+    resolutionSourceRef: 'https://api.bls.gov/publicAPI/v2/timeseries/data/CUUR0000SA0',
+    closeTime: '2026-09-11T12:29:00.000Z',
+    disputeWindowSeconds: ONE_WEEK,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14 from that API: July 2026 = 333.918, August 2025 = 323.976, giving a July ' +
+      'twelve-month change of 3.365% which BLS printed as 3.4%. The threshold needs the August index ' +
+      'to reach 334.667, a rise of 0.224% on the month. For scale: July 2026 was -0.010% on the ' +
+      'month and August 2025 was +0.287%, so the threshold sits inside the recent monthly range ' +
+      'rather than at the edge of it. The 2026 path so far: 2.4, 2.4, 3.3, 3.8, 4.2, 3.5, 3.4. Close ' +
+      'is 12:29:00Z on 2026-09-11, one minute before the 08:30 America/New_York release confirmed on ' +
+      'the BLS CPI schedule page for the August 2026 reference month.',
+  },
+  {
+    question: 'Will the Coinbase Exchange BTC-USD spot price be at or above 66,000 USD at 2026-09-08T16:00:00Z?',
+    cover: 'a single thick disc standing on edge, held at the left of a wide empty field',
+    resolutionCriteria:
+      'YES if the price field returned by the source endpoint, on the first successful read at or ' +
+      'after 2026-09-08T16:00:00Z, parses to a number greater than or equal to 66000. NO if it is ' +
+      'strictly less. The figure is Coinbase Exchange\'s published USD spot price for the BTC-USD ' +
+      'product and no other venue, index or pair is consulted; another exchange printing a different ' +
+      'number does not change the answer, because the question names the venue. If Coinbase does not ' +
+      'answer for 24 hours after that instant, the market is voided and stakes are returned rather ' +
+      'than settled from a substitute venue, because a substitute venue is a different question.',
+    category: 'market_prices',
+    resolutionSourceKind: 'exchange_api',
+    resolutionSourceRef: 'https://api.exchange.coinbase.com/products/BTC-USD/ticker',
+    closeTime: '2026-09-08T15:59:00.000Z',
+    disputeWindowSeconds: ONE_DAY,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14T17:49:50Z from that endpoint: 63,053.23 USD, corroborated the same minute by ' +
+      'Kraken XXBTZUSD at 63,131.70. The threshold is 4.7% above spot over 25 days — roughly half a ' +
+      'standard deviation at BTC\'s recent realised volatility, which is the band where a question ' +
+      'is genuinely open. Coinbase 24-hour stats at the reading: open 63,070.02, high 63,635.97, low ' +
+      '62,468.21. Motivated by CoinDesk on 2026-08-14 reporting bitcoin slipping after the US ' +
+      'inflation print with ETFs seeing August\'s first two-day drawdown.',
+  },
+  {
+    question: 'Will the Coinbase Exchange ETH-USD spot price be at or above 2,000 USD at 2026-09-15T16:00:00Z?',
+    cover: 'two slim tetrahedra meeting point to point, standing in a wide empty field',
+    resolutionCriteria:
+      'YES if the price field returned by the source endpoint, on the first successful read at or ' +
+      'after 2026-09-15T16:00:00Z, parses to a number greater than or equal to 2000. NO if it is ' +
+      'strictly less. The figure is Coinbase Exchange\'s published USD spot price for the ETH-USD ' +
+      'product and no other venue, index or pair is consulted. If Coinbase does not answer for 24 ' +
+      'hours after that instant, the market is voided and stakes are returned rather than settled ' +
+      'from a substitute venue.',
+    category: 'market_prices',
+    resolutionSourceKind: 'exchange_api',
+    resolutionSourceRef: 'https://api.exchange.coinbase.com/products/ETH-USD/ticker',
+    closeTime: '2026-09-15T15:59:00.000Z',
+    disputeWindowSeconds: ONE_DAY,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14T17:49:49Z from that endpoint: 1,881.50 USD, corroborated the same minute by ' +
+      'Kraken XETHZUSD at 1,883.56. The threshold is 6.3% above spot over 32 days. It is a round ' +
+      'number currently BELOW spot\'s reach rather than a level far above it, and ETH\'s higher ' +
+      'realised volatility makes this a comparable proposition to the BTC entry despite the larger ' +
+      'percentage gap. Coinbase 24-hour stats at the reading: open 1,874.94, high 1,891.26, low ' +
+      '1,862.09.',
+  },
+  {
+    question:
+      'Will the European Central Bank deposit facility rate be at or above 2.50 percent following the Governing Council monetary policy decision of 10 September 2026?',
+    cover: 'a set of stepped blocks of increasing height, with the topmost one separated by a gap',
+    resolutionCriteria:
+      'YES if, after the Governing Council\'s monetary policy decision of 10 September 2026, the ' +
+      'deposit facility rate shown on the ECB key interest rates page named as the source is 2.50 ' +
+      'percent or higher. NO if it is below 2.50 percent, including the case where the Governing ' +
+      'Council leaves the rate unchanged at its current 2.25 percent. Only the DEPOSIT FACILITY rate ' +
+      'settles this; the main refinancing operations rate and the marginal lending facility rate are ' +
+      'not consulted. If the decision is postponed past 2026-09-30 or the meeting does not take ' +
+      'place, the market is voided and stakes are returned. If the page cannot be read, the rate ' +
+      'stated in the ECB\'s own monetary policy decisions press release for that date settles it.',
+    category: 'market_prices',
+    resolutionSourceKind: 'regulator_publication',
+    resolutionSourceRef:
+      'https://www.ecb.europa.eu/stats/policy_and_exchange_rates/key_ecb_interest_rates/html/index.en.html',
+    closeTime: '2026-09-10T12:14:00.000Z',
+    disputeWindowSeconds: ONE_WEEK,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14 from that page: deposit facility 2.25%, main refinancing operations 2.40%, ' +
+      'marginal lending 2.65%, all effective 17 June 2026 — a hike from 2.00% and the first since ' +
+      '2023. Rates were held at the 23 July meeting. The threshold is therefore exactly one 25bp ' +
+      'step away. This is the most consensus-favoured question in the batch and is included as such ' +
+      'rather than as a coin flip: a Reuters poll of economists published 2026-08-13 has the ECB ' +
+      'hiking to 2.50% in September, and Lagarde signalled at the July press conference that a move ' +
+      'was possible. It is here because it is unambiguous and settles from a table, and because a ' +
+      'book of nothing but 50/50s is its own kind of distortion. Close is 12:14:00Z, one minute ' +
+      'before the 14:15 Europe/Frankfurt publication time the ECB states for monetary policy ' +
+      'decisions; the ECB calendar confirms the 9-10 September Governing Council meeting.',
+  },
+
+  // ── scheduled_public_events ────────────────────────────────────────────────
+  {
+    question:
+      'Will the US unemployment rate for the August 2026 reference month, as published by the Bureau of Labor Statistics in series LNS14000000, be 4.2 percent or higher?',
+    cover: 'a row of upright rectangular markers with one gap left open near the middle',
+    resolutionCriteria:
+      'YES if the value the Bureau of Labor Statistics publishes for series LNS14000000 — the ' +
+      'seasonally adjusted civilian unemployment rate — at year 2026 period M08 is greater than or ' +
+      'equal to 4.2. NO if it is 4.1 or lower. BLS publishes this series to one decimal place, so ' +
+      'there is no rounding to resolve. The figure is read from the source API as the value field of ' +
+      'the matching element of Results.series[0].data, and is cross-checkable against Table A of the ' +
+      'Employment Situation news release for that month. The FIRST value published for August 2026 ' +
+      'settles the market; the annual seasonal-adjustment revision does not reopen it. If BLS delays ' +
+      'the release beyond 2026-10-04 or does not publish an August 2026 value at all, as happened ' +
+      'during the 2025 lapse in appropriations, the market is voided and stakes are returned.',
+    category: 'scheduled_public_events',
+    resolutionSourceKind: 'primary_source_publication',
+    resolutionSourceRef: 'https://api.bls.gov/publicAPI/v2/timeseries/data/LNS14000000',
+    closeTime: '2026-09-04T12:29:00.000Z',
+    disputeWindowSeconds: ONE_WEEK,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14 from that API: July 2026 = 4.1, and before it June 4.2, May 4.3, April 4.3, ' +
+      'March 4.3, February 4.4, January 4.3. The threshold is one tenth above the last print and is ' +
+      'exactly where the published consensus sits — Trading Economics carries a forecast of 4.2% for ' +
+      'August against a 4.1% prior. A threshold sitting on consensus is as close to an even question ' +
+      'as this category offers. The tension is real rather than statistical: July payrolls came in ' +
+      'at -23,000 against a +80,000 consensus on 2026-08-07, so the household survey rate fell in ' +
+      'the same month the establishment survey shed jobs. Close is 12:29:00Z on 2026-09-04, one ' +
+      'minute before the 08:30 America/New_York release of the Employment Situation for August 2026.',
+  },
+  {
+    question:
+      'Will the MTG-I2 weather satellite lift off aboard an Ariane 6 from Europe\'s Spaceport in French Guiana on or before 2026-09-03T23:59:59Z?',
+    cover: 'a tall slender tapering form on a launch table, with a broad calm field of sky beside it',
+    resolutionCriteria:
+      'YES if the European Space Agency reports, on the Meteosat Third Generation mission page named ' +
+      'as the source, that MTG-I2 launched on an Ariane 6 from Europe\'s Spaceport with a liftoff at ' +
+      'or before 2026-09-03T23:59:59Z. NO if that page reports no MTG-I2 launch by then, or reports ' +
+      'a liftoff after that instant, or reports a launch failure in which the vehicle did not leave ' +
+      'the pad. Lift-off is the criterion and mission outcome is not: a vehicle that leaves the pad ' +
+      'and is subsequently lost still resolves YES, because the question asks whether it flew and ' +
+      'not whether it worked. Only this launch counts; a different MTG spacecraft does not. If that ' +
+      'page cannot be read, an ESA press release on the ESA newsroom index reporting the liftoff ' +
+      'settles it, since ESA is the body that owns the fact either way.',
+    category: 'scheduled_public_events',
+    resolutionSourceKind: 'official_announcement',
+    resolutionSourceRef:
+      'https://www.esa.int/Applications/Observing_the_Earth/Meteorological_missions/meteosat_third_generation',
+    closeTime: '2026-08-27T14:00:00.000Z',
+    disputeWindowSeconds: ONE_WEEK,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14: ESA press release N° 38-2026 of 10 August 2026 states "On 27 August, MTG-I2 ' +
+      'will be launched on board an Ariane 6 rocket from Europe\'s Spaceport in French Guiana", and ' +
+      'the MTG programme page lists "MTG-I2: 27 August 2026 from Kourou, French Guiana on Ariane 6". ' +
+      'Neither ESA nor Arianespace publishes a liftoff TIME, which is itself a signal the timeline is ' +
+      'not fully locked; Spaceflight Now\'s schedule gives a window opening 20:10Z. This is Ariane ' +
+      '6\'s ninth flight and its FIRST to geostationary transfer orbit — a new profile with a long ' +
+      'coast and an upper-stage reignition — into squally late-August weather at Kourou. The deadline ' +
+      'is a week past the target, so an ordinary scrub-and-recycle still resolves YES and only a ' +
+      'real stand-down resolves NO. Close is 14:00:00Z on launch day, 11:00 local, hours before any ' +
+      'plausible window: the published time is third-party, so the margin is sized for that.',
+  },
+  {
+    question:
+      'Will the Kubernetes project publish a release tagged exactly v1.37.0 on or before 2026-08-31T23:59:59Z?',
+    cover: 'seven identical hexagonal tiles laid flush in a row, with an eighth being set into place',
+    resolutionCriteria:
+      'YES if the source endpoint, read once at or after 2026-08-31T23:59:59Z, answers HTTP 200 AND ' +
+      'the response body is a JSON object whose ref field is exactly the string refs/tags/v1.37.0. ' +
+      'NO in every other case, which specifically includes HTTP 404 and includes an HTTP 200 whose ' +
+      'body is a JSON ARRAY: that route returns an array of prefix matches when the exact tag is ' +
+      'absent, and it answers 200 with such an array today because the v1.37.0-alpha and ' +
+      'v1.37.0-rc.0 tags exist. A pre-release tag therefore never settles this YES, which is the ' +
+      'whole question. If GitHub cannot be reached for 48 hours after the close, a v1.37.0 entry on ' +
+      'the Kubernetes project\'s own releases page settles it.',
+    category: 'scheduled_public_events',
+    resolutionSourceKind: 'primary_source_publication',
+    resolutionSourceRef: 'https://api.github.com/repos/kubernetes/kubernetes/git/refs/tags/v1.37.0',
+    closeTime: '2026-08-25T20:00:00.000Z',
+    disputeWindowSeconds: ONE_DAY,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14: the newest 1.37 artefact is v1.37.0-rc.0, published 2026-08-06, and the ' +
+      'latest stable is v1.36.3. No rc.1 exists yet. The SIG Release schedule for the cycle lists ' +
+      '"v1.37.0 released ... Wednesday 26th August 2026", preceded by rc.0 on 5 August and rc.1 on ' +
+      '19 August, and describes itself as "The v1.37 release cycle is proposed as follows" — the ' +
+      'project\'s own hedge. rc.0 already slipped a day against that schedule and rc.1 had not ' +
+      'appeared as of the reading. The deadline of 31 August is placed so that shipping on time or a ' +
+      'few days late resolves YES, while the project\'s documented remedy for a release-blocking ' +
+      'failure during RC burndown — a one-week slip, which would land on 2 September — resolves NO.',
+  },
+  {
+    question:
+      'Will the winner of the 2026 Formula 1 Italian Grand Prix at Monza be a Mercedes driver?',
+    cover: 'a long banked curve of track drawn as one flat ribbon, with a chequered band across one end',
+    resolutionCriteria:
+      'YES if the official Formula 1 race results for the 2026 Italian Grand Prix record the ' +
+      'classified first-place finisher as driving for Mercedes. NO if they record any other ' +
+      'constructor, or if no result is classified. The team named in the results table is what ' +
+      'settles this, so a post-race disqualification or penalty that changes the classified winner ' +
+      'changes the answer, and the classification standing at the end of the FIA\'s appeal period is ' +
+      'the one used. The question is about a constructor and not about any individual driver: which ' +
+      'of Mercedes\' drivers wins is irrelevant. If the race is cancelled or not held in 2026, the ' +
+      'market is voided and stakes are returned.',
+    category: 'scheduled_public_events',
+    resolutionSourceKind: 'primary_source_publication',
+    resolutionSourceRef: 'https://www.formula1.com/en/results/2026/races',
+    closeTime: '2026-09-06T10:30:00.000Z',
+    disputeWindowSeconds: ONE_WEEK,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14 from formula1.com: the Italian Grand Prix runs 4-6 September 2026 at Monza ' +
+      'with the race session listed at 13:00 on 6 September. Constructors\' standings after 11 ' +
+      'rounds: Mercedes 379, Ferrari 307, McLaren 220, Red Bull 177; race wins by team: Mercedes 8, ' +
+      'Ferrari 2, McLaren 1. Mercedes has won eight of eleven but is not sweeping — Ferrari and ' +
+      'McLaren have both beaten them, McLaren took the most recent round in Hungary on 26 July, and ' +
+      'Monza is a low-downforce power circuit and Ferrari\'s home race. That prices nearer 65/35 ' +
+      'than 95/5. Distinct from the existing Mercedes constructors\'-championship market: one race ' +
+      'is a different event with a different answer, and this one closes in three weeks rather than ' +
+      'at the end of the season. Close is 10:30:00Z because the site renders session times in a ' +
+      'selectable timezone and the 13:00 figure is ambiguous between UTC and track time (CEST, ' +
+      'i.e. 11:00Z); 10:30Z is before the earlier of the two readings.',
+  },
+  {
+    question:
+      'Will Vega-C flight VV30, carrying FLEX and Copernicus Sentinel-3C, lift off from Europe\'s Spaceport on or before 2026-09-22T23:59:59Z?',
+    cover: 'a broad flat leaf shape beside a small satellite bus with two straight panels extended',
+    resolutionCriteria:
+      'YES if the European Space Agency reports, on the FLEX mission page named as the source, that ' +
+      'FLEX launched on a Vega-C from Europe\'s Spaceport with a liftoff at or before ' +
+      '2026-09-22T23:59:59Z. NO if that page reports no launch by then, or a liftoff after that ' +
+      'instant, or a failure in which the vehicle did not leave the pad. Lift-off is the criterion ' +
+      'and mission outcome is not: a vehicle that leaves the pad and is subsequently lost still ' +
+      'resolves YES. If the two satellites are separated onto different flights, the flight carrying ' +
+      'FLEX is the one that counts, because FLEX is the mission the source page reports on. If that ' +
+      'page cannot be read, an ESA press release on the ESA newsroom index reporting the liftoff ' +
+      'settles it.',
+    category: 'scheduled_public_events',
+    resolutionSourceKind: 'official_announcement',
+    resolutionSourceRef: 'https://www.esa.int/Applications/Observing_the_Earth/FLEX',
+    closeTime: '2026-09-14T20:00:00.000Z',
+    disputeWindowSeconds: ONE_WEEK,
+    feeBps: FEE_BPS,
+    observed:
+      'Read 2026-08-14: the ESA FLEX mission page fact box states "Date: 15 September 2026", "Site: ' +
+      'Kourou, French Guiana", "Rocket: Vega-C", and ESA press release N° 35-2026 of 20 July 2026, ' +
+      'updated 30 July to confirm the date, says liftoff "is expected to take place on 14 September ' +
+      '2026 (22:21 local time, 03.21 CEST on 15 September)" — 01:21Z on 15 September. Vega-C is the ' +
+      'vehicle that failed on VV22 in December 2022 and was grounded for two years; its cadence is ' +
+      'low and its record thin. This is a dual-payload night launch from the same range that flies ' +
+      'an Ariane 6 GTO campaign two weeks earlier, so range and team availability are a real ' +
+      'constraint rather than a theoretical one. The deadline is a week past the target, so a scrub ' +
+      'still resolves YES. Close is 20:00:00Z on 14 September, over five hours before the published ' +
+      'liftoff instant.',
+  },
+]
+
+/**
  * What the seeder reads: both batches, in the order they were written.
  *
  * ORDER MATTERS ONLY ONCE, and it is not on the page — the browse surface sorts
@@ -794,7 +1200,7 @@ export const QUESTIONS_2026H2 = [
  *
  * @type {readonly SeedQuestion[]}
  */
-export const FORESIGHT_QUESTIONS = [...OPENING_NINE, ...QUESTIONS_2026H2]
+export const FORESIGHT_QUESTIONS = [...OPENING_NINE, ...QUESTIONS_2026H2, ...QUESTIONS_SHORT_202608]
 
 /**
  * The five markets already in the database when this seeding was written, and what to do with each.
@@ -839,4 +1245,29 @@ export const TEST_ARTEFACT_VOID_REASON =
  */
 export function isTestArtefact(question) {
   return /^Will the EMBER (?:mainnet|testnet) \(chain 741[12]\) be above block height \d+ at /.test(question)
+}
+
+/**
+ * The filename a question's committed cover is stored under.
+ *
+ * Derived from the question rather than recorded beside it, so a cover cannot drift away from the
+ * market it belongs to: rewording a question changes the slug, the adopt misses, and the fallback
+ * generates a new one rather than silently attaching the old picture to a different question.
+ *
+ * It lives HERE, next to the questions, rather than in `foresight.mjs` where it was written,
+ * because it now has two callers that must agree byte for byte: the seeder, which looks a cover UP
+ * by slug, and `scripts/foresight-covers.mjs`, which WRITES it. Two copies of these four
+ * replacements would be two chances to disagree, and the failure would be silent — the generator
+ * writes `a-b-c.png`, the seeder asks for `a-b--c.png`, finds nothing, and falls through to
+ * generating a different picture at seed time. One definition, imported twice, cannot do that.
+ *
+ * The 60-character truncation is load-bearing and must not be "fixed": every committed cover on
+ * disk was named by this function, so lengthening it would orphan all of them at once.
+ */
+export function coverSlug(question) {
+  return question
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60)
 }
