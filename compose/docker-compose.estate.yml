@@ -876,6 +876,11 @@ services:
       <<: *common-env
       IDENTITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/identity
       IDENTITY_ISSUER: http://identity:4000
+      # The network every token this identity mints is FOR — the `net` claim (micro-org#459
+      # stage 2). Inert until a verifier sets an expectation; the day both estates trust one
+      # identity, this is what stops a testnet service token passing at a mainnet service.
+      # Set in the migrate block too: paired blocks share an env parser (micro-deploy#104).
+      IDENTITY_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
       IDENTITY_PUBLIC_URL: http://identity:4000
       IDENTITY_DELETION_GRACE_DAYS: "0"
       INSTANCE_ID: identity-migrate
@@ -895,6 +900,11 @@ services:
       <<: *common-env
       IDENTITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/identity
       IDENTITY_ISSUER: http://identity:4000
+      # The network every token this identity mints is FOR — the `net` claim (micro-org#459
+      # stage 2). Inert until a verifier sets an expectation; the day both estates trust one
+      # identity, this is what stops a testnet service token passing at a mainnet service.
+      # Set in the migrate block too: paired blocks share an env parser (micro-deploy#104).
+      IDENTITY_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
       IDENTITY_PUBLIC_URL: http://identity:4000
       # Zero, in this environment only: the erasure drill cannot wait seven days,
       # and 0 is a value env.ts explicitly allows (integer floor 0). Production
