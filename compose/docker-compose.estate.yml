@@ -632,8 +632,22 @@ x-money-network: &money-network ${CF_EMBER_NETWORK:-mainnet}
 # The JWKS seam. Every service that verifies a token fetches identity's keys over
 # a real network here, which is the thing no unit suite could reach.
 x-identity-trust: &identity-trust
+  # ── ONE IDENTITY FOR BOTH ESTATES (micro-org#459 stage 2/step 3) ────────────────────────────
+  #
+  # IDENTITY_ISSUER stays the LITERAL on both estates, deliberately: it is the `iss` CLAIM
+  # string, tokens minted by the surviving identity carry exactly `http://identity:4000`, and a
+  # verifier expects the string, not a route. What moves per estate is where the KEYS and the
+  # EXCHANGE actually live: unset (mainnet), both default to the local identity container;
+  # testnet.env points them at the mainnet identity's public endpoints through the tunnel —
+  # measured before this landed: the JWKS answers 200 and the exchange refuses a bad body 401
+  # via nimbus.cloudsforge.online, which is reachable exactly the same way from either project.
+  #
+  # The `net` claim is what makes this SAFE rather than merely possible: service tokens name
+  # their estate (micro-identity#19/#20), every verifier is armed (AUTH_EXPECTED_NETWORK on
+  # x-common-env), and a person's token deliberately carries no claim so one login serves both.
   IDENTITY_ISSUER: http://identity:4000
-  IDENTITY_JWKS_URL: http://identity:4000/.well-known/jwks.json
+  IDENTITY_JWKS_URL: ${CF_IDENTITY_JWKS_URL:-http://identity:4000/.well-known/jwks.json}
+  IDENTITY_URL: ${CF_IDENTITY_URL:-http://identity:4000}
 
 # ── THE PROBE SPAWNS A NODE RUNTIME, SO ITS INTERVAL IS A CAPACITY DECISION ────
 #
