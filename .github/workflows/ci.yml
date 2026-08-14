@@ -209,6 +209,21 @@ jobs:
           repository: cloudsforge-online/micro-ui
           path: ui
 
+      # The two services whose API routers ENUMERATE named resources rather than
+      # riding one `/v1` prefix, which is the only shape that can silently outgrow
+      # its gateway rule. `check-gateway-covers-api-paths.py`'s CHECKED table names
+      # these files; a third entry there needs a third checkout here, and the script
+      # says so by name rather than passing over a repository it cannot read.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-foresight
+          path: foresight
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-billing
+          path: billing
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -221,6 +236,16 @@ jobs:
       - name: Every registry surface has a route, and every route has a surface
         working-directory: deploy
         run: python3 scripts/surface-routes.py
+
+      # The step above resolves a whole HOST and passes when the host is routed. It
+      # cannot see one resource missing from the list inside a single host's API
+      # rule — and a missing one does not 404, it is answered by the SPA catch-all
+      # with a 200 and an HTML body. `/image-config` (#195) and `/stake-assets` were
+      # both lost that way on `foresight.<apex>`, the second for the whole life of
+      # the custodial staking path.
+      - name: Every API path a service defines is routed on the host that serves it
+        working-directory: deploy
+        run: python3 scripts/check-gateway-covers-api-paths.py
 
       # ── The tunnel ingress is GENERATED, so the check is a diff ──────────────
       #
