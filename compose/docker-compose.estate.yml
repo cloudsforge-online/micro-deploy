@@ -102,6 +102,18 @@ x-common-env: &common-env
   LOG_LEVEL: info
   CLOUDSFORGE_TAG: estate
   PORT: "4000"
+  # ── THE NETWORK GATE, ARMED EVERYWHERE AT ONCE (micro-org#459 stage 2) ──────────────────────
+  #
+  # Every service's token verifier (@cloudsforge/runtime-auth) reads this as its expected
+  # network: a verified token whose `net` claim names the OTHER estate is refused 401
+  # `wrong_network`. This is the single line that makes the shared-identity migration safe —
+  # without it a testnet service token with `ledger:post` passes at the mainnet ledger, because
+  # receivers gate on scope, not network.
+  #
+  # Safe to arm ahead of the claim flowing: a token WITHOUT the claim is tolerated by design
+  # (the rollout story, recorded at VerifierOptions.expectedNetwork), so today this refuses
+  # nothing and starts protecting the moment identity's release mints the claim.
+  AUTH_EXPECTED_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
 
 # ── THE ONE SECRET THIS FILE MAY NOT CONTAIN ──────────────────────────────────
 #
