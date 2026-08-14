@@ -135,8 +135,12 @@ http:
     # carries `!PathPrefix(`/v1`)` and sits at priority 550 — above the bundles (500), below the
     # APIs (600).
     #
-    # Rendered ONLY when CF_WEB_RETIRED is set (testnet.env, at the flip). Unset — mainnet, and
-    # testnet until the shared identity is verified — this whole block renders to nothing.
+    # Rendered ONLY when CF_WEB_RETIRED is `true` in the GATEWAY's own environment
+    # (`compose/env/traefik.testnet.env`, at the flip — not `compose/testnet.env`, which the
+    # gateway never reads and which cost the flip deploy several live minutes). Mainnet says
+    # `false` in `compose/env/traefik.env` and this whole block renders to nothing there. Both
+    # files state an answer; neither is allowed to be silent. See the conditional itself for why
+    # the test compares a value instead of testing for emptiness.
     cf-retired-sub-to-mainnet:
       redirectRegex:
         regex: '^https?://([a-z0-9-]+)-testnet\.cloudsforge\.online/(.*)'
@@ -354,7 +358,16 @@ http:
     # The `www` spelling of the apex, redirected to it. Same priority as the apex router: the two
     # rules match different hostnames and never compete. Traefik requires a service even when a
     # middleware answers first, so it names the one this redirects TO.
-{{ if env "CF_WEB_RETIRED" }}
+{{ if eq (env "CF_WEB_RETIRED") "true" }}
+    # `eq (env …) "true"` RATHER THAN A BARE `if env …`, and the reason is check 6.
+    # `scripts/surface-routes.py` requires every variable this directory reads to carry a NON-EMPTY
+    # value in every `compose/env/traefik*.env`, because an empty value and an unset one are the
+    # same thing to the file provider and that is how the whole public API once rendered as
+    # ``Host(``)``. Under a bare `if`, mainnet's only way to drop these routers was to leave the
+    # variable out — which is exactly what check 6 refuses, and deploy CI was red on it. Comparing
+    # a value lets both environments STATE their answer: `true` on testnet, `false` on mainnet.
+    # Neither file can now be silent about whether this estate is retired.
+    #
     # The retirement routers (micro-org#459 step 5) — see the middlewares above for the whole
     # argument. 302 rather than 301 while the retirement beds in: a cached permanent redirect is
     # the one thing that cannot be rolled back. `!PathPrefix` keeps every `/v1` API answering,
