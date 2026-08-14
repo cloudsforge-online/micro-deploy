@@ -356,7 +356,7 @@ def registry_surfaces():
         "import {SURFACES} from './src/surfaces.ts';"
         "console.log(JSON.stringify(SURFACES.map(s=>"
         "({key:s.key,kind:s.kind,subdomain:s.subdomain,basePath:s.basePath ?? null,"
-        "servesUi:s.servesUi}))))"
+        "servesUi:s.servesUi,viewsAnyNetwork:s.viewsAnyNetwork === true}))))"
     )
     try:
         out = subprocess.run(
@@ -731,6 +731,15 @@ ENV_VARS_SET_IN_ONE_FILE = {
         "to exist. Setting it in traefik.env would open that direction in one line, in a file "
         "both gateways mount",
     ),
+    "CF_VIEW_SITE_HOST": (
+        "traefik.testnet.env",
+        "the same grant, for the one surface whose subdomain is the EMPTY STRING. It exists "
+        "for the reason CF_SITE_HOST exists beside CF_WEB_SUFFIX — `https://` + a suffix "
+        "renders `https://.cloudsforge.online` for the apex, which no Origin header equals — "
+        "and it carries the same direction, so it belongs in the same one file for the same "
+        "reason. Two entries here, not one, because a single variable cannot spell both a "
+        "subdomain pattern and a bare apex",
+    ),
 }
 
 
@@ -1066,21 +1075,47 @@ def entrypoint_chains_match():
 
 
 VIEW_ORIGIN_RE = re.compile(
-    r'^\s*-\s*https://([a-z0-9-]+)\{\{\s*env\s+"CF_VIEW_ORIGIN_SUFFIX"\s*\}\}\s*$'
+    r'^\s*-\s*https://(?:([a-z0-9-]+)\{\{\s*env\s+"CF_VIEW_ORIGIN_SUFFIX"\s*\}\}'
+    r'|\{\{\s*env\s+"CF_VIEW_SITE_HOST"\s*\}\})\s*$'
 )
 
-# ── the bundles that can view ANOTHER network in place, and the file that proves it ──
+# ── the repository that holds each viewing bundle, and nothing else ──────────
 #
-# Every other surface switches network by NAVIGATING (`NetworkSwitcher` with no
-# `onSelect`), so its reads are same-origin on whichever hostname it lands and a
-# cross-environment origin would grant a read nothing performs. These three
-# re-point their reads at the sibling estate instead, and each one has a module
-# that does it. The witness is that module: a claim about a bundle, checked
-# against the bundle, rather than three names in a list nobody revisits.
-VIEWING_BUNDLES = {
-    "hub": "hub-web/src/lib/viewed.ts",
-    "explorer": "explorer-web/src/lib/viewed.ts",
-    "network": "network-site/src/lib/viewed.ts",
+# WHICH SURFACES VIEW IN PLACE IS NO LONGER WRITTEN DOWN HERE. It is
+# `viewsAnyNetwork` on the registry row, read below through `registry_surfaces()`
+# — the same field the product switcher reads to decide whether pressing Testnet
+# re-points this page or navigates away. A hard-coded list here was a second
+# statement of the same fact, and on 2026-08-14 the two disagreed for a whole
+# release: fifteen bundles gained `src/lib/viewed.ts`, the registry knew, and
+# this table still said three, so the grant stayed at three and every one of the
+# fifteen was refused at the preflight.
+#
+# What CANNOT be derived is the checkout each row's bundle lives in: the registry
+# names surfaces, not repositories, and the mapping is genuinely irregular —
+# `create` is micro-mint-web, `developers` is micro-devportal-web, the apex
+# surface is plain `site`, `network` is a -site rather than a -web. So that, and
+# only that, is the table. Its keys are asserted below to be exactly the
+# `viewsAnyNetwork` set, so a new viewing surface cannot be added to the registry
+# without landing here too.
+VIEW_WITNESS_REPOS = {
+    "": "site",
+    "hub": "hub-web",
+    "explorer": "explorer-web",
+    "network": "network-site",
+    "market": "market-web",
+    "create": "mint-web",
+    "trade": "trade-web",
+    "worlds": "worlds-web",
+    "foresight": "foresight-web",
+    "developers": "devportal-web",
+    "admin": "admin-web",
+    "status": "status-web",
+    "pool": "pool-web",
+    "lantern": "lantern-web",
+    "beacon": "beacon-web",
+    "emberkin": "emberkin-web",
+    "aetherholm": "aetherholm-web",
+    "tessera": "tessera-web",
 }
 
 
@@ -1091,18 +1126,38 @@ def view_origin_drift(surfaces):
     SERVE, and it sits beside `allowCredentials: true`. See the module docstring
     for the failure it was written for. What is asserted, and why each half:
 
-      * The grant list equals `VIEWING_BUNDLES` exactly. A name here that cannot
-        view another network in place grants a credentialed cross-environment read
-        that nothing makes; a viewing bundle NOT here is the original bug — its
-        preflight is answered 200 with no `access-control-allow-origin` and its
-        page says "cannot reach the server" while the service is healthy.
-      * Each is a `servesUi` host surface in the registry, for the reason check 5
-        gives: an origin written from a repository name rather than the registry
-        is the `mint`/`devportal` defect, and it is worse here.
-      * Each is ALREADY in the main allowlist, and the two lists are not equal.
-        That makes this block strictly weaker than the one above it — it can only
-        re-grant a surface this estate already serves, on the other environment's
-        hostname — so a new surface can never enter the estate through it.
+      * The grant list equals the registry's `viewsAnyNetwork` set exactly. A name
+        here that cannot view another network in place grants a credentialed
+        cross-environment read that nothing makes; a viewing surface NOT here is
+        the original bug — its preflight is answered 200 with no
+        `access-control-allow-origin` and its page says "cannot reach the server"
+        while the service behind it is healthy.
+      * Each is a `servesUi` host surface, for the reason check 5 gives: an origin
+        written from a repository name rather than the registry is the
+        `mint`/`devportal` defect, and it is worse here.
+      * Each is ALREADY in the main allowlist. The cross-environment block may only
+        RE-GRANT a surface this estate already serves, on the other environment's
+        hostname, so a new surface can never enter the estate through it.
+
+    ── IT USED TO REQUIRE A *STRICT* SUBSET, AND THAT ASSERTION IS GONE ─────────
+
+    It read: "the cross-environment origins are not a STRICT subset of the CORS
+    allowlist … three bundles view in place and the rest navigate". That was a
+    true statement about 2026-08-13 and a rule about nothing. The combined view
+    is now every frontend — pressing Testnet on Worlds shows testnet Worlds — so
+    the two lists differ by exactly the API hosts, which serve no page and can
+    never appear here. Equality of the two sets is now a legitimate end state and
+    is not reported. What still holds, and still carries the security property, is
+    the containment above: this list may not name anything the same-environment
+    list does not already name.
+
+    ── WHICH SURFACES VIEW IN PLACE IS READ FROM THE REGISTRY, NOT FROM HERE ────
+
+    `viewsAnyNetwork` on the row. The switcher reads that field to decide whether
+    Testnet re-points the page or navigates away, and this check reads the same
+    field to decide whether the gateway must let it — one fact, one place. The
+    hard-coded table that used to sit here is what let the grant stay at three
+    while fifteen bundles shipped `src/lib/viewed.ts`.
 
     ── THE WITNESS HALF IS BEST-EFFORT, AND SAYS SO OUT LOUD ────────────────────
 
@@ -1110,87 +1165,109 @@ def view_origin_drift(surfaces):
     checks out `deploy`, `ui`, `foresight` and `billing`, and a deploy host clones
     no frontend at all (`scripts/provision-siblings.sh`), so in both of those the
     witness cannot be read — and the run prints which corroboration it did not
-    perform rather than reporting a check it did not make. The three assertions
-    above need nothing but `policy.yml` and the registry, and they always run.
+    perform rather than reporting a check it did not make. The assertions above
+    need nothing but `policy.yml` and the registry, and they always run.
 
     In a full checkout the witness runs in BOTH directions, and the second is the
-    one that ends this class of bug: a fourth bundle that gains `viewed.ts` and no
-    entry here fails, before anybody opens it in a browser.
+    one that ends this class of bug: a bundle that gains `viewed.ts` without a
+    registry row fails here, before anybody opens it in a browser.
+
+    ── AND THE APEX SURFACE IS SPELLED DIFFERENTLY, NECESSARILY ────────────────
+
+    micro-site's subdomain is the empty string, so its entry cannot be written as
+    `<sub>{{ CF_VIEW_ORIGIN_SUFFIX }}` — that renders `https://.cloudsforge.online`.
+    It is `{{ env "CF_VIEW_SITE_HOST" }}` instead, exactly as the same-environment
+    list spells it `{{ env "CF_SITE_HOST" }}`, and `VIEW_ORIGIN_RE` reads both
+    forms into the same set with `""` for the apex — the same shape as
+    `CORS_ENTRY_RE`, so the two lists stay comparable.
     """
     if not POLICY.exists():
         bad(f"{POLICY} does not exist — the cross-environment origins cannot be checked")
         return
-    granted = {m.group(1) for line in POLICY.read_text().splitlines()
+    granted = {m.group(1) or "" for line in POLICY.read_text().splitlines()
                if (m := VIEW_ORIGIN_RE.match(line))}
-    declared = set(VIEWING_BUNDLES)
+    declared = {s["subdomain"] for s in surfaces if s["viewsAnyNetwork"]}
+
+    # The one thing this file still states by hand — the checkout each surface
+    # lives in — must cover exactly what the registry declares, or the witness
+    # half below silently stops witnessing the surfaces it has no path for.
+    for sub in sorted(declared - set(VIEW_WITNESS_REPOS)):
+        bad(
+            f"surface '{sub or '<apex>'}' is `viewsAnyNetwork` in the registry and has no entry in "
+            f"VIEW_WITNESS_REPOS, so this check cannot tell which checkout holds its "
+            f"src/lib/viewed.ts. Its origin grant is still checked; its module is not"
+        )
+    for sub in sorted(set(VIEW_WITNESS_REPOS) - declared):
+        bad(
+            f"VIEW_WITNESS_REPOS names '{sub or '<apex>'}', which is not `viewsAnyNetwork` in the "
+            f"registry. Either the row lost the field — in which case its cross-environment origin "
+            f"is now an unearned credentialed grant and goes with it — or the surface was renamed"
+        )
 
     for sub in sorted(declared - granted):
         bad(
-            f"'{sub}' views another network IN PLACE ({VIEWING_BUNDLES[sub]}) and has NO origin "
-            f"on CF_VIEW_ORIGIN_SUFFIX in {POLICY.name}. Its cross-environment reads are answered "
-            f"200 with no `access-control-allow-origin`, so the browser refuses them and the page "
-            f"reads 'cannot reach the server' with the service behind it healthy — and nothing "
-            f"server-side records that anything was refused"
+            f"'{sub or '<apex>'}' is `viewsAnyNetwork` in the registry — it re-points its reads at "
+            f"the sibling estate IN PLACE — and has NO origin in the cross-environment block of "
+            f"{POLICY.name}. Its reads are answered 200 with no `access-control-allow-origin`, so "
+            f"the browser refuses them and the page reads 'cannot reach the server' with the "
+            f"service behind it healthy — and nothing server-side records that anything was refused"
         )
     for sub in sorted(granted - declared):
         bad(
-            f"the cf-cors allowlist grants 'https://{sub}<CF_VIEW_ORIGIN_SUFFIX>' — a CREDENTIALED "
-            f"cross-origin read from ANOTHER environment's hostname — and '{sub}' is not in "
-            f"VIEWING_BUNDLES, so no bundle of that name reads across environments at all. Either "
-            f"it gained a src/lib/viewed.ts and belongs in the table, or the grant is unearned"
+            f"the cf-cors allowlist grants 'https://{sub or '<apex>'}<CF_VIEW_ORIGIN_SUFFIX>' — a "
+            f"CREDENTIALED cross-origin read from ANOTHER environment's hostname — and that surface "
+            f"is not `viewsAnyNetwork` in the registry, so no bundle of that name reads across "
+            f"environments at all. Either the row should carry the field and the bundle a "
+            f"src/lib/viewed.ts, or the grant is unearned and belongs deleted"
         )
 
     if granted:
         ui_hosts = {s["subdomain"] for s in surfaces if not s["basePath"] and s["servesUi"]}
         for sub in sorted(granted - ui_hosts):
             bad(
-                f"the cross-environment origin 'https://{sub}<CF_VIEW_ORIGIN_SUFFIX>' names '{sub}', "
-                f"which is not a registry surface that serves a UI. There is no page on that "
-                f"hostname in EITHER environment, so the entry grants an origin nothing loads"
+                f"the cross-environment origin for '{sub or '<apex>'}' names a subdomain that is "
+                f"not a registry surface serving a UI. There is no page on that hostname in EITHER "
+                f"environment, so the entry grants an origin nothing loads"
             )
         allowed = cors_allowlist()
         if allowed is not None:
             for sub in sorted(granted - allowed):
                 bad(
-                    f"'{sub}' is granted on CF_VIEW_ORIGIN_SUFFIX but is NOT in this environment's "
-                    f"own CORS allowlist. The cross-environment block may only re-grant a surface "
-                    f"this estate already serves; a name that appears in one list and not the "
-                    f"other lets a hostname in through the weaker door"
-                )
-            if allowed and granted >= allowed:
-                bad(
-                    f"the cross-environment origins are not a STRICT subset of the CORS allowlist "
-                    f"({len(granted)} of {len(allowed)}). Every surface in the estate would accept "
-                    f"credentialed reads from the other environment, which is not what the "
-                    f"combined view needs — three bundles view in place and the rest navigate"
+                    f"'{sub or '<apex>'}' is granted cross-environment but is NOT in this "
+                    f"environment's own CORS allowlist. The cross-environment block may only "
+                    f"re-grant a surface this estate already serves; a name that appears in one "
+                    f"list and not the other lets a hostname in through the weaker door"
                 )
 
     # The witness, where it can be read. Absence of a checkout is REPORTED, not
     # passed over: this file's rule is that a check which cannot run says so.
     unread = []
-    for sub, witness in sorted(VIEWING_BUNDLES.items()):
-        repo = MICRO / witness.split("/", 1)[0]
+    for sub in sorted(declared & set(VIEW_WITNESS_REPOS)):
+        witness = f"{VIEW_WITNESS_REPOS[sub]}/src/lib/viewed.ts"
+        repo = MICRO / VIEW_WITNESS_REPOS[sub]
         if not repo.is_dir():
             unread.append(repo.name)
             continue
         if not (MICRO / witness).exists():
             bad(
-                f"VIEWING_BUNDLES claims '{sub}' views another network in place via {witness}, "
-                f"and that file does not exist. Either the bundle stopped viewing in place — in "
-                f"which case its cross-environment origin is an unearned credentialed grant and "
-                f"goes with it — or the module moved and this table has stopped being checkable"
+                f"the registry says '{sub or '<apex>'}' views any network in place, and "
+                f"{witness} does not exist. Either the bundle stopped viewing in place — in "
+                f"which case its `viewsAnyNetwork` row and its cross-environment origin go with it "
+                f"— or the module moved and this claim has stopped being checkable"
             )
+    known = {VIEW_WITNESS_REPOS[sub] for sub in declared & set(VIEW_WITNESS_REPOS)}
     for path in sorted(MICRO.glob("*/src/lib/viewed.ts")):
-        witness = f"{path.parent.parent.parent.name}/src/lib/viewed.ts"
-        if witness not in VIEWING_BUNDLES.values():
+        repo = path.parent.parent.parent.name
+        if repo not in known:
             bad(
-                f"{witness} exists, so that bundle re-points its reads at the sibling estate, and "
-                f"it is not in VIEWING_BUNDLES. Every read it makes across environments will be "
-                f"refused by the browser at the preflight — the exact failure micro-org#459 shipped "
-                f"— unless it is added here AND granted an origin in {POLICY.name}"
+                f"{repo}/src/lib/viewed.ts exists, so that bundle re-points its reads at the "
+                f"sibling estate, and its surface is not `viewsAnyNetwork` in the registry. Every "
+                f"read it makes across environments will be refused by the browser at the preflight "
+                f"— the exact failure micro-org#459 shipped — until the registry row carries the "
+                f"field AND {POLICY.name} carries the origin"
             )
     if unread:
-        print(f"  note check 10's witness files were not read for {', '.join(unread)} — not "
+        print(f"  note check 10's witness files were not read for {', '.join(sorted(unread))} — not "
               f"checked out here. The allowlist, registry and subset assertions all ran.")
 
 

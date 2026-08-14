@@ -220,9 +220,12 @@ echo "  public API host is this environment's own: $gateway_api_host"
 #
 # The only variable in this repository that hands a CREDENTIALED read to pages
 # served from hostnames this estate does not own. `gateway/dynamic/policy.yml`
-# renders `https://hub`, `https://explorer` and `https://network` against it into
-# the `cf-cors` allowlist, beside `allowCredentials: true`, so every character of
-# it is reachable from a browser holding a reader's bearer token.
+# renders EVERY frontend's subdomain against it into the `cf-cors` allowlist,
+# beside `allowCredentials: true`, so every character of it is reachable from a
+# browser holding a reader's bearer token. It was three subdomains until
+# 2026-08-14 and is now all eighteen, because every bundle views in place — see
+# the block in policy.yml for why that widening IS the fix rather than a
+# loosening.
 #
 # It exists because micro-org#459 retired the testnet FRONTENDS and kept the
 # testnet ESTATE: a reader opens `hub.cloudsforge.online`, picks Testnet in the
@@ -268,7 +271,47 @@ if [ -n "$view_origin_suffix" ]; then
       echo "       reads with a signed-in reader's bearer token." >&2
       exit 1 ;;
   esac
-  echo "  cross-environment viewers allowed from: <surface>$view_origin_suffix"
+  # ── AND THE APEX SURFACE NEEDS ITS OWN VARIABLE, FOR THE REASON CF_SITE_HOST DOES ──
+  #
+  # micro-site's registry subdomain is the EMPTY STRING, so `https://` + suffix
+  # would render `https://.cloudsforge.online` — not a legal hostname, and an
+  # entry no browser Origin can ever equal. It would not be a security hole; it
+  # would be a silent hole in the grant, which is the failure mode this whole
+  # preflight exists to stop. `CF_VIEW_SITE_HOST` is to `CF_VIEW_ORIGIN_SUFFIX`
+  # exactly what `CF_SITE_HOST` is to `CF_WEB_SUFFIX`.
+  #
+  # It is required whenever the suffix is set, and it must be the OTHER
+  # environment's apex surface rather than this one's, for the same reason as
+  # above: equal to our own it grants nothing while reading like a grant.
+  view_site_host=$(envval CF_VIEW_SITE_HOST)
+  if [ -z "$view_site_host" ]; then
+    echo "FATAL: CF_VIEW_ORIGIN_SUFFIX is set but CF_VIEW_SITE_HOST is not." >&2
+    echo "       policy.yml renders 'https://\$CF_VIEW_SITE_HOST' as the viewing apex origin," >&2
+    echo "       so unset produces a bare 'https://' that matches no Origin header. The" >&2
+    echo "       marketing site would be the one frontend that could not read this estate," >&2
+    echo "       and nothing would log it. Set it to the other environment's apex surface." >&2
+    exit 1
+  fi
+  if [ "$view_site_host" = "$CF_SITE_HOST" ]; then
+    echo "FATAL: CF_VIEW_SITE_HOST is this environment's OWN apex surface." >&2
+    echo "         CF_VIEW_SITE_HOST : $view_site_host" >&2
+    echo "         CF_SITE_HOST      : $CF_SITE_HOST" >&2
+    echo "       That origin is already in the allowlist above, so this grants nothing while" >&2
+    echo "       reading like it does. Set it to the other environment's apex surface." >&2
+    exit 1
+  fi
+  case "$view_site_host" in
+    "$CF_WEB_APEX"|*".$CF_WEB_APEX") ;;
+    *)
+      echo "FATAL: CF_VIEW_SITE_HOST is outside this estate's zone." >&2
+      echo "         CF_VIEW_SITE_HOST : $view_site_host" >&2
+      echo "         CF_WEB_APEX       : $CF_WEB_APEX" >&2
+      echo "       Same argument as CF_VIEW_ORIGIN_SUFFIX above: it lands in cf-cors beside" >&2
+      echo "       allowCredentials: true, and a domain this estate does not control has no" >&2
+      echo "       business holding a signed-in reader's bearer token." >&2
+      exit 1 ;;
+  esac
+  echo "  cross-environment viewers allowed from: <surface>$view_origin_suffix, apex $view_site_host"
 fi
 
 # ── PREFLIGHT 3: the registry and the gateway must agree about what exists ────
