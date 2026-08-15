@@ -321,6 +321,41 @@ http:
         sourceCriterion:
           requestHeaderName: Cf-Connecting-Ip
 
+    # ── VERIFICATION IS THE MOST EXPENSIVE ANONYMOUS REQUEST THIS ESTATE TAKES ─
+    #
+    # `POST /verify` hands a stranger's JSON to a Solidity compiler. The cost is
+    # not comparable to anything else routed here: a submission naming a compiler
+    # version the service has not cached makes it fetch ~9 MB from
+    # `binaries.soliditylang.org`, and then compiling a large import graph is
+    # seconds of single-threaded CPU on a Node process that serves every other
+    # verification request from the same event loop. `cf-rpc-throttle`'s average
+    # of 20/s would let one client hold the service permanently busy while
+    # staying comfortably inside its limit.
+    #
+    # SO THE NUMBER IS PER MINUTE, NOT PER SECOND, and it is small: 6 a minute
+    # with a burst of 3. A person verifying a contract does it once and gets an
+    # answer or a mismatch; the retry loop that matters is "fix the settings and
+    # resubmit", which is minutes of human work between attempts. Nothing
+    # legitimate is shaped like a stream of verifications.
+    #
+    # READS ARE NOT BEHIND THIS. `GET /contracts` and `GET /compilers` answer out
+    # of the on-disk store with no compilation, and the explorer's `/api` — which
+    # is how a reader actually reaches a verified source — is a different router
+    # with `cf-rpc-throttle` on it. Rate-limiting the read path to protect the
+    # write path would make the published source hard to read in order to make it
+    # cheap to publish, which is backwards.
+    #
+    # Keyed on `Cf-Connecting-Ip` for the reason the RPC block gives at length:
+    # every request in the world reaches the origin from cloudflared's address,
+    # so this gateway is the only place the individual client is visible.
+    cf-verify-throttle:
+      rateLimit:
+        average: 6
+        period: 1m
+        burst: 3
+        sourceCriterion:
+          requestHeaderName: Cf-Connecting-Ip
+
   routers:
     # ─────────────────────────────────────────────────────── hub — AND SIGN-IN ──
     #
@@ -1594,6 +1629,92 @@ http:
       service: cf-svc-hearth-mining
 {{ end }}
 
+    # ── THE TWO READ SURFACES: an address index and a contract verifier ───────
+    #
+    # Phase B of `docs/ecosystem/39-forge-exchange.md` — "a stranger can read a
+    # deployed contract's source and its calls without our help". Both services
+    # are `hearth/tools/`, both are deployed by
+    # `compose/docker-compose.hearth-devkit.yml`, and neither holds a key, mines,
+    # signs or writes anything. They read the chain and answer questions.
+    #
+    # ── WHY THEY RIDE `rpc.` AND NOT `explorer.` ──────────────────────────────
+    #
+    # `explorer.<apex>` is the obvious home and it is not available, for a reason
+    # that is specific rather than aesthetic: TESTNET WEB HOSTNAMES ARE RETIRED.
+    # `CF_WEB_RETIRED` turns every `*-testnet` web surface into a redirect to the
+    # combined view — measured, `explorer-testnet.cloudsforge.online/` answers
+    # 302 to `https://explorer.cloudsforge.online/` and so does every path under
+    # it. A router placed on the testnet explorer host would be shadowed by that
+    # redirect and answer nothing, and the EMBER pool these two exist to make
+    # readable is on 7412.
+    #
+    # `rpc.<apex>` is live in both environments, is a chain-data host rather than
+    # a web surface so the retirement does not touch it, and is already declared
+    # in the surface registry — so this passes `scripts/surface-routes.py` check 2
+    # without a registry change in a repository that is not this one's to write.
+    # `cf-api-mining` above made exactly this argument for exactly this reason,
+    # and it holds here with one addition: an Etherscan-compatible client is
+    # configured with ONE base URL per chain, and it already has this one.
+    #
+    # THE PATHS ARE NARROW AND EACH IS A DECISION. `cf-api-rpc`'s bare-host rule
+    # at priority 500 catches everything else, so these take 600 and claim only:
+    #
+    #   /api        the Etherscan-compatible shim — `?module=account&action=txlist`
+    #               and friends, plus `module=contract&action=getsourcecode`,
+    #               which is the ONE request that spans both services: the index
+    #               proxies it to the verifier through `HEARTH_VERIFY_URL`.
+    #   /verify     POST, the submission. Behind `cf-verify-throttle`, not the RPC
+    #               limiter — see the note on that middleware.
+    #   /contracts  GET, what has been verified on this chain.
+    #   /compilers  GET, which solc builds the verifier will accept.
+    #
+    # NOT published: the verifier's own `/api` (the index's is the richer one and
+    # the two would collide), and the index's `/supply`, which is refused for the
+    # same reason the mining block refuses the node's — this estate answers "what
+    # is the state of the chain" at `explorer.<apex>`, and a second address for
+    # the same answer is a second thing to keep true.
+    #
+    # Both conditionals are on their own upstream variable, for the reason the
+    # whole file is wrapped in one: an unset variable must produce NO ROUTER
+    # rather than one pointed at an empty URL. `surface-routes.py` check 6 fails
+    # when a variable this directory reads is missing from either traefik env
+    # file, so "unset by accident" cannot happen quietly — and an estate that
+    # does not run the dev kit sets both to empty and gets no routers at all.
+{{ if env "CF_EXPLORER_INDEX_UPSTREAM" }}
+    # `Path`, not `PathPrefix`, and that is deliberate rather than tidy. The
+    # service routes on `url.pathname === '/api'` and nothing else — the whole
+    # Etherscan grammar lives in the QUERY STRING (`?module=…&action=…`), which a
+    # Traefik path condition does not see and does not need to. A prefix would
+    # publish every future `/api/*` the service ever grows, silently, and the
+    # `rpc` row in `scripts/check-gateway-covers-api-paths.py` claims exactly the
+    # opposite: that this host's routed set is a fixed vocabulary. An exact path
+    # is what makes that claim true instead of aspirational.
+    cf-api-chain-index:
+      rule: 'Host(`rpc{{ env "CF_WEB_SUFFIX" }}`) && Path(`/api`)'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-rpc-throttle]
+      service: cf-svc-hearth-explorer-index
+{{ end }}
+{{ if env "CF_VERIFY_UPSTREAM" }}
+    cf-api-verify:
+      rule: 'Host(`rpc{{ env "CF_WEB_SUFFIX" }}`) && Path(`/verify`)'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-verify-throttle]
+      service: cf-svc-hearth-verify
+
+    # A SECOND ROUTER FOR THE READS, because a router carries one middleware list
+    # and these two costs are not the same. `/verify` compiles; these answer from
+    # a directory listing. Same upstream, same priority, ordinary RPC limiter.
+    cf-api-verify-reads:
+      rule: 'Host(`rpc{{ env "CF_WEB_SUFFIX" }}`) && (Path(`/contracts`) || Path(`/compilers`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-rpc-throttle]
+      service: cf-svc-hearth-verify
+{{ end }}
+
     # ── p2p — PEER GOSSIP, BECAUSE A TUNNEL CANNOT CARRY A TCP SOCKET ─────────
     #
     # Hearth's peer transport is raw TCP on 8646 (`hearth/node/src/params.js`).
@@ -1903,6 +2024,28 @@ http:
     cf-svc-hearth-mining:
       loadBalancer:
         servers: [{ url: "{{ env "CF_MINING_UPSTREAM" }}" }]
+{{ end }}
+{{ if env "CF_EXPLORER_INDEX_UPSTREAM" }}
+    # ── THE TWO DEV-KIT UPSTREAMS ARE CONTAINER NAMES, NOT `CF_CHAIN_HOST` ────
+    #
+    # Every hearth upstream above resolves to the CHAIN HOST over WireGuard,
+    # because the node is on another machine. These two are not the node: they
+    # are `compose/docker-compose.hearth-devkit.yml`, which runs on THIS host,
+    # beside the gateway, on the estate's own network. So they are reached by
+    # compose service name through Docker's embedded DNS, exactly as the ~60
+    # estate services in this file are.
+    #
+    # They in turn reach the chain over `EMBER_RPC_URL`, the same variable the
+    # indexer and foresight use, so there is still exactly one statement per
+    # environment of where the chain is.
+    cf-svc-hearth-explorer-index:
+      loadBalancer:
+        servers: [{ url: "{{ env "CF_EXPLORER_INDEX_UPSTREAM" }}" }]
+{{ end }}
+{{ if env "CF_VERIFY_UPSTREAM" }}
+    cf-svc-hearth-verify:
+      loadBalancer:
+        servers: [{ url: "{{ env "CF_VERIFY_UPSTREAM" }}" }]
 {{ end }}
 {{ else }}
 # CF_WEB_APEX is unset, so this file contributes NOTHING rather than a full set of routers whose rules

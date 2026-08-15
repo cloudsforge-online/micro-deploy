@@ -184,10 +184,19 @@ NOT_CHECKED = {
                "dead pool from a dead network before pointing hashrate at it",
     },
     "rpc": {
-        "terms": ["Path(/mining/template)", "Path(/mining/submit)", "Path(/events)"],
-        "why": "hearth is a Go node, not a `define()` service, and these three exact "
-               "paths peel the MINING listener off the JSON-RPC catch-all. They are "
-               "fixed by the miner protocol; there is no route table here to outgrow",
+        "terms": [
+            "Path(/mining/template)", "Path(/mining/submit)", "Path(/events)",
+            "Path(/api)", "Path(/verify)", "Path(/contracts)", "Path(/compilers)",
+        ],
+        "why": "three upstreams share this hostname and NONE of them is a `define()` "
+               "service — hearth's node (Go), and hearth's explorer index and verifier "
+               "(`tools/`, plain node http servers). Every term is an EXACT `Path`, "
+               "which is what carries the claim: each names one route, so the routed "
+               "set cannot grow when a service does. The first three peel the MINING "
+               "listener off the JSON-RPC catch-all and are fixed by the miner "
+               "protocol; the last four are the chain's read surfaces, and `/api` is "
+               "exact rather than a prefix BECAUSE of this row — the Etherscan grammar "
+               "it serves is entirely in the query string",
     },
 }
 
