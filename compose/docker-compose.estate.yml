@@ -2374,6 +2374,40 @@ services:
       # variable and same spelling as LEDGER_RECONCILE_NETWORK above, so the two
       # cannot drift apart.
       MINT_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
+      # ── WHAT A DEPLOY COSTS, AND WHY TESTNET CANNOT USE MAINNET'S PRICE ──
+      #
+      # Never set anywhere before this line — not here, not in either `*.env`,
+      # not in the tokens files — so `mint/src/env.ts:369` supplied its own
+      # default of `2_500n` cents on BOTH estates. $25.00, priced in USD and
+      # settled in EMBER at the administered rate.
+      #
+      # MEASURED 2026-08-15, on the running containers rather than inferred.
+      # Pricing publishes EMBER at $0.0001, so $25.00 is **250,000 EMBER**:
+      #
+      #   mainnet  custody holds 66,881 EMBER — every EMBER the estate has ever
+      #            mined. The largest single holder has 66,836. Nobody on the
+      #            network can afford one deploy, and nobody ever has: every
+      #            order since 2026-08-04 sits at `awaiting_payment`.
+      #   testnet  the ledger's entire EMBER supply is 25 EMBER. The faucet that
+      #            is supposed to hand out more advertises a 10 EMBER drip from
+      #            a funding address holding 0.
+      #
+      # So the price is not merely high on testnet, it is unpayable by four
+      # orders of magnitude, and the one network whose purpose is to let someone
+      # rehearse a deploy is the one where a deploy cannot be rehearsed.
+      #
+      # INTERPOLATED, NEVER A LITERAL, for the same reason as `MINT_NETWORK`
+      # directly above: the default preserves mainnet's published $25 exactly,
+      # and `testnet.env` alone lowers it. A hardcoded testnet-friendly number
+      # here would quietly discount the real product.
+      #
+      # THIS IS A PRICE, NOT A GATE. Lowering it does not open mainnet deploys
+      # to anyone — `server.ts:562` still refuses any mainnet deploy whose owner
+      # is absent from the empty `MINT_MAINNET_ALLOWLIST`, and this variable does
+      # not touch that. Whether mainnet's $25 is the right number for a chain
+      # with 66,881 coins in existence is the owner's call, and deliberately not
+      # made here.
+      MINT_DEPLOY_PRICE_USD_CENTS: ${CF_MINT_DEPLOY_PRICE_USD_CENTS:-2500}
       # ── WITHOUT THIS, NOTHING MINT ACCEPTS CAN EVER BE MINTED ────────────
       #
       # `MINT_RPC_URLS` was never set here — not in this file, not in either
