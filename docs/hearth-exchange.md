@@ -16,14 +16,17 @@ house key) and [`custody-backup-restore.md`](./custody-backup-restore.md).
 | --- | --- | --- |
 | Contracts | **Deployed and checked.** §1 | **Nothing deployed.** §4 |
 | Pools | **One, funded and traded.** EMBER/FTEST — §6 | — |
+| Readable by a stranger | **Yes.** Index + verifier on `rpc-testnet` — §7 | not deployed |
 | Protocol fee | Off (`feeTo()` unset) | — |
 | `feeToSetter` | A 2-of-3 wallet, **all three keys on one host** — §3 | undecided, and not this script's to decide |
 
 Contracts existing and a market existing are different claims, and until 2026-08-15
 only the first one was true here. It is now both: a pair holds reserves, a swap
 against it filled at exactly the quoted price, and liquidity has been withdrawn
-again. What that does *not* yet mean is that anyone can use it — there is still no
-user surface and no explorer that can read an `eth_*` call (§7).
+again. Later the same day it became readable as well — an address index and a source
+verifier on `rpc-testnet.cloudsforge.online`, §7. What that does *not* yet mean is
+that anyone can **use** it: there is no user surface, and every transaction the pool
+has ever seen was signed by us (§8).
 
 ---
 
@@ -254,15 +257,72 @@ the wrapper forwards it but invents nothing.
 
 ---
 
-## 7. What is not done
+## 7. The read surfaces, deployed 2026-08-15
 
-- **Nothing can read it but a script.** The pool above is provable only by re-running
-  `--status`: `micro-explorer-web` speaks the Hearth-native RPC and not `eth_*`, so a
-  pair, a swap and an LP balance are all invisible to every human-facing surface on the
-  estate. Until that closes, "there is a market" is a claim backed by a log file.
-- **No contract is verified.** Nothing maps the deployed bytecode back to the source it
-  was compiled from, so a reader has to trust that these addresses hold what §1 says.
+Two services out of `hearth/tools/`, brought up by
+[`compose/docker-compose.hearth-devkit.yml`](../compose/docker-compose.hearth-devkit.yml) in project
+`cf-testnet` and routed on `rpc-testnet.cloudsforge.online`. Neither is consensus: no key, no
+mining, no writes. They answer the two questions this section, when it was a list of what is
+missing, said nothing on the estate could.
+
+| Path | Service | Answers |
+| --- | --- | --- |
+| `/api` | `hearth-explorer-api` | the Etherscan grammar — `txlist`, `getsourcecode`, `getabi`, balances |
+| `/verify` | `hearth-verify` | POST a standard-JSON input; it recompiles and compares |
+| `/contracts`, `/compilers` | `hearth-verify` | what has been submitted; which solc versions are cached |
+| `/contract/0x…`, `/contract/0x…/abi` | `hearth-verify` | the native record, richer than the Etherscan shape |
+
+`explorer-testnet.<apex>` was the obvious home and was unavailable: testnet web hostnames are
+retired and that name 302s to the combined view, which would have shadowed any router placed there.
+
+**The index answers the question a node cannot.** It follows 7412 from block 0 and keeps a
+per-address transaction list, so the pool's whole history reads back over `/api`: the 250,000 FTEST
+seed at 16753, the swap out at 16763, the swap back at 16767, the `removeLiquidity` at 16771, the
+second cycle at 16785. `eth_getLogs` finds events; nothing in JSON-RPC finds *every transaction this
+address sent or received*.
+
+**One verification covers every identical deployment.** The verifier matches on RUNTIME bytecode,
+which carries no constructor arguments, so a Forge Create token and every other token any paid order
+has ever deployed are the same bytes with different arguments. That was true of the chain and false
+of the software until hearth#24: records were kept one per address, and a lookup for an address
+nobody had submitted answered "Contract source code not verified" even when the code at it was
+byte-identical to something verified. Records are now indexed by the code deployed at them, under
+the code's hash and the hash of the code with its `immutable` slots zeroed.
+
+Measured through Cloudflare after the pin moved to `sha-7fae1bc8`, asking for NEFELI —
+`0xf0f009AB1C90ed4e65D79664963ceC3c7d57c579`, which nobody ever submitted:
+
+```
+HearthMatchType                     twin-exact
+HearthTwinOf                        0x71550efb54bcaccbe84df3efcc3529eae4be8a32
+ContractName                        FixedSupplyToken
+CompilerVersion                     v0.8.26+commit.8a97fa7a   EVMVersion paris   Runs 200
+HearthConstructorArgumentsVerified  0            ConstructorArguments ""
+SourceCode                          37,989 bytes              ABI 18 entries
+```
+
+`ConstructorArguments` is empty **on purpose and says so**: the native `/contract/` route carries a
+`constructorArgumentsNote` explaining that runtime bytecode does not contain them and that verifying
+this address directly, with its creation transaction, is what would check them. A record verified at
+its own address always beats a derived one, and `/contracts` still lists only submissions — one.
+
+Submitting is `scripts/hearth-verify-submit.mjs`, which walks the import graph and inlines all 11
+sources, because mint's build resolves OpenZeppelin through a callback that a verifier compiling in
+a sandbox does not have.
+
+---
+
+## 8. What is not done
+
+- **`constructorArgumentsVerified` is 0 on the one direct submission.** FTEST was submitted without
+  its creation transaction, so its arguments are recorded and not checked. Re-submitting with
+  `--tx` flips it; nothing else changes.
 - **No user surface.** `micro-exchange-web` does not exist; `scripts/surface-routes.py`
   still lists `exchange` as unrouted, and the registry row says `servesUi: false`. Both
-  change together or the estate advertises a hostname that serves nothing.
+  change together or the estate advertises a hostname that serves nothing. §7 makes the pool
+  *readable*; it does not make it *usable*.
+- **Every transaction against the pool was signed by us.** §6's cycle came out of
+  `hearth-dex-seed.js` with the chain's own coinbase key. A script sharing an author with the router
+  is not a second implementation, and a pool with one participant cannot observe slippage against
+  itself.
 - **Mainnet is untouched**, and should stay that way until §3's open question has an answer.
