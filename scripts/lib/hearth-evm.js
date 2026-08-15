@@ -213,8 +213,40 @@ function connect({ rpcUrl, hearthRepo }) {
   }
 
   /**
-   * A state-changing call, with the gas limit estimated against the real
-   * payload plus a fifth.
+   * Turn an estimate into a gas LIMIT, generously, because a limit is a ceiling
+   * and not a price: whatever the transaction does not burn is refunded.
+   *
+   * ── A FIFTH WAS NOT ENOUGH, AND THE REASON GENERALISES ───────────────────
+   *
+   * Measured on the first swap against the first pool on chain 7412. The
+   * estimate came back at 117,636 and the transaction reverted having consumed
+   * 140,204 of the 141,163 it was given; re-estimated a few blocks later the
+   * same call wanted 162,938.
+   *
+   * The estimate was not wrong when it was taken — it was taken in the same
+   * timestamp window as the mint that created the pool. `HearthV2Pair._update`
+   * only writes `price0CumulativeLast` and `price1CumulativeLast` when
+   * `timeElapsed > 0`, so at estimate time both writes were skipped; by the time
+   * the transaction executed, time HAD elapsed and they were two cold SSTOREs
+   * from zero, at 20,000 gas each.
+   *
+   * That is a 40,000-gas step change on a 118,000-gas call, and no percentage
+   * pad small enough to be sensible covers it. The general shape — a state read
+   * one block before it is written is a state that can have moved across a cold
+   * storage boundary — is not specific to pairs. So the headroom is BOTH
+   * proportional and absolute: double, or a hundred thousand gas, whichever is
+   * larger, capped below the block limit so the transaction stays includable.
+   */
+  async function gasCeiling(estimate) {
+    const block = await rpc('eth_getBlockByNumber', ['latest', false]);
+    const cap = (hexToBig(block.gasLimit) * 9n) / 10n;
+    const wanted = estimate * 2n > estimate + 100_000n ? estimate * 2n : estimate + 100_000n;
+    if (wanted > cap && estimate > cap) throw new Error(`this call needs ${estimate} gas and the block limit is ${hexToBig(block.gasLimit)}`);
+    return wanted > cap ? cap : wanted;
+  }
+
+  /**
+   * A state-changing call, with the gas limit estimated against the real payload.
    *
    * `eth_estimateGas` runs the call, so a transaction that would revert fails
    * HERE, before it is signed and before it costs a block — with the node's own
@@ -225,12 +257,12 @@ function connect({ rpcUrl, hearthRepo }) {
     const tx = { from: key.address, to, data: hex(data) };
     if (value > 0n) tx.value = '0x' + value.toString(16);
     const estimate = hexToBig(await rpc('eth_estimateGas', [tx]));
-    return send(key, { to, data, value, gasLimit: (estimate * 12n) / 10n }, chainId, label || signature);
+    return send(key, { to, data, value, gasLimit: await gasCeiling(estimate) }, chainId, label || signature);
   }
 
   async function deployContract(key, chainId, creationCode, label) {
     const estimate = hexToBig(await rpc('eth_estimateGas', [{ from: key.address, data: hex(creationCode) }]));
-    const receipt = await send(key, { data: creationCode, gasLimit: (estimate * 12n) / 10n }, chainId, label);
+    const receipt = await send(key, { data: creationCode, gasLimit: await gasCeiling(estimate) }, chainId, label);
     const address = String(receipt.contractAddress).toLowerCase();
     if (!(await hasCode(address))) throw new Error(`${label} deployed to ${address} but that account has no code`);
     return { address, receipt };
