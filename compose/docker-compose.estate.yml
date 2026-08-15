@@ -3884,6 +3884,9 @@ services:
       # deploy: the service block got NOTIFY_URL, this block did not, the migrate job refused
       # to start, and admin-api sat in Created on BOTH networks until this line existed.
       NOTIFY_URL: http://notify:4000
+      # Same rule, same reason: the migrator never dials nda either, and refuses to start without
+      # it. See the service block below for what this address is for.
+      NDA_URL: http://nda:4000
       # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
       # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
       # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
@@ -3935,6 +3938,23 @@ services:
       # resending somebody's mail should be recorded against the human who asked for it. So there
       # is no grant to derive and no credential to rotate for this peer — only an address.
       NOTIFY_URL: http://notify:4000
+      # Forge Worlds. The Worlds screen in the operator console generates and runs *Ninety Days
+      # After* worlds through this, and it is the ONLY door into the service: nda has no row in
+      # `surfaces.ts`, so no gateway router, no DNS record and no tunnel ingress rule — the
+      # container has been healthy for weeks and unreachable from any browser on earth. That is
+      # why the title still reads `draft`.
+      #
+      # Port 4000, NOT the 4110 in nda's own Dockerfile: `x-common-env` sets `PORT: "4000"` for
+      # every service here, and the aetherholm block above argues at length for why nda is
+      # normalised rather than left on its EXPOSEd port — 4110 is notify's HOST port in this file.
+      # The container listens on 4000. `4116` in nda's own `ports:` is the derived HOST port and is
+      # bound to 127.0.0.1, so it is not an address admin-api could use even if it wanted to.
+      #
+      # Called with the OPERATOR's own bearer, like NOTIFY_URL and for the same reason —
+      # nda's `requireAdminPrincipal` takes either a service holding nda:write or a human with
+      # role:admin, and a world should record the human who generated it. So there is no grant to
+      # derive and no credential to rotate here either, only an address.
+      NDA_URL: http://nda:4000
       # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
       # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
       # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
