@@ -24,9 +24,10 @@ Contracts existing and a market existing are different claims, and until 2026-08
 only the first one was true here. It is now both: a pair holds reserves, a swap
 against it filled at exactly the quoted price, and liquidity has been withdrawn
 again. Later the same day it became readable as well — an address index and a source
-verifier on `rpc-testnet.cloudsforge.online`, §7. What that does *not* yet mean is
-that anyone can **use** it: there is no user surface, and every transaction the pool
-has ever seen was signed by us (§8).
+verifier on `rpc-testnet.cloudsforge.online`, §7 — and then tradeable by somebody
+else: a wallet holding a key this host does not, driving the whole cycle from the
+browser extension in blocks 17022–17034 (§6). What that does *not* yet mean is that
+anyone can **find** it: there is still no user surface (§8).
 
 ---
 
@@ -255,6 +256,86 @@ rather than the single file. `HEARTH_DEX_SEED_EMBER` and `HEARTH_DEX_SEED_TOKEN`
 to testnet depths; on mainnet the opening depth is an owner decision (`docs/39` §7) and
 the wrapper forwards it but invents nothing.
 
+### The first trade by somebody who is not us — 2026-08-15, blocks 17022–17034
+
+Everything above was signed by `hearth-dex-seed.js` with the key that is also the chain's
+coinbase, which is why `docs/39` phase D stood at ⚠ for a day. It is now ✅, and this is
+what closed it.
+
+**A second key, and the script that exists only to make one.** `scripts/hearth-fund.js`
+sends EMBER from the mining coinbase to one named address and does nothing else — no
+approve, no swap, no liquidity. That restraint is the point: a funder that could trade
+would make the funded wallet the house wearing a second address, which is the exact thing
+the gate rules out. It caps testnet at 250 EMBER behind an explicit `--cap`, and caps
+**mainnet at zero, unraisable**.
+
+```bash
+./scripts/hearth-fund-run.sh --status 0x…       # read both balances, write nothing
+./scripts/hearth-fund-run.sh --dry-run 0x… 60   # everything except the send
+./scripts/hearth-fund-run.sh 0x… 60             # send it
+```
+
+It ran once: **60 EMBER** to `0x41Fb601D07F652512E7ce529A2D55F5D07BCc80E` in block 16989,
+21,000 gas, tx `0xdd0680c9343c2db8eff7ad4444963cd08f02c22917cdb970c785d61a9a434745`. The
+arrival was measured **at the recipient**, because the sender is the coinbase and its own
+balance moves with every block mined while a transaction waits — the trap §6 already
+documents. The recipient rose by exactly 60.000000.
+
+That key was generated on the developer's Mac and has never been on a chain-host disk. It
+is not a faucet and there is no second recipient.
+
+**The cycle, from the browser.** `wallet-extension/test/e2e/exchange.test.ts` launches a
+real Chromium with the unpacked extension, completes onboarding — so the trading key is
+generated *inside the extension*, from a phrase nothing else ever saw — funds it with 12
+EMBER from the funder above, and then drives seven `eth_sendTransaction` calls through an
+EIP-6963 provider, clicking Approve on each window after reading the destination, the value
+and the chain off the screen:
+
+| block | gas | operation |
+| --- | --- | --- |
+| 17022 | 120,268 | `swapExactETHForTokens` — 4 EMBER → **199.191327 FTEST**, exactly the quote |
+| 17024 | 46,407 | `approve` the router for FTEST |
+| 17026 | 146,785 | `addLiquidityETH` — 99.595663 FTEST + 1.995969 EMBER → 14.098822 LP |
+| 17028 | 46,407 | `approve` the router to sell |
+| 17030 | 112,569 | `swapExactTokensForETH` — 99.595663 FTEST → **1.989005 EMBER**, exactly the quote |
+| 17032 | 46,196 | `approve` the router for the LP token |
+| 17034 | 179,067 | `removeLiquidityETH` — 14.098822 LP → 99.644671 FTEST + 1.994990 EMBER |
+
+Trader `0xc40bDA4111AB15a1F502fe8ac65a2F1a0b50522D`. **Three keys, on two machines:** the
+coinbase `0x91a1…1d33` (the house), the funder `0x41Fb…c80E` (the Mac), the trader (the
+extension). The test asserts they are three distinct addresses rather than assuming it,
+because on a fresh local chain the funder *would* be the coinbase and the run would then
+prove the browser half only.
+
+*What it establishes beyond "no revert":*
+
+- Both swaps filled at exactly the router's quote, and the quote was checked against the
+  constant product computed from `getReserves()` at a pinned block **before** either trade
+  was sent — a router disagreeing with its own reserves stops the run before it spends.
+- *k* rose on both legs, so the fee is reaching the pool and not evaporating.
+- **The position earned while it was open**: 99.595663 FTEST in, **99.644671** out —
+  0.049008 FTEST of fee accrued to a liquidity provider who is not us. First time.
+- The round trip cost the trader ≈0.017 EMBER against 0.018 charged, the difference being
+  their own LP share returning.
+- Every sender was **recovered from the signature** by `hearth/node/src/chain/transaction.js`
+  from the raw bytes the extension put on the wire. `eth_getTransactionByHash`'s `from` was
+  not used: the node fills it in by doing the recovery, so believing it would be circular.
+  (This node has no `eth_getRawTransactionByHash` either — measured, `-32601`.)
+
+Reproducing it needs no access to this host:
+
+```bash
+HEARTH_RPC_URL=https://rpc-testnet.cloudsforge.online/ HEARTH_CHAIN_ID=7412 \
+HEARTH_COINBASE_KEY=~/.cloudsforge/ember-testnet/e2e-funder.json \
+HEARTH_DEX_ROUTER=0xba2b9db822e1f2ec3039fe474644b8405268a9b4 \
+HEARTH_DEX_TOKEN=0x71550efb54bcaccbe84df3efcc3529eae4be8a32 \
+node --import tsx --test --test-concurrency=1 --test-timeout=900000 test/e2e/exchange.test.ts
+```
+
+`HEARTH_DEX_HOME=~/dex/keys` works instead of the two addresses when run on this host: the
+test reads `deployment-7412.json` and `pool-7412.json` rather than carrying a hard-coded
+address that would go stale, and silently, the first time the exchange is redeployed.
+
 ---
 
 ## 7. The read surfaces, deployed 2026-08-15
@@ -321,8 +402,9 @@ a sandbox does not have.
   still lists `exchange` as unrouted, and the registry row says `servesUi: false`. Both
   change together or the estate advertises a hostname that serves nothing. §7 makes the pool
   *readable*; it does not make it *usable*.
-- **Every transaction against the pool was signed by us.** §6's cycle came out of
-  `hearth-dex-seed.js` with the chain's own coinbase key. A script sharing an author with the router
-  is not a second implementation, and a pool with one participant cannot observe slippage against
-  itself.
+- **No trade has yet met another trade.** Closed as far as the phase-D gate goes — a wallet holding
+  a key this host does not has run the full cycle from the extension (§6) — but that run was
+  sequential, so nothing in this pool has ever been exposed to a second trade arriving between a
+  quote and its settlement. Slippage under contention needs a frontend and more than one person, and
+  that is phase H.
 - **Mainnet is untouched**, and should stay that way until §3's open question has an answer.
