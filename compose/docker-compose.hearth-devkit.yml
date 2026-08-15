@@ -78,7 +78,7 @@ services:
   # transaction this address sent or received" without walking every block.
   hearth-explorer-api:
     <<: *obs
-    image: ghcr.io/cloudsforge-online/hearth-explorer-api:sha-f49a94cd2b56e6b7c2cc091f90fcb1a741d0c118
+    image: ghcr.io/cloudsforge-online/hearth-explorer-api:sha-7fae1bc8c28b96802b858f23792acf5b75136e61
     # NAMED, unlike the estate's services, because this file may be brought up on
     # its own and a person debugging it should not have to derive
     # `cf-testnet-hearth-explorer-api-1` to read a log.
@@ -116,9 +116,19 @@ services:
   # source for every token any paid order has ever deployed, since they are all
   # the same contract with different arguments. `deploy/scripts/hearth-verify-submit.mjs`
   # builds and posts the input.
+  #
+  # THAT SENTENCE WAS FALSE UNTIL hearth#24, and this is the pin that makes it
+  # true. The premise held — NEFELI and FTEST return byte-identical `eth_getCode`
+  # — but the service kept one record per address and every lookup keyed on the
+  # address alone, so asking for NEFELI answered "Contract source code not
+  # verified". Records are now indexed by the code deployed at them, under the
+  # code's hash and the hash of the code with its `immutable` slots zeroed; a
+  # miss on the address falls back to that index and answers with the twin's
+  # source, `twinOf` naming where it was proven and the constructor arguments
+  # deliberately absent.
   hearth-verify:
     <<: *obs
-    image: ghcr.io/cloudsforge-online/hearth-verify:sha-f49a94cd2b56e6b7c2cc091f90fcb1a741d0c118
+    image: ghcr.io/cloudsforge-online/hearth-verify:sha-7fae1bc8c28b96802b858f23792acf5b75136e61
     container_name: cf-hearth-verify
     environment:
       HEARTH_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
