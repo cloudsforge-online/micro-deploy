@@ -180,6 +180,31 @@ http:
       middlewares: [cf-api-headers]
       service: cf-api-worlds
 
+    # -------------------------------------------------- nda (Ninety Days After)
+    # THE ROUTER THAT MAKES THE GAME REACHABLE AT ALL.
+    #
+    # `nda` serves the whole of *Ninety Days After* — worlds, the map, homesteads, the queued
+    # actions, the day-resolution engine, reports, communes, objectives — and until this row it
+    # had no hostname, no DNS record and no router. It was a healthy container nobody could
+    # reach, which is what the title's `draft` status in `micro-worlds` has been recording.
+    #
+    # `/v1/worlds` is nda's ENTIRE public surface: every route it registers is that prefix or
+    # below (`nda/src/server.ts`). Nothing else on this host claims it — `micro-worlds` owns
+    # `/v1/titles`, `/v1/players`, `/v1/provisions` and `/v1/seasons`, and the two services are
+    # neighbours in name only. The one other `/v1/worlds` in the estate is `admin-api`'s operator
+    # proxy, and that is on the ADMIN host behind Access, not here.
+    #
+    # `POST /v1/events` is NOT routed, deliberately. It is nda's outbox inbox, HMAC-checked over
+    # the raw bytes with `OUTBOX_SIGNING_SECRET`; publishing it would put the estate's event
+    # ingress on the internet for no caller that lives there. Every producer reaches it on the
+    # internal network by service name.
+    cf-api-nda:
+      rule: 'Host(`{{ env "CF_API_HOST" }}`) && PathPrefix(`/v1/worlds`)'
+      priority: 1000
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-api-headers]
+      service: cf-api-nda
+
     cf-api-devplatform:
       rule: 'Host(`{{ env "CF_API_HOST" }}`) && (PathPrefix(`/v1/apps`) || PathPrefix(`/v1/keys`) || PathPrefix(`/v1/oauth-clients`) || PathPrefix(`/v1/organisations`) || PathPrefix(`/v1/projects`) || PathPrefix(`/v1/scopes`) || PathPrefix(`/v1/webhook-endpoints`))'
       priority: 1000
@@ -298,6 +323,9 @@ http:
     cf-api-worlds:
       loadBalancer:
         servers: [{ url: "http://worlds:4000" }]
+    cf-api-nda:
+      loadBalancer:
+        servers: [{ url: "http://nda:4000" }]
     cf-api-devplatform:
       loadBalancer:
         servers: [{ url: "http://devplatform:4000" }]
