@@ -1,0 +1,136 @@
+# THE TWO READ SURFACES FOR THE EMBER CHAIN: an address index and a verifier.
+#
+#   docker compose --env-file testnet.env --env-file estate/tokens.testnet.env \
+#     -p cf-testnet \
+#     -f compose/docker-compose.hearth-devkit.yml \
+#     up -d
+#
+# Both come from `hearth/tools/`. Neither is consensus: they hold no key, mine
+# nothing, sign nothing and write nothing to the chain. They read it and answer
+# questions about it, which is the whole of what phase B of the Forge Exchange
+# plan (`docs/ecosystem/39-forge-exchange.md`) asks for — "a stranger can read a
+# deployed contract's source and its calls without our help".
+#
+# ── WHY A FILE OF ITS OWN AND NOT `docker-compose.estate.yml` ────────────────
+#
+# The estate file contains no `image: ghcr.io/...` line anywhere. Every one of
+# its ~60 services declares a `build:` and is pinned by the rendered release
+# overlay, which `scripts/release-render.py` generates from a manifest and which
+# `!reset null`s the build away. That is a closed system: a service in the estate
+# file that is NOT in the manifest would deploy from a working tree on a release
+# deploy, and one that IS in the manifest needs a version in a repository whose
+# releases this estate does not cut. Hearth is that repository.
+#
+# So these follow the convention the OTHER hearth services in this directory
+# already follow — `docker-compose.miners.yml`, `docker-compose.miners-apphost.yml`
+# and the two seeds: their own file, their own image, pinned by commit SHA. It is
+# also the shape `docker-compose.testnet-chain.yml` argues for at length in its
+# header: "compose acts on the services it was given and leaves the other ~48 in
+# the project alone", and for the same reason `--remove-orphans` must never
+# appear in the command above.
+#
+# ── THEY JOIN THE ESTATE'S NETWORK, AND THAT IS THE LOAD-BEARING PART ────────
+#
+# The gateway proxies BY DNS NAME. It attaches to `${CF_PROJECT}_default` (see
+# the `estate:` block at the bottom of `docker-compose.gateway.yml`, and the
+# incident it records — a gateway that resolved nothing and answered 502 on every
+# host). Compose gives each service a network alias equal to its name, and
+# Docker's embedded DNS resolves aliases across compose projects on a shared
+# network. So `http://hearth-explorer-api:9647` resolves from the gateway even
+# though this file is a different `-p` from the one the gateway was started in.
+#
+# ── PINNED BY SHA, LIKE EVERY OTHER HEARTH IMAGE HERE ────────────────────────
+#
+# `docker-compose.miners.yml` argues the pin for a MINER: following `main` changes
+# consensus behaviour on a restart nobody asked for. Neither service here can
+# affect consensus, so that specific argument does not apply — and the pin is
+# still a SHA, because the weaker argument does: an index and a verifier are
+# things people cite. "Etherscan says the source is X" is worth something only if
+# the thing that said so is identifiable afterwards. A moving tag makes every
+# answer unattributable to a build.
+#
+# `scripts/check-hearth-pins-agree.py` does NOT cover these two: it matches
+# `ghcr.io/cloudsforge-online/hearth-node:` specifically, and deliberately, since
+# what it enforces is that every process participating in one chain's consensus
+# runs one build. These are not that. Bump them when there is a reason to.
+
+x-obs: &obs
+  restart: unless-stopped
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "5"
+
+services:
+  # ── THE ADDRESS INDEX AND THE ETHERSCAN-COMPATIBLE `/api` ──────────────────
+  #
+  # It follows the chain from `HEARTH_EXPLORER_API_START_BLOCK` and keeps a
+  # per-address transaction list, which is the one question a JSON-RPC node
+  # cannot answer: `eth_getLogs` finds events, and nothing finds "every
+  # transaction this address sent or received" without walking every block.
+  hearth-explorer-api:
+    <<: *obs
+    image: ghcr.io/cloudsforge-online/hearth-explorer-api:${CF_HEARTH_DEVKIT_PIN:?set CF_HEARTH_DEVKIT_PIN to a sha-<40hex> tag}
+    # NAMED, unlike the estate's services, because this file may be brought up on
+    # its own and a person debugging it should not have to derive
+    # `cf-testnet-hearth-explorer-api-1` to read a log.
+    container_name: cf-hearth-explorer-api
+    environment:
+      # The chain, from the same two variables everything else in this
+      # environment uses. `EMBER_RPC_URL` carries the per-network PORT as a
+      # literal (8545 mainnet / 8745 testnet) and the HOST as `CF_CHAIN_HOST` —
+      # see the long note on it in `testnet.env`, including why that variable has
+      # to come from the environment and not from a `--env-file`.
+      HEARTH_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
+      # ⚠ NOT DEFAULTED IN THE IMAGE, ON PURPOSE. `tools/explorer-api/src/env.js`
+      # defaults this to mainnet's 7411, and an index that silently follows the
+      # wrong chain is confidently wrong about every balance it reports rather
+      # than visibly broken. The image ships no default so that a missing value
+      # here fails instead of guessing; this line is the only place it is set.
+      HEARTH_CHAIN_ID: ${CF_HEARTH_CHAIN_ID:?set CF_HEARTH_CHAIN_ID (7411 mainnet, 7412 testnet)}
+      # Genesis. The index is cheap on a chain this size — 16,000 blocks at the
+      # time of writing — and starting anywhere else makes "every transaction of
+      # this address" quietly mean "since we happened to start looking".
+      HEARTH_EXPLORER_API_START_BLOCK: "0"
+      # Where a contract's source comes from. Without this, `getsourcecode`
+      # answers "Contract source code not verified" for every address on the
+      # chain, including the ones that ARE verified in the service below.
+      HEARTH_VERIFY_URL: http://hearth-verify:9648
+    volumes:
+      - hearth-explorer-index:/state
+    networks: [estate]
+
+  # ── THE VERIFIER ──────────────────────────────────────────────────────────
+  #
+  # Recompiles a submitted standard-JSON input and compares the result against
+  # the deployed runtime bytecode. It matches on RUNTIME bytecode, which carries
+  # no constructor arguments — so verifying one Forge Create token teaches it the
+  # source for every token any paid order has ever deployed, since they are all
+  # the same contract with different arguments. `deploy/scripts/hearth-verify-submit.mjs`
+  # builds and posts the input.
+  hearth-verify:
+    <<: *obs
+    image: ghcr.io/cloudsforge-online/hearth-verify:${CF_HEARTH_DEVKIT_PIN:?set CF_HEARTH_DEVKIT_PIN to a sha-<40hex> tag}
+    container_name: cf-hearth-verify
+    environment:
+      HEARTH_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
+      HEARTH_CHAIN_ID: ${CF_HEARTH_CHAIN_ID:?set CF_HEARTH_CHAIN_ID (7411 mainnet, 7412 testnet)}
+    volumes:
+      # Holds BOTH the verified-source store and the solc cache. Losing it loses
+      # every verification anyone has ever submitted, and re-downloads ~9 MB per
+      # compiler version from the Solidity team's server on the next request.
+      - hearth-verify-state:/state
+    networks: [estate]
+
+volumes:
+  hearth-explorer-index:
+  hearth-verify-state:
+
+networks:
+  # External, and named exactly as `docker-compose.gateway.yml` names it. This is
+  # the estate's own network — created by `docker-compose.estate.yml` for its ~60
+  # services — and joining it is what lets the gateway address these two by name.
+  estate:
+    external: true
+    name: ${CF_PROJECT:-cloudsforge-estate}_default
