@@ -1133,6 +1133,29 @@ subscribe settlement settlement.outbound.failed    http://wallet:4000/events
 # services genuinely disagree; the rows above are not a template for this one.
 subscribe wallet     wallet.withdrawal.requested   http://settlement:4000/v1/events
 
+# ── AND THE SAME SHAPE AGAIN, FOR THE MONEY THE PLATFORM OWES ITSELF ──────────
+#
+# A paid Forge Create order deploys from a per-order deployer address, and that
+# address is born empty, so the order sits at `awaiting_funds` until somebody
+# sends it gas. Nobody did — the estate's answer was a human sending EMBER by
+# hand, which is not an answer.
+#
+# mint cannot fund it: it holds `custody:sign:deployer` and nothing else, so it
+# can sign FROM the deployer but has no key that can pay INTO it. settlement
+# holds `custody:sign:treasury`. So mint names the shortfall
+# (`mint.deploy.funding_requested`, mint/src/tokens.ts) and settlement plans a
+# `gas_topup` outbound from the pinned treasury (settlement/src/deployerfunding.ts).
+#
+# WITHOUT THIS ROW the ask is written to mint's outbox and delivered to nobody,
+# and the order stalls exactly as it does today — the same silence
+# `wallet.withdrawal.requested` above stalled by, for the same reason: a consumer
+# with no producer row, invisible because both services are healthy.
+#
+# Same path as the line above, and for the same reason: settlement's intake is
+# `/v1/events`, dispatching on the topic in settlement/src/server.ts. It is now
+# the third topic that arrives there.
+subscribe mint       mint.deploy.funding_requested http://settlement:4000/v1/events
+
 echo "── 5d. the audit mirror — admin-api subscribes to the audited topics ────"
 #
 # Claim 9 of the eleven "one platform" tests — an operator answers "where did this
