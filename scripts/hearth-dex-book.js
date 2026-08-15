@@ -368,7 +368,17 @@ async function main() {
   const amount = claim.toString();
   const entry = {
     kind: 'liquidity_seed',
-    originatingService: 'deploy',
+    // Must be the principal the token was minted for. The ledger refuses the
+    // mismatch outright — "missing required authority: attribution to 'deploy'
+    // (this token was minted for 'wallet')" — and it is right to: an entry's
+    // originating service is a claim about who did the thing, and a script
+    // naming a service it is not is a script forging a byline. There is no
+    // `deploy` principal in the scope registry, and inventing one to run a
+    // script by hand would be the wrong repair. `wallet` is the service that
+    // already debits and credits the estate's own chain positions, which is
+    // exactly what this is, and it is what `ember-seed.js` posts under for the
+    // same reason.
+    originatingService: 'wallet',
     actor: 'system',
     idempotencyKey: `hearth-dex-book:${chainId}:${pair}:seed`,
     description: `Forge Exchange opening liquidity, pair ${pair} on EMBER ${EMBER_NETWORK}`,
