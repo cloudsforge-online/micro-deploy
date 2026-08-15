@@ -10,19 +10,20 @@ house key) and [`custody-backup-restore.md`](./custody-backup-restore.md).
 
 ---
 
-## 0. State, as of 2026-08-14
+## 0. State, as of 2026-08-15
 
 | | EMBER testnet (chain 7412) | EMBER mainnet (chain 7411) |
 | --- | --- | --- |
 | Contracts | **Deployed and checked.** §1 | **Nothing deployed.** §4 |
-| Pools | **None.** `allPairsLength() == 0` | — |
+| Pools | **One, funded and traded.** EMBER/FTEST — §6 | — |
 | Protocol fee | Off (`feeTo()` unset) | — |
 | `feeToSetter` | A 2-of-3 wallet, **all three keys on one host** — §3 | undecided, and not this script's to decide |
 
-Contracts existing and a market existing are different claims. Until a pair is
-funded, nothing below has been exercised by a swap; the deploy script says so in its
-own closing line, and this document repeats it because the gap is the sort of thing
-that gets read as "shipped".
+Contracts existing and a market existing are different claims, and until 2026-08-15
+only the first one was true here. It is now both: a pair holds reserves, a swap
+against it filled at exactly the quoted price, and liquidity has been withdrawn
+again. What that does *not* yet mean is that anyone can use it — there is still no
+user surface and no explorer that can read an `eth_*` call (§7).
 
 ---
 
@@ -52,7 +53,7 @@ that did the deploying:
 factory.pairCodeHash()  == 0x46b4122ae9db4a03c913cfbed4e6321064741545c60aafe3ed9410be7657a537
 factory.feeToSetter()   == 0x51faced76d70981e863be2987ccc811b0712e4f8   (the multisig)
 factory.feeTo()         == 0x0000…0000                                  (protocol fee off)
-factory.allPairsLength() == 0
+factory.allPairsLength() == 1                                            (§6)
 multisig required       == 2, owners 3
 router.factory()        == 0x18bbd09d51f4e9e630dd0a86fc984b6326f10e41
 router.WETH() == router.WEMBER() == 0xa26dfebc362a380e1ade6090c7c5887180d1b263
@@ -140,11 +141,11 @@ CF_EMBER_NETWORK=mainnet HEARTH_DEX_OWNERS=0x…,0x…,0x… ./scripts/hearth-de
 
 ---
 
-## 5. Two failures already paid for
+## 5. Four failures already paid for
 
-Both were measured on the first real run against 7412 and are fixed in the script, with
-the cause written at the fix. They are recorded here because the second one is the kind
-of bug that costs money quietly.
+Each was measured on a real run against 7412 and is fixed in the script, with the cause
+written at the fix. They are recorded here because two of them cost money quietly and
+the other two report a failure about a success — which on a money contract is worse.
 
 **The receipt deadline was 180 seconds, and it was wrong.** The router's transaction was
 reported "never mined" and had in fact been mined successfully about a minute later.
@@ -163,11 +164,104 @@ set of pair addresses, with the first factory's pools stranded behind a router t
 longer points at them. The note is now written after **every** deployment, so anything on
 chain survives any failure after it.
 
+**`eth_estimateGas` was short by a cold-storage step change, and the swap reverted.**
+The first swap into the fresh pool was sent with a limit of 141,163 — a 20% pad over an
+estimate of 117,636 — and consumed 140,204 before reverting. Re-estimating the identical
+call a few blocks later returned 162,938. Nothing about the call had changed; the *pool*
+had. `HearthV2Pair._update` writes `price0CumulativeLast` and `price1CumulativeLast` only
+when `timeElapsed > 0`, so an estimate taken inside the same timestamp window as the mint
+skips both, and at execution time they were cold `0 → nonzero` writes at 20,000 gas each.
+Any percentage pad loses this race, because the miss is a step change and not a fraction.
+The lib now takes the larger of double the estimate and estimate + 100,000, capped at 90%
+of the block gas limit: a gas limit is a ceiling and not a price, and the unused remainder
+is refunded, so there is nothing to buy by being tight.
+
+**A swap was reported as returning more EMBER than it cost, and the router was right.**
+The reverse leg quoted 24.850965 EMBER and the script measured 35.629561, then correctly
+concluded from its own numbers that the 0.30% fee was not being charged. The meter was
+the trader's balance either side of the send, with gas added back — and the key these
+scripts sign with **is the chain's coinbase**. Two blocks had been mined while the
+transaction waited, at ~5.389 EMBER each (`params.js coinbaseRewardWei`: the subsidy less
+the Commons' 10%), and 2 × 5.389 is the entire discrepancy. On this estate an
+`eth_getBalance` delta across anything that waits for blocks measures **mining**, not
+whatever the transaction did. The received amount is now read as the pair's EMBER reserve
+delta, which only moves when someone trades.
+
 ---
 
-## 6. What is not done
+## 6. The first pool
 
-- **No pool exists.** Seeding the first pair is the next step (README "After deploying" §5).
+Seeded 2026-08-15 on chain 7412 by `hearth-dex-seed.js`, recorded on the chain host at
+`~/dex/keys/pool-7412.json` (`format: hearth-exchange-pool/1` — a **separate** file from
+the deployment note, because `hearth-dex-deploy.js` rebuilds its own note from a fixed
+field set and would silently drop anything added to it).
+
+| | |
+| --- | --- |
+| Pair | `0xd439a085d812b21de4b179fafe00281de50733a0` |
+| Token | `0x71550efb54bcaccbe84df3efcc3529eae4be8a32` — `FTEST`, 18 decimals, 1,000,000 supply |
+| Opened at | block 16753, with 5,000 EMBER / 250,000 FTEST |
+| Reserves after two exercise cycles | 4,050.254774 EMBER / 202,500 FTEST, at block 16792 |
+
+The reserves are lower than the seed because the cycle deliberately withdraws 10% each
+time, not because anything leaked: the price has held at ~50 FTEST to the EMBER
+throughout, which is what a proportional withdrawal is supposed to do to a pool.
+
+**The pair token is `micro-mint`'s token, deliberately.** `docs/39` §4 asks for a second
+asset already native to Hearth, and the tempting answer is a ten-line ERC-20 written into
+`hearth/contracts/src/` for the occasion — an unreviewed contract in the repository whose
+whole value is that its contracts are reviewed, to test a pool against an asset no user
+will ever hold. `FTEST` is deployed from `FIXEDSUPPLYTOKEN_BYTECODE`, byte for byte the
+creation code every paid Forge Create order runs, extracted by
+`scripts/hearth-dex-token-artifact.mjs` with mint's own `SOURCE_SHA256` carried into the
+artifact and the pool note. The pool therefore exercises the asset type that will actually
+turn up in it.
+
+NEFELI could not do this job: its whole supply sits at the order's recipient and the
+chain host's key holds none of it.
+
+### What the run proved, in order
+
+Every line was re-read from the chain, and the order is not decorative — each check is
+the precondition for it being safe to spend on the next one.
+
+| | |
+| --- | --- |
+| The gate | `factory.pairCodeHash()` == the router's `INIT_CODE_HASH`, **before** funding anything (§2) |
+| The derivation | after `addLiquidityETH`, `factory.getPair()` == `pairFor()` == the address above |
+| The fill | 25 EMBER bought **exactly** the 1,239.348445 FTEST quoted — not "about" |
+| The fee | k rose across both legs: the 0.30% stays in the pool, which is the liquidity providers being paid |
+| The round trip | selling the FTEST straight back returned exactly the quoted 24.851047 EMBER for 25 spent — a cost of 0.148952, the fee charged twice, as it should be |
+| The exit | `removeLiquidityETH` burned 3,181.980515 LP, the LP balance fell by exactly that, and the reserves fell with it |
+
+The exit matters as much as the entry. A pool that takes deposits and cannot return them
+is not a market, and "we never tried to withdraw" is how that gets discovered late.
+
+### Running it
+
+```bash
+./scripts/hearth-dex-seed-run.sh --status     # read the pool, write nothing
+./scripts/hearth-dex-seed-run.sh --dry-run    # everything except the sends
+./scripts/hearth-dex-seed-run.sh              # deploy the token, fund the pair, exercise it
+./scripts/hearth-dex-seed-run.sh --exercise   # trade against a pool that already exists
+```
+
+Same containerised arrangement and same reasoning as §4, with one difference: the seed
+script `require`s `./lib/hearth-evm.js`, so the wrapper mounts the script's **directory**
+rather than the single file. `HEARTH_DEX_SEED_EMBER` and `HEARTH_DEX_SEED_TOKEN` default
+to testnet depths; on mainnet the opening depth is an owner decision (`docs/39` §7) and
+the wrapper forwards it but invents nothing.
+
+---
+
+## 7. What is not done
+
+- **Nothing can read it but a script.** The pool above is provable only by re-running
+  `--status`: `micro-explorer-web` speaks the Hearth-native RPC and not `eth_*`, so a
+  pair, a swap and an LP balance are all invisible to every human-facing surface on the
+  estate. Until that closes, "there is a market" is a claim backed by a log file.
+- **No contract is verified.** Nothing maps the deployed bytecode back to the source it
+  was compiled from, so a reader has to trust that these addresses hold what §1 says.
 - **No user surface.** `micro-exchange-web` does not exist; `scripts/surface-routes.py`
   still lists `exchange` as unrouted, and the registry row says `servesUi: false`. Both
   change together or the estate advertises a hostname that serves nothing.
