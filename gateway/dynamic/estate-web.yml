@@ -1707,8 +1707,17 @@ http:
     # A SECOND ROUTER FOR THE READS, because a router carries one middleware list
     # and these two costs are not the same. `/verify` compiles; these answer from
     # a directory listing. Same upstream, same priority, ordinary RPC limiter.
+    #
+    # THE ONE PREFIX ON THIS HOST, and the exception is argued rather than assumed.
+    # The rule above cf-api-chain-index asks for exact paths so the routed set stays
+    # a fixed vocabulary; `/contract/0x…` and `/contract/0x…/abi` cannot be named
+    # exactly, since the address IS the path. The prefix keeps its trailing slash,
+    # so it matches neither `/contracts` (the listing, exact, above) nor anything
+    # else — the vocabulary is still closed, it just has one member that reads an
+    # argument. Without it the verifier's own documented route answers the RPC's
+    # "JSON-RPC requires POST", which reads as a broken verifier.
     cf-api-verify-reads:
-      rule: 'Host(`rpc{{ env "CF_WEB_SUFFIX" }}`) && (Path(`/contracts`) || Path(`/compilers`))'
+      rule: 'Host(`rpc{{ env "CF_WEB_SUFFIX" }}`) && (Path(`/contracts`) || Path(`/compilers`) || PathPrefix(`/contract/`))'
       priority: 600
       entryPoints: [websecure, tunnel]
       middlewares: [cf-rpc-throttle]

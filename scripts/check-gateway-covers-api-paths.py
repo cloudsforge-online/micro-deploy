@@ -187,16 +187,22 @@ NOT_CHECKED = {
         "terms": [
             "Path(/mining/template)", "Path(/mining/submit)", "Path(/events)",
             "Path(/api)", "Path(/verify)", "Path(/contracts)", "Path(/compilers)",
+            "PathPrefix(/contract/)",
         ],
         "why": "three upstreams share this hostname and NONE of them is a `define()` "
                "service — hearth's node (Go), and hearth's explorer index and verifier "
-               "(`tools/`, plain node http servers). Every term is an EXACT `Path`, "
-               "which is what carries the claim: each names one route, so the routed "
-               "set cannot grow when a service does. The first three peel the MINING "
-               "listener off the JSON-RPC catch-all and are fixed by the miner "
-               "protocol; the last four are the chain's read surfaces, and `/api` is "
+               "(`tools/`, plain node http servers). Every term but one is an EXACT "
+               "`Path`, which is what carries the claim: each names one route, so the "
+               "routed set cannot grow when a service does. The first three peel the "
+               "MINING listener off the JSON-RPC catch-all and are fixed by the miner "
+               "protocol; the next four are the chain's read surfaces, and `/api` is "
                "exact rather than a prefix BECAUSE of this row — the Etherscan grammar "
-               "it serves is entirely in the query string",
+               "it serves is entirely in the query string. The exception is "
+               "`/contract/`, and it cannot grow either: the verifier serves exactly "
+               "`/contract/0x…` and `/contract/0x…/abi`, where the ADDRESS is the path, "
+               "so no exact term can name them. The trailing slash is load-bearing — it "
+               "excludes `/contracts` above, which is a different route on the same "
+               "upstream",
     },
 }
 
