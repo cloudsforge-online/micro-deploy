@@ -49,6 +49,13 @@
 # the thing that said so is identifiable afterwards. A moving tag makes every
 # answer unattributable to a build.
 #
+# And it is a LITERAL, not a `${CF_HEARTH_DEVKIT_PIN}`. A variable would push the
+# answer to "which build is running?" out of the tracked repository and into
+# untracked host state, where no checkout can read it and no reviewer can see it
+# change — which is exactly the property the paragraph above is buying. Every
+# other hearth image in this directory is a literal for the same reason. Bump it
+# by editing this line, in a commit that says why.
+#
 # `scripts/check-hearth-pins-agree.py` does NOT cover these two: it matches
 # `ghcr.io/cloudsforge-online/hearth-node:` specifically, and deliberately, since
 # what it enforces is that every process participating in one chain's consensus
@@ -71,7 +78,7 @@ services:
   # transaction this address sent or received" without walking every block.
   hearth-explorer-api:
     <<: *obs
-    image: ghcr.io/cloudsforge-online/hearth-explorer-api:${CF_HEARTH_DEVKIT_PIN:?set CF_HEARTH_DEVKIT_PIN to a sha-<40hex> tag}
+    image: ghcr.io/cloudsforge-online/hearth-explorer-api:sha-f49a94cd2b56e6b7c2cc091f90fcb1a741d0c118
     # NAMED, unlike the estate's services, because this file may be brought up on
     # its own and a person debugging it should not have to derive
     # `cf-testnet-hearth-explorer-api-1` to read a log.
@@ -111,7 +118,7 @@ services:
   # builds and posts the input.
   hearth-verify:
     <<: *obs
-    image: ghcr.io/cloudsforge-online/hearth-verify:${CF_HEARTH_DEVKIT_PIN:?set CF_HEARTH_DEVKIT_PIN to a sha-<40hex> tag}
+    image: ghcr.io/cloudsforge-online/hearth-verify:sha-f49a94cd2b56e6b7c2cc091f90fcb1a741d0c118
     container_name: cf-hearth-verify
     environment:
       HEARTH_RPC_URL: ${EMBER_RPC_URL:-http://host.docker.internal:8545}
