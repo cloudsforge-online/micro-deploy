@@ -24,6 +24,14 @@ The `flux-2-pro` set, materialised whole: `SET.json` plus 392 PNGs.
 python3 materialise.py --provider flux-2-pro --into <this directory>   # in micro-tessera-assets
 ```
 
+**THIS IS NO LONGER THE SET THE ESTATE SERVES, and that is a variable rather than a change here.**
+On 2026-08-16 `micro-tessera-assets` promoted `gpt-image-2` over FLUX 2 Pro as its shipped set
+(micro-tessera-assets#1), and `CF_WORLD_ASSETS` in both `compose/mainnet.env` and
+`compose/testnet.env` now names `./estate/world-assets-gpt-image-2`. These bytes stay exactly where
+they are, for the reason the next line has always given: the promotion is reversible in one command
+in the asset repository, and a deploy that overwrote the outgoing set would make the estate half of
+that switch one-way. Point the variable back and FLUX is served again with nothing else touched.
+
 `materialise.py` refuses an incomplete set, so a directory it wrote is either
 the full reference set or nothing. `SET.json` is the receipt beside the bytes:
 it maps every asset IDENTITY (`tiles/ashfield-ground-a`) to the PATH it was
