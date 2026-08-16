@@ -91,13 +91,33 @@ BEACON=${CF_BEACON_DIR:-../beacon}
 #
 # `identity` is `nimbus$WEB_SUFFIX` because that is the name the shared UI calls it
 # by and therefore the only one whose CORS allowance and hand-off allowlist are real.
+#
+# `chain` IS NOT A SURFACE AND WAS MISSING, WHICH SILENTLY WITHDREW FOUR JOURNEYS.
+#
+# It resolves to the Hearth JSON-RPC endpoint — `rpc$WEB_SUFFIX`, the hostname
+# `gateway/dynamic/estate-web.yml` routes to the node and the same one every
+# bundle in the estate reads the chain through. Nothing loads a PAGE there; the
+# journeys that declare it use it for `eth_call` and `eth_getTransactionReceipt`,
+# because a figure asserted only against the page it was rendered on is a figure
+# checked against itself.
+#
+# Its absence was not visible as a failure. `browserJourneys()` drops any
+# scenario whose `needs` this file has no address for, and reports it through
+# `undeclared()` as `no address for chain` — so every journey that reads the
+# chain has been quietly undeclared on every run of this script. That is four:
+# BJ-FOR-06 and BJ-FOR-14, which check Foresight's mirror against the contract,
+# and BJ-DEX-01 and BJ-DEX-02 below. Adding the address DECLARES them, and
+# BJ-FOR-06 is red on this estate for a reason recorded in
+# `beacon/src/browser/journeys.test.ts`. A red that was always true and never
+# reported is the reason this line exists.
 TARGETS="site=https://${SITE_HOST}"
 TARGETS="$TARGETS,account=https://hub${WEB_SUFFIX}/account"
 TARGETS="$TARGETS,identity=https://nimbus${WEB_SUFFIX}"
+TARGETS="$TARGETS,chain=https://rpc${WEB_SUFFIX}"
 for pair in \
   "hub hub" "market market" "trade trade" "worlds worlds" "create create" \
   "admin admin" "status status" "explorer explorer" "developers developers" \
-  "network network" "foresight foresight" \
+  "network network" "foresight foresight" "exchange exchange" \
   "emberkin emberkin" "aetherholm aetherholm" "tessera tessera"; do
   # No `declare -A`: bash here is 3.2, and an associative-array map once silently
   # broke five suites in this repository.
@@ -143,42 +163,55 @@ fi
 echo "  gateway answering, sign-in surface served on hub${WEB_SUFFIX}"
 echo
 
-# ── --insecure-tls, WHAT IT NOW COSTS, AND WHERE THE FIX BELONGS ──────────────
+# ── `--insecure-tls` IS GONE, AND THE ROOT IS NAMED INSTEAD ───────────────────
 #
-# **THE PREMISE OF THIS FLAG HAS CHANGED AND THE FLAG HAS NOT.**
+# This block used to argue for keeping `--insecure-tls` "until micro-beacon
+# wires `collectPins` into `beacon browser`". It has. `runBrowser` now collects
+# one SPKI per host per port and hands them to Chromium as
+# `--ignore-certificate-errors-spki-list`, and `estatecert.ts` refuses to pin
+# anything that failed for a reason OTHER than an untrusted root — so an expired
+# certificate, one issued for a different hostname, and a substituted one all
+# still fail, which is the entire difference from the flag that replaced them.
+# `parseBrowserArgs` REFUSES `--insecure-tls` by name (exit 2, with the reason),
+# so leaving it here would not have degraded to a warning: it would have made
+# every run of this script die before it launched a browser.
 #
-# It used to read: "the gateway terminates TLS with Traefik's built-in
-# `CN=TRAEFIK DEFAULT CERT` … there is no CA on a laptop". Both halves are now
-# false. `scripts/gateway-cert.sh` mints `CN=CloudsForge Estate Local CA` and a
-# wildcard leaf, `gateway/dynamic/tls.yml` serves it, and `estate-verify.sh`
-# asserts the chain with `--cacert` and no `-k`. There IS a CA on this laptop,
-# and its public key can be pinned.
+# What the browser pins does not cover beacon's OWN `fetch` — BJ-XS-10 fetches
+# every address the switcher offers, BJ-ACC-02 seeds an account over HTTP, and
+# the DEX journeys read the chain through `rpc$WEB_SUFFIX`. Those go through
+# Node, so the root is named for Node too: `--estate-ca <file>` trusts one PEM
+# IN ADDITION to the system store, for this process only.
 #
-# That matters because `--insecure-tls` is not a warning suppressant. In
-# `beacon/src/cli.ts` it sets `NODE_TLS_REJECT_UNAUTHORIZED=0` process-wide
-# AND passes `ignoreHttpsErrors: true` to every browser context — validation off
-# for every host, every error, for ever. Pointed at staging, this suite would
-# report green through an expired certificate, one issued for the wrong
-# hostname, and an active man-in-the-middle. It is the estate's signature defect
-# in the suite written to end it, and it is the reason the whole estate could be
-# green while unusable in Chrome.
+# WHICH IS WHY IT IS CONDITIONAL. `gateway/certs/ca.crt` is a LOCAL artifact —
+# `scripts/gateway-cert.sh` mints `CN=CloudsForge Estate Local CA` on the
+# machine the estate runs on, and `.gitignore` refuses the directory. A run
+# against mainnet or testnet terminates on a public certificate at Cloudflare's
+# edge, where there is no such file and none is wanted: naming a root that is
+# not in the chain would trust a CA for nothing. Absent, beacon prints "no
+# additional root was named; the system trust store stands unmodified", which is
+# the correct sentence for a public estate and a legible one for a local estate
+# whose certificate has not been minted yet.
 #
-# THE FIX IS NOT HERE, AND IS NOT A LOCAL SHIM. `micro-beacon` has already built
-# the narrow lever — `src/browser/estatecert.ts`, which reads the certificate the
-# gateway is really serving, refuses to pin anything that fails for a reason
-# OTHER than an untrusted root (so expiry and a wrong hostname still fail), and
-# pins one SPKI through Chromium's `--ignore-certificate-errors-spki-list`. Its
-# header already names this CA. But `collectPins` is wired into `beacon smoke`
-# only; the `beacon browser` command this script calls still takes
-# `--insecure-tls` and nothing else.
+# `ca.crt` and NOT `trust.crt`: the bundle is the CA plus every public root in
+# `gateway/trust/`, and `trustEstateCa` parses ONE certificate out of the file it
+# is given. Pointed at the bundle it would silently trust the first and drop the
+# rest — and the first is the one already being asked for.
 #
-# So: reported to micro-beacon, which owns both the flag and the module —
-# `runBrowser` should take the `collectPins` path `runSmokeCommand` already
-# does, and `--insecure-tls` should stop implying `ignoreHttpsErrors`. Until it
-# does, the flag stays, because the alternative is sixteen journeys that die at
-# `page.goto` and report nothing about the product. It is recorded here rather
-# than quietly kept, because a stale justification is how a shortcut becomes a
-# policy.
+# The `curl -sk` in the preflight above is deliberately left alone. It asserts
+# nothing about the product; it asks whether anything is listening at all, and it
+# runs BEFORE the certificate could be read.
+CA=${CF_ESTATE_CA:-gateway/certs/ca.crt}
+# Absolute, because the `cd "$BEACON"` below moves out of `deploy/` and a
+# relative path would resolve against a checkout that has no `gateway/`.
+if [ -f "$CA" ]; then
+  CA="$(cd "$(dirname "$CA")" && pwd)/$(basename "$CA")"
+  set -- --estate-ca "$CA"
+  echo "  naming one additional root for beacon's own requests: $CA"
+else
+  set --
+  echo "  no local CA at $CA — the system trust store stands unmodified"
+fi
+echo
 
 # ── AND WHY THIS `cd`s RATHER THAN PASSING A PATH ─────────────────────────────
 #
@@ -197,6 +230,6 @@ if [ ! -d "$BEACON/node_modules/tsx" ]; then
 fi
 cd "$BEACON" || exit 2
 exec node --import tsx src/cli.ts browser \
-  --insecure-tls \
+  "$@" \
   --timeout "${CF_BROWSER_TIMEOUT_MS:-45000}" \
   --targets "$TARGETS"
