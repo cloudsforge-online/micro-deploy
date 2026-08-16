@@ -248,6 +248,66 @@ export const API_HOST =
   process.env.CF_API_HOST || fromTraefikEnv('CF_API_HOST') || `api${WEB_SUFFIX}`
 
 /**
+ * The identity this estate's services actually TRUST — which since micro-org#459
+ * stage 2 is not necessarily this estate's own.
+ *
+ * ── THE SEEDER SIGNED IN SOMEWHERE NOBODY ACCEPTS, AND SAID SO 32 TIMES ──────
+ *
+ * This was `https://nimbus${WEB_SUFFIX}` inline in `SERVICES` below, which is
+ * right on mainnet and, since the one-login migration, wrong on testnet.
+ * `compose/testnet.env` sets `CF_IDENTITY_URL=https://nimbus.cloudsforge.online`
+ * and `docker-compose.estate.yml` hands it to every testnet container, so the
+ * testnet estate verifies bearers against the SHARED identity's JWKS. Measured
+ * on 2026-08-16, on the running containers:
+ *
+ *   cf-testnet-market-1     IDENTITY_JWKS_URL=https://nimbus.cloudsforge.online
+ *   cf-testnet-foresight-1  IDENTITY_JWKS_URL=https://nimbus.cloudsforge.online
+ *   cf-testnet-hub-api-1    IDENTITY_JWKS_URL=https://nimbus.cloudsforge.online
+ *
+ * `cf-testnet-identity-1` is still running and still answers `/auth/login` with
+ * 200 and a signed token. Nothing in the estate accepts it. So a testnet seeding
+ * run logged in successfully and then failed EVERY write with
+ * `401 unauthenticated` — 32 of them in one run, each one looking like a
+ * per-service authorisation problem and none of them naming the cause. That is
+ * micro-org#472, seen from the seeder rather than from a browser.
+ *
+ * It is not a user-token network mismatch: `identity/src/tokens.ts` deliberately
+ * puts NO `net` claim on user tokens, precisely so one person's token crosses
+ * both estates. The token was fine. It was signed by the wrong identity.
+ *
+ * READ from the estate's own env file, for the same reason `WEB_SUFFIX` and
+ * `WEB_RETIRED` are: it is a fact about how this estate is CONFIGURED, and the
+ * file the seeder reads is the file the containers were started from.
+ *
+ * The `https:` guard is not decoration. `CF_IDENTITY_URL` is legitimately an
+ * in-compose address on some estates (`docker-compose.estate.yml` defaults it to
+ * `http://identity:4000`), and this seeder runs on the HOST, outside that
+ * network. An unreachable base would fail as a connection error at login, which
+ * reads as "identity is down" rather than "this address was never for you".
+ *
+ * `IDENTITY_TOKENS_FILE` below keys off the same answer, so it is computed once
+ * here rather than twice: two readings of one variable that can disagree is the
+ * exact shape of the defect this block exists to close.
+ */
+const DECLARED_IDENTITY = (() => {
+  const declared = process.env.CF_IDENTITY_URL || fromEstateEnv('CF_IDENTITY_URL')
+  return declared && declared.startsWith('https://') ? declared.replace(/\/+$/, '') : null
+})()
+
+/** The identity host this run signs in at. See the block above for why it is read. */
+export const IDENTITY_BASE = DECLARED_IDENTITY || `https://nimbus${WEB_SUFFIX}`
+
+/**
+ * Whether this estate borrows another estate's identity rather than running its own.
+ *
+ * `login()` reports it on every run. The failure this exists to make legible is
+ * silent by construction — the WRONG identity also answers 200 with a signed
+ * token — so the only place it can be caught before the writes start failing is
+ * a line naming where the token came from.
+ */
+export const IDENTITY_IS_SHARED = DECLARED_IDENTITY !== null
+
+/**
  * Where each service is, and whether the request crosses the gateway.
  *
  * `gateway: false` is not a shortcut. It is a fact about the deployment, and it
@@ -255,7 +315,9 @@ export const API_HOST =
  * this seeder created without a browser ever being able to reach them.
  */
 export const SERVICES = {
-  identity: { base: `https://nimbus${WEB_SUFFIX}`, gateway: true },
+  // NOT `https://nimbus${WEB_SUFFIX}`, which is what it said until 2026-08-16 and
+  // is why a whole testnet seeding run 401'd. See `IDENTITY_BASE` above.
+  identity: { base: IDENTITY_BASE, gateway: true },
   custody: { base: `https://vault${WEB_SUFFIX}`, gateway: true },
   foresight: { base: `https://foresight${WEB_SUFFIX}`, gateway: true },
   market: { base: `https://${API_HOST}`, gateway: true },
@@ -537,6 +599,26 @@ export const TOKENS_FILE =
     : 'compose/estate/tokens.env')
 export const ENV_FILES = ['--env-file', ESTATE_ENV, '--env-file', TOKENS_FILE]
 
+/**
+ * The tokens file holding the operator credential for `IDENTITY_BASE` — which is
+ * not always this estate's own.
+ *
+ * The operator account is a property of the IDENTITY, not of the estate, and
+ * since the one-login migration those stopped being the same thing. Measured on
+ * 2026-08-16: `tokens.env` and `tokens.testnet.env` carry the same
+ * `ESTATE_ADMIN_EMAIL` and DIFFERENT `ESTATE_ADMIN_PASSWORD` values. So the
+ * invocation this file documents two blocks down —
+ * `set -a; . compose/estate/tokens.testnet.env; set +a` before a testnet run —
+ * now exports a password for an identity the run will never talk to, and the
+ * only symptom is a 401 at `/auth/login` that reads as a rotated credential.
+ *
+ * Everything ELSE in a tokens file — service tokens, per-estate secrets — is
+ * genuinely keyed on the estate, and `ENV_FILES` above still uses `TOKENS_FILE`
+ * for exactly that reason. This is a second name rather than a change to the
+ * first.
+ */
+export const IDENTITY_TOKENS_FILE = IDENTITY_IS_SHARED ? 'compose/estate/tokens.env' : TOKENS_FILE
+
 export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test'
 
 /**
@@ -564,11 +646,27 @@ export const ADMIN_EMAIL = process.env.ADMIN_EMAIL || 'estate-admin@example.test
  * were never going to send. Evaluated where it is spent instead: at `login()`.
  */
 export function adminPassword() {
-  const value = process.env.ADMIN_PASSWORD || process.env.ESTATE_ADMIN_PASSWORD
+  // THE FILE BEATS THE SHELL HERE, AND ONLY HERE.
+  //
+  // `ESTATE_ADMIN_PASSWORD` in the environment is almost always the wrong
+  // estate's — the documented invocation sources this estate's tokens file, and
+  // on an estate that borrows another's identity that is the wrong credential by
+  // construction (see `IDENTITY_TOKENS_FILE`). So the password for the identity
+  // this run will ACTUALLY sign in at is read from that identity's own file, and
+  // the exported one is only the fallback.
+  //
+  // `ADMIN_PASSWORD` stays ahead of both: it is the explicit override, the name
+  // nothing writes into an env file, and the one an operator types deliberately.
+  const value =
+    process.env.ADMIN_PASSWORD ||
+    fromEnvFile(path.join(ROOT, IDENTITY_TOKENS_FILE), 'ESTATE_ADMIN_PASSWORD') ||
+    process.env.ESTATE_ADMIN_PASSWORD
   if (!value) {
     throw new Error(
-      'ADMIN_PASSWORD (or ESTATE_ADMIN_PASSWORD) is not set. It has no default: the one it used ' +
-        'to have is published in this repository. Source compose/estate/tokens.env first.',
+      `ADMIN_PASSWORD (or ESTATE_ADMIN_PASSWORD) is not set, and ${IDENTITY_TOKENS_FILE} — the ` +
+        `tokens file for ${IDENTITY_BASE}, which is where this run signs in — carries no ` +
+        'ESTATE_ADMIN_PASSWORD either. It has no default: the one it used to have is published ' +
+        'in this repository.',
     )
   }
   return value
@@ -666,6 +764,18 @@ export async function login() {
     expect: 200,
   })
   if (!body.accessToken) throw new Error('identity returned no accessToken')
+  // WHERE the token came from, on every run, because a token from the wrong
+  // identity is indistinguishable from a good one until something rejects it.
+  // The estate ran for two days with a testnet identity that answers 200 and
+  // signs tokens nothing accepts (micro-org#472); the seeder's report of that
+  // was 32 separate 401s, none of which named this. `note`, not `ok` — this is
+  // context for the lines below it, not a check that passed.
+  note(
+    IDENTITY_IS_SHARED
+      ? `signed in at ${IDENTITY_BASE} — this estate BORROWS that identity (CF_IDENTITY_URL), ` +
+          `so the operator credential came from ${IDENTITY_TOKENS_FILE}, not from ${TOKENS_FILE}`
+      : `signed in at ${IDENTITY_BASE} (this estate's own identity)`,
+  )
   return body.accessToken
 }
 
