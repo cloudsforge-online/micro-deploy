@@ -111,6 +111,16 @@ const checkOnly = args.includes('--check')
  * a module it is not going to run.
  */
 const DOMAINS = [
+  /*
+   * FIRST, AND THE ORDER IS LOAD-BEARING FOR EXACTLY ONE REASON.
+   *
+   * The title register decides whether a game is open to play and what may be
+   * sold against it, and `seed/nda.mjs` below creates a world inside one of the
+   * games it registers. Seeding the register first means a run against a fresh
+   * volume never leaves a window in which nda's world exists and the title it
+   * belongs to is still `draft`.
+   */
+  { name: 'worlds', load: () => import('./seed/worlds.mjs').then((m) => m.seedWorlds) },
   { name: 'foresight', load: () => import('./seed/foresight.mjs').then((m) => m.seedForesight) },
   { name: 'community', load: () => import('./seed/community.mjs').then((m) => m.seedCommunity) },
   { name: 'market', load: () => import('./seed/market.mjs').then((m) => m.seedMarket) },

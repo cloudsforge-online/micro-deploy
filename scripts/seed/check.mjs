@@ -166,6 +166,36 @@ export const SURFACES = [
     empty: 'there is no community for a member to join',
   },
   {
+    key: 'worlds.titles',
+    what: 'registered game titles',
+    service: 'worlds',
+    /*
+     * ── THE DEFAULT LIST, DELIBERATELY, AND `includeRetired` IS *OFF* HERE ───
+     *
+     * `seed/worlds.mjs` reads the register WITH retired rows, because it is
+     * reporting a diff and a revived row must not look like a create. This is
+     * the opposite job: it asserts what a VISITOR sees, and
+     * `worlds-web/src/pages/platform.tsx` calls `listTitles({ signal })` with no
+     * flag, so retired titles are excluded from the shelf exactly as they are
+     * excluded here. A check that counted them would go green on a register
+     * holding nothing but retired games and an empty page.
+     *
+     * Anonymous, because the route is: `GET /v1/titles` makes no
+     * `authenticate()` call at all (`worlds/src/server.ts`), and reading it with
+     * the operator's token would be asserting a privileged view of a page every
+     * visitor gets unauthenticated.
+     */
+    path: '/v1/titles',
+    anon: true,
+    pick: (b) => b.titles,
+    page: (suffix) => `https://worlds${suffix}/`,
+    empty:
+      'Forge Worlds lists no games at all. The register is the authority on which games exist, so ' +
+      'an empty one renders the platform page as a heading and a gap notice — run ' +
+      '`estate-seed.mjs --only worlds`. NOTE: this counts rows, not reachability; a register full ' +
+      'of `draft` titles passes this check and still offers a visitor no way into any of them',
+  },
+  {
     key: 'nda.worlds',
     what: 'worlds',
     service: 'nda',
