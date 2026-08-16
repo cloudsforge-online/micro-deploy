@@ -213,6 +213,38 @@ else
 fi
 echo
 
+# ── ONE JOURNEY SIGNS, AND IT SAYS SO BEFORE THE RUN RATHER THAN AFTER ────────
+#
+# BJ-DEX-02 is the only journey in the catalogue that broadcasts a transaction:
+# it presses Swap on the exchange, signs what the page built with a key held in
+# this process, and reads the receipt off the chain. `docs/ecosystem/39-forge-
+# exchange.md` §6 names it as the gate for phase H — "beacon drives a swap
+# through the real gateway" — so it is not an optional extra, it is the
+# measurement.
+#
+# It reads `BEACON_DEX_KEY` and SKIPS, loudly, when there is none. That skip is
+# correct: a journey that signs needs a funded key, and falling back to checking
+# that a browser which cannot sign says it cannot sign would be a green run
+# proving nothing. What the skip does not do is explain itself to somebody
+# reading a report of thirty journeys, which is what this block is for.
+#
+# The variable is passed through by `exec` and never printed. The test is
+# `${BEACON_DEX_KEY:+set}` — the value is never substituted into a word, only
+# its presence, because a shell that echoes a private key into a terminal has
+# written it to scrollback, to a tmux buffer and to anything tailing the run.
+#
+# It is not minted here and there is no default. On testnet the key is an
+# ordinary externally-owned account with a few EMBER on it; on mainnet
+# `deploy/scripts/hearth-fund.js` caps funding at zero by policy, so pointing
+# this at mainnet with a key set will skip on the balance check instead, which
+# is also the right answer.
+if [ -n "${BEACON_DEX_KEY:-}" ]; then
+  echo "  BEACON_DEX_KEY is set — BJ-DEX-02 will sign a real swap and spend real gas"
+else
+  echo "  BEACON_DEX_KEY is unset — BJ-DEX-02 will skip; every other journey is unaffected"
+fi
+echo
+
 # ── AND WHY THIS `cd`s RATHER THAN PASSING A PATH ─────────────────────────────
 #
 # `node --import tsx` resolves `tsx` FROM THE WORKING DIRECTORY, not from the
