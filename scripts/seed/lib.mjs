@@ -207,6 +207,36 @@ export const SITE_HOST =
   process.env.CF_SITE_HOST || fromTraefikEnv('CF_SITE_HOST') || APEX
 
 /**
+ * Whether this estate's WEB surfaces are retired — i.e. whether its own page
+ * hostnames redirect to the other estate rather than serving a bundle.
+ *
+ * ── WHY A SEEDER NEEDS TO KNOW THIS ──────────────────────────────────────────
+ *
+ * `true` on testnet since micro-org#459 step 5. The gateway's
+ * `cf-retired-web-sub` router (priority 550, `estate-web.yml`) answers 302 to
+ * every `*-testnet` hostname whose registry row is `servesUi: true`, and spares
+ * `/v1` so the combined view's cross-estate reads keep working.
+ *
+ * `servesUi: true` is ALSO the predicate `seed/beacon.mjs` used to decide which
+ * hostnames to probe for a 200. The two are keyed on the same registry field
+ * with opposite intent, so between 2026-08-14 and 2026-08-16 testnet's beacon
+ * probed exactly the set its own gateway redirects: 21 probes, all expecting
+ * 200, all getting 302, and a public status page reading `Outage` across 21
+ * product groups over an estate that was answering. Nothing was down.
+ *
+ * READ from the gateway's own env file for the reason `WEB_SUFFIX` above is:
+ * this is a fact about how the gateway is CONFIGURED, and a seeder that guessed
+ * it from the environment label would be a second declaration of it.
+ *
+ * Compared against the string `'true'` rather than tested for truthiness,
+ * because `traefik.env` sets `CF_WEB_RETIRED=false` on mainnet and the string
+ * `'false'` is truthy. `estate-web.yml` compares the same way and says so:
+ * "Neither file can now be silent about whether this estate is retired."
+ */
+export const WEB_RETIRED =
+  (process.env.CF_WEB_RETIRED || fromTraefikEnv('CF_WEB_RETIRED') || 'false') === 'true'
+
+/**
  * The API host, read from the file the GATEWAY reads rather than guessed.
  *
  * `estate-up.sh` reads it from exactly here and refuses to start without it,
