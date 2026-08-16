@@ -10,15 +10,16 @@ house key) and [`custody-backup-restore.md`](./custody-backup-restore.md).
 
 ---
 
-## 0. State, as of 2026-08-15
+## 0. State, as of 2026-08-16
 
 | | EMBER testnet (chain 7412) | EMBER mainnet (chain 7411) |
 | --- | --- | --- |
-| Contracts | **Deployed and checked.** §1 | **Nothing deployed.** §4 |
-| Pools | **One, funded and traded.** EMBER/FTEST — §6 | — |
-| Readable by a stranger | **Yes.** Index + verifier on `rpc-testnet` — §7 | not deployed |
-| Protocol fee | Off (`feeTo()` unset) | — |
-| `feeToSetter` | A 2-of-3 wallet, **all three keys on one host** — §3 | undecided, and not this script's to decide |
+| Contracts | **Deployed and checked.** §1 | **Deployed** from block 38840 — `docs/ecosystem/39` phase F |
+| Pools | **One, funded and traded.** EMBER/FTEST — §6 | **One**, EMBER/FXR, seeded and traded both ways |
+| Readable by a stranger | **Yes.** Index + verifier on `rpc-testnet` — §7 | yes, same pair of surfaces |
+| Receipts (`ForgeReceipt`) | **`fLTC` and the `dEMBER` drill.** §9 | **None, and refused** on a measured reserve of zero — §9 |
+| Protocol fee | Off (`feeTo()` unset) | Off (`feeTo()` unset) |
+| `feeToSetter` | A 2-of-3 wallet, **all three keys on one host** — §3 | a 2-of-3 wallet, **two of three keys on the chain host** |
 
 Contracts existing and a market existing are different claims, and until 2026-08-15
 only the first one was true here. It is now both: a pair holds reserves, a swap
@@ -398,13 +399,67 @@ a sandbox does not have.
 - **`constructorArgumentsVerified` is 0 on the one direct submission.** FTEST was submitted without
   its creation transaction, so its arguments are recorded and not checked. Re-submitting with
   `--tx` flips it; nothing else changes.
-- **No user surface.** `micro-exchange-web` does not exist; `scripts/surface-routes.py`
-  still lists `exchange` as unrouted, and the registry row says `servesUi: false`. Both
-  change together or the estate advertises a hostname that serves nothing. §7 makes the pool
-  *readable*; it does not make it *usable*.
+- **No *public* user surface.** `micro-exchange-web` now exists, is routed, and is driven through
+  the real gateway by the smoke tier — phase H, recorded in `docs/ecosystem/39`. What is still
+  missing is a DNS record: `exchange.cloudsforge.online` resolves nowhere, so the surface is
+  reachable from inside the estate and not from outside it. That is a Cloudflare dashboard action,
+  not a repository change.
 - **No trade has yet met another trade.** Closed as far as the phase-D gate goes — a wallet holding
   a key this host does not has run the full cycle from the extension (§6) — but that run was
   sequential, so nothing in this pool has ever been exposed to a second trade arriving between a
   quote and its settlement. Slippage under contention needs a frontend and more than one person, and
   that is phase H.
-- **Mainnet is untouched**, and should stay that way until §3's open question has an answer.
+- **The mainnet signer set is still §3's open question**, now with contracts behind it. Two of the
+  three keys are files on the chain host; the answer has not changed because the deployment
+  happened, only the stakes have.
+
+---
+
+## 9. Forge Receipts — `fLTC`, the `dEMBER` drill, and the mainnet refusal
+
+`scripts/hearth-receipt-deploy.js` with `scripts/hearth-receipt-run.sh`, in the idiom of the dex
+pair beside them. Three modes:
+
+```
+./scripts/hearth-receipt-run.sh --status     # read the chain, write nothing, no UTXO scan
+./scripts/hearth-receipt-run.sh --drill      # the redemption rehearsal
+./scripts/hearth-receipt-run.sh              # scan Litecoin, deploy, publish, attest, prove
+```
+
+**The reserve is measured on the host, not in the container.** `litecoin-cli` authenticates with
+the cookie in litecoind's datadir, and handing that datadir to a container that also signs EMBER
+transactions and prints diagnostics would put a live credential one stray error message away from a
+transcript — which is how bitcoind's rpcauth leaked once already, out of a caught exception nobody
+thought contained a URL. So the wrapper scans, prints only numbers, and passes the deploy script
+four values: a litoshi total, a Litecoin height, that block's hash, and the address list the total
+covers. The script refuses to attest without all four.
+
+The scan is `scantxoutset`, which walks the whole UTXO set in two to four minutes. That slowness is
+the feature: it is the only reading that needs no wallet, no import, no index of ours and no
+permission, so a stranger's identical command against their own node returns the identical answer.
+
+**The address list is the contract.** Whatever is in it gets published on chain by
+`setReserveAddresses`, and the attested total is the sum over exactly those. Two treasury-purpose
+keys and one pool-purpose key. Per-user *deposit* addresses are deliberately excluded — coin in a
+user's deposit address is that user's, and pledging it would be pledging other people's money.
+
+**Testnet, chain 7412.** `fLTC` at `0x5ff590f4f6f29711706f485d9350666d2f8e2f02` (block 19411), issuer
+the 2-of-3 multisig; both issuer actions went through submit → independent confirm → execute, as
+proposals 0 and 1 in blocks 19417 and 19423. Attested reserve **0**, at Litecoin height 3161026.
+`dEMBER` at `0x197f3dcb648abda5b7c678af5ac4d8042fcc8e6d` (block 19386) is the drill: attested,
+issued to a second key, funded that key for its own gas, burned-then-queued, paid out for real in
+`0xfc08d74d…fdf0`, and settled with that hash. `unsettledRedemptions()` is zero and the custodian
+still holds more than it attested.
+
+**Mainnet, chain 7411: nothing deployed.** The scan measured 0.00000000 LTC at Litecoin height
+3161029 and the script refused, quoting `docs/ecosystem/39` §4. There is no override flag. Send
+Litecoin to a published reserve address, re-run, and the refusal lifts by itself.
+
+**One decode bug, worth recording because of how it failed.** The drill's settlement check read the
+*last* word of `redemption(uint256)`'s return. That getter returns five values, one of them a
+string, so the last word is the tail of the payout address — the check printed a "settled txid" of
+`0x6338643261353264623500…`, which is the ASCII of `c8d2a52db5`, and declared a failure against a
+settlement that was correct on chain. A verifier that cries wolf about a good result is worse than
+no verifier, because the next real failure gets waved past. Fixed to the explicit head index, and
+the check now lives in `--status` so it can be re-run by anybody, at any time, long after the run
+that made the claim.
