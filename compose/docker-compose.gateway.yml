@@ -406,6 +406,24 @@ services:
         # `rpc` and `p2p` are deliberately absent, and correctly so: this list is the
         # surfaces a BROWSER opens, which is why the five API hostnames — nimbus, api,
         # pay, vault and account — are absent from it too.
+        #
+        # ── `exchange` IS HERE BECAUSE IT HAS NO PUBLIC DNS RECORD AT ALL ──────────────
+        #
+        # Every other name below also resolves on the public internet, so its alias is
+        # only what stops the probe from looping back to itself. `exchange` is the first
+        # entry for which the alias is the ONLY way the hostname resolves anywhere: the
+        # tunnel's ingress comes from the Cloudflare dashboard, not from this repository
+        # (see the note above `cloudflared`), and adding the record and the rule are
+        # owner-only actions that have not happened yet.
+        #
+        # That is not a workaround, it is the exact claim the estate makes about this
+        # surface. `site/src/content/stages.ts` grades Forge Exchange `running`, whose
+        # published meaning is "reached by a real browser through the real gateway,
+        # intercepting nothing — it has no address on the public internet". This line is
+        # what makes the first half true, and the missing DNS record is the second half.
+        # When the record is created, `exchange` joins `PUBLIC_SURFACES` and the chip
+        # moves to `open` on its own; this alias stays, for the same reason all the
+        # others do.
         aliases:
           # The bare apex first, because it has no subdomain and a prefixed list
           # silently omits it — which is exactly what happened: 18 of 19 groups
@@ -416,6 +434,7 @@ services:
           - create${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
           - developers${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
           - emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+          - exchange${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
           - explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
           - foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
           - hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
