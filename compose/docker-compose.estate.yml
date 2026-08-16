@@ -3676,6 +3676,31 @@ services:
       # credential row's own `network` column (`identity/src/tokens.ts`), so this
       # buys a valid token for THIS estate and not a passport to the other one.
       BEACON_TARGETS: identity=${CF_IDENTITY_URL:-http://identity:4000},ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000,wallet=http://wallet:4000,custody=http://custody:4000,studio=http://studio:4000
+      # ── AND THE CONSEQUENCE OF THE LINE ABOVE, DECLARED RATHER THAN GUESSED ────────────────
+      #
+      # Pointing the journeys at the identity their services trust fixed seven 401s and exposed
+      # something the combined view never decided: that identity's `event_subscriptions` are bare
+      # service names — `http://activity:4000/ingest` — which resolve inside ITS compose network
+      # and nowhere else. So a session committed for a testnet account reaches MAINNET's activity,
+      # and testnet's activity, whose only producer identity has ever been, receives nothing ever
+      # again. Measured 2026-08-16: activity's inbox on both estates carries three topics, all
+      # `identity.*`, and testnet's newest record is 10:32:18 — the minute the pool stopped
+      # signing in locally.
+      #
+      # Three journeys (`ecosystem.event-bus`, `.one-activity`, `.one-account`) assert a fact
+      # committed in identity arriving here. On an estate whose identity is elsewhere that is not
+      # a failing assertion, it is an unanswerable one, and no product change makes it green. They
+      # read this and skip — which is NOT green: `journeys.ts` emits 0.5 and the gate counts a
+      # skip exactly as a failure. micro-org#474 holds the cross-estate delivery decision, whose
+      # expensive half is `identity.user.deleted`: sixteen subscribers, none of them testnet's, so
+      # a deleted user keeps every row they wrote on the testnet data plane.
+      #
+      # `:+` and not `:-`: it expands to `true` only when `CF_IDENTITY_URL` is set and non-empty,
+      # which is exactly and only when this estate's identity is somebody else's. Mainnet gets the
+      # empty string. Derived from the SAME variable as the target above so the two cannot drift —
+      # beacon inferred this from the target shape for one revision, and that inference called an
+      # IP-addressed estate two estates.
+      BEACON_IDENTITY_FOREIGN: ${CF_IDENTITY_URL:+true}
       BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
       # ── THE POOL THE JOURNEYS SIGN IN AS, WHICH NOTHING PASSED THROUGH ──────
       #
