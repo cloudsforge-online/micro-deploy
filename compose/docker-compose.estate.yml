@@ -3634,7 +3634,48 @@ services:
       # at all. This is the in-cluster address — the browser-facing one is
       # `STUDIO_PUBLIC_URL` on those two services, and the two are different
       # things that happen to name one container.
-      BEACON_TARGETS: identity=http://identity:4000,ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000,wallet=http://wallet:4000,custody=http://custody:4000,studio=http://studio:4000
+      #
+      # ── `identity` IS THE ONE TARGET THAT IS NOT THIS ESTATE'S CONTAINER ───────────
+      #
+      # It said `http://identity:4000` like the rest until 2026-08-16, and on the
+      # testnet estate that address is `cf-testnet-identity-1` — a container every
+      # other service in this file stopped trusting when `*identity-trust` above
+      # started following `CF_IDENTITY_URL` (micro-org#459 stage 2, #472). It still
+      # answers, it still signs, and NOTHING accepts what it signs.
+      #
+      # Measured on testnet, seven journeys open and failing for two days:
+      #
+      #   ecosystem.trial-balance   expected 2xx from /service-tokens/exchange, got 401
+      #   identity.register         expected 2xx from /service-tokens/exchange, got 401
+      #   ecosystem.one-account     expected 200 from /v1/dashboard, got 401
+      #   ecosystem.one-portfolio   expected 200 from /v1/dashboard, got 401
+      #   ecosystem.one-activity    expected 200 from activity /feed, got 401
+      #   ecosystem.event-bus       expected 200 from activity /feed, got 401
+      #   ecosystem.deposit-address expected 201 from POST /v1/deposits, got 401
+      #
+      # Two different 401s with one cause. The pool signs in here and hands the token
+      # to `ledger`/`activity`/`wallet`, which verify against the JWKS at
+      # `CF_IDENTITY_URL`; and `mintServiceToken` (`beacon/src/calls.ts`) exchanges
+      # `BEACON_SERVICE_CREDENTIAL` here, and that credential row lives at the
+      # identity this estate declares, not at the one it happens to run.
+      #
+      # The seeder had the identical defect and was fixed first — `IDENTITY_BASE` in
+      # `scripts/seed/lib.mjs`, which hard-coded `https://nimbus${WEB_SUFFIX}` and
+      # 401'd a whole testnet seeding run. This line is the same fix at the compose
+      # tier: the journeys must sign in where the services they call verify.
+      #
+      # `${CF_IDENTITY_URL:-http://identity:4000}` and NOT a second literal, so this
+      # target and the `IDENTITY_URL` on `*identity-trust` cannot drift apart — two
+      # readings of one question that can disagree is the shape of the defect above.
+      # The default keeps mainnet byte-identical: unset there, where the in-compose
+      # identity IS the shared one, which is why mainnet's journeys were green
+      # throughout.
+      #
+      # The net claim makes the crossing safe rather than merely possible: a testnet
+      # service exchanging at the mainnet identity is minted `net=testnet` from the
+      # credential row's own `network` column (`identity/src/tokens.ts`), so this
+      # buys a valid token for THIS estate and not a passport to the other one.
+      BEACON_TARGETS: identity=${CF_IDENTITY_URL:-http://identity:4000},ledger=http://ledger:4000,market=http://market:4000,worlds=http://worlds:4000,activity=http://activity:4000,hub-api=http://hub-api:4000,wallet=http://wallet:4000,custody=http://custody:4000,studio=http://studio:4000
       BEACON_SERVICE_CREDENTIAL: ${BEACON_IDENTITY_CREDENTIAL:-}
       # ── THE POOL THE JOURNEYS SIGN IN AS, WHICH NOTHING PASSED THROUGH ──────
       #
