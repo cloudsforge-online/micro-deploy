@@ -448,7 +448,7 @@ http:
     # to exclude means a service answers with ANOTHER NETWORK'S STATE, which is invisible. When a
     # regex here has to be wrong, it should be wrong in the direction someone notices.
     cf-retired-web-sub:
-      rule: 'HostRegexp(`^[a-z0-9-]+-testnet\.cloudsforge\.online$`) && !HostRegexp(`^(?:account|api|exchange|nimbus|p2p|pay|rpc|studio|vault)-testnet\.cloudsforge\.online$`) && !PathPrefix(`/v1`)'
+      rule: 'HostRegexp(`^[a-z0-9-]+-testnet\.cloudsforge\.online$`) && !HostRegexp(`^(?:account|api|nimbus|p2p|pay|rpc|studio|vault)-testnet\.cloudsforge\.online$`) && !PathPrefix(`/v1`)'
       priority: 550
       entryPoints: [websecure, tunnel]
       middlewares: [cf-retired-sub-to-mainnet]
@@ -1430,6 +1430,73 @@ http:
       entryPoints: [websecure, tunnel]
       service: cf-svc-pool
 
+    # ── exchange — ONE ROUTER, AND NO SECOND ONE ──────────────────────────────
+    #
+    # REMOVED: cf-api-exchange — it never existed and it must never be added; the
+    #          reader's browser talks to Hearth, not to a CloudsForge service.
+    #
+    # That bury line is the mechanism check 3 of `scripts/surface-routes.py` gives
+    # for naming a router in prose without defining it, and this block needs it
+    # because the whole point of the block is the router that is NOT here. Without
+    # the line the check is right to fail: a name written in a comment reads like a
+    # name that exists, and the next session to grep for `cf-api-exchange` would
+    # find this paragraph and conclude a definition had been lost.
+    #
+    # THE MISSING SECOND ROUTER IS THE INTERESTING PART OF THIS BLOCK. Every
+    # surface above this one has a pair: a bundle on `/` and its service on `/v1`.
+    # This hostname has no service to pair with, because THERE IS NO
+    # `micro-exchange` AND THERE IS NOT GOING TO BE ONE. Forge Exchange is a set
+    # of contracts on Hearth (factory, router, WEMBER — `docs/ecosystem/39`
+    # phase F), and an AMM's entire state is four numbers in a pair contract.
+    # Anything standing in front of them is a cache that is wrong between blocks.
+    #
+    # SO THE BUNDLE READS `rpc.<apex>` DIRECTLY, CROSS-ORIGIN, AND THAT IS THE ONE
+    # DEPLOY FACT THIS SURFACE DEPENDS ON. It is the first page in the estate for
+    # which that is true — every other frontend resolves `apiBase()` to its own
+    # origin. `exchange.<apex>` → `rpc.<apex>` is a different origin, so the
+    # browser sends a preflight and needs this surface's origin in `cf-cors`'s
+    # `accessControlAllowOriginList` in policy.yml. That entry is WRITTEN BY HAND
+    # and CHECKED against the registry's `servesUi` flag by `surface-routes.py`
+    # check 5 — nothing renders it, and an earlier draft of this comment said it
+    # did, which would have left the origin missing with a note explaining why it
+    # could not be. The check is the reason that mistake cannot survive a commit:
+    # the `servesUi: true` this router justifies makes the missing origin a CI
+    # failure in micro-deploy, in both directions.
+    #
+    # MEASURED ON 2026-08-16, BEFORE THIS ROUTER EXISTED:
+    # `OPTIONS https://rpc.cloudsforge.online/` with `Origin: https://exchange.
+    # cloudsforge.online` answered 200, `access-control-allow-credentials: true`,
+    # and NO `access-control-allow-origin` — which a browser reads as a refusal.
+    # The identical request with a `pool.` or `foresight.` origin got one. The
+    # registry flip is what closes that, and the note in `cf-api-rpc` below records
+    # the consequence: this is the first page whose origin that list has to carry
+    # for a reason other than completeness.
+    #
+    # PROXYING THE CHAIN THROUGH THIS HOSTNAME WOULD HAVE BEEN EASIER AND WRONG.
+    # A `/rpc` prefix here would have avoided the preflight entirely. It would also
+    # have put a CloudsForge server between a reader and the contract they were
+    # invited to check — indistinguishable, from the browser, from a server that
+    # answers `getReserves()` with whatever it likes. `/contracts` re-runs the
+    # CREATE2 derivation in the reader's own browser precisely so that nothing on
+    # this hostname has to be trusted; a proxy would make that theatre. There is
+    # no `proxy_pass` in the bundle's nginx.conf either, and its CI fails on one.
+    #
+    # `exchange-testnet.<apex>` HAS NO ROUTER, deliberately, and it is now absent
+    # from the `cf-retired-web-sub` exclusion above for that reason — it redirects
+    # to mainnet like every other retired testnet frontend (micro-org#459). One
+    # deployment reads either chain: `viewsAnyNetwork: true`, and the bundle
+    # composes `rpc-testnet.<apex>` from `viewedNetwork()` when the reader presses
+    # Testnet. Today that renders "Forge Exchange is not deployed on this network",
+    # because `DEPLOYMENTS` in the bundle has one row and it is chain 7411 — which
+    # is a true sentence, and better than a hostname that answers with a swap form
+    # aimed at contracts that are not there.
+    cf-web-exchange:
+      rule: 'Host(`exchange{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-exchange
+
     # ── rpc — THE CHAIN, AND THE LAST INGRESS RULE THAT SKIPPED THIS FILE ─────
     #
     # `rpc.<apex>` went STRAIGHT FROM THE TUNNEL TO THE NODE. Every other hostname
@@ -1476,6 +1543,19 @@ http:
     # same-origin echo and a third-party dapp keeps the open header the chain intends.
     # Neither needed a new allowlist entry: nothing is SERVED at `rpc.<apex>`, so no
     # page ever has that origin.
+    #
+    # THAT WAS TRUE ABOUT `rpc.<apex>` AND IS STILL TRUE; WHAT CHANGED IS WHO CALLS
+    # IT. Until `cf-web-exchange` above, every estate origin in the `cf-cors`
+    # allowlist was there for completeness — no first-party page actually made a
+    # cross-origin request to this endpoint, so the echo branch was never taken by
+    # one. Forge Exchange's whole read path is `eth_call` from `exchange.<apex>` to
+    # here, which makes it the first surface whose entry in that list is load-bearing
+    # rather than tidy. Measured before it shipped: this endpoint answered an
+    # `exchange.` origin with no `access-control-allow-origin` at all, which a
+    # browser reads as a refusal, while `pool.` and `foresight.` origins got one.
+    # The list is rendered from `servesUi`, so flipping that flag is the whole fix —
+    # but it means a future `servesUi: false` on that row would silently break every
+    # page on this surface, and the only symptom would be in a browser console.
     #
     # THE CONDITIONAL BELOW IS ON `CF_RPC_UPSTREAM`, for the reason the whole file is
     # wrapped in one: an unset variable must produce NO ROUTER rather than one pointed
@@ -1852,6 +1932,15 @@ http:
     cf-web-pool:
       loadBalancer:
         servers: [{ url: "http://pool-web:8080" }]
+    # Forge Exchange. 8080 for the third time and the same reason, read from
+    # micro-exchange-web's Dockerfile `EXPOSE`: `nginx-unprivileged` cannot bind 80.
+    # It is NOT 5194 — that is the registry devPort, and on this row alone the
+    # devPort names a vite dev server rather than anything a container listens on,
+    # because there is no `micro-exchange` service to call. No published host port
+    # here either: the gateway needs the container name and nothing else.
+    cf-web-exchange:
+      loadBalancer:
+        servers: [{ url: "http://exchange-web:8080" }]
 
     # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
     # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are

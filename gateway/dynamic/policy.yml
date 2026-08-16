@@ -185,6 +185,28 @@ http:
           # against the browser's own `Origin` header, and `pool` is deliberately absent from it.
           # Whoever mounts the bar here must add it there too.
           - https://pool{{ env "CF_WEB_SUFFIX" }}
+          # ── the exchange, and the first entry here that is LOAD-BEARING ─────────────
+          #
+          # Every origin above is here so that `consumeAuthCallback` can POST to
+          # `nimbus.<apex>/auth/handoff/redeem` after a sign-in — one call, at the end of one
+          # flow, on pages whose own data is same-origin. `exchange.<apex>` has no sign-in at
+          # all (no bar, no account menu, no bearer token anywhere in the bundle) and still
+          # cannot function without this line, which is the opposite arrangement and worth
+          # stating where it can be read.
+          #
+          # micro-exchange-web reads Hearth over JSON-RPC at `rpc.<apex>` and speaks to nothing
+          # else — there is no `micro-exchange` service and, per the `cf-web-exchange` block in
+          # estate-web.yml, there is not going to be one. `exchange.<apex>` → `rpc.<apex>` is a
+          # DIFFERENT ORIGIN, so every read the page makes is preflighted: the pair list, the
+          # reserves, the router's quote, the contract checks. Without this entry the surface
+          # does not degrade, it renders nothing at all, and the only record of why is in the
+          # reader's browser console.
+          #
+          # MEASURED 2026-08-16, before this line existed: `OPTIONS https://rpc.cloudsforge.online/`
+          # with `Origin: https://exchange.cloudsforge.online` answered 200,
+          # `access-control-allow-credentials: true`, and NO `access-control-allow-origin`. The
+          # same request with a `pool.` or `foresight.` origin got one.
+          - https://exchange{{ env "CF_WEB_SUFFIX" }}
 {{ end }}
 {{ if env "CF_VIEW_ORIGIN_SUFFIX" }}
           # ══ THE COMBINED VIEW: THREE ORIGINS ON THE *OTHER* ENVIRONMENT ══════════════════════
@@ -284,6 +306,11 @@ http:
           - https://lantern{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://beacon{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://pool{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `exchange` views in place like the rest, and what it re-points is not an API base but
+          # an RPC endpoint: `exchange-web/src/lib/rpc.ts` composes `rpc-testnet.<apex>` from
+          # `viewedNetwork()`, so a reader who chooses Testnet on the mainnet page reads the
+          # testnet chain from a mainnet origin. Same shape as every line above, one layer down.
+          - https://exchange{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:

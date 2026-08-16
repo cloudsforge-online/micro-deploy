@@ -5196,6 +5196,47 @@ services:
       additional_contexts: *web-contexts
       args: *web-build-args
 
+  # ------------------------------------------- exchange-web (exchange.<apex>)
+  # Forge Exchange's frontend. It is the ONLY web service in this file with no
+  # backend of any kind on the estate, and that is the product rather than a gap:
+  # Forge Exchange is a factory, a router and WEMBER on Hearth (docs/ecosystem/39
+  # phase F). There is no `micro-exchange` and there is not going to be one — an
+  # AMM's entire state is four numbers in a pair contract, and a service in front
+  # of them could only be a cache that is wrong between blocks.
+  #
+  # So this bundle reads `rpc.<apex>` from the READER'S OWN BROWSER, which is
+  # cross-origin and the one deploy fact it depends on: `exchange.<apex>` must be
+  # in `cf-cors`'s allowlist in gateway/dynamic/policy.yml. That list is WRITTEN BY
+  # HAND and checked against the surface registry's `servesUi` flag by check 5 of
+  # scripts/surface-routes.py, in both directions — nothing renders it. Nothing
+  # here grants it and nothing here can.
+  #
+  # ── NO `POOL_API_PRESENCE` EQUIVALENT, AND THE REASON IS WORTH THE LINES ──
+  #
+  # pool-web needs a variable because "is micro-pool deployed on this network" is
+  # not a question its bundle can answer — a missing backend reads as an outage,
+  # which is the incident-that-was-not-happening described above. Here the bundle
+  # CAN answer it, without asking anyone: `eth_chainId` against the node it is
+  # already talking to, looked up in a frozen table keyed by chain id. Testnet
+  # renders "Forge Exchange is not deployed on this network" from the chain's own
+  # answer, and the phase-G deployment that changes that changes it for every
+  # reader at once, with no variable to remember and no image to rebuild.
+  #
+  # That is also why there is no environment block at all, no `deployment.json`
+  # and no entrypoint template in this image — its CI asserts the 404 — and no
+  # published host port: the gateway resolves it by container name and a second
+  # address for the same bundle is the one nobody tests.
+  #
+  # No profile, for the pool console's reason: `cf-web-exchange` matches the whole
+  # Host, so removing the container replaces every page including robots.txt with
+  # an unbranded Traefik 502.
+  exchange-web:
+    <<: *web-defaults
+    build:
+      context: ../../exchange-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+
 # ── named volumes ──────────────────────────────────────────────────────────────
 #
 # The first one in this file, and the reason is worth stating: everything else
