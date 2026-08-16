@@ -36,6 +36,60 @@
  * There is nothing to check first and nothing to duplicate: running this twice
  * writes the same nineteen rows twice and the count does not move.
  *
+ * ── A RETIRED ESTATE HAS NO PAGES OF ITS OWN, AND MUST NOT BE PROBED FOR ONE ─
+ *
+ * This is the defect that produced a total public outage over a healthy estate,
+ * and it is worth stating precisely because both halves of it were correct.
+ *
+ * `cf-retired-web-sub` (`gateway/dynamic/estate-web.yml`, priority 550, rendered
+ * only when `CF_WEB_RETIRED` is `true`) answers 302 to every `*-testnet`
+ * hostname whose registry row is `servesUi: true`, sparing `/v1` so the combined
+ * view's cross-estate reads keep working. That is micro-org#459 step 5 and it is
+ * right: since the combined view, testnet HAS no frontends — its pages are
+ * mainnet's pages with a network selected.
+ *
+ * The loop below chose which hostnames to probe for a 200 using `servesUi: true`.
+ * Also right, and argued at length above.
+ *
+ * SAME PREDICATE, OPPOSITE INTENT. So from the retirement deploy on 2026-08-14
+ * at 04:08 UTC, this seeder pointed 21 probes at exactly the set the gateway
+ * redirects. Measured on 2026-08-16: every one of them `expect=200 got=302`,
+ * `probe_state` 21 down and 1 up, `check_rollups` 128,405 down checks out of
+ * 134,051 on 08-15 — and `status.<apex>` reading
+ *
+ *     ■ Outage — Something has stopped answering. Read across 21 product groups.
+ *
+ * with 28 incidents opened inside the half hour the retirement went live. The
+ * one probe that stayed green was `worlds.titles`, because it is an API read and
+ * `/v1` is what the retirement spares. That is the whole fix, in one row of
+ * evidence: on a retired estate the API is what still exists, so the API is what
+ * a probe must ask.
+ *
+ * So `WEB_RETIRED` splits this file's two jobs:
+ *
+ *   * **Surface probes are upserted `enabled: false`.** Not deleted — a disabled
+ *     probe keeps its history and can be switched back on, and `listProbes(sql,
+ *     true)` is what the public projection reads (`beacon/src/server.ts`), so
+ *     disabling is exactly "stop publishing this" and nothing more. Their past
+ *     rollups stay in the daily bars, which is honest: those hostnames really did
+ *     stop serving pages on those days.
+ *   * **The retirement itself gets probed**, expecting 302 rather than 200. If it
+ *     breaks, a retired frontend starts serving its own stale bundle again — the
+ *     pre-#459 behaviour — and nothing else in the estate would notice. The
+ *     prober uses `redirect: 'manual'` (`beacon/src/probes.ts`), so a 302 is
+ *     recorded as a 302 rather than followed to the mainnet 200.
+ *
+ *     Nothing else CAN notice, and that is verified rather than assumed:
+ *     `scripts/probe-public-estate.py` is the estate's other prober, it probes
+ *     the same hostnames from outside, and it is structurally blind here twice
+ *     over — `urlopen` follows redirects, and its bar is "anything below 500 is
+ *     an answer". A retired hostname and an un-retired one both read `OK` to it,
+ *     which is correct for the question it asks ("is the public estate
+ *     answering?") and is why that question cannot cover this one. It is also
+ *     why the two days of false outage passed every check the estate has: the
+ *     one prober that followed the redirect was happy, and the one that did not
+ *     was the one publishing the page.
+ *
  * ── AND `slos` IS LEFT EMPTY, DELIBERATELY ───────────────────────────────────
  *
  * `PUT /v1/slos/:name` exists and would work. It is not called.
@@ -87,7 +141,17 @@
  * question, asked of a path rather than of a host.
  */
 
-import { ok, bad, skip, note, head, WEB_SUFFIX, SITE_HOST } from './lib.mjs'
+import {
+  ok,
+  bad,
+  skip,
+  note,
+  head,
+  WEB_SUFFIX,
+  SITE_HOST,
+  WEB_RETIRED,
+  EMBER_NETWORK,
+} from './lib.mjs'
 
 /**
  * Beacon is not in the shared SERVICES map because it is the only consumer, and
@@ -184,7 +248,188 @@ const API_READ_PROBES = [
     subdomain: 'api',
     critical: true,
   },
+  /*
+   * ── THE FIVE ADDED ON 2026-08-16, AND WHAT EACH ONE COST TO ADD ────────────
+   *
+   * The retirement (see this file's header) took every surface probe off testnet
+   * and left the estate with ONE probe that asks a service a question. That is
+   * not a status page. These five were chosen by running the bar above over
+   * every unauthenticated `GET` in the estate with no path parameter — the
+   * candidate set is mechanical, the rejections are not, and both are recorded
+   * here because the rejected ones look like perfectly good probes.
+   *
+   * MEASURED THROUGH BOTH GATEWAYS ON 2026-08-16, before being written here:
+   *
+   *   market<suffix>/v1/collections          200 / 200
+   *   foresight<suffix>/stake-assets         200 / 200
+   *   tessera<suffix>/v1/wards               200 / 200
+   *   aetherholm<suffix>/v1/chronicle/seasons 200 / 200
+   *   network-testnet<…>/v1/faucet           200 — and 404 on mainnet, below
+   *
+   * REJECTED, WITH REASONS, because each of these answers 200 on both estates
+   * and would have looked like coverage:
+   *
+   *   * `foresight/categories`, `trade/v1/capabilities`, `mint/v1/catalogue`,
+   *     `devplatform/v1/scopes` — all 200, all STATIC. Their handlers never
+   *     touch `deps.sql`; they return a constant. That is test 2, and it is the
+   *     test that matters: a static route is a liveness probe wearing a costume
+   *     and would have gone green straight through #150.
+   *   * `nda/v1/worlds` — 401. Authenticated, so it fails test 1.
+   *   * `community/v1/communities` — 404 at the gateway. Publicly unrouted, so
+   *     there is nothing to probe.
+   *   * `beacon/api/status/public` — 200 on both, and a real read. Rejected
+   *     anyway: beacon would be probing itself, so the check only runs when the
+   *     answer is already known to be yes. A probe that cannot report its own
+   *     subject's outage is not a probe.
+   *
+   * `foresight/stake-assets` is the one entry not under `/v1`, and it is the
+   * right path rather than the obvious `/markets`: `estate-web.yml` routes
+   * `/markets` to the API only for `Accept: application/json`, and a probe sends
+   * no such header — mainnet answers it with the app shell, 200, forever green.
+   * `cf-api-foresight-resources` routes `/stake-assets` to the service
+   * unconditionally, and `listStakeAssets` reads the database.
+   *
+   * AND IT IS THE ONLY ONE HERE THE RETIREMENT DOES NOT SPARE BY NAME. The
+   * retirement router's rule ends `&& !PathPrefix(`/v1`)`, which is what keeps
+   * the other four reachable on a retired estate. `/stake-assets` is not under
+   * `/v1`, so it is inside the redirect's rule and survives only because
+   * `cf-api-foresight-resources` is priority 600 against the retirement's 550 —
+   * verified by reading both, and by the 200 measured above. If that number ever
+   * moves, this probe reports Forge Foresight down for the same reason 21 of
+   * them did. It is the one entry in this list whose green depends on a
+   * priority rather than on a path.
+   */
+  {
+    key: 'market.collections',
+    productGroup: 'Forge Market',
+    path: '/v1/collections',
+    subdomain: 'market',
+    critical: true,
+  },
+  {
+    key: 'foresight.stakeassets',
+    productGroup: 'Forge Foresight',
+    path: '/stake-assets',
+    subdomain: 'foresight',
+    critical: true,
+  },
+  {
+    key: 'tessera.wards',
+    productGroup: 'Tessera',
+    path: '/v1/wards',
+    subdomain: 'tessera',
+    critical: true,
+  },
+  {
+    key: 'aetherholm.chronicle',
+    productGroup: 'Aetherholm',
+    path: '/v1/chronicle/seasons',
+    subdomain: 'aetherholm',
+    critical: true,
+  },
+  /*
+   * THE FAUCET EXISTS ON ONE NETWORK, so it is seeded on one network.
+   *
+   * `network<suffix>/v1/faucet` answers 200 on testnet and 404 on mainnet —
+   * measured, and correct: there is no mainnet faucet and there must not be.
+   * Seeding it on both would manufacture exactly the permanently-red row this
+   * file's third test exists to prevent, on the estate where it would be seen
+   * most.
+   *
+   * `networks` is declared rather than discovered. The alternative — probe the
+   * URL at seed time and skip it on a non-200 — would mean a probe that only
+   * comes into existence while its subject is healthy, which is a probe that can
+   * never report an outage. The same trap as the self-probe rejected above.
+   *
+   * It is matched against `EMBER_NETWORK`, and that is safe for a reason worth
+   * stating: `CF_EMBER_NETWORK` is not an extra label that could quietly default
+   * to the wrong answer here — it is the variable that picks `compose/<net>.env`
+   * in `lib.mjs`, which names `CF_TRAEFIK_ENV`, which is where `WEB_SUFFIX` and
+   * `WEB_RETIRED` come from. A run with it wrong is not a run that mis-seeds one
+   * faucet probe; it is a run pointed at the other estate entirely, and every
+   * URL in this file would already be mainnet's.
+   */
+  {
+    key: 'faucet.terms',
+    productGroup: 'Testnet faucet',
+    path: '/v1/faucet',
+    subdomain: 'network',
+    critical: true,
+    networks: ['testnet'],
+  },
 ]
+
+/**
+ * The retirement's own probes — seeded only on an estate whose web is retired.
+ *
+ * Two, because there are two routers and either can break independently:
+ * `cf-retired-web-sub` covers the subdomains and `cf-retired-web-apex` covers
+ * the apex, which cannot be formed by concatenation (see `urlFor`).
+ *
+ * `expectStatus: 302` is the assertion. The prober sends `redirect: 'manual'`
+ * (`beacon/src/probes.ts`), so this records the redirect rather than following
+ * it to mainnet's 200 — without that, this probe would be green whether the
+ * retirement worked or not.
+ *
+ * `critical: false`, and the distinction is real rather than tidy. A failed
+ * retirement is not a product outage: nothing goes dark, an old bookmark starts
+ * serving a stale testnet bundle again. That is worth a row on a status page and
+ * is not worth a page at three in the morning.
+ *
+ * `hub` is the subdomain probed because it is `servesUi: true` and is not in the
+ * router's service-hostname exclusion — i.e. it is squarely inside the set the
+ * retirement is supposed to cover. Probing an excluded hostname would assert
+ * nothing about the rule.
+ */
+const RETIREMENT_PROBES = [
+  { key: 'retired.sub', url: () => `https://hub${WEB_SUFFIX}/` },
+  { key: 'retired.apex', url: () => `https://${SITE_HOST}/` },
+]
+
+/** The group these land in. Named for what a reader is looking at, not for the router. */
+const RETIREMENT_GROUP = 'Retired web addresses'
+
+/** The API reads this estate is entitled to seed. See `networks` on `faucet.terms`. */
+const API_READS_HERE = API_READ_PROBES.filter(
+  (probe) => !probe.networks || probe.networks.includes(EMBER_NETWORK),
+)
+
+/**
+ * Seed the two probes that assert the retirement still redirects.
+ *
+ * Returns 0 without writing anything on an estate that is not retired, rather
+ * than being called conditionally — so the caller reports one number either way
+ * and a run on mainnet says out loud that it seeded none.
+ */
+async function seedRetirementProbes(token) {
+  if (!WEB_RETIRED) return 0
+  let written = 0
+  for (const probe of RETIREMENT_PROBES) {
+    const url = probe.url()
+    const res = await beaconApi(`/v1/probes/${encodeURIComponent(probe.key)}`, {
+      method: 'PUT',
+      token,
+      body: {
+        target: probe.key,
+        productGroup: RETIREMENT_GROUP,
+        url,
+        method: 'GET',
+        expectStatus: 302,
+        intervalMs: INTERVAL_MS,
+        deadlineMs: DEADLINE_MS,
+        critical: false,
+        enabled: true,
+      },
+    })
+    if (res.status === 200 || res.status === 201) {
+      written++
+      note(`retirement probe ${probe.key} → ${url} (expects 302)`)
+    } else {
+      bad(`probe ${probe.key} → ${res.status}: ${JSON.stringify(res.body).slice(0, 160)}`)
+    }
+  }
+  return written
+}
 
 /**
  * Seed the reads. Separate from the surface loop rather than folded into it,
@@ -194,6 +439,14 @@ const API_READ_PROBES = [
 async function seedApiReadProbes(token) {
   let written = 0
   for (const probe of API_READ_PROBES) {
+    if (!API_READS_HERE.includes(probe)) {
+      note(
+        `api read probe ${probe.key} is not seeded on ${EMBER_NETWORK}: it declares ` +
+          `${probe.networks.join(', ')} only, and probing it here would be a permanently red row`,
+      )
+    }
+  }
+  for (const probe of API_READS_HERE) {
     const url = `https://${probe.subdomain}${WEB_SUFFIX}${probe.path}`
     const res = await beaconApi(`/v1/probes/${encodeURIComponent(probe.key)}`, {
       method: 'PUT',
@@ -223,17 +476,19 @@ async function seedApiReadProbes(token) {
 export async function seedBeacon(token) {
   head('beacon — probes from the surface registry, and no SLO nobody agreed')
 
-  // The API read probes do not come from the registry, so they are seeded whether or not it can be
-  // read. That is not a convenience: the registry failing to load is exactly the kind of estate
-  // trouble during which you most want the one probe that asks a service a real question.
+  // Neither of these comes from the registry, so both are seeded whether or not it can be read.
+  // That is not a convenience: the registry failing to load is exactly the kind of estate trouble
+  // during which you most want the probes that ask a service a real question.
   const apiReads = await seedApiReadProbes(token)
+  const retirementProbes = await seedRetirementProbes(token)
 
   const surfaces = await loadSurfaces()
   if (!surfaces) {
     skip(
       'no SURFACE probes seeded: the surface registry at ui/packages/ui/src/surfaces.ts could not ' +
         'be read. A hand-written list here would be a ninth copy of a list the registry exists to ' +
-        `stop anybody keeping, so none is written. The ${apiReads} API read probe(s) were seeded.`,
+        `stop anybody keeping, so none is written. The ${apiReads} API read probe(s) and ` +
+        `${retirementProbes} retirement probe(s) were seeded.`,
     )
     return
   }
@@ -281,7 +536,17 @@ export async function seedBeacon(token) {
         // the same event, and paging on both identically is how a pager gets
         // ignored.
         critical: surface.kind === 'product',
-        enabled: true,
+        // ON A RETIRED ESTATE THIS ROW IS WRITTEN, AND SWITCHED OFF. See this file's header:
+        // `urlFor(surface)` is a hostname the gateway answers 302 to, so probing it for 200
+        // measures the retirement and reports it as the product being down — which is exactly
+        // what testnet published across 21 product groups for two days.
+        //
+        // Written rather than skipped, and disabled rather than deleted, because all three
+        // states have to survive a flag flipping back. `PUT` is an upsert (header), so an
+        // estate that stops being retired gets `enabled: true` on the next deploy with its
+        // history intact, and one that starts being retired has its rows switched off on the
+        // deploy that retires it. Nothing here needs to know which way the flag moved.
+        enabled: !WEB_RETIRED,
       },
     })
     if (res.status === 200 || res.status === 201) {
@@ -306,8 +571,28 @@ export async function seedBeacon(token) {
         'measured nothing — the defect in #14.',
     )
   }
-  if (apiReads !== API_READ_PROBES.length) {
-    bad(`${apiReads} of ${API_READ_PROBES.length} API read probe(s) upserted; the rest failed above`)
+  if (apiReads !== API_READS_HERE.length) {
+    bad(`${apiReads} of ${API_READS_HERE.length} API read probe(s) upserted; the rest failed above`)
+  }
+
+  if (WEB_RETIRED) {
+    // The count is the assertion, not the prose. `probeable.length` surface rows went off and
+    // `apiReads` API reads carry the estate — if that second number is small, this line is where
+    // somebody finds out, rather than a status page that has quietly stopped measuring anything.
+    ok(
+      `this estate's web is RETIRED (CF_WEB_RETIRED), so its ${probeable.length} surface probe(s) ` +
+        `were upserted DISABLED — their hostnames redirect, and probing a redirect for a page ` +
+        `reports the product as down. ${retirementProbes} retirement probe(s) assert the redirect ` +
+        `itself, and ${apiReads} API read probe(s) are what actually measures this estate.`,
+    )
+    if (apiReads === 0) {
+      bad(
+        'a retired estate with 0 API read probes measures NOTHING: every surface probe is ' +
+          'disabled and `worst([])` publishes a green page over an estate nobody is watching.',
+      )
+    }
+  } else if (retirementProbes > 0) {
+    bad(`${retirementProbes} retirement probe(s) were seeded on an estate that is not retired`)
   }
 
   const excluded = surfaces.filter((s) => !s.servesUi).map((s) => s.key)
