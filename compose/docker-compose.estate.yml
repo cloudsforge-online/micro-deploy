@@ -96,6 +96,14 @@ name: ${CF_PROJECT:-cloudsforge-estate}
 x-build-contexts: &build-contexts
   runtimepkgs: ../../runtime
   contractspkgs: ../../contracts
+  # `walletcore` is used by ONE image — beacon's — and is declared here with the other two anyway.
+  # A named context that a Dockerfile never COPYs from costs nothing: buildkit resolves it and
+  # never reads it. Giving beacon a build block of its own that differs from every other service's
+  # by one line is how the next person copies the wrong one, and how a second anchor drifts from
+  # this one. Beacon takes @cloudsforge/hearth-wallet-core because BJ-DEX-02 signs a real swap in
+  # a browser that has no wallet extension; its own package.json records why it may not carry a
+  # fourth copy of a signer instead.
+  walletcore: ../../hearth-wallet-core
 
 x-common-env: &common-env
   NODE_ENV: production
