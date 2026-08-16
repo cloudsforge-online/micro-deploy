@@ -2652,7 +2652,15 @@ done
 # consoles were added to LANTERN_RUM_ORIGINS with their containers; without those
 # entries this answers 400 "origin is not allowed" and Lantern is blind to exactly
 # the pages an operator opens when something is already wrong.
-for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX"; do
+#
+# `exchange.` is the third, added 2026-08-16 and TWO DAYS LATE. The surface
+# shipped on the 14th, its `src/lib/obs.ts` POSTed here from the first page load,
+# and every one of those reports was refused 400 — which is invisible, because RUM
+# is fire-and-forget. The symptom of a missing entry is a surface with NO client
+# errors in Lantern at all, and that reads as a page nobody is having trouble with.
+# It is checked here so the next surface's absence is a failing line rather than a
+# quiet gap in the data.
+for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX"; do
   sinkcode=$(gwv "lantern$WEB_SUFFIX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
     -H 'content-type: application/json' -d '{"samples":[]}')
   [ "$sinkcode" = 202 ] \
@@ -2853,6 +2861,31 @@ so_theft=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
 case "$so_theft" in
   2*) bad "A HAND-OFF CODE MINTED FOR MARKET WAS REDEEMED FROM ANOTHER ORIGIN ($so_theft) — the origin binding is not enforced" ;;
   *)  ok "the same code is refused from a foreign origin ($so_theft) — the binding holds" ;;
+esac
+
+# EVERY SURFACE THAT MOUNTS THE BAR MUST BE MINTABLE FOR, and the exchange is the
+# one that proves the rule is not automatic. It shipped on 2026-08-14 WITHOUT the
+# shared bar — no CloudsForge service stands behind it, so a session unlocked
+# nothing — and it was reported the way a reader finds it: "i tried url directly
+# its open but it has no login bar on top". The bar went on, and the bar is what
+# makes this origin's absence from IDENTITY_HANDOFF_ORIGINS expensive: a reader
+# who presses Sign in is sent to the portal, comes back with a code, and identity
+# refuses to have minted it. The page then renders SIGNED OUT after a successful
+# login, which reads as a broken account rather than as a missing allowlist entry.
+#
+# Minted only, not redeemed. The mint is where the allowlist is consulted
+# (`createHandoffCode` returns null for an unlisted origin, identity/src/handoff.ts),
+# and the redemption path is already proven end to end against Market above.
+so_xc=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
+  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
+  -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
+  -H "origin: https://exchange$WEB_SUFFIX" \
+  -d "{\"redirectOrigin\":\"https://exchange$WEB_SUFFIX\"}")
+case "$so_xc" in
+  2*) ok "identity mints a hand-off code for https://exchange$WEB_SUFFIX — the bar there can complete a sign-in" ;;
+  401) bad "the hand-off drill has no session (401) — this says NOTHING about exchange$WEB_SUFFIX" ;;
+  *)  bad "identity refused a code for exchange$WEB_SUFFIX ($so_xc) — IDENTITY_HANDOFF_ORIGINS does not name it, so pressing Sign in on the exchange returns the reader signed out" ;;
 esac
 
 # And an origin that is not a surface must not get a code at all.

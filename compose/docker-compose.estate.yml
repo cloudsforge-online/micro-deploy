@@ -969,9 +969,26 @@ services:
       # identity/src/env.ts), so a wrong entry is a dead container rather
       # than a silently-ignored line.
       #
-      # These are the sixteen surfaces this compose file serves, at the apex the
+      # These are the eighteen surfaces this compose file serves, at the apex the
       # gateway routes them on. `site` is the bare apex — it has an empty
       # `subdomain` in the registry — which is why the first entry has no label.
+      #
+      # ── `exchange.` WAS THE EIGHTEENTH, AND IT WAS ADDED THE DAY IT NEEDED ONE ─
+      #
+      # exchange-web shipped WITHOUT an account bar on purpose: no CloudsForge
+      # service stands behind it, every read is an anonymous `eth_call` and every
+      # write is signed by the reader's own wallet, so there was nothing a session
+      # could unlock. The owner reported the consequence rather than the cause —
+      # "i tried url directly its open but it has no login bar on top" — and the
+      # bar went on, because the bar is the estate's CHROME (product switcher,
+      # network switcher, home link, the reader's handle) and not an
+      # authorisation mechanism.
+      #
+      # Adding the bar WITHOUT adding this line would have been worse than
+      # leaving it off. `createHandoffCode` returns null for an origin not on
+      # this list, `POST /auth/handoff` answers 403, and the reader is bounced
+      # back to a page that shows them signed out — which reads as a broken
+      # account rather than as a surface that has none.
       #
       # THE LAST ENTRY IS THE ONE ODD ONE, AND IT IS DELIBERATE.
       # `http://localhost:5172` is micro-tessera-web's VITE DEV PORT, not a
@@ -1009,6 +1026,7 @@ services:
         https://market${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://create${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://trade${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://exchange${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
@@ -4703,8 +4721,20 @@ services:
       # check that cannot fail.
       #
       # Eighteen surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
-      # above. `site` is the bare apex — empty `subdomain` in the registry — which
-      # is why the first entry carries no label.
+      # above, minus that list's one loopback dev port. `site` is the bare apex —
+      # empty `subdomain` in the registry — which is why the first entry carries
+      # no label.
+      #
+      # ── `exchange.` WAS MISSING HERE LONGER THAN IT WAS MISSING ABOVE ─────────
+      #
+      # It shipped as a surface on 2026-08-14 and was added to this list on
+      # 2026-08-16, which means exchange-web's `src/lib/obs.ts` spent two days
+      # POSTing to `/ingest/client` and collecting 400s. Nothing broke visibly:
+      # RUM is fire-and-forget, so the only symptom was a surface with no client
+      # errors in Lantern at all — which reads as a page nobody is having trouble
+      # with rather than as a page nobody can report trouble from. An origin that
+      # ships the shared UI belongs here on the day it ships, not on the day it
+      # grows an account.
       #
       # ── THE LAST TWO, AND WHY `lantern.` ITSELF IS ON ITS OWN ALLOWLIST ───────
       #
@@ -4727,6 +4757,7 @@ services:
         https://market${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://create${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://trade${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://exchange${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
