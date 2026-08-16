@@ -322,6 +322,15 @@ export const SERVICES = {
   foresight: { base: `https://foresight${WEB_SUFFIX}`, gateway: true },
   market: { base: `https://${API_HOST}`, gateway: true },
   mint: { base: `https://${API_HOST}`, gateway: true },
+  // The title register. On the API host and not a surface of its own:
+  // `gateway/dynamic/public-api.yml` routes `/v1/titles`, `/v1/players`,
+  // `/v1/provisions` and `/v1/seasons` on `CF_API_HOST` to `http://worlds:4000`.
+  //
+  // NOT `https://worlds${WEB_SUFFIX}`, which is `worlds-web` — the browser
+  // bundle that READS this register. Addressing that host would send
+  // `POST /v1/titles` at an nginx serving static files, which answers 405 and
+  // looks like the service refusing the write.
+  worlds: { base: `https://${API_HOST}`, gateway: true },
   // Not published by the gateway; loopback host ports from the compose file.
   //
   // `studio` is the newest entry and the one whose `gateway: false` is currently
