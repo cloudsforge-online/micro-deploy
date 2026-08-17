@@ -28,6 +28,20 @@
 # later. It reads no compose file and interpolates nothing, because the thing it
 # must not trust is precisely the rendering.
 #
+# ── AND IT ASKED FOR ONE ORIGIN, WHICH IS NOT THE SAME AS ASKING ──────────────
+#
+# Until micro-org#480 the required list was `hub` and nothing else, on the
+# argument that hub is the origin every surface hands off FROM. True, and not
+# enough: `pool.cloudsforge.online` shipped without an allowlist entry, served
+# 200 throughout, and this check stayed green the whole time because the one
+# origin it asked about was present. A required list of one passes on nineteen
+# surfaces out of twenty.
+#
+# It derives the whole list from micro-ui's registry now — the same module
+# `surface-routes.py` runs — so the question is "does the running container
+# allowlist every surface the estate serves" rather than "does it allowlist the
+# one I thought to name".
+#
 #   ./scripts/check-handoff-live.sh cloudsforge-estate-identity-1 .cloudsforge.online
 #   ./scripts/check-handoff-live.sh cf-testnet-identity-1        -testnet.cloudsforge.online
 #
@@ -56,13 +70,65 @@ fi
 
 fail=0
 
-# 1. Hub, the origin every surface hands off FROM. A list without it works for nobody.
-for required in "https://hub${suffix}"; do
+# ── 1. EVERY browsable surface, derived from the registry, not just hub ───────
+#
+# This asked for `hub` alone until micro-org#480, and one required origin is a
+# check that passes on nineteen of twenty. `pool.cloudsforge.online` was live,
+# 200, `servesUi` in the registry, and absent from this list — and it made no
+# noise here, because hub was present and hub is all that was asked.
+#
+# The registry is the same one `surface-routes.py` reads, RUN rather than parsed,
+# so a row that arrives in micro-ui arrives here on the next deploy with nothing
+# to remember. `servesUi && !basePath` is the estate's predicate for "a hostname
+# a browser loads a page from": a basePath surface rides another surface's
+# origin and would be a duplicate, and a surface with no page has no `Origin`
+# header to send.
+#
+# The apex is spelled from the suffix rather than passed in, because the two are
+# one fact in every environment this estate has ever had — `.cloudsforge.online`
+# / `cloudsforge.online` and `-testnet.cloudsforge.online` /
+# `testnet.cloudsforge.online`. Stripping the leading separator yields
+# CF_SITE_HOST in both.
+site_host="${suffix#[.-]}"
+
+ui_registry="$(cd "$(dirname "$0")/.." && pwd)/../ui/packages/ui"
+required_subs=""
+if [ -d "$ui_registry" ] && command -v node >/dev/null 2>&1; then
+  required_subs=$(cd "$ui_registry" && node --import tsx -e \
+    "import {SURFACES} from './src/surfaces.ts';\
+     console.log(SURFACES.filter(s=>s.servesUi && !s.basePath).map(s=>s.subdomain).join(' '))" \
+    2>/dev/null | tail -1) || required_subs=""
+fi
+
+if [ -z "$required_subs" ]; then
+  # A DEPLOY HOST CLONES NO FRONTEND (`scripts/provision-siblings.sh`), so the
+  # registry is genuinely unreadable there. That is reported rather than passed
+  # over — the weaker check still runs and says out loud that it is the weaker
+  # one, which is this repository's rule for a check that cannot fully run.
+  echo "note: micro-ui is not checked out beside this repo, so the full surface list" >&2
+  echo "      could not be derived. Falling back to hub + the apex; run this from a" >&2
+  echo "      full checkout (or CI) to check every surface." >&2
+  required_subs="hub"
+  required_origins="https://hub${suffix} https://${site_host}"
+else
+  required_origins=""
+  for sub in $required_subs; do
+    if [ -z "$sub" ]; then
+      required_origins="$required_origins https://${site_host}"
+    else
+      required_origins="$required_origins https://${sub}${suffix}"
+    fi
+  done
+fi
+
+for required in $required_origins; do
   case ",${origins}," in
     *",${required},"*) ;;
     *)
       echo "FATAL: $container does not allowlist ${required}." >&2
-      echo "       A user signs in at one surface and is signed out at every other." >&2
+      echo "       identity answers 403 to every POST /auth/handoff for that origin, so a" >&2
+      echo "       reader signed in anywhere else is bounced back to that surface signed" >&2
+      echo "       out — which reads as a broken account rather than a missing config line." >&2
       fail=1 ;;
   esac
 done
@@ -88,4 +154,5 @@ if [ "$fail" -ne 0 ]; then
   exit 1
 fi
 
-echo "ok: $container allowlists hub${suffix} and no dev origins ($(printf '%s' "$origins" | tr ',' '\n' | grep -c .) entries)"
+echo "ok: $container allowlists $(printf '%s' "$required_origins" | wc -w | tr -d ' ') required origin(s)\
+ and no dev origins ($(printf '%s' "$origins" | tr ',' '\n' | grep -c .) entries)"

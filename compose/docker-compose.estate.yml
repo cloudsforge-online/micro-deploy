@@ -969,9 +969,31 @@ services:
       # identity/src/env.ts), so a wrong entry is a dead container rather
       # than a silently-ignored line.
       #
-      # These are the nineteen surfaces this compose file serves, at the apex the
+      # These are the twenty surfaces this compose file serves, at the apex the
       # gateway routes them on. `site` is the bare apex — it has an empty
       # `subdomain` in the registry — which is why the first entry has no label.
+      #
+      # ── `pool.` WAS THE TWENTIETH, AND IT WAS MISSING FOR AS LONG AS IT EXISTED ─
+      #
+      # Found by the origin sweep for micro-org#480, which asked identity to mint
+      # a code for every live hostname in turn: `pool.cloudsforge.online` serves
+      # 200, is `servesUi` in the registry, and was the ONLY such surface the
+      # allowlist did not name — `POST /auth/handoff` answered 403 for it while
+      # every one of its nineteen siblings answered 201.
+      #
+      # It cost nothing YET, and that is the only reason it survived this long.
+      # pool-web is the one shipped bundle with no account bar (it never imports
+      # `consumeAuthCallback`), so nothing on that surface has ever asked for a
+      # code to be refused. The line is here before the bar is, deliberately:
+      # `exchange.` and `journal.` below are the two worked examples of this list
+      # being a step BEHIND a surface, and in both the symptom was a reader
+      # bounced to a page showing them signed out — which reads as a broken
+      # account rather than as a surface that has none. An origin that ships the
+      # shared UI belongs here on the day it ships, not on the day it grows a bar.
+      #
+      # It is also why `scripts/surface-routes.py` now derives this list from the
+      # registry instead of trusting it. Nineteen of twenty correct is exactly the
+      # shape of drift no human reading finds, and this file had two such lists.
       #
       # ── `journal.` IS THE NINETEENTH, AND IT LANDED WITH ITS CONTAINER ────────
       #
@@ -1048,6 +1070,7 @@ services:
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://journal${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
@@ -4731,10 +4754,27 @@ services:
       # cannot complete, and an allowlist entry that can never match is another
       # check that cannot fail.
       #
-      # Nineteen surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
+      # Twenty surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
       # above, minus that list's one loopback dev port. `site` is the bare apex —
       # empty `subdomain` in the registry — which is why the first entry carries
       # no label.
+      #
+      # ── `pool.` WAS MISSING HERE TOO, AND HERE IT WAS COSTING SOMETHING ───────
+      #
+      # The micro-org#480 sweep found `pool.` absent from both lists. Above it was
+      # inert — pool-web has no account bar, so nothing had asked. Here it was
+      # not: pool-web DOES call `initObs()` and DOES post to `/ingest/client`,
+      # so every client error, every unhandled rejection and every web-vital that
+      # surface has ever produced was answered 400 and dropped. Measured on the
+      # live estate before the fix: `POST https://lantern.<apex>/ingest/client`
+      # with `Origin: https://pool.<apex>` → 400, the same call with `hub.` or
+      # `journal.` → 202.
+      #
+      # This is `exchange.` again, exactly — an origin shipping the shared UI and
+      # reporting nothing, which reads as a page nobody is having trouble with
+      # rather than as a page nobody can report trouble FROM. Twice is a pattern,
+      # so `scripts/surface-routes.py` now derives both lists from the registry
+      # and fails the build on the next one.
       #
       # ── `exchange.` WAS MISSING HERE LONGER THAN IT WAS MISSING ABOVE ─────────
       #
@@ -4780,6 +4820,7 @@ services:
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://journal${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate
