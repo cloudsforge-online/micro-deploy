@@ -183,6 +183,18 @@ NOT_CHECKED = {
         "why": "`/v1` covers the API; the two probes are published so miners can tell a "
                "dead pool from a dead network before pointing hashrate at it",
     },
+    "agora": {
+        "terms": ["PathPrefix(/v1)", "PathPrefix(/livez)", "PathPrefix(/readyz)"],
+        "why": "`/v1` covers the API — micro-agora defines a hundred and some routes and "
+               "every one of them is under `/v1`, so the square's next resource is routed "
+               "the day it is written. The two probes are published for the same reason "
+               "pool's are: this hostname is the one an operator is asked about when "
+               "somebody says the square is down, and a probe that can only be read from "
+               "inside the docker network answers nobody. `/metrics` is deliberately NOT "
+               "among them — micro-agora's scrape carries per-route counts for whispers "
+               "and reports, which is a map of who is talking to whom and who has been "
+               "complained about; Prometheus takes it in-network",
+    },
     "rpc": {
         "terms": [
             "Path(/mining/template)", "Path(/mining/submit)", "Path(/events)",

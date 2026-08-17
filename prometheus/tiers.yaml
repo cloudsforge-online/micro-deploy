@@ -94,6 +94,7 @@ billing: "2"
 # Not in §8 — every one of these postdates it.
 admin-api: "2"     # Operator BFF. Two-eyes approvals gate money; the surface itself is not in the money path.
 analytics: "2"     # Pseudonymised product analytics (AD-21). Loopback only, no gateway route.
+agora: "2"         # The public square. Posts, circles and whispers — product, and it custodies no value; the one thing it holds that nothing else does is a private message, and that is a confidentiality property, not an availability one.
 emberkin: "2"      # Game title.
 foresight: "2"     # Parimutuel markets — "never custodies stake" (34-service-catalogue.md), so not Tier 1.
 aetherholm: "2"    # Game title.

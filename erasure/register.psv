@@ -210,3 +210,32 @@ community|community|http://community:4000/v1/events|pseudonymise|-|insert into c
 # acknowledgement is what proves the seam: until this row existed, `eraseSubject`
 # was code no event could reach.
 analytics|analytics|http://analytics:4000/ingest|destroy the per-subject salt|-|-|ACK-ONLY
+#
+# ── REGISTERED IN THE RELEASE THAT FIRST SHIPPED IT ──────────────────────────
+#
+# Every row above was added after the fact, to a service already running. This
+# one is here on the day the service first deploys, which is the only way this
+# file stops being a backlog.
+#
+# agora — the public square. `delete from voices` is the whole erasure and it
+# cascades to posts, replies, sparks, echoes, follows, circle membership,
+# whisper threads and notifications, because on a social service the thing a
+# person asked to have forgotten IS what they wrote. There is no Art. 17(3)
+# retention argument to make about a post: it is not a financial record, not a
+# chain fact and not an audit trail.
+#
+# Three tables the cascade does not reach are REDACTED instead, following
+# `mint/src/erasure.ts`. `outbox.actor` and `outbox.payload->>'subject'` name
+# the person on every envelope this service has ever emitted, and nothing
+# prunes an outbox — a relay marks a row published and leaves it — so without
+# the redaction an erased account survives for ever as a dated, ordered list of
+# everything they did here. The row itself stays: it is the durable record that
+# the event happened, and an unpublished one is a delivery other services are
+# still owed. `moderation_actions.operator` and `reports.resolved_by` are the
+# same argument pointed at a moderator: the action keeps its effect and loses
+# its author.
+#
+# The seed plants one of each — a voice for the cascade, an outbox envelope and
+# a moderation action for the redaction — because a drill that only ever seeds
+# the easy table proves the easy table.
+agora|agora|http://agora:4000/v1/events|mixed|-|insert into voices (subject, handle, display_name) values ('user:{{uid}}', concat('drill_', substr(md5('{{uid}}'), 1, 12)), 'Drill') on conflict do nothing; insert into outbox (topic, key, producer, actor, payload) values ('agora.post.created', concat('drill-', substr(md5('{{uid}}'), 1, 16)), 'agora', 'user:{{uid}}', jsonb_build_object('subject', 'user:{{uid}}', 'postId', '00000000-0000-4000-8000-0000000d5111')); insert into moderation_actions (operator, action, subject_kind, subject_id, reason) values ('user:{{uid}}', 'voice_suspended', 'voice', '00000000-0000-4000-8000-0000000d5111'::uuid, 'drill')|SCAN

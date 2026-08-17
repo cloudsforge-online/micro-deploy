@@ -2490,6 +2490,22 @@ fi
 # `404 application/json` from their own service. That is a failure a bundle-only
 # check on the other sixteen could never have seen, because on those sixteen no
 # service ever owned the hostname.
+#
+# ── THE FOUR ADDED 2026-08-18, THREE OF THEM LATE ────────────────────────────
+#
+# `pool`, `exchange` and `journal` shipped on 2026-08-12, -14 and -16 and NONE of
+# them was ever added here. Each was a surface the estate served, listed in the
+# registry, reachable from the product menu, and unasserted by the script whose
+# entire job is "every surface on its registry hostname" — so for six days the
+# honest reading of a green run was "seventeen of twenty surfaces are up", and
+# nothing said so. The gap is not hypothetical: `cf-web-journal` and
+# `cf-web-exchange` are single routers with no API pair, so a typo'd upstream
+# would have served a 502 to every reader and passed this file.
+#
+# `agora` is the fourth and it is added WITH its container, same as its
+# LANTERN_RUM_ORIGINS entry. The rule that follows from the other three is
+# simple enough to state: a surface joins this list in the release that first
+# serves it, not in the release that first notices it is missing.
 for rec in \
   "hub hub-web" \
   ". site" \
@@ -2507,7 +2523,11 @@ for rec in \
   "aetherholm aetherholm-web" \
   "tessera tessera-web" \
   "lantern lantern-web" \
-  "beacon beacon-web"; do
+  "beacon beacon-web" \
+  "pool pool-web" \
+  "exchange exchange-web" \
+  "journal journal-web" \
+  "agora agora-web"; do
   set -- $rec
   sub=$1; repo=$2
   # `site` has an EMPTY subdomain in the registry, so it is the one surface whose
@@ -2551,7 +2571,9 @@ for rec in \
   "developers /v1/scopes devplatform" \
   "tessera /v1/wards tessera" \
   "lantern /v1/issues lantern" \
-  "beacon /v1/gate beacon"; do
+  "beacon /v1/gate beacon" \
+  "pool /v1/pool pool" \
+  "agora /v1/timeline/latest agora"; do
   set -- $rec
   sub=$1; path=$2; svc=$3
   apic=$(gw "$sub$WEB_SUFFIX" "$path")
@@ -2661,8 +2683,8 @@ done
 # It is checked here so the next surface's absence is a failing line rather than a
 # quiet gap in the data. `journal.` is the fourth, and it was added WITH its
 # container rather than two days after it — which is the whole return on writing
-# the previous sentence down.
-for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX" "https://journal$WEB_SUFFIX"; do
+# the previous sentence down. `agora.` is the fifth, added the same way.
+for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX" "https://journal$WEB_SUFFIX" "https://agora$WEB_SUFFIX"; do
   sinkcode=$(gwv "lantern$WEB_SUFFIX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
     -H 'content-type: application/json' -d '{"samples":[]}')
   [ "$sinkcode" = 202 ] \
@@ -2878,17 +2900,26 @@ esac
 # Minted only, not redeemed. The mint is where the allowlist is consulted
 # (`createHandoffCode` returns null for an unlisted origin, identity/src/handoff.ts),
 # and the redemption path is already proven end to end against Market above.
-so_xc=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
-  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
-  "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
-  -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
-  -H "origin: https://exchange$WEB_SUFFIX" \
-  -d "{\"redirectOrigin\":\"https://exchange$WEB_SUFFIX\"}")
-case "$so_xc" in
-  2*) ok "identity mints a hand-off code for https://exchange$WEB_SUFFIX — the bar there can complete a sign-in" ;;
-  401) bad "the hand-off drill has no session (401) — this says NOTHING about exchange$WEB_SUFFIX" ;;
-  *)  bad "identity refused a code for exchange$WEB_SUFFIX ($so_xc) — IDENTITY_HANDOFF_ORIGINS does not name it, so pressing Sign in on the exchange returns the reader signed out" ;;
-esac
+#
+# `agora` is here for a sharper version of the same reason. On the exchange a
+# signed-out reader still gets a usable page — prices, pairs, a wallet-connect
+# button. On the square a signed-out reader gets a timeline and NOTHING ELSE:
+# posting, replying, following and every whisper are behind the session. A
+# missing allowlist entry there is not a degraded surface, it is a read-only one,
+# and the reader has no way to tell that from "this product is read-only".
+for so_org in exchange journal agora; do
+  so_xc=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
+    --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+    "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
+    -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
+    -H "origin: https://$so_org$WEB_SUFFIX" \
+    -d "{\"redirectOrigin\":\"https://$so_org$WEB_SUFFIX\"}")
+  case "$so_xc" in
+    2*) ok "identity mints a hand-off code for https://$so_org$WEB_SUFFIX — the bar there can complete a sign-in" ;;
+    401) bad "the hand-off drill has no session (401) — this says NOTHING about $so_org$WEB_SUFFIX" ;;
+    *)  bad "identity refused a code for $so_org$WEB_SUFFIX ($so_xc) — IDENTITY_HANDOFF_ORIGINS does not name it, so pressing Sign in there returns the reader signed out" ;;
+  esac
+done
 
 # And an origin that is not a surface must not get a code at all.
 so_bad=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \

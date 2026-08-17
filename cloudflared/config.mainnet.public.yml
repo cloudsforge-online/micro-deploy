@@ -91,6 +91,8 @@ ingress:
     service: http://127.0.0.1:9081
   - hostname: aetherholm.cloudsforge.online
     service: http://127.0.0.1:9081
+  - hostname: agora.cloudsforge.online
+    service: http://127.0.0.1:9081
   - hostname: api.cloudsforge.online
     service: http://127.0.0.1:9081
   - hostname: create.cloudsforge.online

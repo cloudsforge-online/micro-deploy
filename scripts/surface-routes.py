@@ -1119,6 +1119,13 @@ VIEW_WITNESS_REPOS = {
     # reads. The row exists for what the Testnet button does WITHOUT it: throw a reader out
     # of the article they were reading and onto Forge Network.
     "journal": "journal-web",
+    # The viewer for which the switch changes the MOST. Everywhere else the two networks hold the
+    # same kind of thing at different stakes; agora holds two separate squares — different posts,
+    # different handles, and nobody's reply on one visible on the other. `agora-web/src/lib/
+    # viewed.ts` is what re-points the timeline, and `<Outlet key={viewed}>` in that shell is what
+    # stops a reply from the other square being left on screen under a heading that now names this
+    # one.
+    "agora": "agora-web",
     "lantern": "lantern-web",
     "beacon": "beacon-web",
     "emberkin": "emberkin-web",

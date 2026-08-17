@@ -1539,6 +1539,50 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-journal
 
+    # ── agora — A BUNDLE AND ITS SERVICE ON ONE HOSTNAME, SPLIT BY PATH ───────
+    #
+    # The ordinary pair, and the arrangement `explorer.` and `pool.` above
+    # already have: the bundle matches the Host at 500, the service matches Host
+    # plus `/v1` at 600, and micro-agora-web therefore issues RELATIVE requests
+    # and never learns its own hostname. That is not a stylistic preference on
+    # this surface. `api.<apex>` carries `cf-api-headers` and deliberately NOT
+    # the app CORS allowlist — it is called by servers and by the SDK, not by a
+    # first-party page — so a bundle addressing the API host cross-origin would
+    # be refused at the preflight on every request, and nothing in this file
+    # could grant it without making the public API a browser origin.
+    #
+    # THE TESTNET HALF IS NOT A SECOND ROUTER AND MUST NOT BECOME ONE.
+    # `agora-testnet.<apex>` is caught by `cf-retired-web-sub` at priority 550
+    # and 302s to mainnet like every other retired web hostname — but `/v1` on
+    # that name is NOT retired, because `cf-api-agora` below is priority 600 and
+    # outranks the redirect. That asymmetry is what makes reading the other
+    # square from this page work at all: the reader stays on the mainnet bundle
+    # and the FETCHES go to the testnet service (`src/lib/viewed.ts`).
+    #
+    # WHAT A READER OF THE OTHER SQUARE SENDS, AND WHY IT NEEDS policy.yml.
+    # Those cross-environment fetches carry a bearer and a cookie-less
+    # credential, so `agora.<apex>` must appear in the `CF_VIEW_ORIGIN_SUFFIX`
+    # half of `cf-cors` — the grant this surface's `viewsAnyNetwork: true`
+    # registry row earns and that check 10 of `scripts/surface-routes.py`
+    # verifies against `src/lib/viewed.ts` existing. Nothing here grants it.
+    cf-web-agora:
+      rule: 'Host(`agora{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-agora
+    # `/livez` and `/readyz` alongside `/v1` for `cf-api-pool`'s reason: they are
+    # what an external prober asks, and a prober that can only reach the bundle's
+    # nginx healthz proves the page is served and nothing about the square being
+    # open. `/metrics` is deliberately NOT here — it is scraped in-network by
+    # Prometheus over the compose network, and publishing it would put the
+    # whisper counter and every route's latency on the open internet.
+    cf-api-agora:
+      rule: 'Host(`agora{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      service: cf-svc-agora
+
     # ── rpc — THE CHAIN, AND THE LAST INGRESS RULE THAT SKIPPED THIS FILE ─────
     #
     # `rpc.<apex>` went STRAIGHT FROM THE TUNNEL TO THE NODE. Every other hostname
@@ -1991,6 +2035,15 @@ http:
     cf-web-journal:
       loadBalancer:
         servers: [{ url: "http://journal-web:8080" }]
+    # Forge Agora's bundle. 8080 for the fifth time and the same
+    # `nginx-unprivileged` reason, read from micro-agora-web's Dockerfile
+    # `EXPOSE`. Not 5197 — that is vite's port in a development stack — and not
+    # 4150 either, which is the registry devPort and belongs to micro-agora, the
+    # service below. This surface is the first in a while where the devPort and
+    # the frontend are different processes, so the two are spelled out apart.
+    cf-web-agora:
+      loadBalancer:
+        servers: [{ url: "http://agora-web:8080" }]
 
     # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
     # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are
@@ -2083,6 +2136,21 @@ http:
     cf-svc-pool:
       loadBalancer:
         servers: [{ url: "http://pool:4000" }]
+
+    # micro-agora. 4000 through `*common-env`'s `PORT: "4000"`, not the 4150 the
+    # registry carries — that is the port the service binds by itself, and the
+    # compose file normalises the CONTAINER port on top of it. Writing 4150 here
+    # would be a connection refused that looks exactly like a container which has
+    # not started.
+    #
+    # NO PROFILE on this one, unlike pool: the square is either open or it is
+    # not, and a bundle that renders a timeline against a 502 has nothing honest
+    # to put on the page — there is no equivalent of the pool console's "no
+    # endpoint is published", because "there are no posts" and "the service is
+    # down" are the same screen.
+    cf-svc-agora:
+      loadBalancer:
+        servers: [{ url: "http://agora:4000" }]
 
     # ── the backends that arrived tonight ────────────────────────────────────
     #

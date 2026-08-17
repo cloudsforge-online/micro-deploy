@@ -146,3 +146,18 @@ CREATE DATABASE foresight;
 -- the estates already running, it was created by hand once, deliberately, and
 -- that is recorded rather than assumed.
 CREATE DATABASE pool;
+
+
+-- The public square. Voices, posts, circles, whispers, reports and the
+-- moderation record, all keyed to an identity account that already exists —
+-- micro-agora issues nothing and stores no password.
+--
+-- Whispers are the reason this is its own database rather than a schema inside
+-- `community`: a private message between two people is the one thing here that
+-- no other service may ever join against, and rule 1 makes that structural
+-- instead of a convention somebody remembers.
+--
+-- Same note as `pool` above: this file only runs on an EMPTY data directory, so
+-- on the estates already running this database was created by hand once,
+-- deliberately, and that is recorded rather than assumed.
+CREATE DATABASE agora;

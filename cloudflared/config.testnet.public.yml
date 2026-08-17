@@ -89,6 +89,15 @@ ingress:
 
   - hostname: aetherholm-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
+  # The web half of this hostname is retired — `cf-retired-web-sub` answers it
+  # with a 302 to `agora.cloudsforge.online` at priority 550. It is here anyway,
+  # and it has to be, because the API half is NOT retired: `cf-api-agora` matches
+  # `/v1` at priority 600 and outranks the redirect. That is the only way the
+  # mainnet bundle reads a testnet timeline while the combined view is switched
+  # over, and a missing ingress entry would present as an unreachable network
+  # rather than as a hostname nobody published.
+  - hostname: agora-testnet.cloudsforge.online
+    service: http://127.0.0.1:9181
   - hostname: api-testnet.cloudsforge.online
     service: http://127.0.0.1:9181
   - hostname: create-testnet.cloudsforge.online

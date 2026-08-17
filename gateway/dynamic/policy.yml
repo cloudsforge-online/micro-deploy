@@ -218,6 +218,16 @@ http:
           # reader who signs in from an article is returned to a page showing them signed
           # out, which reads as a broken account rather than as a surface with none.
           - https://journal{{ env "CF_WEB_SUFFIX" }}
+          # ── agora, which needs this for the one request it makes off its own origin ──
+          #
+          # Every read micro-agora-web performs is RELATIVE — the bundle and the service share
+          # `agora.<apex>` and `cf-api-agora` splits them by path — so on this list the square's
+          # own traffic is not what is being granted. The account bar is. It calls
+          # `nimbus.<apex>/auth/handoff/redeem` at the end of a sign-in exactly like every
+          # origin above, and without this line a reader who signs in from a post is returned
+          # to a page showing them signed out. On a surface whose whole premise is "the account
+          # you already have", that reads as the premise being false.
+          - https://agora{{ env "CF_WEB_SUFFIX" }}
 {{ end }}
 {{ if env "CF_VIEW_ORIGIN_SUFFIX" }}
           # ══ THE COMBINED VIEW: THREE ORIGINS ON THE *OTHER* ENVIRONMENT ══════════════════════
@@ -330,6 +340,15 @@ http:
           # the defect the owner reported about the other surfaces. With it the chrome
           # switches and the reader keeps their place.
           - https://journal{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `agora` views in place, and here the switch re-points MORE than anywhere else on this
+          # list. Everywhere else the two networks hold the same KIND of thing at different
+          # stakes — a testnet balance is a real balance of a coin worth nothing. Agora holds
+          # two separate squares: different posts, different handles, and nobody's reply on one
+          # visible on the other. So a reader who chooses Testnet on `agora.<apex>` sends every
+          # timeline read, and their bearer, to `agora-testnet.<apex>/v1/…` from a mainnet
+          # origin. Without this line that preflight is refused and the page renders an empty
+          # square, which is indistinguishable from a square nobody has posted in.
+          - https://agora{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:

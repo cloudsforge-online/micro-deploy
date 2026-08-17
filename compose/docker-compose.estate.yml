@@ -1073,6 +1073,7 @@ services:
         https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://agora${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
 
       # ── THE ACCOUNT LINK, WITHOUT WHICH A VERIFICATION MAIL CARRIES NOTHING ───
@@ -4822,7 +4823,8 @@ services:
         https://journal${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://agora${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate
     ports:
       # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.
@@ -5439,6 +5441,88 @@ services:
     <<: *web-defaults
     build:
       context: ../../journal-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+
+  # ------------------------------------------------------------------- agora
+  # Forge Agora — the public square. A service and a frontend, kept together
+  # here rather than filed with the other services above because the pair is one
+  # surface and reading them apart is how `AGORA_PUBLIC_URL` gets set to the
+  # wrong hostname.
+  agora-migrate:
+    <<: *migrate-defaults
+    build:
+      context: ../../agora
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      AGORA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/agora
+      # No POLICY_URL and no credential on the migrator: it opens the database,
+      # takes an advisory lock, applies migrations and exits. A migrator that
+      # could reach the moderation gate is a migrator that can be blocked by it.
+      AGORA_IDENTITY_CREDENTIAL: ${AGORA_IDENTITY_CREDENTIAL:-}
+      INSTANCE_ID: agora-migrate
+    env_file: *outbox-secrets
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  agora:
+    <<: *service-defaults
+    build:
+      context: ../../agora
+      additional_contexts: *build-contexts
+    environment:
+      <<: [*common-env, *identity-trust]
+      AGORA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/agora
+      # The moderation gate, and it is SOFT by design: when policy is unreachable
+      # the post is published and stamped `moderation_degraded`, a state the
+      # report queue filters on. Failing closed would turn one upstream's bad
+      # afternoon into a square nobody can speak in; not flagging at all would be
+      # a silence that reads as approval.
+      POLICY_URL: http://policy:4000
+      AGORA_IDENTITY_CREDENTIAL: ${AGORA_IDENTITY_CREDENTIAL:-}
+      # Where a BROWSER reaches studio — never where this service reaches it,
+      # because this service never calls studio at all. It composes the
+      # `bytesUrl` on an avatar or an attachment, so `http://studio:4000` here
+      # would be a broken image in every browser on earth.
+      STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+      # Where a BROWSER reaches agora-web, and its one consumer is the `url` on
+      # `agora.notification.mail_requested`. micro-notify renders links against
+      # `NOTIFY_PUBLIC_URL`, which is the hub, and the hub has no route into the
+      # square — so without this line every mail about a reply lands a reader on
+      # a notification centre that cannot show them the reply. Derived from
+      # `CF_WEB_SUFFIX` like every other public URL in this file: each estate
+      # then advertises its own hostname and neither can be handed the other's.
+      AGORA_PUBLIC_URL: https://agora${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+      INSTANCE_ID: agora-estate
+    env_file: *outbox-secrets
+    ports:
+      # 4150 — `deployableRepos()` index 50, immediately after journal-web's
+      # 4149. Derived, not chosen; `make check-web` re-derives it from micro-org.
+      - "127.0.0.1:${CF_PORT_BASE:-4}150:4000"
+    depends_on:
+      agora-migrate:
+        condition: service_completed_successfully
+      policy:
+        condition: service_healthy
+    healthcheck: *healthcheck
+
+  # ------------------------------------------------ agora-web (agora.<apex>)
+  # Forge Agora's front. No environment block and no published host port, for
+  # exchange-web's reasons: it resolves every API base from the hostname it was
+  # served under (`apiBase()` is a FUNCTION, so a network switch re-points the
+  # next fetch), and a second address for the same bundle is the one nobody
+  # tests. A baked origin here would be worse than a broken page — it would be a
+  # WORKING page publishing testnet posts to mainnet.
+  #
+  # No profile, for the pool console's reason: `cf-web-agora` matches the whole
+  # Host, so removing the container replaces every page with an unbranded
+  # Traefik 502 rather than with nothing.
+  agora-web:
+    <<: *web-defaults
+    build:
+      context: ../../agora-web
       additional_contexts: *web-contexts
       args: *web-build-args
 
