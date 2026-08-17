@@ -1497,6 +1497,48 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-exchange
 
+    # ── journal — THE ONE ROUTER WHOSE JOB INCLUDES NOT REWRITING ─────────────
+    #
+    # Ordinary in every visible way and load-bearing in one invisible one. The
+    # bundle bakes NO hostname: every canonical, `og:url`, RSS channel link and
+    # JSON-LD `@id` is written to disk as the literal `__CF_ORIGIN__` and
+    # substituted per request by nginx `sub_filter` with `https://$host`
+    # (`docs/ecosystem/40` §4.1). So the origin the archive claims as its own is
+    # whatever Host reaches the container. `cf-web-headers` does not touch Host
+    # and Traefik forwards it unchanged, which is what makes that work — and a
+    # future middleware here that rewrote it would put the WRONG canonical on
+    # every page of the archive with nothing user-visible to show for it. Only a
+    # crawler would ever see the damage, months later, as an archive that says
+    # its articles live somewhere else.
+    #
+    # The SCHEME half is a literal `https` rather than nginx's `$scheme`, and
+    # this router is why. TLS ends at Cloudflare; cloudflared speaks plain HTTP
+    # to the gateway and this entryPoint speaks plain HTTP to the container, so
+    # `$scheme` is `http` for every reader who arrived over https. Nor would
+    # `X-Forwarded-Proto` rescue it: this gateway sets no `forwardedHeaders`
+    # trusted list, so Traefik overwrites that header with its own entrypoint's
+    # scheme. A canonical naming `http://…` names a URL that 301s, and a crawler
+    # treats a 301 target as a different address and drops the one it was told.
+    #
+    # `journal-testnet.<apex>` HAS NO ROUTER, and unlike exchange's that is not
+    # even a decision about this surface: `cf-retired-web-sub` above catches
+    # every `*-testnet` web hostname at priority 550 and 302s it to mainnet.
+    # There is nothing for a second archive to serve anyway — an article is
+    # byte-identical on both networks, so a testnet copy would be the same page
+    # at a second address, which is the duplicate-content case a search engine
+    # resolves by suppressing one of them and not telling anyone which. The
+    # bundle's own nginx.conf still serves `Disallow: /` and 404s the feed and
+    # the sitemap on any non-mainnet Host, and its CI proves it. That is the
+    # container's invariant rather than dead code: it is what makes a
+    # `localtest.me` build, a laptop and any future second hostname right by
+    # construction rather than by remembering.
+    cf-web-journal:
+      rule: 'Host(`journal{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-journal
+
     # ── rpc — THE CHAIN, AND THE LAST INGRESS RULE THAT SKIPPED THIS FILE ─────
     #
     # `rpc.<apex>` went STRAIGHT FROM THE TUNNEL TO THE NODE. Every other hostname
@@ -1941,6 +1983,14 @@ http:
     cf-web-exchange:
       loadBalancer:
         servers: [{ url: "http://exchange-web:8080" }]
+    # Forge Journal. 8080 for the fourth time, same `nginx-unprivileged` reason,
+    # read from micro-journal-web's Dockerfile `EXPOSE`. Not 5196 — that is the
+    # registry devPort, and like exchange it names a vite dev server rather than
+    # a listener, because there is no `micro-journal` and there is not going to
+    # be one: this bundle's whole backend is `src/content/`, compiled to files.
+    cf-web-journal:
+      loadBalancer:
+        servers: [{ url: "http://journal-web:8080" }]
 
     # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
     # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are
