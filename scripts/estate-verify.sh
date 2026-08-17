@@ -2659,8 +2659,10 @@ done
 # is fire-and-forget. The symptom of a missing entry is a surface with NO client
 # errors in Lantern at all, and that reads as a page nobody is having trouble with.
 # It is checked here so the next surface's absence is a failing line rather than a
-# quiet gap in the data.
-for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX"; do
+# quiet gap in the data. `journal.` is the fourth, and it was added WITH its
+# container rather than two days after it — which is the whole return on writing
+# the previous sentence down.
+for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX" "https://journal$WEB_SUFFIX"; do
   sinkcode=$(gwv "lantern$WEB_SUFFIX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
     -H 'content-type: application/json' -d '{"samples":[]}')
   [ "$sinkcode" = 202 ] \

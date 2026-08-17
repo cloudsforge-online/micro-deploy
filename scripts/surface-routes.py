@@ -1107,6 +1107,11 @@ VIEW_WITNESS_REPOS = {
     # `exchange-web/src/lib/rpc.ts` composes `rpc-testnet.<apex>` from `viewedNetwork()`. Same
     # module, same field, one layer down; this table only has to name the checkout that holds it.
     "exchange": "exchange-web",
+    # The only viewer whose CONTENT is identical on both networks — an article is the same
+    # words either way — so `viewed.ts` here re-points nothing but the account bar's own
+    # reads. The row exists for what the Testnet button does WITHOUT it: throw a reader out
+    # of the article they were reading and onto Forge Network.
+    "journal": "journal-web",
     "lantern": "lantern-web",
     "beacon": "beacon-web",
     "emberkin": "emberkin-web",

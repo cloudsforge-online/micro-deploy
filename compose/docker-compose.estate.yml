@@ -969,9 +969,19 @@ services:
       # identity/src/env.ts), so a wrong entry is a dead container rather
       # than a silently-ignored line.
       #
-      # These are the eighteen surfaces this compose file serves, at the apex the
+      # These are the nineteen surfaces this compose file serves, at the apex the
       # gateway routes them on. `site` is the bare apex — it has an empty
       # `subdomain` in the registry — which is why the first entry has no label.
+      #
+      # ── `journal.` IS THE NINETEENTH, AND IT LANDED WITH ITS CONTAINER ────────
+      #
+      # Forge Journal is an archive: nothing on it is gated, no page fetches
+      # anything, and a reader who never signs in loses no function whatsoever.
+      # The line is here anyway, on the day the container shipped, because the
+      # account bar is the estate's CHROME rather than a gate — and because
+      # `exchange.` is the worked example of what leaving it out costs. A bar
+      # that renders a sign-in link and then 403s the hand-off does not read as
+      # "this surface has no account"; it reads as a broken account.
       #
       # ── `exchange.` WAS THE EIGHTEENTH, AND IT WAS ADDED THE DAY IT NEEDED ONE ─
       #
@@ -1037,6 +1047,7 @@ services:
         https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://journal${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
@@ -4720,7 +4731,7 @@ services:
       # cannot complete, and an allowlist entry that can never match is another
       # check that cannot fail.
       #
-      # Eighteen surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
+      # Nineteen surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
       # above, minus that list's one loopback dev port. `site` is the bare apex —
       # empty `subdomain` in the registry — which is why the first entry carries
       # no label.
@@ -4768,6 +4779,7 @@ services:
         https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://journal${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate
@@ -5339,6 +5351,53 @@ services:
     <<: *web-defaults
     build:
       context: ../../exchange-web
+      additional_contexts: *web-contexts
+      args: *web-build-args
+
+  # -------------------------------------------- journal-web (journal.<apex>)
+  # Forge Journal's archive. The SECOND web service here with no backend, and
+  # for a different reason from exchange-web's: that one has no service because
+  # an AMM's state is four numbers in a contract, this one has no service
+  # because there is no state at all. Every page, the feed and the sitemap are
+  # FILES the build wrote from `src/content/`, and `docs/ecosystem/40` §4 is why
+  # they are files rather than a bundle — a link-preview fetcher runs no scripts,
+  # so a client-rendered archive hands Slack, LinkedIn and X one identical
+  # document for every article anybody ever shares.
+  #
+  # ── NOTHING IS CONFIGURED HERE, AND THE IMAGE REFUSES TO BE ───────────────
+  #
+  # No environment block, no `deployment.json`, no entrypoint template. Its CI
+  # asserts the 404 on that file, which is the check that keeps this true: the
+  # moment an article's text depends on a variable, two networks stop serving
+  # the same words and the sitemap starts describing a build rather than a
+  # corpus.
+  #
+  # THE HOSTNAME IS NOT BAKED IN EITHER, and that is the one deploy fact worth
+  # knowing about this container. Every absolute URL — canonical, `og:url`, the
+  # RSS channel link, every JSON-LD `@id` — is written to disk as the literal
+  # `__CF_ORIGIN__` and substituted per request by `sub_filter` with
+  # `https://$host`. One image therefore serves the estate, a `localtest.me`
+  # laptop and anything else pointed at it, each telling a crawler the truth
+  # about where it was fetched from. It also means THE GATEWAY MUST PASS THE
+  # ORIGINAL Host HEADER, which `cf-web-journal` does like every other web
+  # router; a proxy that rewrote it would have every canonical on the archive
+  # naming the wrong site, silently, and only a crawler would ever notice.
+  #
+  # Only the HOST half is per-request. The scheme is the literal `https`, not
+  # nginx's `$scheme`, because TLS ends at Cloudflare: cloudflared reaches the
+  # gateway over plain HTTP and the gateway reaches this container over plain
+  # HTTP, so `$scheme` is `http` for a reader who arrived over https, and a
+  # canonical of `http://…` names a URL that 301s to the real one — which a
+  # crawler reads as a different address and discards.
+  #
+  # NO PROFILE, for the pool console's reason: `cf-web-journal` matches the
+  # whole Host, so removing the container replaces every page — including
+  # `robots.txt`, which is the file a search engine re-reads most often — with
+  # an unbranded Traefik 502.
+  journal-web:
+    <<: *web-defaults
+    build:
+      context: ../../journal-web
       additional_contexts: *web-contexts
       args: *web-build-args
 

@@ -207,6 +207,17 @@ http:
           # `access-control-allow-credentials: true`, and NO `access-control-allow-origin`. The
           # same request with a `pool.` or `foresight.` origin got one.
           - https://exchange{{ env "CF_WEB_SUFFIX" }}
+          # ── the journal, which is here for the ORDINARY reason after all ────────────
+          #
+          # Worth one line because the surface invites the opposite guess. Forge Journal is
+          # an archive: nothing on it is gated, no page fetches anything to render, and a
+          # reader who never signs in loses no function. So "a static archive needs no CORS
+          # grant" is a reasonable thing to think and it is wrong — the bundle carries the
+          # estate's account bar, and the bar calls `nimbus.<apex>/auth/handoff/redeem` at
+          # the end of a sign-in exactly like every origin above it. Without this line a
+          # reader who signs in from an article is returned to a page showing them signed
+          # out, which reads as a broken account rather than as a surface with none.
+          - https://journal{{ env "CF_WEB_SUFFIX" }}
 {{ end }}
 {{ if env "CF_VIEW_ORIGIN_SUFFIX" }}
           # ══ THE COMBINED VIEW: THREE ORIGINS ON THE *OTHER* ENVIRONMENT ══════════════════════
@@ -311,6 +322,14 @@ http:
           # `viewedNetwork()`, so a reader who chooses Testnet on the mainnet page reads the
           # testnet chain from a mainnet origin. Same shape as every line above, one layer down.
           - https://exchange{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `journal` views in place for a reason none of the lines above share: its CONTENT
+          # does not vary by network at all. An article is the same words on both, so there is
+          # nothing here for the switch to re-point except the account bar's own reads — and
+          # that is the whole point of the row. Without `viewsAnyNetwork` the Testnet button
+          # on an article throws the reader out of the piece and onto Forge Network, which is
+          # the defect the owner reported about the other surfaces. With it the chrome
+          # switches and the reader keeps their place.
+          - https://journal{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
 {{ end }}
         accessControlAllowMethods: [GET, POST, PUT, PATCH, DELETE, OPTIONS]
         accessControlAllowHeaders:
