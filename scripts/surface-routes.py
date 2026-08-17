@@ -83,6 +83,13 @@ WHAT IT CHECKS
  10. Every origin granted on `CF_VIEW_ORIGIN_SUFFIX` — another environment's
      frontends, reading this one with the reader's bearer — is a UI surface here
      and a bundle that can actually view another network in place. See below.
+ 11. `cf-retired-web-sub` retires the testnet FRONTENDS and spares every testnet
+     hostname that serves no UI. It matched all of them, so `rpc-testnet` 302'd
+     to the mainnet RPC and answered chain 7411 with a 200. See below.
+ 12. `IDENTITY_HANDOFF_ORIGINS` and `LANTERN_RUM_ORIGINS` in
+     `compose/docker-compose.estate.yml` name exactly the surfaces a browser
+     loads a page from. Two more hand-written copies of check 5's list, in the
+     one file check 5 does not read, and `pool.` was missing from both. See below.
 
 THE PATH EVERY REAL USER TAKES IS THE ONE NOTHING DRIVES
 --------------------------------------------------------
@@ -1378,6 +1385,169 @@ def retirement_spares_services(surfaces):
             )
 
 
+# ── the two origin allowlists inside docker-compose.estate.yml ───────────────
+#
+# Both are folded block scalars of `https://<sub>${CF_WEB_SUFFIX:-…}` lines with
+# the apex written as `https://${CF_SITE_HOST:-…}`, exactly the two forms
+# `HOST_RE` and `CORS_ENTRY_RE` already read elsewhere — so the empty capture
+# means "the apex surface" here too and the three lists stay comparable.
+ESTATE_ORIGIN_RE = re.compile(
+    r"^https://(?:\$\{CF_SITE_HOST[^}]*\}"
+    r"|([a-z0-9-]+)\$\{CF_WEB_SUFFIX[^}]*\})$"
+)
+
+# An entry that is deliberately NOT a deployed surface, and the argument for it.
+# One per list, checked in both directions like `EXPECTED_UNROUTED`: an entry
+# here that has left the compose file is a stale claim, and a literal in the
+# compose file that is not here is an origin nobody has argued for.
+ESTATE_ORIGIN_EXCEPTIONS = {
+    "IDENTITY_HANDOFF_ORIGINS": {
+        # micro-tessera-web's Vite dev port. A title is developed against this
+        # estate rather than against a stub, so `pnpm dev` on 5172 signs in
+        # through the same identity container as everything else. `origin()`
+        # accepts `http` and this is loopback — an entry only an attacker
+        # already running code on the developer's machine could reach.
+        "http://localhost:5172": "micro-tessera-web's Vite dev port, argued in the compose file",
+    },
+    "LANTERN_RUM_ORIGINS": {},
+}
+
+
+def estate_origin_allowlist(var):
+    """The subdomains named by one comma-separated origin list in the estate file.
+
+    Returns `(subdomains, literals)`, or None when the list cannot be read — and
+    "cannot be read" is a FAILURE here rather than a skip, for the reason the
+    module docstring gives: a check that quietly stops running is worse than no
+    check, and both of these lists fail closed and silently at runtime.
+
+    Parsed from the raw text rather than through a YAML loader on purpose. The
+    values are full of `${CF_WEB_SUFFIX:-…}` interpolations that only
+    `docker compose config` expands, and expanding them would mean rendering the
+    file against ONE environment — which is exactly the mistake `cors_allowlist`
+    records above, where a mainnet-rendered list was read as if it described the
+    testnet gateway that mounts the same directory. The templated form is the
+    thing under check; it is the same in every environment, and that is the point.
+    """
+    if not ESTATE.exists():
+        bad(f"{ESTATE} does not exist — {var} cannot be checked")
+        return None
+    lines = ESTATE.read_text().splitlines()
+    starts = [i for i, l in enumerate(lines) if re.match(rf"^\s*{var}:\s*>-\s*$", l)]
+    if not starts:
+        bad(
+            f"{var} is not defined as a folded block scalar in {ESTATE.name}. Either it was "
+            f"deleted — and an EMPTY allowlist is not 'allow everything', it disables the feature "
+            f"outright — or it was rewritten in a shape this check no longer reads, which means "
+            f"this check has silently stopped covering it"
+        )
+        return None
+    if len(starts) > 1:
+        bad(f"{var} is defined {len(starts)} times in {ESTATE.name}; YAML keeps one and the "
+            f"others are dead text nobody is told about")
+        return None
+    start = starts[0]
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    subs, literals = set(), set()
+    for line in lines[start + 1:]:
+        if not line.strip() or (len(line) - len(line.lstrip())) <= indent:
+            break
+        entry = line.strip().rstrip(",")
+        m = ESTATE_ORIGIN_RE.match(entry)
+        if m:
+            subs.add(m.group(1) or "")
+        else:
+            literals.add(entry)
+    return subs, literals
+
+
+# What each list IS, and what its absence costs — quoted into the failure so the
+# person reading a red build gets the consequence and not just the diff.
+ESTATE_ORIGIN_LISTS = {
+    "IDENTITY_HANDOFF_ORIGINS": (
+        "identity's SSO hand-off allowlist",
+        "So `createHandoffCode` returns null there, `POST /auth/handoff` answers 403, and the "
+        "reader is bounced back to a page showing them signed out — which reads as a broken "
+        "account rather than as a surface that has none",
+    ),
+    "LANTERN_RUM_ORIGINS": (
+        "lantern's client-telemetry sink",
+        "So `/ingest/client` answers 400 there, and every client error, unhandled rejection and "
+        "web-vital that surface produces is dropped — a surface reporting nothing reads as a page "
+        "nobody is having trouble with rather than as a page nobody can report trouble FROM",
+    ),
+}
+
+
+def estate_origin_drift(surfaces):
+    """── 12: both estate allowlists name every browsable surface, and only those ─
+
+    THE FIFTH COPY OF THE SAME DEFECT, IN THE ONE FILE CHECK 5 DOES NOT READ.
+
+    Check 5 derives the gateway's CORS origins from the registry and records four
+    drifts it was written for. The estate compose file carries TWO MORE lists of
+    the same fact — `IDENTITY_HANDOFF_ORIGINS` and `LANTERN_RUM_ORIGINS`, both
+    hand-written, both `https://<sub><suffix>` per surface — and nothing derived
+    either. Their own comments record them drifting the same way check 5's list
+    did: `exchange.` was absent from the RUM list for two days after it shipped,
+    `journal.` and the two operator consoles were each added by hand on the day
+    someone happened to open the file, and micro-org#480 found `pool.` missing
+    from BOTH — a live, 200-serving, `servesUi` surface that was the only one of
+    twenty either list did not name.
+
+    Nineteen of twenty correct is precisely the shape of drift a human reading
+    does not find. So it is derived here, in both directions, like every other
+    list in this repository that is kept by hand because it is an argument.
+
+    `servesUi && not basePath` is the same predicate check 5 uses and is right for
+    the same reasons. A `basePath` surface is a route on ANOTHER surface's host
+    and shares that host's origin — listing it would be a duplicate entry under a
+    hostname nothing serves. A surface with no UI has no page, no browser tab and
+    no `Origin` header to send, and demanding an entry for one would be demanding
+    a grant for a request that is never made.
+
+    IT IS NOT CONDITIONED ON WHETHER THE BUNDLE USES IT TODAY, and micro-org#480
+    is why. pool-web has no account bar, so its missing hand-off entry cost
+    nothing — right up until the bar arrives, at which point the omission ships
+    as a broken sign-in on a surface everything else works on. Both of the worked
+    examples in the compose file's own prose (`exchange.`, `journal.`) are that
+    story with the order of events swapped. The entry belongs on a surface the
+    day it ships, not the day it grows a reason.
+    """
+    ui_hosts = {s["subdomain"] for s in surfaces if not s["basePath"] and s["servesUi"]}
+    for var, (what, cost) in ESTATE_ORIGIN_LISTS.items():
+        read = estate_origin_allowlist(var)
+        if read is None:
+            continue
+        listed, literals = read
+        exceptions = ESTATE_ORIGIN_EXCEPTIONS[var]
+
+        for sub in sorted(ui_hosts - listed):
+            bad(
+                f"surface '{sub or '<apex>'}' serves a UI and is NOT named by {var} — {what} — in "
+                f"{ESTATE.name}. {cost}"
+            )
+        for sub in sorted(listed - ui_hosts):
+            bad(
+                f"{var} names 'https://{sub or '<apex>'}<CF_WEB_SUFFIX>', which no registry "
+                f"surface serves a UI on. That is the `mint`/`devportal` defect check 5 catches on "
+                f"the gateway — an origin written from a repository name rather than from the "
+                f"registry — and here it grants a hand-off or a telemetry write nothing makes"
+            )
+        for entry in sorted(literals - set(exceptions)):
+            bad(
+                f"{var} carries the literal origin '{entry}', which is neither a registry surface "
+                f"nor a declared exception in ESTATE_ORIGIN_EXCEPTIONS. Every entry in this list "
+                f"is a grant, so every entry needs an argument that is written down and checked"
+            )
+        for entry in sorted(set(exceptions) - literals):
+            bad(
+                f"ESTATE_ORIGIN_EXCEPTIONS declares '{entry}' as a deliberate non-surface entry in "
+                f"{var}, and it is not in the list any more — {exceptions[entry]}. Either the "
+                f"exception is stale and belongs deleted, or the entry was dropped by accident"
+            )
+
+
 def main():
     surfaces = registry_surfaces()
     routers = gateway_routers()
@@ -1490,6 +1660,9 @@ def main():
 
     # ── 11: the retirement redirect catches pages, not chain endpoints ────────
     retirement_spares_services(surfaces)
+
+    # ── 12: the estate's two origin allowlists agree with the registry too ────
+    estate_origin_drift(surfaces)
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:
