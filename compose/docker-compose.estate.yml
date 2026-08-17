@@ -1226,6 +1226,7 @@ services:
       # and derives an empty set — absent, not `[]`.
       IDENTITY_SERVICE_TOKEN_GRANTS: >-
         {"admin-api":["identity:admin","ledger:post","ledger:read"],
+         "agora":["policy:decide"],
          "beacon":["ledger:read"],
          "billing":["admin:read","ledger:post"],
          "community":["indexer:read","ledger:post","policy:decide"],

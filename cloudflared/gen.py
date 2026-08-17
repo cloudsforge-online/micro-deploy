@@ -458,6 +458,32 @@ HEADER = """\
 """
 
 
+# ── per-hostname notes, and why they cannot be written where they appear ──────
+#
+# A generated file rejects hand-written comments: `gen.py --check --strict`
+# regenerates it in memory and fails on any difference, so a note typed into
+# `config.testnet.public.yml` above the rule it explains survives exactly until
+# CI runs. It happened — the agora-testnet explanation below was added to the
+# file by hand and turned the ingress check red on the next PR, which is a fair
+# outcome and a bad trade: the note was correct and useful and the only way to
+# keep it was to delete it.
+#
+# So notes live HERE, keyed by `(environment, registry subdomain)`, and are
+# emitted above their rule. Most rules need none — the block comment at the top
+# of each file carries the general argument, and this table is for the case the
+# general argument cannot cover: a single hostname whose entry looks wrong.
+HOSTNAME_NOTES = {
+    ("testnet", "agora"): """\
+# The web half of this hostname is retired — `cf-retired-web-sub` answers it
+# with a 302 to `agora.cloudsforge.online` at priority 550. It is here anyway,
+# and it has to be, because the API half is NOT retired: `cf-api-agora` matches
+# `/v1` at priority 600 and outranks the redirect. That is the only way the
+# mainnet bundle reads a testnet timeline while the combined view is switched
+# over, and a missing ingress entry would present as an unreachable network
+# rather than as a hostname nobody published.""",
+}
+
+
 def render(env, tunnel_name, rules, *, note):
     cfg = ENVIRONMENTS[env]
     lines = [HEADER.format(env=env, apex=APEX, label=cfg["env"] or "(none — the unadorned form)",
@@ -487,6 +513,9 @@ def render(env, tunnel_name, rules, *, note):
     service: http_status:404
 """)
     for hostname, service in rules:
+        hostname_note = HOSTNAME_NOTES.get((env, subdomain_of(hostname, cfg["env"])))
+        if hostname_note:
+            lines.extend(f"  {line}" for line in hostname_note.rstrip().splitlines())
         lines.append(f"  - hostname: {hostname}")
         lines.append(f"    service: {service}")
         if service.startswith("https://"):
