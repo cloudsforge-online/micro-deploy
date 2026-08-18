@@ -1059,3 +1059,178 @@ tests:
                 nothing needs restarting; the runbook says what decision is due and
                 where the plan lives.
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-difficulty-sustained.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ExchangeDeskInventoryLow — the desk drains — micro-org#501.
+  #
+  # Forge Exchange fills a conversion out of the platform's own stock, and that
+  # stock is funded by hand. ZERO CONVERSIONS HAVE EVER BEEN POSTED on this
+  # estate, so the desk has never moved: `wallet_desk_inventory` has been two
+  # flat lines since the day it was seeded, and the only place this rule's
+  # firing condition can be produced is here.
+  #
+  # THIS BLOCK ALREADY EARNED ITS KEEP. The expression was first written as
+  # `inventory / max_over_time(...) < 0.1`, which parsed, passed `check-rules`,
+  # and was wrong twice: `$value` on a comparison is the LEFT side, so the
+  # summary rendered the RATIO ("down to 0.0703 EMBER") instead of a balance,
+  # and `0 / 0` is NaN so a desk empty for the whole window never fired at all.
+  # Both were found by running these cases, not by reading the rule.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 5m
+    input_series:
+      # EMBER: holds the seeded 28,432.78 for an hour, then falls to 2,000 —
+      # 7% of its own peak. The real desk balance, not a round invention.
+      - series: 'wallet_desk_inventory{asset="EMBER", instance="wallet:4000", job="cf-services", service="wallet", team="wallet"}'
+        values: "28432.78+0x11 2000+0x30"
+      # SHARD: falls by HALF over the same hour and must stay quiet. The
+      # negative control on the VALUE axis — the rule is a low-stock alert, not
+      # a change detector, and a desk half spent is a desk working as intended.
+      - series: 'wallet_desk_inventory{asset="SHARD", instance="wallet:4000", job="cf-services", service="wallet", team="wallet"}'
+        values: "1000+0x11 500+0x30"
+    alert_rule_test:
+      # 55m — the last sample before the drop. Full desk, nothing to say.
+      - eval_time: 55m
+        alertname: ExchangeDeskInventoryLow
+        exp_alerts: []
+
+      # 1h20m — twenty minutes below the line, ten short of `for: 30m`. The
+      # negative control on the TIME axis: the half hour exists so that a dip
+      # somebody is already fixing does not open a ticket.
+      - eval_time: 1h20m
+        alertname: ExchangeDeskInventoryLow
+        exp_alerts: []
+
+      # 1h35m — thirty-five minutes below. EMBER tickets; SHARD does not.
+      #
+      # `Exchange desk is down to 2000 EMBER` is the assertion that matters
+      # most in this file: it is a BALANCE IN WHOLE UNITS. Under the original
+      # division it read `0.0703`, which is not a quantity of anything, and no
+      # amount of reading the YAML made that visible.
+      - eval_time: 1h35m
+        alertname: ExchangeDeskInventoryLow
+        exp_alerts:
+          - exp_labels:
+              asset: EMBER
+              instance: wallet:4000
+              job: cf-services
+              service: wallet
+              team: wallet
+              severity: ticket
+              sev: "3"
+            exp_annotations:
+              summary: "Exchange desk is down to 2000 EMBER"
+              description: >-
+                The conversion desk is nearly out of this asset, and it cannot refill
+                itself — funding it is an admin action against a real balance. Every
+                conversion INTO this asset starts being refused when it reaches zero,
+                with a 409 that deliberately does not tell the user why. Decide how
+                much the desk should hold before funding it: the figure this fell
+                from is the last decision somebody made, not a target.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-exchange-desk-inventory.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ExchangeDeskInventoryLow — the desk that was never funded — micro-org#501.
+  #
+  # Its own block because it is a DIFFERENT FAILURE, not a smaller one. The
+  # case above has a peak to fall away from. This one has an account, a balance
+  # row of zero, and no history: never funded, or drained longer ago than the
+  # 30d window remembers. Every conversion into the asset has been refused for
+  # as long as the series has existed and the estate said nothing.
+  #
+  # `0 <= 0.1 * 0` is true. `0 / 0 < 0.1` is NaN < 0.1, which is FALSE — the
+  # division did not merely mis-render this case, it never fired on it. That is
+  # the whole reason this block is separate: a reader who changes the operator
+  # back has to delete an assertion that says out loud what breaks.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 5m
+    input_series:
+      - series: 'wallet_desk_inventory{asset="LTC", instance="wallet:4000", job="cf-services", service="wallet", team="wallet"}'
+        values: "0+0x24"
+    alert_rule_test:
+      # 20m — empty from the first sample, but `for: 30m` has not elapsed. The
+      # rule is not exempted from its own patience just because the value is 0.
+      - eval_time: 20m
+        alertname: ExchangeDeskInventoryLow
+        exp_alerts: []
+
+      # 40m — fires, with `0` as the value and the asset named.
+      - eval_time: 40m
+        alertname: ExchangeDeskInventoryLow
+        exp_alerts:
+          - exp_labels:
+              asset: LTC
+              instance: wallet:4000
+              job: cf-services
+              service: wallet
+              team: wallet
+              severity: ticket
+              sev: "3"
+            exp_annotations:
+              summary: "Exchange desk is down to 0 LTC"
+              description: >-
+                The conversion desk is nearly out of this asset, and it cannot refill
+                itself — funding it is an admin action against a real balance. Every
+                conversion INTO this asset starts being refused when it reaches zero,
+                with a 409 that deliberately does not tell the user why. Decide how
+                much the desk should hold before funding it: the figure this fell
+                from is the last decision somebody made, not a target.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-exchange-desk-inventory.md
+
+  # ══════════════════════════════════════════════════════════════════════════
+  # ExchangeDeskInventoryShort — somebody was turned away — micro-org#501.
+  #
+  # The gauge above cannot see an asset the desk holds NO ACCOUNT in: no
+  # account, no balance row, no series, and silence that looks exactly like
+  # health. This counter is incremented on the refusal itself, so it fires in
+  # that case and in every other. It is the reason the pair is a pair.
+  #
+  # `increase(...[1h]) > 0` rather than `rate(...)`: no conversion has ever been
+  # posted, so a 5m rate on this route is a number that rounds to nothing.
+  # ══════════════════════════════════════════════════════════════════════════
+  - interval: 5m
+    input_series:
+      # Flat at zero for an hour, then one refusal at 65m and no more.
+      - series: 'wallet_money_operations_total{route="conversion", outcome="desk_short", instance="wallet:4000", job="cf-services", service="wallet", team="wallet"}'
+        values: "0+0x12 1+0x24"
+      # The negative control on the LABEL axis, and it is not decoration: this
+      # counter carries every conversion outcome on the same name, and a
+      # selector that lost `outcome="desk_short"` would page on the healthy
+      # ones. Conversions succeeding steadily throughout must change nothing.
+      - series: 'wallet_money_operations_total{route="conversion", outcome="ok", instance="wallet:4000", job="cf-services", service="wallet", team="wallet"}'
+        values: "0+3x36"
+    alert_rule_test:
+      # 1h — successes only. Nobody has been refused.
+      - eval_time: 1h
+        alertname: ExchangeDeskInventoryShort
+        exp_alerts: []
+
+      # 1h10m — one refusal in the window. `for: 0m`, so it tickets at once:
+      # unlike the gauge, waiting cannot improve this — it has already happened
+      # to a person and no retry of theirs fixes it.
+      #
+      # NO `asset` LABEL, asserted rather than assumed. Which asset the
+      # platform's book is short in is a trading signal, withheld from the
+      # anonymous 409 for the same reason; if somebody adds it to the counter,
+      # this exp_labels block is what refuses.
+      - eval_time: 1h10m
+        alertname: ExchangeDeskInventoryShort
+        exp_alerts:
+          - exp_labels:
+              route: conversion
+              outcome: desk_short
+              instance: wallet:4000
+              job: cf-services
+              service: wallet
+              team: wallet
+              severity: ticket
+              sev: "2"
+            exp_annotations:
+              summary: "1 conversion(s) refused in the last hour — the desk is out"
+              description: >-
+                Forge Exchange turned a user away because the desk had nothing to
+                fill their conversion with. Nothing is broken and nothing is lost —
+                the refusal is checked inside the ledger transaction, so no partial
+                posting exists — but the product is not working and only an admin
+                funding the desk fixes it. Read `wallet_desk_inventory` to see which
+                asset; this series deliberately does not say.
+              runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-exchange-desk-inventory.md
