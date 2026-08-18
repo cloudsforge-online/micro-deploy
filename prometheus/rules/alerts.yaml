@@ -687,6 +687,149 @@ groups:
             idempotent.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-deposit-credits-unposted.md
 
+      # ── THE EXCHANGE DESK, WHICH NOTHING WATCHED AT ALL (micro-org#501) ────
+      #
+      # Forge Exchange fills a conversion out of a desk: an `exchange`/`inventory`
+      # account per asset, funded by hand. `fundDesk` is `requireAdmin` and stays
+      # that way — both fundings this estate has booked drew on a USER's
+      # available balance, so a service principal able to call it would be a
+      # machine that can debit a user without that user's session. The gate is
+      # right, and it means the desk can ONLY be refilled by a person, which is
+      # what makes the absence of any signal a defect rather than a nicety.
+      #
+      # Before these two rules the desk could run to zero and nothing anywhere
+      # would say so. `convert` throws `desk_inventory_short` BEFORE the
+      # conversion route's counter runs, so a refusal moved no series either: the
+      # first party to learn the desk was empty was the person holding the 409,
+      # and they have no way to tell anyone. Both halves are new — the gauge and
+      # the `desk_short` outcome — and neither is useful without the other, for
+      # the reason set out on the second rule.
+      - alert: ExchangeDeskInventoryLow
+        # ── THE LEADING HALF: FUND IT BEFORE ANYBODY IS REFUSED ──────────────
+        #
+        # `wallet_desk_inventory` is per asset, in WHOLE UNITS. That is not
+        # cosmetic: a Prometheus sample is a float64 and the desk's EMBER balance
+        # is 2.84e22 wei, four orders of magnitude past the last integer a
+        # float64 holds exactly, so a smallest-unit gauge would hand this
+        # threshold a silently rounded number.
+        #
+        # ── WHY THE THRESHOLD IS RELATIVE AND NOT A NUMBER ───────────────────
+        #
+        # There is no honest absolute here. "Below 100" is a serious warning for
+        # BTC and meaningless for SHARD, and the assets do not share a unit — the
+        # same objection `LedgerReconciliationDrift` above records against a
+        # single `_native` figure. Converting to a common unit needs a price
+        # oracle behind an alert threshold, which makes the threshold move with
+        # the market.
+        #
+        # So it is measured against the desk's OWN high-water mark. A desk at a
+        # tenth of the most it has held in thirty days is a desk most of the way
+        # through whatever the operator last decided it should hold, whichever
+        # asset it is and whatever they decided. It self-calibrates when the desk
+        # is deliberately resized: fund it smaller on purpose and the peak decays
+        # out of the window in thirty days rather than holding a stale ticket
+        # open.
+        #
+        # ── MULTIPLY, DO NOT DIVIDE, AND THAT IS TWO SEPARATE BUGS AVOIDED ───
+        #
+        # The obvious spelling of "a tenth of the peak" is
+        # `inventory / max_over_time(...) < 0.1`. It was written that way first
+        # and the promtool cases below rejected it, twice over:
+        #
+        #   1. `$value` on a comparison is the LEFT side. Under the division it
+        #      is the ratio, so the summary read "Exchange desk is down to
+        #      0.0703 EMBER" for a desk holding 2,000 — a plausible-looking
+        #      number that is not a quantity of anything.
+        #   2. `0 / 0` is NaN and `NaN < 0.1` is FALSE. A desk that has been
+        #      empty for the WHOLE window — never funded, or drained more than
+        #      thirty days ago — is invisible to the ratio. That is the case an
+        #      operator most needs to see, and the division is what hides it.
+        #
+        # Moving the constant to the right fixes both at once: the value stays a
+        # balance in whole units, and `0 <= 0.1 * 0` is true, so the empty desk
+        # fires without needing a second clause bolted on beside it. Both sides
+        # carry identical labels, so the vector match is exact.
+        #
+        # ── NO `absent()` COMPANION, SAME ARGUMENT AS THE RULE ABOVE ─────────
+        #
+        # `beforeScrape` writes this on every scrape on every replica, so it
+        # cannot go missing while wallet is scraped at all. But it can only
+        # publish an asset the desk has a balance ROW for — an asset it was never
+        # funded in has no row, no series, and no way for this rule to notice.
+        # That gap is why the refusal rule below exists and why it is not
+        # optional.
+        expr: wallet_desk_inventory <= 0.1 * max_over_time(wallet_desk_inventory[30d])
+        # Long, deliberately. Funding the desk is a human action with a ledger
+        # entry behind it, and the point of this rule is to give that person lead
+        # time rather than to react. A dip that clears inside half an hour did
+        # not need anybody.
+        for: 30m
+        labels:
+          severity: ticket
+          team: wallet
+          service: wallet
+          sev: "3"
+        annotations:
+          summary: "Exchange desk is down to {{ $value }} {{ $labels.asset }}"
+          description: >-
+            The conversion desk is nearly out of this asset, and it cannot refill
+            itself — funding it is an admin action against a real balance. Every
+            conversion INTO this asset starts being refused when it reaches zero,
+            with a 409 that deliberately does not tell the user why. Decide how
+            much the desk should hold before funding it: the figure this fell
+            from is the last decision somebody made, not a target.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-exchange-desk-inventory.md
+
+      - alert: ExchangeDeskInventoryShort
+        # ── THE TRAILING HALF: IT HAS ALREADY HAPPENED TO SOMEBODY ───────────
+        #
+        # A conversion was refused because the desk could not fill it. This is
+        # the only signal that survives the gauge's blind spot: an asset the desk
+        # holds no account in publishes no series, so `wallet_desk_inventory`
+        # cannot fall below anything for it and the silence is indistinguishable
+        # from health. The route increments this whether or not an account
+        # exists.
+        #
+        # ── WHY IT IS NOT `rate(...) > 0` ───────────────────────────────────
+        #
+        # Zero conversions have ever been posted on this estate. A rate over a
+        # 5m window on a route that sees one request a week is a number that
+        # rounds to nothing and a rule that never fires. `increase(...[1h]) > 0`
+        # asks the question that matters — did this happen at all — and holds the
+        # ticket open for an hour afterwards, which is the operator's window to
+        # find it.
+        #
+        # ── NO ASSET LABEL, AND THAT IS THE SAME DECISION THE 409 MAKES ──────
+        #
+        # Which asset the desk is out of is a trading signal: it is what somebody
+        # would need in order to size an order against the platform's book, and
+        # it is precisely what `desk_inventory_short`'s wording withholds from an
+        # anonymous caller. `/metrics` is loopback-bound today, but a series is
+        # forever and a gateway route is one line — so the counter does not carry
+        # it. The operator reads the asset off `wallet_desk_inventory` and off
+        # the admin route, both of which are already gated.
+        #
+        # `sev: "2"` rather than 3: unlike the rule above, a user has already
+        # been turned away from a working product, and no retry of theirs fixes
+        # it.
+        expr: increase(wallet_money_operations_total{route="conversion",outcome="desk_short"}[1h]) > 0
+        for: 0m
+        labels:
+          severity: ticket
+          team: wallet
+          service: wallet
+          sev: "2"
+        annotations:
+          summary: "{{ $value | printf \"%.0f\" }} conversion(s) refused in the last hour — the desk is out"
+          description: >-
+            Forge Exchange turned a user away because the desk had nothing to
+            fill their conversion with. Nothing is broken and nothing is lost —
+            the refusal is checked inside the ledger transaction, so no partial
+            posting exists — but the product is not working and only an admin
+            funding the desk fixes it. Read `wallet_desk_inventory` to see which
+            asset; this series deliberately does not say.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-exchange-desk-inventory.md
+
   # ==================================================== TICKET — chain ======
   #
   # EMBER'S TWO STANDING DEFECTS, MADE VISIBLE (micro-org#363).
