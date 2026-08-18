@@ -3976,7 +3976,7 @@ else
     # here that distinguishes a backup from a directory of large files.
     backup_verified=$(printf '%s\n' "$BACKUP_METRICS" | sed -n 's/^backup_last_verified_unixtime \([0-9][0-9]*\).*/\1/p' | head -1)
     if [ -z "$backup_verified" ]; then
-      bad "no backup_last_verified_unixtime — sets are being written and none has been restored, so nothing here has established that any of them can be. The gauge appears the first time a backup.verify job succeeds; it runs itself every 24h, so an absent one means the job is dead-lettered rather than merely young"
+      bad "no backup_last_verified_unixtime — sets are being written and none has been restored, so nothing here has established that any of them can be. The runner seeds this gauge at boot from backup_runs.verified_at, so a restart no longer erases it and an absent one is not merely a young process: either no set has EVER been verified, or backup.verify is dead-lettered. Check 'select verified_at from backup_runs order by verified_at desc limit 1' and the dead flag on the backup.verify row in jobs"
     else
       ok "a backup set has been restored into a scratch database and verified, $(( $(date +%s) - backup_verified ))s ago"
     fi

@@ -49,7 +49,7 @@ try {
 // that reads the environment has to be loaded after it.
 const { env, SERVICE } = await import('./env.ts')
 const { registerHandlers, RecurringSchedule, rescheduleRecurring, seedRecurring, leaseKeyFor } = await import('./jobs.ts')
-const { lastSucceededAt } = await import('./catalogue.ts')
+const { lastSucceededAt, lastVerifiedAt } = await import('./catalogue.ts')
 const { assertClientMatchesServer, parseDsn, readClusterFacts } = await import('./pg.ts')
 const { assertDestinationIsReal, freeBytesAt, fsErrorsAt } = await import('./disk.ts')
 
@@ -213,6 +213,40 @@ if (lastSuccess) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════════════════════
+// AND SEED `backup_last_verified_unixtime` THE SAME WAY, FOR THE SAME REASON.
+//
+// The gauge above and this one are the same defect twice; only the first one was ever fixed. This
+// one is written in `verify.ts` on the clean-restore path and nowhere else, so a restart erased the
+// estate's only evidence that any set had ever been restored — and left it erased until the next
+// nightly verify, which is up to a day later.
+//
+// The check that reads it says an absent gauge "means the job is dead-lettered rather than merely
+// young". That is a fair reading of an absence the runner never explains, and it was WRONG on
+// mainnet on 2026-08-18: the runner had restarted at 15:37 after a host reboot, every night from
+// 08-14 to 08-18 had a `verified_at`, and `backup.verify` was queued for 03:00 the next morning
+// with `dead = false`. The absence meant "this process has not verified anything YET", which is the
+// one thing the reader was told it could not mean.
+//
+// Seeding it from the catalogue makes the check's reading true again: with a restart no longer able
+// to erase it, an absent series really does mean no set here has ever been proven restorable.
+//
+// Before `runner.start()` for the ordering reason given above — a verify that lands while this
+// process is booting must not be overwritten by the older value read here.
+//
+// NOTHING IS PUBLISHED WHEN NO SET HAS EVER BEEN VERIFIED, which is the convention both gauges
+// beside it follow. A zero would claim a restore happened in 1970; absent says none ever happened.
+// ══════════════════════════════════════════════════════════════════════════════════════════════
+const lastVerified = await lastVerifiedAt(admin, env.env).catch((err: unknown) => {
+  // Not fatal, for the same reason: a catalogue read that failed is a reason to leave the gauge
+  // absent, not a reason to stop backing the estate up.
+  logger.error('could not read the last verified backup from the catalogue', { err })
+  return null
+})
+if (lastVerified) {
+  metrics.set('backup_last_verified_unixtime', Math.floor(lastVerified.getTime() / 1000))
+}
+
+// ══════════════════════════════════════════════════════════════════════════════════════════════
 // AND SEED `backup_secrets_included` TO ZERO WHEN THERE IS NO RECIPIENT, WITHOUT WAITING FOR A RUN.
 //
 // This one case is knowable at boot and is the case that was actually true on mainnet: with
@@ -234,6 +268,10 @@ logger.info('last successful backup', {
   // line an operator will see, because `/data/cloudsforge-backups` is empty and `backup_runs` has
   // never held a succeeded row for this estate.
   lastSuccessAt: lastSuccess?.toISOString() ?? '(never — this estate has no backup)',
+  // The absence is logged as loudly here too, and means something sharper than the one above: sets
+  // are being written that nothing has ever restored. That is the state this whole job exists to
+  // make visible, and after a restart this line is now the first place it is visible from.
+  lastVerifiedAt: lastVerified?.toISOString() ?? '(never — no set here has been proven restorable)',
 })
 
 runner.start()
