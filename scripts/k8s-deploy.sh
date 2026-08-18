@@ -43,6 +43,7 @@ NETWORK=""
 DRY_RUN=0
 RERUN_MIGRATIONS=0
 ONLY_WAVE=""
+HOLD=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-900}
 ROLLOUT_TIMEOUT=${ROLLOUT_TIMEOUT:-900}
 
@@ -52,6 +53,7 @@ while [ $# -gt 0 ]; do
     --dry-run)           DRY_RUN=1; shift ;;
     --rerun-migrations)  RERUN_MIGRATIONS=1; shift ;;
     --wave)              ONLY_WAVE="${2:-}"; shift 2 ;;
+    --hold)              HOLD="${2:-}"; shift 2 ;;
     -h|--help)           sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
@@ -188,6 +190,53 @@ want_wave() { [ -z "$ONLY_WAVE" ] || [ "$ONLY_WAVE" = "$1" ]; }
 # else in these files, because container and template names are nested deeper.
 names_in() { awk '/^  name: /{print $2}' "$1"; }
 
+# ── `--hold`, AND WHY A SECOND ESTATE IS NOT A HARMLESS COPY ─────────────────
+#
+# During migration this cluster runs a SECOND mainnet estate beside the live
+# compose one. Its databases are copies, so most services are inert towards the
+# original: they read and write their own snapshot and nothing outside notices.
+#
+# Two are not, because their state is not in the database at all:
+#
+#   settlement  — `chain.sweep`, `chain.outbound` and `treasury.watch` poll the
+#                 SAME chain host and sign with the SAME custody keys. Two
+#                 estates sweeping the same addresses build conflicting spends:
+#                 a double-spend race on the UTXO chains, a nonce collision on
+#                 EMBER. Its queue is empty today, which makes this a race that
+#                 has not fired yet rather than one that cannot.
+#
+#   beacon      — its synthetic journeys register real accounts, and each one
+#                 sends real mail through the shared Mailtrap tenant. That tier
+#                 allows 150 messages a day and beacon alone already spends it,
+#                 so a second copy does not degrade the estate's mail — it
+#                 removes it.
+#
+# `--hold` leaves those Deployments UNAPPLIED rather than applied-then-scaled:
+# an image pull is slower than a `kubectl scale`, so scaling afterwards would
+# almost always win, and "almost always" is not a property to give a money path.
+# Their Services still apply, so a caller gets a refused connection with a name
+# that resolves rather than an NXDOMAIN it will cache.
+#
+# At cutover the live estate is stopped, the databases are re-synced, and the
+# same command runs WITHOUT `--hold`. Nothing here is permanent.
+held() { case ",$HOLD," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+# Documents are split on a bare `---`, which the renderer emits as a separator
+# and never inside content — block scalars are indented, so they cannot produce
+# one at column zero. A document with no `metadata.name` is the header comment
+# block; it is dropped because kubectl reads a comment-only document as null.
+drop_held_docs() {
+  awk -v hold=",$HOLD," '
+    function flush() {
+      if (name != "" && index(hold, "," name ",") == 0) printf "---\n%s", buf
+      buf = ""; name = ""
+    }
+    /^---$/ { flush(); next }
+    { buf = buf $0 "\n"; if ($0 ~ /^  name: / && name == "") name = $2 }
+    END { flush() }
+  ' "$1"
+}
+
 # ── WAVE 20: THE CLAIMS ──────────────────────────────────────────────────────
 if want_wave 20; then
   say "── wave 20: volumes ─────────────────────────────────────────────────────"
@@ -299,9 +348,25 @@ fi
 # ── WAVE 50: THE ESTATE ──────────────────────────────────────────────────────
 if want_wave 50; then
   say "── wave 50: deployments ─────────────────────────────────────────────────"
-  DEPLOYS="$(names_in "$DIR/50-deployments.yaml" | tr '\n' ' ')"
+  ALL_DEPLOYS="$(names_in "$DIR/50-deployments.yaml")"
+  DEPLOYS=""
+  for d in $ALL_DEPLOYS; do held "$d" || DEPLOYS="$DEPLOYS $d"; done
   DEPLOY_COUNT="$(printf '%s' "$DEPLOYS" | wc -w | tr -d ' ')"
-  kubectl apply -n "$NAMESPACE" -f "$DIR/50-deployments.yaml" >/dev/null || fail "wave 50 apply failed"
+
+  if [ -n "$HOLD" ]; then
+    for d in $(printf '%s\n' "$ALL_DEPLOYS"); do
+      held "$d" || continue
+      say "  HELD: $d — not applied"
+      # A hold added between deploys has to take effect on what is already
+      # running, or the flag protects only a cluster that never ran without it.
+      if kubectl get deployment "$d" -n "$NAMESPACE" >/dev/null 2>&1; then
+        kubectl scale deployment "$d" -n "$NAMESPACE" --replicas=0 >/dev/null 2>&1
+        say "        (it existed and was running; scaled to 0)"
+      fi
+    done
+  fi
+
+  drop_held_docs "$DIR/50-deployments.yaml" | kubectl apply -n "$NAMESPACE" -f - >/dev/null || fail "wave 50 apply failed"
   say "  applied $DEPLOY_COUNT Deployment(s)"
 
   # `readyReplicas` alone is a trap during a rolling update: it counts the OLD
@@ -342,6 +407,13 @@ if want_wave 50; then
 fi
 
 say "Deployed $NETWORK at release $RELEASE."
+if [ -n "$HOLD" ]; then
+  say ""
+  say "HELD BACK, and therefore NOT RUNNING: $HOLD"
+  say "  This estate is incomplete until the same command runs without --hold,"
+  say "  which is a cutover step: stop the compose estate, re-sync the databases,"
+  say "  then deploy again with no hold."
+fi
 say ""
 say "This brings up the services. It does NOT route traffic to them — that is the"
 say "gateway's IngressRoutes, applied separately. Until those exist the estate is"
