@@ -215,6 +215,19 @@ The real close is three things, and the alert only proves the first:
 2. A restore has proven a set. `backup_last_verified_unixtime` is the gauge for
    that, `backup_runs.verified_at` is the row, and until one is stamped every set
    is a hypothesis. A backup nobody has restored is a wish.
+
+   That gauge is seeded at boot from the catalogue, exactly as
+   `backup_last_success_unixtime` is above, and for a reason worth keeping: until
+   2026-08-18 it was written **only** on the verify path, so every restart erased
+   the estate's whole record of restore-provenness until the next 03:00 verify —
+   up to fifteen hours after a midday deploy. A host reboot that day made the case
+   concrete: sets verified every night from 08-14 to 08-18, `backup.verify` armed
+   for the next night and not dead, and the gauge absent anyway, which read as a
+   dead-lettered job. An absent one now carries its real meaning — either nothing
+   has EVER been verified, or `backup.verify` is dead-lettered. Tell them apart
+   with `select verified_at from backup_runs where verified_at is not null order
+   by verified_at desc limit 1` and the `dead` flag on the `backup.verify` row in
+   `jobs`.
 3. The `age` identity that decrypts the miner coinbase key exists somewhere that
    is not this host, and somebody has read the paper copy recently enough to know
    it is legible.
