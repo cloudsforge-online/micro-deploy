@@ -5075,6 +5075,13 @@ services:
       # a pool mining to nowhere pays a block reward to a script nobody holds.
       POOL_BTC_NODE_URL: ${BTC_RPC_URL:-}
       POOL_BTC_PAYOUT_ADDRESS: ${POOL_BTC_PAYOUT_ADDRESS:-}
+      # DOGE is merge-mined under LTC and is therefore NOT in `POOL_CHAINS`; see the
+      # service block below for the whole argument. Repeated here because the
+      # migrator imports the same eager `env.ts`, and `loadAuxChains` reads these
+      # two the moment `POOL_LTC_AUX_CHAINS` is non-empty.
+      POOL_LTC_AUX_CHAINS: ${POOL_LTC_AUX_CHAINS:-}
+      POOL_DOGE_NODE_URL: ${DOGE_RPC_URL:-}
+      POOL_DOGE_PAYOUT_ADDRESS: ${POOL_DOGE_PAYOUT_ADDRESS:-}
       POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
       INSTANCE_ID: pool-migrate
     depends_on:
@@ -5151,6 +5158,46 @@ services:
       # mined to would turn every found block into unbooked custody inflow.
       POOL_BTC_NODE_URL: ${BTC_RPC_URL:-}
       POOL_BTC_PAYOUT_ADDRESS: ${POOL_BTC_PAYOUT_ADDRESS:-}
+      # ── DOGECOIN, AND WHY IT IS NOT IN `POOL_CHAINS` — micro-org#481 ───────────
+      #
+      # Dogecoin is merge-mined UNDER Litecoin. There is no separate stratum port
+      # for it, no separate difficulty and no separate template poll: the same
+      # scrypt share that might be a Litecoin block might also be a Dogecoin one,
+      # and `pool/src/env.ts` refuses `doge` in `POOL_CHAINS` by name rather than
+      # accepting it and mining a chain nobody can find a block on alone.
+      #
+      # So the switch is `POOL_LTC_AUX_CHAINS`, and the three variables are
+      # all-or-nothing together for the reason `loadAuxChains` states: a half
+      # configuration mines Litecoin perfectly and silently mines no Dogecoin at
+      # all, and the only symptom of that is an absence.
+      #
+      # THE FEATURE SHIPPED ON 2026-08-11 AND WAS NEVER TURNED ON, AND THE REASON
+      # WAS NOT DOGECOIN. `POOL_LTC_AUX_CHAINS` appeared in no file in this
+      # repository until today, and the owner noticed the consequence from the
+      # outside: no Dogecoin anywhere in the wallet. What blocked it was that
+      # `dogecoin.conf` carried the literal `rpcauth=none` — four characters, no
+      # colon, no digest — so `multiUserAuthorized` refused every caller and the
+      # node's ONLY working credential was the cookie it rewrites on each start.
+      # A cookie cannot be put in a variable that has to survive a restart. That
+      # is fixed: the node now carries a real `rpcauth` line for user `cfpool`,
+      # and `DOGE_RPC_URL` names it. See `runbooks/runbook-dogecoind-rpcauth.md`.
+      #
+      # `POOL_DOGE_PAYOUT_ADDRESS` is `DMin1y72…abP3m`, minted 2026-08-18 through
+      # custody's `POST /v1/admin/pool-payouts/dogecoin/mainnet/mint` under the
+      # `pool` purpose and under an operator's own name — the same route, the same
+      # purpose and the same argument as the BTC address above. It is a P2PKH
+      # `D…` address because Dogecoin has no segwit; `custody/src/dogecoin.test.ts`
+      # exists to stop a `doge1…` ever being minted for it.
+      #
+      # `POOL_DOGE_NODE_URL` carries HTTP Basic userinfo and is never echoed.
+      #
+      # Arming these while dogecoind is unreachable is SAFE and deliberate:
+      # `AuxTemplateSource.refresh` never throws, so every failure is a reason to
+      # mine Litecoin without a commitment, and the pool picks Dogecoin up on its
+      # next poll rather than needing a restart of its own.
+      POOL_LTC_AUX_CHAINS: ${POOL_LTC_AUX_CHAINS:-}
+      POOL_DOGE_NODE_URL: ${DOGE_RPC_URL:-}
+      POOL_DOGE_PAYOUT_ADDRESS: ${POOL_DOGE_PAYOUT_ADDRESS:-}
       POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
       # ══════════════════════════════════════════════════════════════════════════
       # TWO STRATUM TRANSPORTS, CONFIGURED NOTHING ALIKE, AND THE ASYMMETRY IS THE
