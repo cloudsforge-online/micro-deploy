@@ -363,6 +363,47 @@ export async function lastSucceededAt(sql: Sql, environment: Environment): Promi
 }
 
 /**
+ * When a set for this environment was last PROVEN RESTORABLE — or **null if none ever has been**.
+ *
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ * **THE TWIN OF `lastSucceededAt`, AND IT EXISTS FOR THE SAME REASON THAT ONE DOES.**
+ *
+ * `backup_last_verified_unixtime` was written on the verify path and nowhere else, so a container
+ * restart erased it and left the estate unable to say whether any set had ever been restored —
+ * while the catalogue, three feet away, held the answer. Measured on mainnet 2026-08-18: the
+ * runner restarted at 15:37 after a host reboot, `backup_runs` carried a `verified_at` for every
+ * night from 08-14 to 08-18 (the newest 03:00:09Z that morning) and `backup.verify` was armed for
+ * 08-19 03:00 with `dead = false` — and the gauge was absent anyway. The check that reads it then
+ * accuses the job of being dead-lettered, which is the one explanation the evidence ruled out.
+ *
+ * The window is not a corner case: it opens on every restart and closes only at the next nightly
+ * verify, so a deploy at midday blinds the estate to its own restore-provenness for fifteen hours.
+ *
+ * NULL, NOT ZERO — for the reason spelled out on `lastSucceededAt`. Absent means "no set here has
+ * ever been proven restorable", which is a different and worse fact than "the proof is old", and
+ * only an absent series can say it.
+ * ══════════════════════════════════════════════════════════════════════════════════════════════
+ *
+ * `verified_at` is stamped by `markVerified` ONLY after a restore of that set completed cleanly,
+ * and `backup_runs_verification_is_attributed` refuses one that cannot name the restore that
+ * earned it. So the newest `verified_at` is the newest moment a restore actually proved something,
+ * which is exactly what the gauge claims to publish.
+ *
+ * `state = 'succeeded'` for the same reason as the read above, plus one specific to this column: a
+ * PRUNED row can still carry the `verified_at` it earned while its files existed, and seeding from
+ * one would publish a proof about a set that has since been deleted.
+ */
+export async function lastVerifiedAt(sql: Sql, environment: Environment): Promise<Date | null> {
+  const [row] = await sql<{ verified_at: Date }[]>`
+    select verified_at from backup_runs
+      where environment = ${environment} and state = 'succeeded' and verified_at is not null
+      order by verified_at desc
+      limit 1
+  `
+  return row?.verified_at ?? null
+}
+
+/**
  * Record that a set was actually restored, and by which restore.
  *
  * `backup_runs_verification_is_attributed` refuses a `verified_at` with nothing to point at.
