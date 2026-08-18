@@ -60,6 +60,14 @@ import subprocess
 import sys
 import tempfile
 
+try:
+    import yaml
+except ModuleNotFoundError:
+    sys.exit(
+        "FAIL: PyYAML is not installed, so the render-vars file cannot be read.\n"
+        "       python3 -m pip install pyyaml"
+    )
+
 # ── THE FILE MAP: which env file becomes which Secret ─────────────────────────
 #
 # `kind` decides how the Secret is consumed by the rendered workloads:
@@ -105,6 +113,107 @@ NAMESPACES = {"mainnet": "cloudsforge-estate", "testnet": "cf-testnet"}
 PG_PASSWORD_VAR = "CF_POSTGRES_PASSWORD"
 PG_USER = "cloudsforge"
 PG_SECRET = "pg-cloudsforge"
+
+# The Secret holding values that had to be COMPUTED from other credentials
+# because Kubernetes' `$(VAR)` expansion cannot express the computation. Today
+# that is `SETTLEMENT_RPC_URLS` alone; see the render-vars comment for why a
+# conditional JSON object is not something a manifest can assemble.
+DERIVED_SECRET = "estate-derived"
+RENDER_VARS = "k8s/estate/render-vars.{network}.yaml"
+
+# The subset of shell parameter expansion the derived expressions use. Anything
+# outside it is a hard failure rather than a best effort — see `expand`.
+EXPANSION = re.compile(
+    r"""\$\{
+          ([A-Za-z_][A-Za-z0-9_]*)      # 1: name
+          (?: (:-|:\+) ([^{}]*) )?      # 2: operator, 3: operand
+        \}
+      | \$ ([A-Za-z_][A-Za-z0-9_]*)     # 4: bare $NAME
+    """,
+    re.VERBOSE,
+)
+
+
+def expand(expression, values, depth=0):
+    """Evaluate the restricted shell expansion the derived expressions use.
+
+    Supports exactly `${NAME}`, `${NAME:-default}`, `${NAME:+alternative}` and
+    `$NAME`, where an operand may itself contain expansions. Empty counts as
+    unset, which is what `:-` and `:+` mean in a shell and what the compose file
+    is relying on.
+
+    IMPLEMENTED HERE RATHER THAN BY CALLING A SHELL, and not for tidiness. The
+    inputs are credentials. Handing a string containing a live value to `bash -c`
+    means a value containing a backtick or `$(` is executed, and the estate's
+    tokens are machine-generated strings nobody has audited for shell
+    metacharacters. Passing them through the environment instead of argv fixes
+    the `ps` exposure but not the execution. There is no safe way to let a shell
+    see them, so no shell does.
+    """
+    if depth > 8:
+        sys.exit("FAIL: derived expression nests more than 8 levels; refusing to evaluate it.")
+
+    # Refuse anything this parser would silently mis-read. A `${` that does not
+    # match the grammar would otherwise be copied through as a literal, and the
+    # result — a settlement RPC map with `${` in it — fails at boot in a way that
+    # points at settlement rather than at here.
+    for stray in re.finditer(r"\$\{", expression):
+        if not any(m.start() == stray.start() for m in EXPANSION.finditer(expression)):
+            sys.exit(
+                "FAIL: a derived expression uses parameter expansion this script does not\n"
+                "      implement (nesting, or an operator other than `:-` / `:+`).\n"
+                "      Position {} of the expression in render-vars. The expression is not\n"
+                "      printed: it is a template over credentials.".format(stray.start())
+            )
+    if "$(" in expression or "`" in expression:
+        sys.exit("FAIL: a derived expression contains command substitution. Refusing to evaluate it.")
+
+    def one(match):
+        name = match.group(1) or match.group(4)
+        operator, operand = match.group(2), match.group(3)
+        current = values.get(name) or ""
+        if operator == ":-":
+            return current or expand(operand, values, depth + 1)
+        if operator == ":+":
+            return expand(operand, values, depth + 1) if current else ""
+        return current
+
+    return EXPANSION.sub(one, expression)
+
+
+def verify_names(render_vars, tokens, tokens_rel):
+    """Compare render-vars' `secret_vars` against the real file, BOTH directions.
+
+    The renderer classifies every `${VAR}` in the compose file as either a
+    credential or a setting, and it does so from a committed list because
+    `tokens.env` is not in the repository. That list can drift from the file in
+    two ways, and they are not equally bad:
+
+      a name here the file lacks — the rendered `secretKeyRef` points at a
+      missing key. `optional: false`, so the pod does not start. Loud, and
+      recoverable in a minute.
+
+      a name in the file not here — the renderer sees an unclassified variable,
+      treats it as configuration, and WRITES ITS VALUE INTO k8s/estate/, which is
+      committed. Silent, and recoverable only by rotating the credential.
+
+    The second is the reason this check exists, and the reason it is fatal on
+    every run rather than something you opt into with a flag.
+    """
+    declared = set(render_vars.get("secret_vars") or [])
+    present = set(tokens)
+    missing_from_file = sorted(declared - present)
+    missing_from_list = sorted(present - declared)
+
+    print(f"  secret_vars: {len(declared)} declared, {len(present)} in {tokens_rel}")
+    if not missing_from_file and not missing_from_list:
+        print("    both directions agree")
+        return True
+    for name in missing_from_file:
+        print(f"    ! declared but absent from the file: {name}   (pod would not start)")
+    for name in missing_from_list:
+        print(f"    ! in the file but not declared: {name}   (RENDERER WOULD COMMIT ITS VALUE)")
+    return False
 
 
 def parse_env(path):
@@ -215,13 +324,25 @@ def main():
         action="store_true",
         help="report how many values would differ under kubectl's --from-env-file. Counts only.",
     )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="only compare render-vars' secret_vars against the real file, both directions. Creates nothing.",
+    )
     args = parser.parse_args()
 
     root = pathlib.Path(args.root)
     namespace = NAMESPACES[args.network]
     entries = FILES[args.network]
+    mode = "VERIFY" if args.verify else ("APPLY" if args.apply else "dry-run (names only)")
 
-    print(f"network={args.network} namespace={namespace} mode={'APPLY' if args.apply else 'dry-run (names only)'}")
+    render_vars_rel = RENDER_VARS.format(network=args.network)
+    render_vars_path = root / render_vars_rel
+    if not render_vars_path.exists():
+        sys.exit(f"FAIL: {render_vars_rel} is missing; it says which variables are credentials.")
+    render_vars = yaml.safe_load(render_vars_path.read_text()) or {}
+
+    print(f"network={args.network} namespace={namespace} mode={mode}")
     print()
 
     missing = [rel for _, rel, _ in entries if not (root / rel).exists()]
@@ -235,11 +356,32 @@ def main():
             + "\n\nThey are gitignored by design and live only on the host. Transfer them; do not recreate them."
         )
 
+    # Everything is parsed BEFORE anything is created. The name check below can
+    # fail, and a half-applied Secret set is worse than none: the estate would
+    # come up with a subset of its credentials current and no single command that
+    # says so.
+    parsed = [(name, rel, kind, parse_env(root / rel)) for name, rel, kind in entries]
+    tokens_rel, tokens = next(((rel, data) for _, rel, kind, data in parsed if kind == "interp"), (None, None))
+    if tokens is None:
+        sys.exit("FAIL: this network has no `interp` file, so there is nothing to verify secret_vars against.")
+
+    if not verify_names(render_vars, tokens, tokens_rel):
+        sys.exit(
+            "\nFAIL: the committed classification and the host's file disagree.\n"
+            "      Fix the list in {}, or the file, before rendering or applying\n"
+            "      anything. See the comment above `secret_vars:` for what each direction costs.".format(
+                render_vars_rel
+            )
+        )
+    print()
+    if args.verify:
+        print("Nothing above is a value. If you can read a credential in this output, that is a bug — report it.")
+        sys.exit(0)
+
     ok = True
     pg_password = None
-    for name, rel, kind in entries:
+    for name, rel, kind, data in parsed:
         path = root / rel
-        data = parse_env(path)
         print(f"  {name}  ({kind})  <- {rel}   [{len(data)} key(s)]")
         if args.audit_quoting:
             naive = {}
@@ -274,6 +416,48 @@ def main():
         dry=not args.apply,
     ):
         ok = False
+
+    # ── THE COMPUTED VALUES ──────────────────────────────────────────────────
+    #
+    # Evaluated here, with the real values, because the expression is
+    # conditional and a manifest cannot be. The renderer has already checked
+    # this expression byte-for-byte against the compose file, so what is
+    # computed here and what compose computes today cannot have drifted.
+    derived_vars = render_vars.get("derived_vars") or {}
+    if derived_vars:
+        print()
+        derived = {}
+        for key, spec in sorted(derived_vars.items()):
+            value = expand(spec["from"], tokens)
+            if not value:
+                sys.exit(
+                    f"FAIL: {key} evaluated to the empty string.\n"
+                    f"      Its consumers ({', '.join(spec.get('consumers') or [])}) read it at import and\n"
+                    f"      exit; an empty Secret key would take them down at start rather than\n"
+                    f"      at first use. Check that its inputs are set in {tokens_rel}."
+                )
+            if "host.docker.internal" in value:
+                # The `:-` default in the compose expression names Docker's
+                # bridge gateway. render-vars records `host.docker.internal: drop`
+                # on the evidence that it never fires — every network sets its
+                # EMBER_RPC_URL explicitly. If it fires here that evidence has
+                # expired, and the result would be settlement pointed at a name
+                # no cluster DNS resolves: withdrawals failing with a lookup
+                # error, on the money tier, with nothing wrong in the manifests.
+                sys.exit(
+                    f"FAIL: {key} fell back to its `host.docker.internal` default, which does not\n"
+                    f"      exist on Kubernetes. An input is unset in {tokens_rel} that was set when\n"
+                    f"      render-vars was written. Set it, or change the default and the\n"
+                    f"      `extra_hosts:` decision together."
+                )
+            derived[key] = value
+            # The COUNT of contributing variables is safe and is the number worth
+            # seeing: it is how you notice a chain silently dropping out.
+            contributors = sorted(set(re.findall(r"[A-Za-z_][A-Za-z0-9_]*", spec["from"])) & set(tokens))
+            live = [name for name in contributors if tokens.get(name)]
+            print(f"  {DERIVED_SECRET}/{key}  <- {len(live)} of {len(contributors)} input(s) set: {', '.join(live)}")
+        if not apply_secret(namespace, DERIVED_SECRET, derived, dry=not args.apply):
+            ok = False
 
     print()
     print("Nothing above is a value. If you can read a credential in this output, that is a bug — report it.")
