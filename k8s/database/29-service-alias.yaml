@@ -1,0 +1,99 @@
+# A Service literally named `postgres`, in both namespaces, so that not one of
+# the estate's 57 connection strings has to change.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE PROBLEM THIS SOLVES
+#
+# `compose/docker-compose.estate.yml` builds 57 DSNs of the form
+#
+#     postgresql://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/<db>
+#
+# where the host `postgres` is the compose service name. CloudNativePG does not
+# create a Service by the cluster's own name. Measured on 2026-08-19, right after
+# the clusters came up, it creates exactly three:
+#
+#     postgres-rw    → the primary; reads and writes
+#     postgres-ro    → replicas only; empty while `instances: 1`
+#     postgres-r     → any instance, primary included
+#
+# and `kubectl get svc postgres` returned NotFound. So the name is free, and the
+# choice is between renaming it in 57 places or adding it back in one.
+#
+# One. A migration that also rewrites 57 strings that each carry a password is a
+# migration with 57 new opportunities to typo a hostname into something that
+# resolves, connects to the wrong database, and is not noticed until the data is
+# in the wrong place.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY `ExternalName` AND NOT A COPY OF THE SELECTOR
+#
+# The obvious alternative is a normal ClusterIP Service carrying the same
+# selector CNPG puts on `postgres-rw`, which is (measured, not assumed):
+#
+#     cnpg.io/cluster = postgres
+#     cnpg.io/instanceRole = primary
+#
+# That works today and it is the wrong shape, because it copies a fact that
+# belongs to the operator. CNPG has already renamed this label once — the pods
+# still carry a bare `role: primary` alongside `cnpg.io/instanceRole: primary`,
+# which is precisely the residue of that rename. When it happens again, a
+# hand-copied selector does not error. It silently matches nothing, and a Service
+# matching nothing is a connection refused across all 30 databases at once.
+#
+# `ExternalName` delegates instead of duplicating: it is a CNAME to CNPG's own
+# `postgres-rw`, so whatever CNPG does to its labels, its own Service keeps
+# pointing at the primary and this alias keeps pointing at that Service. There is
+# one place that knows how to find the primary, and it is the operator's.
+#
+# The one real cost, stated rather than discovered later: `kubectl port-forward
+# svc/postgres` does not work against an ExternalName. Use `svc/postgres-rw`.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# `-rw` AND NOT `-r`, WHICH IS A DECISION AND NOT A DEFAULT
+#
+# Every one of the 57 DSNs points here, and they are not all writers — plenty of
+# services mostly read. Pointing the alias at `postgres-r` would spread those
+# reads across instances once there are instances to spread across.
+#
+# It still points at `-rw`, on purpose. Under compose there was one server and
+# every connection saw its own writes immediately; `-r` would quietly change that
+# to "reads may land on a replica and be behind by however far replication lags".
+# For code written against read-your-writes, that is a bug that only appears
+# under load, on the surfaces that matter, months after the migration that caused
+# it, and it would be one of the very few behaviour changes in this whole move.
+#
+# So the migration preserves the semantics it started with. Sending a specific
+# service's reads to `postgres-ro` later is then a deliberate, reviewable, one-
+# service change — which is what it should have been all along.
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+  annotations:
+    online.cloudsforge.why: >-
+      Compatibility alias so the estate's DSNs can keep saying `@postgres:5432`.
+      Not created by CloudNativePG. Points at the primary via postgres-rw.
+spec:
+  type: ExternalName
+  # Fully qualified deliberately. A bare `postgres-rw` would be resolved through
+  # the pod's search path, which differs between namespaces and would make this
+  # manifest mean different things in the two places it is applied.
+  externalName: postgres-rw.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: cf-testnet
+  labels:
+    online.cloudsforge.network: testnet
+  annotations:
+    online.cloudsforge.why: >-
+      Compatibility alias so the estate's DSNs can keep saying `@postgres:5432`.
+      Not created by CloudNativePG. Points at the primary via postgres-rw.
+spec:
+  type: ExternalName
+  externalName: postgres-rw.cf-testnet.svc.cluster.local

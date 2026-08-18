@@ -1,0 +1,73 @@
+# The storage class the estate's data uses, and the one property that matters.
+#
+# ── `Retain`, WHICH IS THE WHOLE REASON THIS EXISTS ──────────────────────────
+#
+# k3s ships `local-path` as the default class with `reclaimPolicy: Delete`.
+# Under that policy, deleting a PersistentVolumeClaim deletes the directory
+# holding the data — so `kubectl delete pvc` or `kubectl delete ns` becomes
+# `rm -rf` on the estate's database, with no confirmation and no undo.
+#
+# That is not a hypothetical risk here, it is the risk this migration was partly
+# undertaken to remove. Measured on the compose host on 2026-08-18: BOTH live
+# Postgres containers were backed by ANONYMOUS Docker volumes —
+#
+#   cloudsforge-estate-postgres-1  →  9768f792…a7c36   (10 GB, mainnet)
+#   cf-testnet-postgres-1          →  6067f3b1…8efa0   (655 MB, testnet)
+#
+# — because `compose/docker-compose.estate.yml` declares NO volume for
+# `postgres` at all, and the `postgres:17-alpine` image's own `VOLUME
+# /var/lib/postgresql/data` therefore created an unnamed one. An anonymous
+# volume is named by no file in this repository, survives a restart, and does
+# NOT survive `docker compose down` followed by `up`: the second command creates
+# a fresh empty one and the estate comes up on an empty database, having lost
+# nothing that anything would report as lost. `docker volume prune` removes it
+# outright.
+#
+# So the estate's entire recovery position rested on nobody typing a routine
+# command. `Retain` replaces that with a policy: when a claim goes away the
+# volume is kept, moves to `Released`, and a human has to decide.
+#
+# ── `WaitForFirstConsumer`, WHICH IS NOT OPTIONAL ON LOCAL STORAGE ───────────
+#
+# A local-path volume is a directory on one specific node. Binding it before the
+# scheduler has picked a node produces a volume the pod may be unable to reach —
+# harmless on today's single node and a silent trap on the multi-node cluster
+# this is being built to become. Deferring the bind until the pod is scheduled
+# is what makes the same manifest correct in both.
+#
+# ── WHAT THIS CLASS DOES NOT GIVE YOU, SAID PLAINLY ──────────────────────────
+#
+# 1. THE SIZE IS ADVISORY. local-path provisions a directory, not a quota, so a
+#    PVC requesting 60Gi can consume the whole filesystem and a PVC requesting
+#    1Gi is not protected from anything. The sizes in the Cluster manifests are
+#    documentation of intent and a guard against a future class that DOES
+#    enforce — they are not a reservation. Watch `df`, not the PVC.
+# 2. NO EXPANSION. `allowVolumeExpansion: false` because local-path cannot do
+#    it, stated rather than left to be discovered when a resize hangs `Pending`
+#    for ever. Growing means a new, larger claim and a CNPG replica rebuild onto
+#    it, which is the documented path and is why CNPG is the operator here.
+# 3. NO REPLICATION. The directory lives on one node's disk. Redundancy at this
+#    layer would be Longhorn or Ceph; this estate deliberately does not use
+#    them, because CloudNativePG already replicates at the POSTGRES level, and
+#    two replication systems stacked on each other is two consistency models to
+#    reason about during an incident. Going from `instances: 1` to `instances:
+#    3` gives each replica its own local volume on its own node and Postgres
+#    streams between them — which is why no storage re-architecture is needed
+#    when this cluster grows, and why the single node today is a starting point
+#    rather than a corner.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: cf-retain
+  annotations:
+    # Explicitly NOT the default. The default stays `local-path` with
+    # `Delete`, so a scratch PVC somebody creates while debugging is cleaned up
+    # normally and only the things that opt in are kept for ever. A cluster
+    # where everything is retained is a cluster where `Released` volumes pile up
+    # until somebody deletes them in a batch, which is the same accident with
+    # more steps.
+    storageclass.kubernetes.io/is-default-class: "false"
+provisioner: rancher.io/local-path
+reclaimPolicy: Retain
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: false

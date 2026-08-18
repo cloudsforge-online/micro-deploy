@@ -1,0 +1,228 @@
+# The mainnet database, as a CloudNativePG Cluster.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT THIS REPLACES, AND WHY IT IS NOT A LIKE-FOR-LIKE MOVE
+#
+# Under compose this was `postgres:17-alpine` with a `command:` overriding
+# max_connections, a `pg_isready` health check, and — measured on the host on
+# 2026-08-18 — an ANONYMOUS Docker volume, because the compose file declares no
+# volume for it and the image's own `VOLUME /var/lib/postgresql/data` therefore
+# created an unnamed one (`9768f792…a7c36`, 10 GB, 31 databases). Nothing in the
+# repository named the estate's database. See k8s/base/10-storageclass.yaml.
+#
+# Three things change here and each is deliberate:
+#
+#   1. THE VOLUME HAS A NAME AND A RETAIN POLICY. That is the entire point.
+#   2. `cloudsforge` IS NO LONGER A SUPERUSER. Under compose it is
+#      POSTGRES_USER, so initdb made it one. Measured across all 31 databases on
+#      both networks, the only extension in use anywhere is `btree_gist` (in
+#      `market` and `tessera`), which has been TRUSTED since PostgreSQL 13 and
+#      installs as the database owner. Every object is owned by `cloudsforge`
+#      and there are no non-default schemas. So superuser was never used for
+#      anything, and `enableSuperuserAccess: false` below — CNPG's default —
+#      costs the estate nothing and removes a privilege 30 services hold today.
+#   3. THE MAJOR VERSION IS PINNED TO THE SOURCE'S. The compose server reports
+#      17.11; this is 17.11. A migration is not the moment to also change major
+#      version, and matching majors keeps physical options (basebackup, logical
+#      replication upgrade) open if the dump/restore path below ever needs one.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE SINGLE NODE IS A STARTING POINT, NOT A CORNER — WHICH IS WHY CNPG
+#
+# `instances: 1` today. Going to three is editing that number: CNPG creates two
+# more pods, each gets its own PersistentVolumeClaim on its own node from the
+# same StorageClass, and Postgres streams between them. No storage layer has to
+# be re-architected, because the replication happens ABOVE the storage rather
+# than underneath it.
+#
+# That is the reason this estate does not put Longhorn or Ceph under the
+# database. A replicated block device plus a replicating database is two
+# consistency models stacked, two failure modes to tell apart at 3am, and a
+# write amplification nobody measured. CNPG's own documentation says the same
+# thing and the choice here follows it.
+#
+# What `instances: 1` genuinely costs, said plainly rather than left implied:
+# there is no failover, and any operation that restarts the primary — a minor
+# version bump, a change to a parameter that needs a restart, a node reboot — is
+# downtime for all 30 databases at once. On this estate that is currently
+# acceptable; see estate-has-no-real-users. It stops being acceptable the moment
+# it is not, and the fix is the number below.
+# ══════════════════════════════════════════════════════════════════════════════
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  # ── NAMED `postgres` ON PURPOSE, AND IT SAVES 57 EDITS ──────────────────────
+  #
+  # `compose/docker-compose.estate.yml` builds 57 connection strings by
+  # interpolating one password variable into `postgresql://cloudsforge:…@postgres
+  # :5432/<db>`. The host in every one of them is the literal `postgres`, which
+  # is the compose service name.
+  #
+  # CNPG creates `postgres-rw`, `postgres-ro` and `postgres-r` from this name —
+  # NOT a service called `postgres` — so `29-service-alias.yaml` adds one, and
+  # every DSN the renderer emits keeps working with no rewriting at all. A
+  # migration that also rewrites 57 credentials-bearing strings is a migration
+  # with 57 more places to be wrong.
+  name: postgres
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  instances: 1
+
+  # ── PINNED BY DIGEST, FOR THE REASON release-render.py GIVES AT LENGTH ──────
+  #
+  # "A tag is a mutable pointer and this estate's own machinery moves it." The
+  # same rule that governs the 48 service images governs the one image holding
+  # all the data. Resolved 2026-08-19 from ghcr.io.
+  #
+  # `standard` rather than `minimal`: the contrib extensions ship in it, and
+  # `btree_gist` is required by `market` and `tessera`. A `minimal` image would
+  # come up fine and fail at the first migrator that runs CREATE EXTENSION,
+  # which is a failure that looks like a bad migration rather than a bad image.
+  #
+  # ── TAG *AND* DIGEST, WHICH IS NOT BELT-AND-BRACES ──────────────────────────
+  #
+  # This was written as a bare `@sha256:` first, matching how the estate pins its
+  # 48 service images, and CNPG's admission webhook rejected it outright:
+  #
+  #   spec.imageName: Invalid value: "...@sha256:91e0de…":
+  #   Can't use just the image sha as we can't detect upgrades
+  #
+  # The refusal is right, and it is a distinction the compose estate never had to
+  # make. CNPG does not merely run this image, it reasons about it: changing the
+  # image on a running cluster is a MAJOR VERSION UPGRADE if the version moved,
+  # and a rolling restart if it did not — and those are wildly different
+  # operations to perform on 10 GB of data. A digest is opaque, so an operator
+  # given only a digest cannot tell 17.11→17.12 from 17→18, and CNPG declines to
+  # guess rather than silently attempt the wrong one.
+  #
+  # `tag@sha256:` gives both, with no trade-off: containerd resolves the pull by
+  # DIGEST, so the tag cannot be moved underneath this cluster and the
+  # immutability the estate's pinning rule exists for is fully intact — while
+  # CNPG parses `17.11` from the tag and knows what kind of change any future
+  # edit is. It also puts the version in front of anyone running `kubectl get
+  # cluster`, which is why the separate annotation that used to carry it here is
+  # gone: it now had two places to say `17.11` and one of them could go stale.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:91e0de662d53895a45f1396f4ee1a75daeb0c26fc87853afc9c8f43e01fdaa21
+  imagePullPolicy: IfNotPresent
+
+  # ── SUPERUSER ACCESS STAYS OFF ─────────────────────────────────────────────
+  #
+  # This is CNPG's default and it is restated explicitly because turning it on
+  # is a one-word change that nothing would otherwise flag. It publishes a
+  # `postgres` superuser password as a Secret; the estate has no use for one
+  # (see the measurement in the header) and a credential nothing needs is a
+  # credential that only ever leaks.
+  enableSuperuserAccess: false
+
+  bootstrap:
+    initdb:
+      # ── `app` IS A PLACEHOLDER AND THE ESTATE NEVER OPENS IT ────────────────
+      #
+      # CNPG requires an application database at bootstrap. The estate's 30 real
+      # databases are declared as `Database` resources in 21-databases.yaml,
+      # generated from `compose/estate/initdb.sql` so the two cannot drift, and
+      # this one is not among them. Making one of the 30 the bootstrap database
+      # instead would split the source of truth: 29 declared in one place and
+      # one created a different way, which is precisely the kind of exception
+      # that survives until somebody deletes the wrong thing.
+      database: app
+      owner: cloudsforge
+      # The role's password. NOT generated by CNPG: it is the value already in
+      # `compose/estate/tokens.env`, loaded by `scripts/k8s-secrets.sh` from
+      # that gitignored file, so the 57 DSNs stay byte-identical through the
+      # cutover. Rotating it afterwards is a separate, ordered operation with a
+      # runbook — runbooks/runbook-postgres-password.md — and doing both at once
+      # would make a failed cutover indistinguishable from a failed rotation.
+      secret:
+        name: pg-cloudsforge
+      # Matches the compose server exactly, checked rather than assumed:
+      # `show lc_collate` and `show server_encoding` on
+      # cloudsforge-estate-postgres-1. A restore into a differently-collated
+      # cluster succeeds and then sorts text differently, which shows up as
+      # wrong query results rather than as an error.
+      localeCollate: en_US.utf8
+      localeCType: en_US.utf8
+      encoding: UTF8
+
+  postgresql:
+    parameters:
+      # ── THE ONE PARAMETER THE COMPOSE FILE OVERRODE ────────────────────────
+      # Carried over verbatim from `command: [postgres, -c, max_connections=400]`
+      # and its comment: "22 services x a pool of 10 exceeds the default 100, and
+      # the symptom is a service that boots, passes its first probe and then
+      # fails readiness under no load at all." There are more than 22 now.
+      max_connections: "400"
+      # Not a compose setting — there was none, so Postgres used its 128MB
+      # default inside a container with no memory limit at all. Set explicitly
+      # here because the pod now HAS a limit, and shared_buffers left to default
+      # under a limit is the standard way to get an OOM kill that reads as a
+      # crash loop.
+      shared_buffers: 512MB
+      effective_cache_size: 1GB
+      # 400 connections x work_mem is the worst case that decides whether this
+      # pod fits in its limit. 4MB x 400 = 1.6GB of headroom needed above
+      # shared_buffers in the worst case, which is why the limit is 2Gi and not
+      # 1Gi. The estate's measured live connection count is well under 100.
+      work_mem: 4MB
+      maintenance_work_mem: 128MB
+
+  # ── RESOURCES: REQUEST EQUALS LIMIT, ON PURPOSE ────────────────────────────
+  #
+  # Memory request == limit puts this pod in the Guaranteed QoS class, which is
+  # the difference between "the database is the last thing evicted when the node
+  # is under pressure" and "the database is evicted because it is using more
+  # than it asked for". On a single node running the whole estate, that
+  # distinction decides what happens on a bad day.
+  #
+  # NO CPU LIMIT, deliberately. A CPU limit throttles rather than evicts, and a
+  # throttled Postgres produces latency that looks exactly like a slow query.
+  # The request is what the scheduler needs; the limit would only ever hurt.
+  #
+  # These numbers are sized for the CURRENT VM (4 GB floor, 12 GB ceiling) while
+  # the WSL stack is still running beside it. Once WSL is removed and the VM
+  # ceiling rises, raising this is one edit and a rolling restart.
+  resources:
+    requests:
+      memory: 2Gi
+      cpu: "500m"
+    limits:
+      memory: 2Gi
+
+  storage:
+    storageClass: cf-retain
+    # 10 GB in use today, of which `indexer` alone is 9,449 MB and is the only
+    # one growing meaningfully. 60Gi is roughly six times the current footprint.
+    #
+    # READ k8s/base/10-storageclass.yaml BEFORE TRUSTING THIS NUMBER: under
+    # local-path this is a directory and not a quota, so the figure is a
+    # statement of intent and a guard against a future class that enforces. The
+    # thing that will actually run out is the VM's 180 GB filesystem, and `df`
+    # is what says so.
+    size: 60Gi
+
+  # ── WAL ON ITS OWN VOLUME ──────────────────────────────────────────────────
+  #
+  # Not a performance decision on one local disk — a blast-radius one. With WAL
+  # on the data volume, anything that stops WAL being recycled (a stuck
+  # replication slot, an archiver that cannot write) fills the same filesystem
+  # the database is in and Postgres stops with a full disk. Separated, that
+  # failure fills a volume whose only job is WAL, and the database can still be
+  # read while somebody fixes it.
+  walStorage:
+    storageClass: cf-retain
+    size: 16Gi
+
+  # With one instance there is nobody to switch over TO, so `supervised` would
+  # mean an update that waits for a human to perform an impossible switchover.
+  # `unsupervised` restarts the primary in place, which is the only thing that
+  # can happen here and is honest about it.
+  primaryUpdateStrategy: unsupervised
+
+  monitoring:
+    # The estate already scrapes 1,300+ series and has an alerting plane with
+    # runbooks. CNPG exports on :9187 with a PodMonitor; the Prometheus config
+    # in prometheus/ is file-based today, so this is turned on and wired up in
+    # the telemetry phase rather than left to be discovered as a gap.
+    enablePodMonitor: false

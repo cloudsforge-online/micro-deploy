@@ -1,0 +1,42 @@
+# The two networks are two namespaces, and that is the isolation boundary.
+#
+# ── WHY NOT ONE NAMESPACE WITH A LABEL ───────────────────────────────────────
+#
+# Because every other separation in this estate is enforced rather than named,
+# and a label is not enforcement. `AUTH_EXPECTED_NETWORK` makes a mainnet token
+# unusable on testnet, the backup runner refuses a cross-environment restore,
+# `backup_runs` is keyed by environment, and the two networks deliberately hold
+# DIFFERENT Postgres passwords in two different gitignored files — CI asserts
+# they differ. All of that exists because "the wrong network's data" is the
+# failure this estate has decided it will not have.
+#
+# A namespace carries that into Kubernetes for free: Secret names do not
+# collide, a NetworkPolicy has something to select, RBAC has something to scope,
+# and `kubectl delete` typed at the wrong terminal hits one network rather than
+# both. Under compose the same property came from two project names
+# (`cloudsforge-estate` and `cf-testnet`), which is the same idea with weaker
+# machinery behind it.
+#
+# ── THE NAMES ARE THE COMPOSE PROJECT NAMES, NOT NEW ONES ────────────────────
+#
+# Renaming during a migration means every log line, dashboard, runbook and piece
+# of muscle memory referring to `cloudsforge-estate` becomes wrong on the day
+# the estate is least understood. So mainnet keeps its project name verbatim.
+# Testnet's compose project was itself renamed to `cf-testnet` on purpose
+# (micro-org#257) and keeps that.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cloudsforge-estate
+  labels:
+    # Read by the renderer and by every guard that has to answer "which network
+    # is this object part of" without parsing a name. The value matches
+    # CF_EMBER_NETWORK, which is the same string the services themselves check.
+    online.cloudsforge.network: mainnet
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cf-testnet
+  labels:
+    online.cloudsforge.network: testnet
