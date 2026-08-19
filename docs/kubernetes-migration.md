@@ -524,6 +524,32 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
 
    Step 5 is what brings the other 50 back: `50-deployments.yaml` carries an
    explicit `replicas: 1`, so `kubectl apply` restores it.
+
+   **…but only the 51 it renders.** Three more Deployments live in these
+   namespaces, hold database connections (so they DO have to be scaled down),
+   and are applied by a different script each — so step 5 leaves them at zero and
+   says nothing. After step 5, run their own scripts:
+   ```sh
+   ./scripts/k8s-backup-runner.sh --network mainnet
+   ./scripts/k8s-backup-runner.sh --network testnet
+   ./scripts/k8s-hearth-devkit.sh --network testnet
+   ```
+
+   | Deployment | Namespace | Applied by |
+   |---|---|---|
+   | `backup-runner` | both | `scripts/k8s-backup-runner.sh` |
+   | `hearth-explorer-api` | `cf-testnet` | `scripts/k8s-hearth-devkit.sh` |
+   | `hearth-verify` | `cf-testnet` | `scripts/k8s-hearth-devkit.sh` |
+
+   Missing `backup-runner` is the expensive one and it is silent by
+   construction: the estate keeps serving, and the only thing that changed is
+   that nothing is writing a recovery point. `estate-verify.sh` does say so —
+   `NO backup-runner container in project cloudsforge-estate` — which is how it
+   was caught here. The check to run afterwards is:
+   ```sh
+   kubectl get deploy -A -o json | jq -r '.items[]|select(.spec.replicas==0)|"\(.metadata.namespace) \(.metadata.name)"'
+   ```
+   Only `cf-edge/cloudflared` should be listed, and only until step 6.
    Then, and only then, stop the two postgres containers as well:
    ```sh
    docker compose -p cloudsforge-estate stop postgres      # on the app host
@@ -712,6 +738,68 @@ teach it to read `CF_WEB_RETIRED` and skip the 25 web-surface assertions and the
 `/healthz` probe when a network's frontends are retired; and stop asserting a
 testnet shell that the estate deliberately redirects away.
 
+### After steps 3–5, and the ten failures that are the tunnel
+
+Measured on mainnet 2026-08-19, on a cluster left alone for several minutes
+after the cutover — `cloudsforge-estate` 53/53 and `cf-testnet` 55/55 ready,
+nothing applied since: **11 failures in a 276-line run, and ten of them have one
+cause.** Every check that addresses the cluster passed. The eleven are item 1
+above (`app` not in `initdb.sql`) plus these ten:
+
+```
+FAIL foresight: https://foresight.cloudsforge.online/markets?…  answered 502 (gateway)
+FAIL market.listings:   https://api.cloudsforge.online/v1/listings     answered 502 (gateway)
+FAIL market.collections: https://api.cloudsforge.online/v1/collections answered 502 (gateway)
+FAIL worlds.titles:     https://api.cloudsforge.online/v1/titles       answered 502 (gateway)
+FAIL status page:       https://status.cloudsforge.online/api/status/public answered 502
+FAIL mint.tokens / community / nda.worlds / billing.products:
+       needs the operator to be signed in and this run has no token
+```
+
+All ten come from ONE section — `THE PAGES HAVE SOMETHING ON THEM`, which does
+not curl anything itself but shells out to `scripts/estate-seed.mjs --check`.
+**That subprocess is the only part of the suite that still resolves the estate's
+hostnames through PUBLIC DNS.** Between step 3 and step 6 those names point at
+Cloudflare, and Cloudflare's origin is the compose estate step 3 stopped, so
+every one of them is answered `502` by Cloudflare — confirmed from the VM:
+
+```
+https://api.cloudsforge.online/v1/listings   HTTP 502  server: cloudflare
+```
+
+The four "no token" lines are the same fault one hop earlier: `login()` in
+`scripts/seed/lib.mjs` posts to `IDENTITY_BASE`, which is
+`https://nimbus.cloudsforge.online`. No token, so the four authenticated reads
+are refused rather than attempted. They are not four faults; they are the fifth
+502 with its status code swallowed.
+
+**Step 6 is the fix, and clearing them is step 6's proof.** Nothing here needs
+changing.
+
+#### But the same gap made those ten checks PASS for the wrong reason
+
+Worth writing down, because it cuts the other way and is the more dangerous
+half. `k8s-estate-verify.sh`'s own header says of the seeder's addresses:
+
+> Eleven of its entries are https hostnames and survive the runtime change
+> untouched.
+
+That is false in both directions. Before step 3, those eleven names also
+resolved through public DNS — to the **compose** estate, which was up and
+answering. So every pre-cutover cluster run reported those ten surfaces green
+**having never addressed the cluster at all**. The rest of the suite is pinned:
+`gw()` uses `--resolve` onto the gateway's ClusterIP, and the 26 service URLs
+are exported as ClusterIPs. This one subprocess is not, and it is the section
+whose entire reason for existing is catching surfaces that are up and empty.
+
+It cannot be fixed the way `gw()` was. `estate-seed.mjs` uses Node's global
+`fetch`, which has no `--resolve`: pinning it needs either an undici dispatcher
+with a custom `lookup` (undici is not importable from a bare Node, and the
+seeder's Node is a pinned tarball `scripts/node-tool.sh` fetches into `.tools/`),
+or `/etc/hosts` entries on the VM — which is host state outside the repo, the
+thing `k8s-cluster-dns.sh` exists to keep in one place. Deliberately NOT done
+during the cutover; recorded in "What is not finished".
+
 ---
 
 ## What is not finished
@@ -734,6 +822,14 @@ Honest list, as of 2026-08-19:
 - **No `stratum-endpoint` in the cluster.** Equivalent to today while
   `CF_STRATUM_PUBLISH` is off, and a real gap the day hardware miners are meant to
   dial in. See cutover step 3 for why it was never rendered and what it would take.
+- **`estate-seed.mjs --check` is not pinned to the cluster.** The one part of the
+  suite that still resolves the estate's hostnames through public DNS, so its ten
+  assertions answer about whatever the tunnel currently points at rather than
+  about this cluster. Measured in both directions — green pre-cutover off the
+  compose estate, ten 502s between steps 3 and 6. Argued in full under "After
+  steps 3–5" above, including why `--resolve` is not available to it. This is the
+  section that exists to catch surfaces that are up and empty, so it is the worst
+  one to have unpinned.
 
 Closed since the first draft of this list: host aliases (superseded by
 `scripts/k8s-cluster-dns.sh`, which gives CoreDNS a zone per namespace instead of
