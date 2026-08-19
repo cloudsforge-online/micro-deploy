@@ -203,7 +203,7 @@ http:
           # same request with a `pool.` or `foresight.` origin got one.
           #
           # NONE OF THAT CHANGES; THE ORIGIN DOES. Wave 2 made the desk `<apex>/exchange`, so
-          # the origin its RPC reads come FROM is the apex — `https://{{ env "CF_SITE_HOST" }}`,
+          # the origin its RPC reads come FROM is the apex — the CF_SITE_HOST entry,
           # already the first entry in this block. The grant is not relocated, it is SUBSUMED,
           # and a line of its own would be a duplicate origin in a list that is keyed by origin.
           #
@@ -222,8 +222,8 @@ http:
           # returned to a page showing them signed out — a broken account, not a surface
           # with none.
           #
-          # All of that is still true and it is now covered by `https://{{ env
-          # "CF_SITE_HOST" }}`, the FIRST entry in this list. Wave 1 of
+          # All of that is still true and it is now covered by the CF_SITE_HOST entry,
+          # the FIRST in this list. Wave 1 of
           # `docs/apex-consolidation.md` moved the surface to `<apex>/journal`, and CORS is
           # decided on the ORIGIN — scheme, host, port. A path is none of the three, so the
           # apex's grant covers every bundle mounted on it, and the journal's reads are
@@ -357,7 +357,7 @@ http:
           # `journal` STILL views in place and no longer needs a line of its own, for the
           # same reason it lost the one in the same-environment list above: it is
           # `<apex>/journal` now, so the origin its cross-environment reads come FROM is
-          # `{{ env "CF_VIEW_SITE_HOST" }}` — the first entry in this block.
+          # the CF_VIEW_SITE_HOST entry — the first in this block.
           #
           # The registry row keeps `viewsAnyNetwork: true`, which is not a formality here.
           # The journal is the one viewer whose CONTENT does not vary by network at all —
