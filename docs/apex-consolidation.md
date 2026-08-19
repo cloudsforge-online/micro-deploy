@@ -224,19 +224,75 @@ get **610**, above their parent, and the check in
 [section 7](#7-what-ci-must-learn) fails any pair of nested prefixes whose
 priorities do not order longest-first.
 
-### Decision 4: a surface with an API remounts it under its own path
+### Decision 4: a surface with an API remounts it under its own path, and the gateway strips it back off
 
-Eleven of the fourteen have a co-hosted service — `cf-api-market-host`,
-`cf-api-explorer`, `cf-api-pool` and so on — matching `Host(<sub>) &&
-PathPrefix('/v1')`. Those bundles issue *relative* requests to `/v1/…`, which
-is what lets them not know their own hostname. Move the bundle to `/market` and
-a relative `/v1/titles` still resolves to `/v1/titles` at the apex root, which
-routes nowhere.
+**TWELVE** of the fourteen have a co-hosted service — not eleven, and not all of
+them under `/v1`; see §5 for the corrected count and for why `foresight` is the
+one that matters. Those bundles issue *relative* requests, which is what lets
+them not know their own hostname. Move the bundle to `/market` and a relative
+`/v1/titles` still resolves to `/v1/titles` at the apex root, which routes
+nowhere.
 
 So each such surface's API moves with it, to `/<surface>/v1`, and the bundle's
-fetch base becomes its own base path. That is a change in the *service* repo's
-consumers, not just the frontend, and it is why these surfaces are not in
-wave 1.
+fetch base becomes its own base path.
+
+**The service does not change, and the first draft of this decision said it
+would.** It said the move was "a change in the *service* repo's consumers, not
+just the frontend". It is not, because the gateway can put the prefix back:
+
+```yaml
+    cf-api-strip-market:
+      stripPrefix:
+        prefixes: ["/market"]
+```
+
+The router matches `Host(apex) && PathPrefix('/market/v1')`, the middleware
+removes `/market`, and `cf-svc-market` receives exactly the `/v1/titles` it
+receives today. **The estate already does this** — `gateway/dynamic/public-api.yml`
+carries `cf-api-strip-version` for the four services that do not serve `/v1`
+themselves, with the argument written out: changing the services "would mean
+editing four shipped, CI-green services and breaking every internal caller; so
+the gateway presents one versioned surface and strips the prefix". The same
+argument applies here and reaches the same answer.
+
+So decision 4 costs, per surface: **one router, one middleware, and one line in
+the frontend's API base.** Not a service change, not a consumer change.
+
+**What must be checked per service before relying on it**, because stripPrefix
+is invisible to the service and therefore invisible in its responses:
+
+| Risk | Why it breaks | Where to look |
+| --- | --- | --- |
+| a `Location:` header | the service builds it from the path it *sees*, which no longer has the prefix — so a 201 or a 302 points at `/v1/…` on the apex root | any `reply.redirect` / `Location` |
+| `Set-Cookie` with a `Path` | a cookie scoped `Path=/v1` is not sent back with a request to `/market/v1` | any `setCookie` with a path |
+| absolute URLs in a JSON body | pagination links, HATEOAS, an asset URL composed server-side | any response field holding a path |
+
+The bundle half is unaffected: decision 1 refused `StripPrefix` for the BUNDLE
+because a bundle emits self-referential asset URLs and the browser resolves them
+against the origin. **An API returns JSON**, which has no equivalent — except in
+the three rows above, which is why they are enumerated rather than waved at.
+
+**Audited, 2026-08-19, across all twelve services** — `market`, `mint`, `trade`,
+`worlds`, `emberkin`, `aetherholm`, `tessera`, `indexer` (which serves the
+`explorer` surface), `pool`, `foresight`, `agora`, `devplatform`:
+
+```console
+$ # per service: redirects, cookies with a Path, rooted paths in a response field
+$ grep -rlE '\.redirect\(|header\(.location' <svc>/src        →  0 files, every service
+$ grep -rlE 'setCookie|Set-Cookie'              <svc>/src        →  0 files, every service
+$ grep -rnE "(url|href|link|next|self)\s*:\s*[\`'\"]/" <svc>/src  →  0 matches, every service
+```
+
+Zero on all three, twelve for twelve. These services answer JSON built from their
+own database rows and nothing else — no service in the estate composes a URL for
+a caller, which is the same property that let `public-api.yml` present a
+different path layout than any of them serve.
+
+**The audit is the load-bearing part of this decision, not the middleware.**
+`stripPrefix` is invisible to the service: it cannot fail loudly, and a service
+that did compose an absolute path would keep answering 200 while handing the
+browser an address on the apex root. Re-run the three greps before adding a
+thirteenth surface to this mechanism.
 
 ### Decision 5: the surface keeps `viewsAnyNetwork`, and a registry invariant was wrong
 
@@ -697,6 +753,37 @@ This is the second instance of the same shape in two waves — the first was
 whose subject moved out from under them, and neither failed when it did. Worth
 looking for deliberately in wave 3: **any check whose pattern names a path is a
 check that stops checking when the path moves.**
+
+**It happened a third time on the deploy, and that one was loud.** The first CI
+build after wave 1 merged failed in `micro-journal-web`: the image step probed
+`GET /` twenty times and got 404 each time, and the nginx step looked for
+`error_page 404 /index.html`. The image was correct and the workflow was not.
+
+The three instances differ in one way that matters:
+
+| | Failed when the path moved? |
+| --- | --- |
+| wave 1, the `viewsAnyNetwork` invariant | no — passed, measuring a proxy |
+| wave 2, the nginx alternation reader | no — matched nothing, looped zero times |
+| the deploy, the CI image probes | **yes** |
+
+A check that names a path either goes silent or goes red, and which one it does
+is decided by whether an empty match is treated as success. `grep -q X || fail`
+goes red; `for m in $(grep X); do assert; done` goes silent. **Prefer the first
+shape, and where the second is unavoidable, assert the match set is non-empty** —
+which is what `check-router-prefix-ordering.py` and the rewritten alternation
+reader both now do.
+
+Two further assertions came out of the same episode and are worth copying to
+every surface wave 3 moves, because neither existed before and both are about
+what a bundle must NOT serve:
+
+- **`/` must 404 from the bundle's own container.** The apex root belongs to
+  `micro-site`. A bundle answering there means the gateway can serve the wrong
+  one for `/` and nothing reports it — micro-org#428, which has happened twice.
+- **`/robots.txt` must 404**, in both spellings. A reappearance is two containers
+  claiming one address, with the gateway deciding which one sets the indexing
+  policy for the entire origin.
 
 ### The one CORS grant that was load-bearing
 
