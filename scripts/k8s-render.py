@@ -703,6 +703,33 @@ def main():
             container_ports.append({"containerPort": int(container_port)})
             if bind not in ("127.0.0.1", "localhost"):
                 stratum_ports.append(int(container_port))
+
+        # ── A SERVICE WITH NO `ports:` STILL NEEDS A Service, AND THIS IS WHY ──
+        #
+        # Six frontends — exchange-web, journal-web, agora-web, lantern-web,
+        # pool-web, beacon-web — publish NO host port on purpose, and the compose
+        # file argues the case at each one: "the gateway resolves it by container
+        # name and a second address for the same bundle is the one nobody tests".
+        # Under compose that is complete. A container on the network answers to
+        # its own name whether or not anything is published; `ports:` was only
+        # ever about reaching it from the HOST.
+        #
+        # Kubernetes does not work that way. A Pod has no DNS name — a SERVICE
+        # does — so rendering only from `ports:` left those six with no address
+        # at all, and the gateway's `http://exchange-web:8080` resolved to
+        # nothing. Measured on the live cluster: 6 of 67 routers answered 502
+        # while all 50 Deployments read 1/1 Running and every readiness probe
+        # passed, because the probe talks to localhost inside the pod and never
+        # crosses the network that was missing.
+        #
+        # The port is not guessed and not tabled: it is the one the healthcheck
+        # already proved the service listens on, the same value `probe_from_
+        # healthcheck` returns for the readiness probe above. A service with
+        # neither `ports:` nor a healthcheck gets no Service, which is right —
+        # nothing has established that it listens at all.
+        if not container_ports and port is not None:
+            container_ports.append({"containerPort": port})
+
         if container_ports:
             seen, unique = set(), []
             for entry in container_ports:

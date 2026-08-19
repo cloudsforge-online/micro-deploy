@@ -486,5 +486,6 @@ if [ -n "$HOLD" ]; then
 fi
 say ""
 say "This brings up the services. It does NOT route traffic to them — that is the"
-say "gateway's IngressRoutes, applied separately. Until those exist the estate is"
-say "reachable only from inside the cluster."
+say "estate's own Traefik, applied separately by ./scripts/k8s-gateway.sh --network"
+say "$NETWORK, which reads gateway/dynamic/ rather than any IngressRoute CRD. Until"
+say "it runs, the estate is reachable only by Service name from inside the cluster."

@@ -471,6 +471,8 @@ spec:
           periodSeconds: 2
           timeoutSeconds: 5
           failureThreshold: 45
+        ports:
+        - containerPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -705,6 +707,8 @@ spec:
           periodSeconds: 2
           timeoutSeconds: 5
           failureThreshold: 45
+        ports:
+        - containerPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1261,6 +1265,8 @@ spec:
           periodSeconds: 2
           timeoutSeconds: 5
           failureThreshold: 45
+        ports:
+        - containerPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1860,6 +1866,8 @@ spec:
           periodSeconds: 2
           timeoutSeconds: 5
           failureThreshold: 45
+        ports:
+        - containerPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1981,6 +1989,8 @@ spec:
           periodSeconds: 2
           timeoutSeconds: 5
           failureThreshold: 45
+        ports:
+        - containerPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2849,6 +2859,8 @@ spec:
           periodSeconds: 2
           timeoutSeconds: 5
           failureThreshold: 45
+        ports:
+        - containerPort: 8080
 ---
 apiVersion: apps/v1
 kind: Deployment

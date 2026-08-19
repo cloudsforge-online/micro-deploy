@@ -88,6 +88,24 @@ except ModuleNotFoundError:
 # INTO connection strings, so its keys must not be injected wholesale into every
 # container's environment. That would hand every service every other service's
 # credential, which is the opposite of what the 57 separate DSNs are for.
+#
+# ── WHY `env-traefik` IS HERE, WHEN THE FILE IS COMMITTED AND HOLDS NO SECRET ──
+#
+# `compose/env/traefik.env` is tracked and public — the file says so itself, and
+# ACME credentials are deliberately kept out of it. It is loaded here anyway,
+# because of one line:
+#
+#     CF_RPC_UPSTREAM=http://${CF_CHAIN_HOST:-host.docker.internal}:8545
+#
+# CF_CHAIN_HOST is a `secret_vars` entry that lives in the untracked tokens file.
+# So the file is public but its INTERPOLATED result is not derivable from the
+# repository, and this is the one path in the estate that already resolves such a
+# value correctly, never prints it, and stores it where the cluster can rebuild
+# itself without the host. A ConfigMap built by hand would have needed a second
+# copy of the interpolation rules and a second chance to get the fallback wrong —
+# and getting it wrong is silent: the gateway would proxy to
+# `host.docker.internal`, which does not resolve in a pod, and every chain-facing
+# route would answer 502 while the gateway itself stayed healthy.
 FILES = {
     "mainnet": [
         ("estate-tokens", "compose/estate/tokens.env", "interp"),
@@ -98,6 +116,7 @@ FILES = {
         ("secret-studio", "compose/secrets/studio.mainnet.env", "envfrom"),
         ("secret-chainrpc", "compose/secrets/chainrpc.mainnet.env", "envfrom"),
         ("env-chain", "compose/env/chain.mainnet.env", "envfrom"),
+        ("env-traefik", "compose/env/traefik.env", "envfrom"),
     ],
     "testnet": [
         ("estate-tokens", "compose/estate/tokens.testnet.env", "interp"),
@@ -108,6 +127,7 @@ FILES = {
         ("secret-studio", "compose/secrets/studio.testnet.env", "envfrom"),
         ("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom"),
         ("env-chain", "compose/env/chain.testnet.env", "envfrom"),
+        ("env-traefik", "compose/env/traefik.testnet.env", "envfrom"),
     ],
 }
 
