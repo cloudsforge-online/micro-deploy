@@ -117,7 +117,15 @@ spec:
             - --metrics.prometheus.addrouterslabels=true
             - --entrypoints.metrics.address=:8082
             - --tracing.otlp=true
-            - --tracing.otlp.grpc.endpoint=otel-collector:4317
+            # FQDN, and the ONLY line in this file that had to change for the
+            # cluster. Under compose this was the bare `otel-collector:4317`,
+            # which resolved because the telemetry plane and both gateways sat
+            # on the same shared external `app` network. The collector is now in
+            # `cf-telemetry`, one copy for both networks exactly as before, so
+            # the name has to be qualified. Measured: Traefik is the collector's
+            # only in-cluster client — no estate service sets an OTLP endpoint
+            # variable at all.
+            - --tracing.otlp.grpc.endpoint=otel-collector.cf-telemetry.svc.cluster.local:4317
             - --tracing.otlp.grpc.insecure=true
             - --tracing.sampleRate=1.0
             - --ping=true
