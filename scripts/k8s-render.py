@@ -590,6 +590,56 @@ def main():
                     source_spec = {"name": bind["configMap"]}
                 volumes.append({"name": bind["name"], bind["kind"]: source_spec})
 
+        # ── EVERY CONTAINER TRUSTS THE ESTATE'S OWN CA ───────────────────────
+        #
+        # Under compose exactly one service carried `NODE_EXTRA_CA_CERTS` —
+        # beacon, because beacon is the only one that deliberately calls the
+        # estate at the addresses a person uses. Everything else that names a
+        # public hostname (`IDENTITY_JWKS_URL=https://nimbus.<apex>/...`, which
+        # is EVERY testnet service, because testnet verifies tokens against the
+        # shared identity) resolved that name on the public internet, went out
+        # through Cloudflare, and came back to a publicly-trusted certificate.
+        #
+        # In the cluster that is no longer what happens. `k8s-cluster-dns.sh`
+        # answers the estate's hostnames with the gateway's ClusterIP — it has
+        # to, or a pod probing `hub.<apex>` is answered by a DIFFERENT estate —
+        # and the gateway serves the estate CA leaf on testnet and a Cloudflare
+        # ORIGIN CA leaf on mainnet. Neither is in a public root store. Measured
+        # from `deploy/ledger` in cf-testnet on 2026-08-19, before this block:
+        #
+        #     UNABLE_TO_VERIFY_LEAF_SIGNATURE | unable to verify the first certificate
+        #
+        # and the visible consequence was every authenticated assertion in the
+        # suite turning from `401` — testnet's own pre-existing shared-identity
+        # defect, micro-org#472 — into `503 verifier_unavailable`, including
+        # `an EXPIRED service token was answered 503; expiry is not being
+        # enforced`. A verifier that cannot reach its JWKS does not fail closed
+        # on expiry; it fails ambiguous on everything.
+        #
+        # UNIFORM RATHER THAN CONDITIONAL. The alternative was to attach this
+        # only where an env value happens to hold an `https://…<apex>` URL, and
+        # that rule is right until a service gains such a URL, or builds one
+        # from two variables, or follows a redirect into one. `trust.crt` is the
+        # estate CA PLUS every public root, so a container that gets it loses
+        # nothing and no longer depends on which variable holds what today.
+        #
+        # A service that already sets the variable keeps its own value: beacon's
+        # is the same path from its own bind mount, and this must not become a
+        # second opinion about where the bundle is.
+        trust = render_vars.get("cluster_tls_trust")
+        if trust and not any(e["name"] == "NODE_EXTRA_CA_CERTS" for e in env):
+            env.append({"name": "NODE_EXTRA_CA_CERTS", "value": trust["mountPath"]})
+            if not any(m["mountPath"] == trust["mountPath"] for m in volume_mounts):
+                volume_mounts.append(
+                    {
+                        "name": trust["volume"],
+                        "mountPath": trust["mountPath"],
+                        "readOnly": True,
+                        "subPath": trust["key"],
+                    }
+                )
+                volumes.append({"name": trust["volume"], "configMap": {"name": trust["configMap"]}})
+
         container = {
             "name": name,
             "image": image,
@@ -791,7 +841,19 @@ def main():
                     # a platform migration would be guessing.
                     "replicas": 1,
                     "selector": {"matchLabels": {"app.kubernetes.io/name": name}},
-                    "strategy": {"type": "Recreate"} if volume_mounts else {"type": "RollingUpdate"},
+                    # `Recreate` because a ReadWriteOnce PVC cannot be attached to
+                    # the old and new pods at once — a rolling update would wedge
+                    # with the new pod Pending on a volume the old one still holds.
+                    # The test is PVC-BACKED volumes specifically, not "has any
+                    # mount at all": every container now mounts the `gateway-trust`
+                    # ConfigMap, and a ConfigMap mounts into as many pods as ask
+                    # for it. Keyed off the mount list, the trust bundle would have
+                    # quietly converted all 52 services to downtime-per-deploy.
+                    "strategy": (
+                        {"type": "Recreate"}
+                        if any("persistentVolumeClaim" in v for v in volumes)
+                        else {"type": "RollingUpdate"}
+                    ),
                     "template": {"metadata": {"labels": labels}, "spec": pod_spec},
                 },
             }

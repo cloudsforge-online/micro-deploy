@@ -130,6 +130,17 @@ volume_sizes:
   # the point of keeping the old one switchable.
   world-assets: 1Gi
 
+# Mounted into every container; see render-vars.mainnet.yaml for why. It matters
+# more here than there: all 28 of this namespace's services verify tokens against
+# `https://nimbus.cloudsforge.online` — the SHARED MAINNET identity, which is
+# micro-org#472 and predates the migration — so in the cluster every one of them
+# is making a TLS call to a gateway leaf no public root store signs.
+cluster_tls_trust:
+  volume: gateway-trust
+  configMap: gateway-trust
+  key: trust.crt
+  mountPath: /etc/ssl/estate/trust.crt
+
 bind_mounts:
   ../gateway/certs/trust.crt:
     kind: configMap

@@ -66,10 +66,17 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -86,6 +93,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -159,10 +170,17 @@ spec:
           value: http://notify:4000
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -179,6 +197,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -207,6 +229,14 @@ spec:
       - name: admin-web
         image: ghcr.io/cloudsforge-online/micro-admin-web@sha256:f7ffee51e3d9f8f05c91c3fe5c11c8265968de10224c4eaea30da9079ecb9f51
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -223,6 +253,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -278,10 +312,17 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -298,6 +339,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -326,6 +371,14 @@ spec:
       - name: aetherholm-web
         image: ghcr.io/cloudsforge-online/micro-aetherholm-web@sha256:03fae013468c5113fd54b39da543bc6f2e2a76cb2c2e105ed0cccdb60a06899b
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -342,6 +395,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -409,10 +466,17 @@ spec:
           value: '4000'
         - name: STUDIO_PUBLIC_URL
           value: https://studio-testnet.cloudsforge.online
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -429,6 +493,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -457,6 +525,14 @@ spec:
       - name: agora-web
         image: ghcr.io/cloudsforge-online/micro-agora-web@sha256:8870a1ee4cf957e65058680502e09a3c4f4a1b51a395315725492e87bcc37824
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -473,6 +549,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -534,6 +614,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -541,6 +623,11 @@ spec:
         - secretRef:
             name: secret-analytics-pepper
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -557,6 +644,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -573,7 +664,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: beacon
   strategy:
-    type: Recreate
+    type: RollingUpdate
   template:
     metadata:
       labels:
@@ -693,6 +784,14 @@ spec:
       - name: beacon-web
         image: ghcr.io/cloudsforge-online/micro-beacon-web@sha256:6864ec131f6e0b050ee1e597732bc25aebb15fa51e989506d498d3e65b8b7c3f
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -709,6 +808,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -774,10 +877,17 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -794,6 +904,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -859,10 +973,17 @@ spec:
           value: http://policy:4000
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -879,6 +1000,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -936,6 +1061,8 @@ spec:
           value: http://policy:4000
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-custody
@@ -947,6 +1074,10 @@ spec:
         - name: custody-keys
           mountPath: /var/lib/custody
           readOnly: false
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -967,6 +1098,9 @@ spec:
       - name: custody-keys
         persistentVolumeClaim:
           claimName: custody-keys
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1022,10 +1156,17 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -1042,6 +1183,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1070,6 +1215,14 @@ spec:
       - name: devportal-web
         image: ghcr.io/cloudsforge-online/micro-devportal-web@sha256:d0cea7d49251f579443d0260e32dba8771ce2a7effdc5dbfb8f0b2597161e2ce
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -1086,6 +1239,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1159,10 +1316,17 @@ spec:
           value: '4000'
         - name: WORLDS_URL
           value: http://worlds:4000
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -1179,6 +1343,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1207,6 +1375,14 @@ spec:
       - name: emberkin-web
         image: ghcr.io/cloudsforge-online/micro-emberkin-web@sha256:def6e273e550aeeb1b082824d8a4c5628d6bffa1672c657d294d5122a221348f
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -1223,6 +1399,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1251,6 +1431,14 @@ spec:
       - name: exchange-web
         image: ghcr.io/cloudsforge-online/micro-exchange-web@sha256:fc187c376d008847bc7f0563d61d991323ae38e05033c6802993ee2d5b17fe0f
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -1267,6 +1455,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1295,6 +1487,14 @@ spec:
       - name: explorer-web
         image: ghcr.io/cloudsforge-online/micro-explorer-web@sha256:79f03d4793347b3398647735c37d4d338ea3ea14c95441c8ff26934f5cd16bfa
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -1311,6 +1511,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1404,6 +1608,13 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -1420,6 +1631,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1523,6 +1738,8 @@ spec:
           value: http://pricing:4000
         - name: STUDIO_PUBLIC_URL
           value: https://studio-testnet.cloudsforge.online
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: env-chain
@@ -1530,6 +1747,11 @@ spec:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -1546,6 +1768,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4021
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1574,6 +1800,14 @@ spec:
       - name: foresight-web
         image: ghcr.io/cloudsforge-online/micro-foresight-web@sha256:1e0b5e115758c811cb2ae6a0bbc20d5106b2824e470044afbb6b3dcad95e94f2
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -1590,6 +1824,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1659,6 +1897,13 @@ spec:
           value: http://pricing:4000
         - name: WALLET_URL
           value: http://wallet:4000
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -1675,6 +1920,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1706,6 +1955,13 @@ spec:
         env:
         - name: POOL_API_PRESENCE
           value: absent
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -1722,6 +1978,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1811,6 +2071,8 @@ spec:
           value: ''
         - name: TURNSTILE_SITE_KEY
           value: ''
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1818,6 +2080,11 @@ spec:
         - secretRef:
             name: secret-identity-key
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -1834,6 +2101,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1895,6 +2166,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: env-chain
@@ -1905,6 +2178,11 @@ spec:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -1921,6 +2199,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -1949,6 +2231,14 @@ spec:
       - name: journal-web
         image: ghcr.io/cloudsforge-online/micro-journal-web@sha256:8a6ddffaa8b848726a87aca4df57600b67034361a288a8d9e83cf157c9b49041
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -1965,6 +2255,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2028,6 +2322,13 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2044,6 +2345,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2072,6 +2377,14 @@ spec:
       - name: lantern-web
         image: ghcr.io/cloudsforge-online/micro-lantern-web@sha256:b74bd8fbe6d6697242aba5811e241f1a3e73e66f41dafd1f5d0e54903f30ae5e
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -2088,6 +2401,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2157,10 +2474,17 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2177,6 +2501,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2246,10 +2574,17 @@ spec:
           value: '4000'
         - name: STUDIO_PUBLIC_URL
           value: https://studio-testnet.cloudsforge.online
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2266,6 +2601,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2294,6 +2633,14 @@ spec:
       - name: market-web
         image: ghcr.io/cloudsforge-online/micro-market-web@sha256:afd8247586291a931d5b88762f6cb64a7d0e2fa919269ae740605634b0397aac
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -2310,6 +2657,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2391,10 +2742,17 @@ spec:
           value: '4000'
         - name: PRICING_URL
           value: http://pricing:4000
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2411,6 +2769,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2439,6 +2801,14 @@ spec:
       - name: mint-web
         image: ghcr.io/cloudsforge-online/micro-mint-web@sha256:637bd753109dcbfe75445f210f1f1f894ccc9e4ff7b3a63753d8751568a43e4b
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -2455,6 +2825,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2520,10 +2894,17 @@ spec:
           value: '4000'
         - name: WORLDS_URL
           value: http://worlds:4000
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2540,6 +2921,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2568,6 +2953,14 @@ spec:
       - name: network-site
         image: ghcr.io/cloudsforge-online/micro-network-site@sha256:aa4476c95102b8add9c18583d27f476830a1d8561dcbfe6fe1e376d2bde99f6b
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -2584,6 +2977,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2685,10 +3082,17 @@ spec:
           value: '4000'
         - name: SMTP_SECURE
           value: 'false'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2705,6 +3109,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2760,10 +3168,17 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy
         - name: PORT
           value: '4000'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2780,6 +3195,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2811,6 +3230,13 @@ spec:
         env:
         - name: POOL_API_PRESENCE
           value: absent
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -2827,6 +3253,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2884,10 +3314,17 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing
         - name: PRICING_MIN_SOURCES
           value: '1'
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2904,6 +3341,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -2979,10 +3420,17 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/settlement
         - name: SETTLEMENT_NETWORK
           value: testnet
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -2999,6 +3447,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3027,6 +3479,14 @@ spec:
       - name: site
         image: ghcr.io/cloudsforge-online/micro-site@sha256:542c72f13d8e157a6d2d661b4627c50549edf6b31fb2df3ec6f00b7ba6182da0
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -3043,6 +3503,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3071,6 +3535,14 @@ spec:
       - name: status-web
         image: ghcr.io/cloudsforge-online/micro-status-web@sha256:3f5fff82d858427bbfce9b24ad39da5f56d9857f78667c5917c3295cd19cf5ed
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -3087,6 +3559,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3144,6 +3620,8 @@ spec:
           value: /var/lib/studio/assets
         - name: STUDIO_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3155,6 +3633,10 @@ spec:
         - name: studio-assets
           mountPath: /var/lib/studio/assets
           readOnly: false
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -3175,6 +3657,9 @@ spec:
       - name: studio-assets
         persistentVolumeClaim:
           claimName: studio-assets
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3242,10 +3727,17 @@ spec:
           value: http://studio:4000
         - name: TESSERA_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -3262,6 +3754,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4022
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3290,10 +3786,17 @@ spec:
       - name: tessera-web
         image: ghcr.io/cloudsforge-online/micro-tessera-web@sha256:29eb1f5d84914bad6fef5b607a274c501d0903bf1b90b91286c6e6acdb05c3ce
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         volumeMounts:
         - name: world-assets
           mountPath: /usr/share/nginx/html/world-assets
           readOnly: true
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -3314,6 +3817,9 @@ spec:
       - name: world-assets
         persistentVolumeClaim:
           claimName: world-assets
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3381,10 +3887,17 @@ spec:
           value: http://pricing:4000
         - name: TRADE_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/trade
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -3401,6 +3914,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3429,6 +3946,14 @@ spec:
       - name: trade-web
         image: ghcr.io/cloudsforge-online/micro-trade-web@sha256:cf08ffae144f16d2c3279a1024f4e646ba2d995eb8a07a94f13f91063376f5a6
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -3445,6 +3970,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3522,10 +4051,17 @@ spec:
           value: '{"EMBER":"21000000000000","LTC":"10000","BTC":"3000"}'
         - name: WALLET_NETWORK
           value: testnet
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -3542,6 +4078,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3607,10 +4147,17 @@ spec:
           value: '4000'
         - name: WORLDS_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
         envFrom:
         - secretRef:
             name: secret-outbox
             optional: false
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /readyz
@@ -3627,6 +4174,10 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 4000
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -3655,6 +4206,14 @@ spec:
       - name: worlds-web
         image: ghcr.io/cloudsforge-online/micro-worlds-web@sha256:67e7a808efebc9eb9058008e181d71cd5457efecf8cb7790ab66f2883fa23c75
         imagePullPolicy: IfNotPresent
+        env:
+        - name: NODE_EXTRA_CA_CERTS
+          value: /etc/ssl/estate/trust.crt
+        volumeMounts:
+        - name: gateway-trust
+          mountPath: /etc/ssl/estate/trust.crt
+          readOnly: true
+          subPath: trust.crt
         readinessProbe:
           httpGet:
             path: /healthz
@@ -3671,3 +4230,7 @@ spec:
           failureThreshold: 45
         ports:
         - containerPort: 8080
+      volumes:
+      - name: gateway-trust
+        configMap:
+          name: gateway-trust

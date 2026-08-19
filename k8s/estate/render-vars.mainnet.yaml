@@ -155,6 +155,38 @@ volume_sizes:
   # the point of keeping the old one switchable.
   world-assets: 1Gi
 
+# ─── THE TRUST BUNDLE EVERY CONTAINER NEEDS IN THE CLUSTER ───────────────────
+#
+# Under compose exactly one service asked for this — beacon, below, because
+# beacon is the only one that deliberately calls the estate at the addresses a
+# person uses. Every other service that names a public hostname resolved it on
+# the public internet, went out through Cloudflare, and came back to a
+# publicly-trusted certificate, so it needed nothing.
+#
+# In the cluster that is no longer true. `scripts/k8s-cluster-dns.sh` answers
+# the estate's own hostnames with the gateway's ClusterIP — it has to, or a pod
+# probing `hub.cloudsforge.online` is answered by the LIVE estate — and the
+# gateway presents a Cloudflare Origin CA leaf here and the estate CA's leaf on
+# testnet. Neither is in a public root store. Measured from `deploy/ledger` in
+# cf-testnet before this existed: `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, which
+# turned every authenticated assertion in estate-verify from `401` into
+# `503 verifier_unavailable` — including "an EXPIRED service token was answered
+# 503", because a verifier that cannot fetch its JWKS stops being able to say
+# anything about a token at all.
+#
+# Applied to every container rather than to the ones whose env happens to hold
+# an `https://…` URL today: `trust.crt` is the estate CA PLUS every public root,
+# so a container that gets it loses no public trust, and the uniform rule does
+# not quietly stop covering a service that later gains such a URL, builds one
+# from two variables, or follows a redirect into one.
+#
+# A service that sets `NODE_EXTRA_CA_CERTS` itself keeps its own value.
+cluster_tls_trust:
+  volume: gateway-trust
+  configMap: gateway-trust
+  key: trust.crt
+  mountPath: /etc/ssl/estate/trust.crt
+
 # ─── BIND MOUNTS, WHICH HAVE NO HOST TO BIND TO ──────────────────────────────
 #
 # Compose mounted these out of the repository checkout beside it. There is no
