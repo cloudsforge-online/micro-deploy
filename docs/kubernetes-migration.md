@@ -1,0 +1,521 @@
+# Migrating the estate to Kubernetes
+
+The estate is moving off `docker compose` on a WSL host and onto k3s on a
+Hyper-V Linux VM. This document is the runbook: what exists, where it lives,
+what has to be done by hand if the VM is ever rebuilt, and the exact sequence
+that flips public traffic.
+
+---
+
+## Status, before anything else
+
+**NOTHING IS CUT OVER. Public traffic is still served by compose.**
+
+| | Serving the public | Running a full second estate |
+| --- | --- | --- |
+| **Where** | app host, WSL, `docker compose` | `cf-k8s` VM, k3s |
+| **Mainnet** | `cloudsforge.online` and its subdomains | `cloudsforge-estate` namespace |
+| **Testnet** | `testnet.cloudsforge.online` | `cf-testnet` namespace |
+| **Deployed by** | `scripts/release-deploy.sh` | `scripts/k8s-deploy.sh` |
+| **Cloudflare tunnel** | `Cloudflared` service on Windows, running | `cf-edge` namespace, **`replicas: 0`** |
+
+Both estates are up at once and that is safe **only because of the last row**.
+A Cloudflare tunnel load-balances across every connector that is Ready, so the
+moment a second connector attaches, Cloudflare starts splitting live public
+traffic between two estates with two different databases. The connector in
+`cf-edge` therefore exists, holds a valid token, and is scaled to zero;
+`scripts/k8s-cloudflared.sh` re-asserts that and **refuses to finish** if
+anything has scaled it up. That single field is the whole safety interlock, and
+scaling it to 1 is the cutover.
+
+Until the cutover, `docs/releasing.md` is still the document that governs a
+release. This one governs the migration.
+
+---
+
+## Which machine
+
+| Host | Reach it by | What is there |
+| --- | --- | --- |
+| **k8s** `savva@192.168.1.171` | `ssh savva@192.168.1.171` — key-only, passwordless sudo | The `cf-k8s` VM. k3s, both estates, CloudNativePG, the telemetry plane, the backup runner, BuildKit. Checkouts at `~/dev/cloudsforge/{deploy,org,runtime,miner-keys}`. **This document.** |
+| **app** `savva@192.168.1.129` | `ssh` lands on **Windows cmd.exe**; the estate is `wsl -d Ubuntu-24.04`, checkouts at `/home/savvaniss/dev/cloudsforge` | The live compose estate. Also the Hyper-V host: the VM runs *on this machine*. Also the `Cloudflared` Windows service that carries all public traffic today. |
+| **chain** `malf@192.168.1.42` | `ssh malf@192.168.1.42` | `bitcoind`, `litecoind`, `dogecoind` and the Hearth seed — host processes, not containers. Reached over WireGuard from both estates. |
+| **Mac** | — | Git authority. Branch `migration/kubernetes`. |
+
+### Never run kubectl from the Mac
+
+The Mac's default kubectl context is `aks-editorai-sbx`, **a live Azure work
+cluster**. A `kubectl delete` typed against the wrong context is not recoverable
+by apologising. Every `kubectl` in this document runs **on the VM, over ssh**:
+
+```sh
+ssh savva@192.168.1.171 'kubectl get pods -A'
+```
+
+No kubeconfig was ever copied to the Mac, and none should be.
+
+---
+
+## Why a Linux VM, and not Docker Desktop or WSL
+
+The original plan was single-node Kubernetes through Docker Desktop, because
+Docker Desktop is a Windows application and that sounded like "no WSL". It is
+not: Docker Desktop's Kubernetes runs inside a WSL2 VM, so choosing it would
+have kept every gram of the overhead the move was meant to remove. There is no
+native-Windows path either — Linux containers need a Linux kernel, and on
+Windows that is always a VM. The only real choice is *which* VM and *who
+manages it*.
+
+So: a Hyper-V VM we own, running a real Linux server, reached over ssh. k3s
+rather than full kubeadm — one binary, one systemd unit, a bundled containerd,
+and Traefik and local-path already present. The trade is explicit and worth
+writing down: k3s is a single point of failure on a single node, which is
+exactly what compose on one host already was. Nothing got less available; the
+control plane got standard.
+
+---
+
+## The Windows host
+
+The VM must survive a reboot with no human present, so the pieces are services
+rather than sessions:
+
+| Piece | State | Why |
+| --- | --- | --- |
+| `vmms` (Hyper-V VMM) | Running, **Automatic** | Starts the hypervisor at boot. |
+| `vmcompute` | Running, Manual | Started on demand by `vmms`. Correct as-is. |
+| `cf-lan` virtual switch | **External**, on the Realtek 2.5GbE adapter | An *external* switch, not the Default Switch, so the VM gets a real LAN address (`192.168.1.171`) that survives reboots and is reachable from the chain host and the Mac. The Default Switch NATs and renumbers. |
+| `cf-k8s` VM | `AutomaticStartAction: Start`, delay 30s | Comes back by itself. The 30s delay lets networking settle first. |
+| `Cloudflared` | Running, Automatic | **Still carrying all public traffic.** Stopped at cutover, not before. |
+
+`Get-VM cf-k8s` is the one-line health check from the Windows side.
+
+**Do not use `Start-Process` to launch anything long-lived over ssh on this
+host** — SSH kills the process tree when the session ends, and the result reads
+as a service "flapping". Use a service, or `Win32_Process.Create`.
+
+---
+
+## The VM
+
+```
+cf-k8s        Ubuntu 26.04 LTS, kernel 7.0.0-30-generic
+              16 vCPU, 12 GB static memory, autostart
+              / = 194G on /dev/mapper/ubuntu--vg-ubuntu--lv
+              k3s v1.36.3+k3s1, containerd 2.3.2-k3s2
+              savva = uid/gid 1000, key-only ssh, passwordless sudo
+```
+
+**Memory is static, not dynamic, and 12 GB is a ceiling set by the host.** The
+Windows box is also running WSL and Docker Desktop today; that budget is what
+was free. The VM currently sits around 8 GB used with both estates up, which is
+enough but not roomy. **Raising it is a post-cutover step**, once WSL is gone.
+
+**The LVM volume group has zero free extents.** There is no `lvextend` waiting
+to be run — growing storage means attaching a *new* virtual disk. That matters
+for the backup destination below, and Windows `C:` has only ~136 GB free today,
+so the new disk is also blocked behind deleting WSL.
+
+---
+
+## Host state the manifests do not carry
+
+This is the rebuild list. If the VM is ever recreated, these are the things no
+`kubectl apply` will restore, in the order they are needed.
+
+### 1. k3s, with a raised pod ceiling
+
+`/etc/rancher/k3s/config.yaml`:
+
+```yaml
+kubelet-arg:
+  - max-pods=250
+```
+
+The kubelet's default is 110. The steady state is ~104 pods before cloudflared,
+telemetry or the backup runner land — measured on 2026-08-19 at 111
+non-terminated pods against an allocatable 110, at which point the second
+hearth-devkit pod simply could not be scheduled. Everything already running
+stayed healthy, which is what makes it worth writing down: **the ceiling does
+not degrade the estate, it silently refuses the next thing.**
+
+250 and not higher because the node's podCIDR is a `/24` — 254 usable
+addresses. A limit above that trades a scheduling error for an IP-exhaustion
+error, which is the same outage with a worse message.
+
+### 2. WireGuard to the chain host
+
+`wg-quick@wg0`, enabled and active. The VM is **`10.10.0.3`**; the peer is the
+chain host at `192.168.1.42:51820`, `allowed-ips 10.10.0.0/24`, keepalive 25s.
+
+The chain host had to be told to accept it. `bitcoin.conf`, `litecoin.conf` and
+`dogecoin.conf` each gained an `rpcallowip=10.10.0.3/32` line beside the
+existing `10.10.0.2/32` (the WSL app host), and **all three daemons were
+restarted** to pick it up — `rpcallowip` is read at startup only. The
+pre-change files are kept as `*.conf.bak.20260819`.
+
+`litecoind` does not stop instantly: the process disappears **before** it
+releases the datadir lock, so a fast restart loses the race and leaves the node
+down. Wait for the lock, then start.
+
+Both estates are allowed at once on purpose. The app host's `10.10.0.2/32` line
+and its peer are retired *after* the cutover, not during it.
+
+### 3. BuildKit, driving k3s's own containerd
+
+`/etc/buildkit/buildkitd.toml` + `/etc/systemd/system/buildkit.service`
+(`After=k3s.service`, enabled). The OCI worker is off; the containerd worker
+points at `/run/k3s/containerd/containerd.sock`, namespace `k8s.io`.
+
+`deploy/backup` is the one estate deployable with **no published image** — every
+other service is a digest-pinned GHCR reference out of the release manifest,
+while the backup runner has only ever existed as a local `docker build` on the
+app host. After cutover that host loses Docker, and an unbuildable backup image
+is micro-org#434 in a new form (the estate went 43 hours with no backup because
+nothing on the deploy path rendered it).
+
+So the VM builds it itself, and **no Docker daemon is reinstated**. buildkitd
+writes into the namespace kubelet resolves from, so a built image is already in
+the store — no registry, no push, no pull to miss. Building into any other
+containerd namespace produces an image that exists and that no pod can use.
+
+`./scripts/k8s-backup-runner.sh --build` is the whole interface.
+
+> **Follow-up:** add a GHCR publish job to `deploy/.github/workflows/ci.yml` so
+> `deploy/backup` gets a digest-pinned reference like every other service. Then
+> BuildKit becomes a convenience rather than a dependency.
+
+### 4. The backup destination
+
+```
+/srv/cloudsforge-backups   owner 1000:1000, mode 700
+```
+
+Owner and mode are load-bearing. Kubernetes will happily mount a root-owned
+hostPath; the pod then starts, reports Ready, and fails its canary write — which
+reads as a *backup* fault rather than a *permissions* one.
+`scripts/k8s-backup-runner.sh` checks ownership, mode, and the 100 GiB
+filesystem floor `src/disk.ts` enforces, because all three surface as a pod
+event several seconds after an apply that already printed `configured`.
+
+**Mainnet's 11.8 GB of backup history is already here** (`mainnet/`, `testnet/`
+under that root). It was rsynced from WSL on 2026-08-19, direct host-to-host
+over a restricted ephemeral key that was destroyed on both ends afterwards. It
+had to move *before* cutover rather than after: the imported database carries
+`succeeded` rows pointing at `/backups/mainnet/<ts>` directories, and `verify`
+runs daily against the newest succeeded set — leaving the files behind would
+have produced daily verify failures that were migration artefacts, not faults.
+
+Both networks share one root. `run.ts` already writes
+`<root>/<environment>/<timestamp>`, `prune.ts` selects from database rows in
+per-network clusters and independently refuses any path outside the root, and
+separate roots buy nothing on one filesystem because `min_free_bytes` is
+enforced through `statfs`. The payoff is one manifest, byte-identical for both
+namespaces.
+
+> **Post-cutover:** give this its own virtual disk. 143 GB free today against a
+> 100 GB `min_free_bytes` floor is comfortable and is not a plan — and the
+> backups sharing a filesystem with the container store means a runaway image
+> pull can starve the estate's only recovery point.
+
+### 5. The miner keys
+
+```
+~/dev/cloudsforge/miner-keys/mainnet/coinbase-keystore.json
+~/dev/cloudsforge/miner-keys/testnet/coinbase-keystore.json
+~/dev/cloudsforge/miner-keys/secrets/coinbase-passphrase
+```
+
+Mounted read-only into the backup runner, which encrypts them into every set
+under `CF_BACKUP_AGE_RECIPIENT`. Their absence is not an error the runner
+raises — it publishes `backup_secrets_included 0` and `MinerCoinbaseKeyUnbacked`
+fires. Both networks currently read **1**.
+
+Note the standing limitation, unchanged by this migration: this backs up the
+*app host's* key. The chain host holds roughly six times as much EMBER and has
+no runner of its own.
+
+### 6. `gateway/certs/` — untracked, and correctly so
+
+```
+deploy/gateway/certs/estate.crt    the estate's TLS certificate
+deploy/gateway/certs/estate.key    mode 600
+deploy/gateway/certs/trust.crt     tracked; the internal trust bundle
+```
+
+`estate.key` is a private key and is not in git. `scripts/k8s-gateway.sh` loads
+the pair into the `gateway-certs` Secret in each namespace. A rebuilt VM needs
+these copied across before the gateway will serve TLS; the gateway starts
+without them and answers on `:80` only, which looks like a routing bug.
+
+### 7. The untracked env files, and one deliberate divergence
+
+`compose/estate/tokens.env` and `tokens.testnet.env` are untracked host state and
+are the input to `scripts/k8s-secrets.py`. They were copied from the app host.
+
+**`compose/estate/tokens.testnet.env` on the VM carries
+`CF_BACKUP_AGE_RECIPIENT`; the app host's copy does not.** That is on purpose,
+and it is the one place the two hosts' files differ. Testnet had never had a
+backup at all — every row in its `backup_runs` was `queued` with a NULL
+`started_at`, enqueued by something and claimed by nothing, because the compose
+estate had no testnet runner. One Kubernetes manifest serves both namespaces, so
+testnet has a runner now, and a runner with no recipient leaves the coinbase key
+out of every set.
+
+The value is **mainnet's recipient, copied rather than regenerated**. An age
+recipient is a *public* key, so copying creates no new secret; a second keypair
+would create a new *private* one, and private-key custody is already the
+estate's thinnest thread. Blast radius is unchanged either way — whoever holds
+the identity that decrypts testnet already decrypts mainnet.
+
+`k8s/estate/render-vars.testnet.yaml` declares the name, so
+`scripts/k8s-secrets.py --verify` checks it in both directions.
+
+---
+
+## The layers, and the order they go on
+
+Each script's own header carries the full argument for why it is a script and
+not a bare `kubectl apply`. This is the sequence.
+
+| # | Layer | Command | Notes |
+| --- | --- | --- | --- |
+| 0 | Namespaces, StorageClass | `kubectl apply -f k8s/base/` | `cf-retain` is `reclaimPolicy: Retain`. Every stateful claim uses it, so deleting a PVC cannot delete the data. |
+| 1 | CloudNativePG | operator install, then `kubectl apply -f k8s/database/` | One `Cluster` named `postgres` per namespace, single instance `postgres-1`, 60Gi data + 16Gi WAL, plus 30 `Database` objects generated from `initdb.sql`. |
+| 2 | Secrets | `./scripts/k8s-secrets.py --network <net> --apply` | Reads the untracked env files. **Prints names only, never values.** `--verify` checks both directions against `render-vars.<net>.yaml`. |
+| 3 | Database import | `./scripts/k8s-db-import.sh --network <net> --rehearse` | Same command rehearses and cuts over; `--cutover` is the flag that means "the source is stopped". |
+| 4 | Volumes | `./scripts/k8s-estate-seed.sh --network <net>` | Fills the PVCs. A manifest can declare a PVC but not fill it, and an empty one is invisible: custody starts, reports ready, holds no keys. |
+| 5 | The estate | `./scripts/k8s-deploy.sh --network <net> --hold beacon,settlement` | 51 rendered Deployments, applied in waves, wave 50 in batches. |
+| 6 | Gateway | `./scripts/k8s-gateway.sh --network <net>` | ConfigMap of `gateway/dynamic/*.yml` (208 KB), the trust bundle, the cert Secret, the pod. `strategy: Recreate` — never two Traefiks, per micro-org#428. |
+| 7 | Hearth devkit | `./scripts/k8s-hearth-devkit.sh --network testnet` | Testnet only; refuses mainnet, which runs no devkit. |
+| 8 | Telemetry | `./scripts/k8s-telemetry.sh` | One plane in `cf-telemetry` for both networks, as compose has. |
+| 9 | Backup runner | `./scripts/k8s-backup-runner.sh --network <net>` | Both networks. Add `--build` first on a fresh VM. |
+| 10 | Tunnel | `./scripts/k8s-cloudflared.sh --token-file <path>` | Installs at `replicas: 0` and refuses to finish if anything scaled it up. |
+
+Rendering is separate from applying, and both generated trees are committed:
+
+```sh
+./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.81.yaml \
+    --outdir k8s/estate/mainnet
+./scripts/k8s-render-databases.py --network mainnet --out k8s/database/21-databases-mainnet.yaml
+```
+
+`k8s/estate/{mainnet,testnet}/` are pinned to release **2026.8.81**; all 51
+images are digest-pinned `ghcr.io` references and no pull secret is needed.
+Re-render on every release, exactly as `release-deploy.sh` re-resolves digests.
+`scripts/check-k8s-databases-match-initdb.py` fails the build if the SQL and the
+generated `Database` manifests drift — that particular rot is silent in the
+worst way, because a missing database is a service that starts and 500s.
+
+### Namespace names are load-bearing
+
+`cloudsforge-estate` and `cf-testnet` are the **compose project names**. They
+were chosen so that `<project> == <namespace>`, which is what lets
+`scripts/k8s-telemetry.sh` rewrite every compose target
+(`cloudsforge-estate-indexer-1:9464`) into a Kubernetes FQDN
+(`indexer.cloudsforge-estate.svc.cluster.local:9464`) mechanically, and what lets
+the backup runner take `BACKUP_COMPOSE_PROJECT` straight from the downward API
+(`fieldRef: metadata.namespace`). Renaming a namespace breaks both, quietly.
+
+---
+
+## What is running now, and what is deliberately not
+
+Measured 2026-08-19:
+
+| Namespace | Pods | Notes |
+| --- | --- | --- |
+| `cloudsforge-estate` | 52/52 Running | 49 estate + gateway + postgres + backup-runner |
+| `cf-testnet` | 54/54 Running | the same, plus 2 hearth-devkit |
+| `cf-telemetry` | 6/6 Running | prometheus, alertmanager, grafana, loki, tempo, otel-collector |
+| `cnpg-system` | 1/1 Running | the operator |
+| `cf-edge` | **0** | cloudflared, `replicas: 0` — the interlock |
+
+**`beacon` and `settlement` are held on both networks** — `--hold
+beacon,settlement`. They are held rather than applied-and-scaled-to-zero, so
+nothing about them exists to be accidentally started.
+
+- **`beacon`** synthesises registrations against live surfaces. Two beacons on
+  two estates would double the load *and* double the mail: Mailtrap's free tier
+  is 150 messages a day, and beacon already spends all of it.
+- **`settlement`** moves real money. Two settlement processes against two
+  databases and one set of chain nodes is a double-spend engine.
+
+Prometheus reports **40 targets, 38 up**. The two down are exactly these. That
+is the intended reading: the held services are visible as down rather than
+absent, so "everything green" cannot be reached by forgetting them.
+
+---
+
+## Reaching things without a public hostname
+
+Nothing in the cluster is exposed on a node port; the gateway is `ClusterIP`.
+Until cutover, reach things from the VM:
+
+```sh
+# Grafana — replaces the old ssh tunnel to the app host
+ssh -L 9091:127.0.0.1:9091 savva@192.168.1.171
+#   then, on the VM:
+kubectl -n cf-telemetry port-forward svc/grafana 9091:3000
+
+# Prometheus, without a port-forward at all — through the API server proxy
+kubectl get --raw "/api/v1/namespaces/cf-telemetry/services/prometheus:9090/proxy/api/v1/targets?state=active"
+
+# Postgres
+kubectl exec -n cloudsforge-estate postgres-1 -c postgres -- psql -U postgres -d <db> -c '<sql>' </dev/null
+```
+
+`kubectl exec -i` eats your stdin exactly as `docker exec -i` does. Drop the
+`-i` and append `</dev/null` unless a pipe into the pod is the deliberate point.
+
+For building a Prometheus query string, use `urllib.parse.urlencode` in a small
+python helper rather than hand-escaping through ssh → kubectl → shell.
+
+---
+
+## The cutover
+
+Do this in one sitting. Steps 3–6 are the window in which the estate is down.
+
+1. **Re-render at the release that is live**, and commit. The k8s tree must
+   name the same release `release-deploy.sh` last applied, or the cutover is
+   also an unreviewed rollback — the failure mode of 2026.08.12, where 45
+   services silently went backwards and nothing was unhealthy.
+
+2. **Verify the k8s estate answers**, with hostnames mapped to the gateway
+   rather than to Cloudflare, and run the real `scripts/estate-verify.sh`
+   against it. *(Not yet done — see "What is not finished" below.)*
+
+3. **Stop the compose estate** on the app host, inside WSL. There is no
+   `release-deploy.sh --down` — that script only ever brings things *up*, and
+   `deploy/down.sh` stops the telemetry plane, not the estate. Stop each project
+   by name:
+   ```sh
+   export DOCKER_CONFIG=/tmp/dockercfg-nocreds     # else every compose call re-authenticates
+   docker compose -p cloudsforge-estate down
+   docker compose -p cf-testnet down
+   ```
+   `down` by project name resolves containers and networks from their compose
+   labels, so it needs neither `-f` nor `--env-file`. **Never add `-v`** — that
+   deletes the named volumes, which on this host is the estate's data. **Never
+   add `--remove-orphans`**, which is a standing rule for the devkit and miner
+   projects and costs nothing to keep here.
+
+   The equivalent with files, if you want compose to re-read them, is
+   `-f compose/docker-compose.estate.yml -f compose/docker-compose.release.yml
+   --env-file compose/mainnet.env --env-file compose/estate/tokens.env` — the
+   two `--env-file`s must name the same estate, which is what
+   `scripts/check-env-files-agree.sh` exists to enforce.
+
+   Nothing may write to the source databases after this point.
+
+4. **Re-import the databases**, now that the source is quiet:
+   ```sh
+   ./scripts/k8s-db-import.sh --network mainnet --cutover
+   ./scripts/k8s-db-import.sh --network testnet --cutover
+   ```
+
+5. **Deploy without the hold**, which is what starts `beacon` and `settlement`:
+   ```sh
+   ./scripts/k8s-deploy.sh --network mainnet
+   ./scripts/k8s-deploy.sh --network testnet
+   ```
+
+6. **Move the tunnel.** Off first, then on — never both:
+   ```sh
+   # on the Windows app host
+   Stop-Service Cloudflared
+   Set-Service Cloudflared -StartupType Disabled
+   # on the VM
+   kubectl -n cf-edge scale deploy/cloudflared --replicas=1
+   ```
+   Disabling the Windows service matters as much as stopping it: a reboot with
+   it still on `Automatic` re-attaches a connector to a dead estate and
+   Cloudflare will happily send it half the traffic.
+
+7. **Verify from outside** — `scripts/estate-verify.sh` against the real public
+   hostnames, both networks, plus one authenticated journey.
+
+Rollback, at any point before step 6, is: scale `cf-edge` back to 0 (it already
+is), start the compose estate, and nothing else — the compose databases are
+untouched until step 4 and the tunnel never moved.
+
+**Public hostnames are Cloudflare configuration and cannot be checked from this
+repository.** If a surface looks broken, prove the origin with a `Host` header
+before believing the routing.
+
+---
+
+## After the cutover
+
+In order, none of them urgent enough to do during the window:
+
+1. **Retire the app host's chain access.** Remove the `10.10.0.2/32` peer from
+   the chain host's WireGuard and the `rpcallowip=10.10.0.2/32` line from all
+   three `*.conf`, then restart the daemons — waiting for `litecoind`'s lock.
+   Remove the `*.conf.bak.20260819` files at the same time.
+2. **Delete WSL and Docker Desktop.** ~118 GB reclaimed. The 15 GB WSL
+   "leak" was never a leak — it is an unset `.wslconfig` memory cap — but the
+   distro image is real and the estate no longer needs it.
+3. **Raise the VM's memory** now that the host has it to give.
+4. **Attach a dedicated backup disk** and move `/srv/cloudsforge-backups` onto
+   it. Requires the space freed in step 2 (there are no free extents in the
+   existing volume group).
+5. **Rotate the Postgres password.** One role, `cloudsforge`, across 32
+   databases and every connection string, driven by one interpolation variable
+   — the rotation is atomic and has a runbook.
+6. **Publish `deploy/backup` to GHCR** so the last unpinned image becomes a
+   digest like the other 51.
+7. **Task #168:** rotate the four exposed tokens and de-duplicate the three
+   repeated names in `tokens.testnet.env`.
+
+---
+
+## Divergences from compose, recorded
+
+Things the Kubernetes estate does differently, each on purpose.
+
+| Compose | Kubernetes | Why |
+| --- | --- | --- |
+| Per-network backup roots | one `/srv/cloudsforge-backups` | `run.ts` already namespaces by environment; `prune.ts` refuses paths outside the root; one filesystem makes separate roots meaningless. Buys one manifest for both networks. |
+| No testnet backup runner | testnet has one | It never had a backup at all. One manifest, both namespaces. |
+| `CF_BACKUP_AGE_RECIPIENT` mainnet-only | on both | See §7 above; shared public key, no new private key. |
+| `BackupNeverRun: absent(backup_last_success_unixtime)` | one `absent()` per instance, `or`-ed | The bare form answers about the whole series set and goes empty the moment *any* runner succeeds anywhere. Harmless with one runner; with two, a healthy mainnet covers for a testnet that never succeeds. |
+| `estate:` network `aliases:` | *not yet reproduced* | See below. |
+| host-published ports | ClusterIP only | Nothing but the tunnel should ever reach the gateway. |
+| kubelet default 110 pods | `max-pods=250` | ~104 pods steady state across two estates. |
+
+---
+
+## What is not finished
+
+Honest list, as of 2026-08-19:
+
+- **Host aliases.** The compose file gives services extra names on the `estate:`
+  network via `aliases:`. Kubernetes gives each Service its own DNS name, which
+  covers most of it, but the aliases have to be reproduced as `hostAliases`
+  computed from the router `Host()` rules before anything can be verified by
+  hostname. **This blocks cutover step 2.**
+- **`scripts/check-k8s-render-matches-compose.py`** and
+  **`scripts/check-k8s-gateway-matches-compose.py`** — the drift guards. The
+  database one exists; these two do not, so today a compose change can land
+  without the k8s tree noticing.
+- **A full `estate-verify.sh` run against the cluster.** Not attempted yet, for
+  the host-aliases reason above.
+- **Nothing is on `main`.** All of this is branch `migration/kubernetes`, and it
+  merges when the migration is complete and verified — not before.
+
+### Smaller items noticed on the way
+
+- `compose/docker-compose.backup.yml` still comments a `coinbase-key.json` that
+  no longer exists under that name.
+- `compose/env/chain.mainnet.env`'s header claims "Compose v5.1.1"; the host
+  reports `2.40.3-desktop.1`.
+- Eight `.bak` token files on the app host, plus three duplicated keys in
+  `tokens.testnet.env`.
+- `loki` runs `runAsUser: 0`; it probably does not need to.
+- `cloudflared-metrics.cf-edge` exports metrics that nothing scrapes.
+- `prometheus/rules/alerts.test.yaml` has no `BackupNeverRun` case at all.
+- Mainnet's `traefik.env` sets `CF_EXPLORER_INDEX_UPSTREAM` and
+  `CF_VERIFY_UPSTREAM` even though mainnet runs no devkit, so those routers
+  exist and 502. **Operator's call** whether to remove them.

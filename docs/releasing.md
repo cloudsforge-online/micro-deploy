@@ -2,6 +2,18 @@
 
 What is deployed right now, and the one rule that governs how it changes.
 
+> **This document is still correct, and it has an expiry date.** Since
+> 2026-08-19 a second, complete estate has been running on k3s on a Hyper-V
+> Linux VM (`cf-k8s`, `192.168.1.171`), deployed by `scripts/k8s-deploy.sh`
+> rather than by `release-deploy.sh`. Nothing points at it: its Cloudflare
+> connector is pinned to `replicas: 0`, so public traffic is served by the
+> compose estate described below and by nothing else. When that changes, this
+> document changes with it. Until then, a release still means exactly what it
+> says here — with one addition: **re-render the Kubernetes tree at the same
+> release**, or the cutover silently becomes a rollback to whatever release it
+> was last pinned to. See
+> [`docs/kubernetes-migration.md`](kubernetes-migration.md).
+
 ---
 
 ## Which machine, before anything else
