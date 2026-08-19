@@ -355,6 +355,29 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-api-remount.py
 
+      # ── AND THE GATEWAY FILES CAN BE RENDERED AT ALL ─────────────────────────
+      #
+      # These are Go TEMPLATES that are also YAML, and the two disagree about
+      # what a comment is. The file provider renders before anything parses
+      # YAML, so `{{` inside a `#` line is an action, and a malformed one means
+      # Traefik builds NO configuration from that provider. Not a bad route —
+      # no routes.
+      #
+      # That happened on 2026-08-19: three lines of prose in policy.yml wrapped
+      # a template action across a newline, the continuation began with `#`, and
+      # the whole of cloudsforge.online answered 404 for about six minutes.
+      # policy.yml's own header had stated the rule for months; nothing enforced
+      # it, because every other check reads these files as text and skips
+      # comments.
+      #
+      # It also lay dormant through two entire waves, because the gateway
+      # configmap is applied by k8s-gateway.sh and nothing had re-applied it. A
+      # gateway template error is decoupled in time from the commit that
+      # introduces it, which is exactly why it belongs at commit time.
+      - name: Every gateway template action is balanced and outside a comment
+        working-directory: deploy
+        run: python3 scripts/check-gateway-templates-parse.py
+
       # ── THE PROBER MUST STILL BE ABLE TO FIND THE ESTATE ───────────────────
       #
       # `uptime.yml` probes every public hostname on a schedule, and it derives
