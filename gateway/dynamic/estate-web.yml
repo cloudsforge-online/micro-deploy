@@ -192,6 +192,21 @@ http:
         replacement: 'https://${1}/journal/${2}'
         permanent: true
 
+    # The same shape for wave 2's surface. One middleware per moved hostname
+    # rather than one generic rule, and that is deliberate: a single
+    # `^https?://([a-z0-9-]+)\.(.+?)/(.*)` -> `https://${2}/${1}/${3}` would
+    # rewrite EVERY subdomain on the estate the moment it were attached to the
+    # wrong router — including `hub`, `nimbus` and `admin`, which are staying on
+    # their own hostnames for reasons this plan calls non-negotiable. Twelve more
+    # of these will accumulate here, and twelve verbose blocks that can only
+    # damage the one hostname they name is the right trade against one clever
+    # block that can damage all of them.
+    cf-exchange-to-apex:
+      redirectRegex:
+        regex: '^https?://exchange\.(.+?)/(.*)'
+        replacement: 'https://${1}/exchange/${2}'
+        permanent: true
+
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
     # `rpc.<apex>` and `p2p.<apex>` are the only two hostnames in this estate that
@@ -1524,11 +1539,53 @@ http:
     # because `DEPLOYMENTS` in the bundle has one row and it is chain 7411 — which
     # is a true sentence, and better than a hostname that answers with a swap form
     # aimed at contracts that are not there.
+    # ── AND IT IS A PATH ON THE APEX NOW — WAVE 2 OF THE CONSOLIDATION ───────
+    #
+    # `exchange.<apex>` served the desk until 2026-08-19 and now 301s to
+    # `<apex>/exchange`. Wave 2, and wave 2 alone: this is the only surface
+    # besides the journal with no API of its own on its hostname, so it is the
+    # last one that can move without moving a service's routes with it.
+    #
+    # THE RULE IS NOT `PathPrefix(`/exchange`)`, and that is measured. Traefik
+    # 3.2.3's PathPrefix is a RAW STRING PREFIX — the bare form also claims
+    # `/exchangeable` and `/exchange-old`. `Path` is exact and
+    # `PathPrefix(`/exchange/`)` cannot match a longer first segment, so the
+    # alternation is the whole address space of this surface and nothing else.
+    # `check-base-paths-agree.py` rejects the bare form.
+    #
+    # Gated on CF_WEB_RETIRED for the same reason `cf-web-journal` is: the apex
+    # mount is meaningless on testnet, where the apex is itself a 302 to
+    # mainnet. `ne` and not `not` — `env` returns a STRING and `"false"` is
+    # truthy to a Go template, so `not (env …)` deletes the router from mainnet
+    # too.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
     cf-web-exchange:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/exchange`) || PathPrefix(`/exchange/`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-exchange
+{{ end }}
+
+    # ── THE HOSTNAME IT LEFT, WHICH KEEPS ANSWERING FOREVER ──────────────────
+    #
+    # A tombstone, at 500 so the retirement redirects at 550 still outrank it on
+    # testnet — where a `-testnet` name must go to mainnet before it goes to a
+    # path. On mainnet nothing outranks it and it answers the 301.
+    #
+    # `service:` is still `cf-web-exchange` even though the middleware answers
+    # before the service is ever reached: Traefik requires a router to name one,
+    # and naming the surface's own backend keeps the row readable as "this is
+    # where the exchange used to be" rather than pointing at an unrelated
+    # container that happens to exist.
+    #
+    # It never gets deleted. A 301 that has been served for two years is still
+    # the only thing between an old link and a 404.
+    cf-web-exchange-sub:
       rule: 'Host(`exchange{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-exchange-to-apex]
       service: cf-web-exchange
 
     # ── journal — THE ONE ROUTER WHOSE JOB INCLUDES NOT REWRITING ─────────────

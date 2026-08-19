@@ -2752,8 +2752,9 @@ fi
 #
 # Wave 1 of `docs/apex-consolidation.md` moved `journal` to `subdomain: ''` +
 # `basePath: '/journal'`, so its record is now `. journal-web /journal`: the apex
-# host, the journal's checkout, and the path that separates it from `site`. The
-# field defaults to `/` so the other twenty records are unchanged.
+# host, the journal's checkout, and the path that separates it from `site`. Wave
+# 2 did the same for `exchange`. The field defaults to `/` so the other nineteen
+# records are unchanged, and twelve more will acquire one.
 #
 # The assertion is STRONGER at a path than it was at a hostname, and that is
 # worth saying because the opposite is the intuition. On `journal.<apex>` a
@@ -2785,7 +2786,7 @@ for rec in \
   "lantern lantern-web" \
   "beacon beacon-web" \
   "pool pool-web" \
-  "exchange exchange-web" \
+  ". exchange-web /exchange" \
   ". journal-web /journal" \
   "agora agora-web"; do
   set -- $rec
@@ -2879,7 +2880,10 @@ else
   for rec in \
     "journal /2026/08/any-article-slug /journal/2026/08/any-article-slug" \
     "journal /feed.xml /journal/feed.xml" \
-    "journal / /journal/"; do
+    "journal / /journal/" \
+    "exchange /pools/0xabc /exchange/pools/0xabc" \
+    "exchange /sitemap.xml /exchange/sitemap.xml" \
+    "exchange / /exchange/"; do
     set -- $rec
     oldsub=$1; oldpath=$2; newpath=$3
     if [ "$EMBER_NETWORK" = mainnet ]; then

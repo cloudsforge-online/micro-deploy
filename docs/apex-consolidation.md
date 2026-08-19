@@ -30,7 +30,7 @@ produced them.
 | --- | --- | --- |
 | `journal.<apex>` | `/journal` | Pure content, no service, no session. The whole reason the estate has an SEO problem, and the cheapest place to prove the fix. |
 | `exchange.<apex>` | `/exchange` | Calls `rpc.<apex>` and nothing of its own. |
-| `developers.<apex>` | `/developers` | Documentation. Documentation on a subdomain is the canonical example of authority thrown away. |
+| `developers.<apex>` | `/developers` | The developer platform console. **Not documentation** — this row said so and it was wrong; `cf-api-developers` serves 35 `/v1` handlers from `micro-devplatform` on this hostname, which is why it is wave 3 and not wave 2. See §5. |
 | `market.<apex>` | `/market` | |
 | `create.<apex>` | `/create` | |
 | `trade.<apex>` | `/trade` | |
@@ -306,19 +306,41 @@ surface that could tell them apart.
 
 ## 5. The wave order, and what decides it
 
-Not "highest SEO value first". The ordering test is **does this surface have a
-`/v1` router on its own hostname** — because that is the difference between a
-bundle change and a bundle-plus-API change, and doing the second kind before
-the first kind has ever been deployed means debugging two new things at once.
+Not "highest SEO value first". The ordering test is **does this surface have an
+API on its own hostname** — because that is the difference between a bundle
+change and a bundle-plus-API change, and doing the second kind before the first
+kind has ever been deployed means debugging two new things at once.
 
-| Wave | Surfaces | Why together |
+**The test was first written as "a `/v1` router", and that was wrong.** Read the
+router's UPSTREAM instead — `service: cf-svc-*` — which is the discriminator
+`surface-routes.py` already uses and for the same reason. Two surfaces pass a
+`/v1` test and fail the real one:
+
+| Surface | Its API on its own host | What a `/v1` test would have said |
+| --- | --- | --- |
+| `foresight` | `/ideas`, `/categories`, `/image-config`, `/stake-assets`, `/me`, `/markets` | "no API" |
+| `pool`, `agora` | `/v1`, plus `/livez` and `/readyz` at the root | "one prefix to move" |
+
+`foresight` is the one that matters. Its six prefixes are **unversioned and at
+the root**, so mounting that surface at `/foresight` without moving them would
+put `/me` and `/markets` on the apex — names the marketing site could plausibly
+want, answered by a prediction-market service. It is the hardest surface in the
+estate to move and a `/v1` test called it the easiest.
+
+| Wave | Surfaces | Why |
 | --- | --- | --- |
 | **1** | `journal` | No service, no API router, no session, no chain data. `micro-journal` does not exist and the container's own nginx.conf says it never will. If the base-path pattern is wrong, the cost is an archive that 404s for an hour. |
-| **2** | `exchange`, `developers` | Also no `/v1` router of their own — `exchange` calls `rpc.<apex>` cross-origin, `developers` is docs. Proves the pattern twice more before any API moves. |
-| **3** | the remaining eleven | Each needs decision 4 applied. `worlds` + its three games go as one unit, because the nesting is the point. |
+| **2** | `exchange`, alone | The ONLY other surface with no API on its own hostname — an AMM's whole state is four numbers in a pair contract, and the bundle reads them from `rpc.<apex>` cross-origin. Proves the pattern once more, on a surface that has a session and chain data where the journal had neither, before any API moves. |
+| **3** | the remaining twelve | Each needs decision 4 applied. `worlds` + its three games go as one unit, because the nesting is the point; `foresight` wants its own attention for the reason above. |
+
+**Wave 2 was planned as `exchange` + `developers` and `developers` was moved
+out.** It has `cf-api-developers` on `developers.<apex>` serving 35 handlers from
+`micro-devplatform` — it is the developer platform console, not a docs site, and
+the plan called it "docs". Checking that claim against the router table is what
+produced the corrected test above.
 
 Each wave is its own branch, its own PR and its own release. There is no wave
-that ships two moved surfaces the estate has not seen the pattern work on.
+that ships a moved surface on a pattern the estate has not seen work.
 
 ---
 
@@ -349,17 +371,28 @@ they were written to assert rather than being re-pointed at a path whose only
 purpose is deployment. The mount is nginx's business, and the image is where
 nginx's business starts.
 
-**Vite rewrites `base` into some asset references and not others**, which is
-worth naming because the half that works hides the half that does not. Anything
-Vite resolves as a module graph import — the entry `<script>`, the CSS it pulls
-in, an `import`ed image — comes out with `/journal/` in front of it. Anything
-that is a literal string in a template, in `public/`, or composed at runtime
-does not: Vite never sees it. So a build can be visibly correct — the app loads,
-the styles apply — while every favicon and every og card in `index.html` points
-at the apex root, where the site's bundle answers with an HTML 404 for a PNG.
-That is why `nginx.conf` carries a `location` for the favicons and the og cards
-specifically, and why `brand-chrome.test.ts` reads the built HTML rather than
-the source.
+**Vite rewrites `base` into some asset references and not others**, and the line
+between them is worth measuring rather than assuming — the first draft of this
+paragraph drew it in the wrong place. Measured on the wave-2 build:
+
+| Reference | Rewritten? |
+| --- | --- |
+| module-graph imports — the entry `<script>`, the CSS it pulls in, an `import`ed image | ✅ |
+| `/`-rooted URLs in `index.html` attributes — `href`, `src`, **and `content` on `og:image`** | ✅ |
+| a path composed at runtime in JS (`'/' + name`) | ❌ |
+| a path written inside a file in `public/` — Vite copies those verbatim | ❌ |
+
+The plan originally claimed the second row was NOT rewritten, and that every
+favicon and og card in `index.html` would point at the apex root. They do not:
+`content="/og-1200x630.png"` came out of the build as
+`content="/exchange/og-1200x630.png"`. The claim was reasoned from "Vite only
+sees the module graph" and never checked against a build.
+
+What survives the correction is the reason to care. The two ❌ rows are real, they
+fail exactly as described — an HTML 404 served where a PNG was expected — and
+nothing in the build reports them. That is why `nginx.conf` carries a `location`
+for the favicons and the og cards specifically, and why `brand-chrome.test.ts`
+reads the BUILT HTML rather than the source.
 
 **`isRegisteredPlacement()` had quietly become a tautology, and the move is what
 exposed it.** The function warns when a bundle is served from an address the
@@ -589,6 +622,95 @@ So `/products/journal` keeps its own canonical, pointing at itself. The same
 question returns for all fourteen surfaces and now has an answer: **only add a
 canonical where the two pages would be interchangeable to a reader.** For a
 product page and the product, they are not.
+
+---
+
+## 6bis. Wave 2 — `exchange` → `/exchange`
+
+Only what DIFFERED from wave 1 is recorded here. The mechanism is the same and
+is not restated.
+
+**It was chosen alone**, for the reason §5 now gives. It is also not a repeat:
+the journal is static prose with no session and no chain data, and this has a
+wallet, a signed session and live contract reads. If a base path breaks something
+only an authenticated surface can break, it breaks here — on one surface, before
+twelve move at once.
+
+### Three defects it exposed, two of them pre-existing
+
+**1. `rpcUrl()` derived the apex itself.** The body was string surgery on the
+hostname — drop the first label, give up if there is none to drop:
+
+```ts
+const parts = hostname.split('.')
+if (parts.length <= 2) return null
+const apex = parts.slice(1).join('.')
+```
+
+That encodes "this bundle is served from a subdomain". At
+`cloudsforge.online/exchange` the hostname is two labels, so it returned `null`
+and every page rendered **"There is no chain endpoint for this address"** — the
+honest wording for a preview deployment and completely wrong for the estate's own
+apex.
+
+The comment above the function already claimed the endpoint was "composed the
+same way `viewedHosts()` composes every other address". It was not: it was a
+second copy of the derivation, and the copies had drifted the moment one surface
+stopped being a hostname. It is `viewedHosts().rpc` now, and there is one
+derivation in the estate rather than two.
+
+`no-build-time-config.test.ts` asserted the three lines that BUILT the address —
+which is to say it asserted the private copy existed. It now asserts the
+opposite, and that `parts.slice(` never comes back.
+
+**2. `isRegisteredPlacement()` had become a tautology**, exactly as in
+`journal-web`. Second copy, same fix.
+
+**3. The sitemap composed `$scheme://$host`.** Third copy of the defect §6.4
+records for `micro-site`. `$scheme` is `http` on every real request, so it
+advertised every URL at an address that 301s.
+
+### `/exchange/` is an address this surface did not used to have
+
+While the bundle was a hostname its index was `/`, and `/` has no
+trailing-slash variant to get wrong. Now the front door is a path, and a reader
+who types the folder with a slash — or any tool that normalises a
+directory-looking URL by adding one — arrives at a second address.
+
+Enumerated exactly, like everything else in that file, rather than by widening
+the block to the prefix form: `location /exchange` as a prefix would also claim
+`/exchangeable`, and would re-open the "every address answers 200" hole the
+enumeration exists to keep shut. Not a 301 either — the gateway routes both, and
+a redirect would cost a round trip on the front door to remove a duplicate that
+nothing links to. The canonical stays the bare form.
+
+### A test that would have failed open
+
+`routes.test.ts`'s "nginx enumerates nothing that is not a route" read the
+alternation with a literal `^/(`. Under the mount the block is
+`^/exchange/(pools|…)`, that pattern matches nothing, the loop runs zero times
+and **the test passes reporting nothing, forever.** It is anchored on `BASE` now
+and asserts it found the block at all.
+
+This is the second instance of the same shape in two waves — the first was
+`viewsAnyNetwork`'s invariant in wave 1, the second is this. Both were assertions
+whose subject moved out from under them, and neither failed when it did. Worth
+looking for deliberately in wave 3: **any check whose pattern names a path is a
+check that stops checking when the path moves.**
+
+### The one CORS grant that was load-bearing
+
+Every other origin in `policy.yml`'s same-environment block is there so
+`consumeAuthCallback` can POST once at the end of a sign-in. The exchange has no
+sign-in at all and still could not function without a grant: it reads Hearth over
+JSON-RPC at `rpc.<apex>`, so **every** read it makes is preflighted — the pair
+list, the reserves, the router's quote. Without a grant it does not degrade, it
+renders nothing.
+
+None of that changed; the origin did. The grant is subsumed by the apex's, which
+was already the first entry in the block. The order matters: deleting the old
+line before the apex was on the list would have taken every price on the page
+down.
 
 ---
 

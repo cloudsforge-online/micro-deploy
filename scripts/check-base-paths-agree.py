@@ -93,6 +93,7 @@ def bad(msg):
 # landing here fails rather than going unchecked.
 BUNDLE_REPOS = {
     "journal": "journal-web",
+    "exchange": "exchange-web",
 }
 
 

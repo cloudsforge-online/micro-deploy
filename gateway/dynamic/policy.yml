@@ -185,28 +185,32 @@ http:
           # against the browser's own `Origin` header, and `pool` is deliberately absent from it.
           # Whoever mounts the bar here must add it there too.
           - https://pool{{ env "CF_WEB_SUFFIX" }}
-          # ── the exchange, and the first entry here that is LOAD-BEARING ─────────────
+          # ── THE EXCHANGE HAS NO LINE HERE ANY MORE, AND THE GRANT IT NEEDED IS REAL ─
           #
-          # Every origin above is here so that `consumeAuthCallback` can POST to
-          # `nimbus.<apex>/auth/handoff/redeem` after a sign-in — one call, at the end of one
-          # flow, on pages whose own data is same-origin. `exchange.<apex>` has no sign-in at
-          # all (no bar, no account menu, no bearer token anywhere in the bundle) and still
-          # cannot function without this line, which is the opposite arrangement and worth
-          # stating where it can be read.
+          # It had one, and unlike every other origin in this block it was LOAD-BEARING rather
+          # than incidental. The entries above exist so `consumeAuthCallback` can POST to
+          # `nimbus.<apex>/auth/handoff/redeem` once, at the end of a sign-in, on pages whose
+          # own data is same-origin. The exchange has no sign-in at all and still could not
+          # function without a grant: `micro-exchange-web` reads Hearth over JSON-RPC at
+          # `rpc.<apex>` and speaks to nothing else, so EVERY read it makes is preflighted —
+          # the pair list, the reserves, the router's quote, the contract checks. Without a
+          # grant the surface does not degrade, it renders nothing, and the only record of why
+          # is in the reader's browser console.
           #
-          # micro-exchange-web reads Hearth over JSON-RPC at `rpc.<apex>` and speaks to nothing
-          # else — there is no `micro-exchange` service and, per the `cf-web-exchange` block in
-          # estate-web.yml, there is not going to be one. `exchange.<apex>` → `rpc.<apex>` is a
-          # DIFFERENT ORIGIN, so every read the page makes is preflighted: the pair list, the
-          # reserves, the router's quote, the contract checks. Without this entry the surface
-          # does not degrade, it renders nothing at all, and the only record of why is in the
-          # reader's browser console.
-          #
-          # MEASURED 2026-08-16, before this line existed: `OPTIONS https://rpc.cloudsforge.online/`
+          # MEASURED 2026-08-16, before the line existed: `OPTIONS https://rpc.cloudsforge.online/`
           # with `Origin: https://exchange.cloudsforge.online` answered 200,
           # `access-control-allow-credentials: true`, and NO `access-control-allow-origin`. The
           # same request with a `pool.` or `foresight.` origin got one.
-          - https://exchange{{ env "CF_WEB_SUFFIX" }}
+          #
+          # NONE OF THAT CHANGES; THE ORIGIN DOES. Wave 2 made the desk `<apex>/exchange`, so
+          # the origin its RPC reads come FROM is the apex — `https://{{ env "CF_SITE_HOST" }}`,
+          # already the first entry in this block. The grant is not relocated, it is SUBSUMED,
+          # and a line of its own would be a duplicate origin in a list that is keyed by origin.
+          #
+          # This is the second surface to leave this block and the reasoning is identical to the
+          # journal's below, but the CONSEQUENCE of getting it wrong is not: an unnecessary
+          # journal grant would have been dead configuration, whereas deleting this one before
+          # the apex was on the list would have taken every price on the page down.
           # ── the journal HAS NO LINE HERE ANY MORE, and the apex above is why ────────
           #
           # It had one, for the ordinary reason and worth stating because the surface
@@ -340,11 +344,16 @@ http:
           - https://lantern{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://beacon{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://pool{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          # `exchange` views in place like the rest, and what it re-points is not an API base but
-          # an RPC endpoint: `exchange-web/src/lib/rpc.ts` composes `rpc-testnet.<apex>` from
-          # `viewedNetwork()`, so a reader who chooses Testnet on the mainnet page reads the
-          # testnet chain from a mainnet origin. Same shape as every line above, one layer down.
-          - https://exchange{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `exchange` STILL views in place and no longer needs a line of its own, for the same
+          # reason it lost the one in the same-environment list above: it is `<apex>/exchange`
+          # now, so the origin its cross-environment reads come FROM is the apex, and the apex
+          # is already in this block.
+          #
+          # What it re-points is worth keeping on the record, because it is not an API base like
+          # every other line here: `exchange-web/src/lib/rpc.ts` composes the endpoint from
+          # `viewedHosts().rpc`, so a reader who chooses Testnet on the mainnet page reads the
+          # TESTNET CHAIN from a mainnet origin. That is the grant this entry was for, and the
+          # apex's entry covers it unchanged.
           # `journal` STILL views in place and no longer needs a line of its own, for the
           # same reason it lost the one in the same-environment list above: it is
           # `<apex>/journal` now, so the origin its cross-environment reads come FROM is
