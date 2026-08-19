@@ -207,6 +207,46 @@ http:
         replacement: 'https://${1}/exchange/${2}'
         permanent: true
 
+    # Wave 3a. Same shape again, and the third of the twelve this file expects.
+    #
+    # IT REDIRECTS THE BUNDLE AND NOT THE API, which is new here and is the whole
+    # difference between this wave and the two before it. `market.<apex>/v1` is
+    # still routed straight to the service by `cf-api-market-host` at 600, which
+    # outranks the tombstone at 500 — so this regex never sees it. That is
+    # deliberate: a 301 answers a GET well and mangles a POST, because a client
+    # that follows one is entitled to drop the body and the method. The bundle
+    # moved; third-party callers of the API did not have to.
+    cf-market-to-apex:
+      redirectRegex:
+        regex: '^https?://market\.(.+?)/(.*)'
+        replacement: 'https://${1}/market/${2}'
+        permanent: true
+
+    # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
+    #
+    # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
+    # needs it for a consolidated surface. The bundle at `/market` issues
+    # RELATIVE requests, so `/v1/listings` from a page at `/market/collections`
+    # resolves at the APEX ROOT — micro-site's — and micro-site answers its SPA
+    # shell: 200, an HTML body where JSON was expected, every panel dead and a
+    # network tab that looks perfectly healthy.
+    #
+    # So the bundle asks for `/market/v1/listings`, the gateway routes it, and
+    # this takes `/market` back off before `cf-svc-market` sees it. micro-market
+    # is unchanged and never learns it moved.
+    #
+    # `check-api-remount.py` demands this middleware on the router by name. The
+    # part it CANNOT check is whether the service composes an absolute path of
+    # its own — a `Location:`, a cookie `Path`, a URL in a JSON body — because
+    # stripPrefix is invisible to the service and such a path would point back at
+    # the apex root while still answering 200. That was AUDITED instead, across
+    # all twelve services, and the three greps are recorded in decision 4.
+    # micro-market: 0 redirects, 0 cookie Paths, 0 rooted response fields.
+    cf-market-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/market"
+
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
     # `rpc.<apex>` and `p2p.<apex>` are the only two hostnames in this estate that
@@ -524,12 +564,90 @@ http:
       service: cf-web-site
 
     # ──────────────────────────────────────────────────────────────── market ──
+    # ── WAVE 3a, AND THE FIRST CONSOLIDATED SURFACE THAT BRINGS A SERVICE ─────
+    #
+    # `market.<apex>` served this until 2026-08-19 and now 301s to
+    # `<apex>/market`. Waves 1 and 2 moved a bundle and nothing else — `journal`
+    # has no API and `exchange` reads a chain cross-origin — so this is the first
+    # time the estate has to move a surface's ROUTES with its bundle, which is
+    # decision 4 in `docs/apex-consolidation.md` and the reason the wave order
+    # puts it third rather than first.
+    #
+    # FOUR ROUTERS, AND EACH ONE HAS TO EXIST
+    #
+    #   cf-web-market       the bundle, on the apex at `/market`          600
+    #   cf-api-market-apex  its API, at `/market/v1`, mount stripped      700
+    #   cf-web-market-sub   the tombstone on the hostname it left         500
+    #   cf-api-market-host  the API on that hostname, still direct        600
+    #
+    # THE RULE IS NOT `PathPrefix(`/market`)`, and that is measured rather than
+    # assumed. Traefik 3.2.3's PathPrefix is a RAW STRING PREFIX — the bare form
+    # also claims `/marketplace` and `/market-old`, neither of which is this
+    # surface. `Path` is exact and `PathPrefix(`/market/`)` cannot match a longer
+    # first segment, so the alternation is this surface's whole address space and
+    # nothing else. `check-base-paths-agree.py` rejects the bare form.
+    #
+    # THE API IS AT 700 AND NOT 600, WHICH IS A NEW BAND FOR THIS FILE. The
+    # convention was bundles 500, retirement 550, APIs 600, and a path-mounted
+    # bundle moved to 600 because it has to beat both the apex's own bundle and
+    # any retirement rule parked on the host. `/market/v1` CONTAINS `/market`, so
+    # both routers below can match `GET /market/v1/listings` and only priority
+    # decides which — at equal priority Traefik falls back to rule LENGTH, which
+    # is not a decision anybody made. An API mounted under a consolidated surface
+    # therefore sits one band above its own bundle, and the eleven surfaces still
+    # to move will each need the same. `check-router-prefix-ordering.py` fails
+    # the tie rather than letting rule length settle it.
+    #
+    # Gated on CF_WEB_RETIRED for the same reason `cf-web-journal` and
+    # `cf-web-exchange` are: the apex mount is meaningless on testnet, where the
+    # apex is itself a 302 to mainnet. `ne` and not `not` — `env` returns a
+    # STRING and `"false"` is truthy to a Go template, so `not (env …)` would
+    # delete the router from mainnet too.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
     cf-web-market:
-      rule: 'Host(`market{{ env "CF_WEB_SUFFIX" }}`)'
-      priority: 500
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/market`) || PathPrefix(`/market/`))'
+      priority: 600
       entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-market
+
+    cf-api-market-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/market/v1`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-market-strip-mount]
+      service: cf-svc-market
+{{ end }}
+
+    # ── THE HOSTNAME IT LEFT, WHICH KEEPS ANSWERING FOREVER ──────────────────
+    #
+    # A tombstone, at 500 so the retirement redirects at 550 still outrank it on
+    # testnet — where a `-testnet` name must go to mainnet before it goes to a
+    # path. On mainnet nothing outranks it and it answers the 301.
+    #
+    # `service:` is still `cf-web-market` even though the middleware answers
+    # before the service is ever reached: Traefik requires a router to name one,
+    # and naming the surface's own backend keeps the row readable as "this is
+    # where the market used to be" rather than pointing at an unrelated container
+    # that happens to exist.
+    #
+    # It never gets deleted. A 301 that has been served for two years is still
+    # the only thing between an old link and a 404.
+    cf-web-market-sub:
+      rule: 'Host(`market{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-market-to-apex]
+      service: cf-web-market
+
+    # ── AND THE API ON THAT HOSTNAME, WHICH IS NOT REDIRECTED ────────────────
+    #
+    # Unchanged, and deliberately outranking the tombstone at 500 so that the
+    # redirect above never sees a `/v1` call. A 301 answers a GET well and
+    # mangles a POST: a client that follows one is entitled to drop the body and
+    # downgrade the method, so redirecting an API is how an integration starts
+    # silently losing writes. The BUNDLE moved to the apex; third-party callers
+    # of `market.<apex>/v1` did not have to, and nothing here asks them to.
     cf-api-market-host:
       rule: 'Host(`market{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600

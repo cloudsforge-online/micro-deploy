@@ -2770,7 +2770,7 @@ fi
 for rec in \
   "hub hub-web" \
   ". site" \
-  "market market-web" \
+  ". market-web /market" \
   "create mint-web" \
   "trade trade-web" \
   "worlds worlds-web" \
@@ -2883,7 +2883,10 @@ else
     "journal / /journal/" \
     "exchange /pools/0xabc /exchange/pools/0xabc" \
     "exchange /sitemap.xml /exchange/sitemap.xml" \
-    "exchange / /exchange/"; do
+    "exchange / /exchange/" \
+    "market /listings/00000000-0000-0000-0000-000000000000 /market/listings/00000000-0000-0000-0000-000000000000" \
+    "market /sitemap.xml /market/sitemap.xml" \
+    "market / /market/"; do
     set -- $rec
     oldsub=$1; oldpath=$2; newpath=$3
     if [ "$EMBER_NETWORK" = mainnet ]; then
@@ -2919,7 +2922,7 @@ echo "── the surfaces' own APIs, behind the same hostname ──────
 for rec in \
   "hub /v1/dashboard hub-api" \
   "admin /v1/approvals admin-api" \
-  "market /v1/listings market" \
+  ". /market/v1/listings market" \
   "create /v1/catalogue mint" \
   "trade /v1/bots trade" \
   "worlds /v1/titles worlds" \
@@ -2931,10 +2934,22 @@ for rec in \
   "agora /v1/timeline/latest agora"; do
   set -- $rec
   sub=$1; path=$2; svc=$3
-  apic=$(gw "$sub$WEB_SUFFIX" "$path")
+  # `.` is the apex, the same sentinel the provenance loop above uses and for the
+  # same reason. It appeared here when `market` was consolidated: the surface is
+  # `<apex>/market` now, so its API is `<apex>/market/v1` and the host is no
+  # longer `<sub>$WEB_SUFFIX`. Eleven more records will take this shape.
+  #
+  # AND THE PATH IS THE ASSERTION, not just the host. `/market/v1/listings` is
+  # the address the BUNDLE actually calls — it is what `apiBaseFor()` composes
+  # from the registry — so probing it exercises the router AND the stripPrefix
+  # together. Probing `/v1/listings` on the apex instead would reach micro-site,
+  # which answers its SPA shell with a 200, and this loop would print `ok` for a
+  # surface whose every panel is dead.
+  if [ "$sub" = "." ]; then apihost="$SITE_HOST"; else apihost="$sub$WEB_SUFFIX"; fi
+  apic=$(gw "$apihost" "$path")
   case "$apic" in
-    404|502|000) bad "https://$sub$WEB_SUFFIX$path answered $apic — $svc is not routed behind its own surface's hostname" ;;
-    *) ok "https://$sub$WEB_SUFFIX$path → $svc ($apic)" ;;
+    404|502|000) bad "https://$apihost$path answered $apic — $svc is not routed behind its own surface's hostname" ;;
+    *) ok "https://$apihost$path → $svc ($apic)" ;;
   esac
 done
 
@@ -3210,19 +3225,37 @@ fi
 # The STATUS is captured alongside the body, because 401 and 403 mean completely
 # different things here and reporting them as one line is what made this section
 # accuse the allowlist of a fault that was a missing session.
+# ── THE TARGET OF THIS DRILL IS THE APEX NOW, AND IT IS STILL FORGE MARKET ───
+#
+# It read `market$WEB_SUFFIX` in seven places. Wave 3a of
+# `docs/apex-consolidation.md` made Forge Market `<apex>/market`, so that
+# hostname no longer serves the bundle a reader presses Sign in on — it 301s —
+# and its origin left IDENTITY_HANDOFF_ORIGINS with the move. Left alone, every
+# assertion below would have gone red on the day of the deploy and blamed the
+# allowlist for a hostname that is correctly absent from it.
+#
+# RESPELT RATHER THAN RETARGETED, which is the whole point. Pointing the drill at
+# some other subdomain would have kept it green and stopped it testing the thing
+# it was written for: hub mints, ANOTHER ORIGIN redeems, and the code is refused
+# from a third. The apex is a different origin from `hub<suffix>`, it is where
+# the market's pages live, and it is the origin the shared bar runs on there — so
+# the crossing being proven is the same crossing, spelled the way it now resolves.
+#
+# It is also the spelling that stops rotting. Eleven more surfaces move onto this
+# apex; each one would otherwise be a fresh edit here.
 so_mint=$(curl -sk -o /tmp/estate-sso-mint.json -w '%{http_code}' \
   -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -H "origin: https://hub$WEB_SUFFIX" \
-  -d "{\"redirectOrigin\":\"https://market$WEB_SUFFIX\"}")
+  -d "{\"redirectOrigin\":\"https://$SITE_HOST\"}")
 so_code=$(python3 -c "import json;print(json.load(open('/tmp/estate-sso-mint.json')).get('code',''))" 2>/dev/null)
 if [ -n "$so_code" ]; then
-  ok "identity minted a hand-off code for https://market$WEB_SUFFIX"
+  ok "identity minted a hand-off code for https://$SITE_HOST"
 elif [ "$so_mint" = "401" ]; then
   bad "the hand-off drill has no session (401) — this says NOTHING about the allowlist; fix the sign-in above first"
 else
-  bad "identity refused to mint a hand-off code ($so_mint) — IDENTITY_HANDOFF_ORIGINS does not name market$WEB_SUFFIX, and cross-surface SSO is dead"
+  bad "identity refused to mint a hand-off code ($so_mint) — IDENTITY_HANDOFF_ORIGINS does not name $SITE_HOST, and cross-surface SSO is dead"
 fi
 
 # Market redeems it, presenting the Origin a browser would send. This is the
@@ -3231,13 +3264,13 @@ fi
 # (identity/src/handoff.ts).
 so_new=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff/redeem" \
-  -H 'content-type: application/json' -H "origin: https://market$WEB_SUFFIX" \
+  -H 'content-type: application/json' -H "origin: https://$SITE_HOST" \
   -d "{\"code\":\"${so_code:-nothing-was-minted}\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('accessToken',''))" 2>/dev/null)
 if [ -n "$so_new" ]; then
-  ok "market$WEB_SUFFIX redeemed it and holds a session — A USER CAN CROSS SURFACES"
+  ok "$SITE_HOST redeemed it and holds a session — A USER CAN CROSS SURFACES"
 else
-  bad "the hand-off code could not be redeemed from https://market$WEB_SUFFIX"
+  bad "the hand-off code could not be redeemed from https://$SITE_HOST"
 fi
 
 # THE BINDING ITSELF. A code minted for Market must be worthless from anywhere
@@ -3245,7 +3278,7 @@ fi
 so_code2=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
-  -d "{\"redirectOrigin\":\"https://market$WEB_SUFFIX\"}" \
+  -d "{\"redirectOrigin\":\"https://$SITE_HOST\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
 so_theft=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
   --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \

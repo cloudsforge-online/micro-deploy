@@ -94,6 +94,7 @@ def bad(msg):
 BUNDLE_REPOS = {
     "journal": "journal-web",
     "exchange": "exchange-web",
+    "market": "market-web",
 }
 
 
