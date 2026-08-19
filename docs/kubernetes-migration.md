@@ -9,27 +9,50 @@ that flips public traffic.
 
 ## Status, before anything else
 
-**NOTHING IS CUT OVER. Public traffic is still served by compose.**
+**CUT OVER 2026-08-19 07:44 UTC. Public traffic is served by Kubernetes.**
 
-| | Serving the public | Running a full second estate |
+| | Serving the public | Stopped |
 | --- | --- | --- |
-| **Where** | app host, WSL, `docker compose` | `cf-k8s` VM, k3s |
-| **Mainnet** | `cloudsforge.online` and its subdomains | `cloudsforge-estate` namespace |
-| **Testnet** | `testnet.cloudsforge.online` | `cf-testnet` namespace |
-| **Deployed by** | `scripts/release-deploy.sh` | `scripts/k8s-deploy.sh` |
-| **Cloudflare tunnel** | `Cloudflared` service on Windows, running | `cf-edge` namespace, **`replicas: 0`** |
+| **Where** | `cf-k8s` VM, k3s | app host, WSL, `docker compose` |
+| **Mainnet** | `cloudsforge-estate` namespace | project `cloudsforge-estate` |
+| **Testnet** | `cf-testnet` namespace | project `cf-testnet` |
+| **Deployed by** | `scripts/k8s-deploy.sh` | `scripts/release-deploy.sh` |
+| **Cloudflare tunnel** | `cf-edge`, `replicas: 1`, 4 connectors | Windows service, **Stopped and Disabled** |
 
-Both estates are up at once and that is safe **only because of the last row**.
-A Cloudflare tunnel load-balances across every connector that is Ready, so the
-moment a second connector attaches, Cloudflare starts splitting live public
-traffic between two estates with two different databases. The connector in
-`cf-edge` therefore exists, holds a valid token, and is scaled to zero;
-`scripts/k8s-cloudflared.sh` re-asserts that and **refuses to finish** if
-anything has scaled it up. That single field is the whole safety interlock, and
-scaling it to 1 is the cutover.
+Steps 1–7 below were executed in order and are recorded with what they actually
+did, including the two places the runbook was wrong and had to be fixed mid-
+cutover (step 3's `down`, step 4's live target). What the estate measures now:
 
-Until the cutover, `docs/releasing.md` is still the document that governs a
-release. This one governs the migration.
+| | real failures | of which pre-existing, documented below |
+| --- | --- | --- |
+| mainnet | **2** | 2 — `app` not in `initdb.sql`, `market.listings is EMPTY` |
+| testnet | **59** | 59 — the documented baseline exactly |
+
+Mainnet's items 3–6 — the parallel-run drift — closed on the cutover, which is
+what step 1's stopped-source dump was for. Testnet's 59 is unchanged from the
+pre-cutover measurement: no new failure shape appeared on either network.
+
+The interlock this section used to describe is now spent, and the direction it
+guards has reversed. It was: a second connector splits live traffic across two
+estates with two databases. **That is still true**, so the Windows service is
+`Disabled` rather than merely stopped — `Automatic` plus a Windows reboot would
+re-attach a connector to the compose estate, which is stopped but still on disk
+with its volumes, and Cloudflare would load-balance onto it. Do not re-enable it.
+**`scripts/k8s-cloudflared.sh` must not be re-run as it stands.** It applies
+`k8s/cloudflared/60-cloudflared.yaml`, and that file carries `replicas: 0` as a
+hard invariant the script refuses to proceed without:
+
+```
+grep -q '^  replicas: 0$' "$MANIFEST" || fail "the manifest no longer declares 'replicas: 0' …"
+```
+
+Before the cutover that was the interlock. After it, applying the same file
+scales the LIVE connector to zero and every public hostname 502s at once. The
+protection and the outage are now the same line. Listed under "What is not
+finished".
+
+`docs/releasing.md` still describes the compose release path. **This document
+governs deploys now**, until that one is rewritten.
 
 ---
 
@@ -584,8 +607,39 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    it still on `Automatic` re-attaches a connector to a dead estate and
    Cloudflare will happily send it half the traffic.
 
+   **`ssh savva@192.168.1.129` lands on `cmd.exe`, which eats the quoting of any
+   PowerShell one-liner with a `|`, a `{}` or a `$_` in it.** Drive it with
+   `-EncodedCommand` instead — UTF-16LE, base64 — and the nesting problem does
+   not exist:
+   ```sh
+   c=$(printf '%s' "$PS" | iconv -f UTF-8 -t UTF-16LE | base64 | tr -d '\n')
+   ssh savva@192.168.1.129 "powershell -NoProfile -EncodedCommand $c"
+   ```
+   Measured: `Cloudflared  Stopped  Disabled`, then four connectors registered in
+   ~6s (`fra08`, `ath01`, `fra10`, `ath01`, all QUIC). The whole window between
+   the last compose-served request and the first cluster-served one was under a
+   minute.
+
 7. **Verify from outside** — `scripts/estate-verify.sh` against the real public
    hostnames, both networks, plus one authenticated journey.
+
+   Measured immediately after step 6. Fourteen public hostnames from a machine
+   outside the estate entirely, all 200 except two that are correct: `nimbus/`
+   404 (identity publishes no `/` route — its `/.well-known/jwks.json` answers
+   200 with keys) and `testnet.cloudsforge.online` 302 (the retirement). Then
+   the full suite on both networks:
+
+   | | real failures | what they are |
+   | --- | --- | --- |
+   | mainnet | **2** | `app` not in `initdb.sql`; `market.listings is EMPTY` |
+   | testnet | **59** | the documented baseline, unchanged |
+
+   **The nine failures that were the tunnel cleared on both networks**, which is
+   what makes step 6 provable rather than merely done — see "After steps 3–5"
+   for why those nine existed and what they were really measuring. Mainnet's
+   drift items 3–6 closed too. One alert firing estate-wide,
+   `HearthConformanceVectorsFailing` (severity `ticket`, pre-existing content),
+   and `backup_last_success_unixtime` 889s old inside the cluster.
 
 Rollback, at any point before step 6, is: scale `cf-edge` back to 0 (it already
 is), then `docker compose -p cloudsforge-estate start` and
@@ -822,6 +876,14 @@ Honest list, as of 2026-08-19:
 - **No `stratum-endpoint` in the cluster.** Equivalent to today while
   `CF_STRATUM_PUBLISH` is off, and a real gap the day hardware miners are meant to
   dial in. See cutover step 3 for why it was never rendered and what it would take.
+- **`k8s/cloudflared/60-cloudflared.yaml` still says `replicas: 0`, and
+  `scripts/k8s-cloudflared.sh` still refuses to run without it.** Correct until
+  07:44 UTC on 2026-08-19 and an outage button ever since: re-running the script
+  scales the live connector down and 502s every public hostname. The manifest
+  should carry `replicas: 1` and the script's assertion should invert — it is
+  now "this cluster serves the public, refuse to zero it" rather than "this
+  cluster is a standby, refuse to start it". Left as-is during the cutover
+  because changing the interlock while relying on it is how interlocks get lost.
 - **`estate-seed.mjs --check` is not pinned to the cluster.** The one part of the
   suite that still resolves the estate's hostnames through public DNS, so its ten
   assertions answer about whatever the tunnel currently points at rather than
