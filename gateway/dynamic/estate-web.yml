@@ -222,6 +222,23 @@ http:
         replacement: 'https://${1}/market/${2}'
         permanent: true
 
+    # Wave 3b. Two more of the twelve, same shape, same reasoning — and the same
+    # split between the bundle and the API: `create.<apex>/v1` and
+    # `trade.<apex>/v1` stay routed straight to their services by the routers at
+    # 600 below, which outrank these tombstones at 500, so neither regex ever
+    # sees a `/v1` call. A 301 answers a GET well and mangles a POST.
+    cf-create-to-apex:
+      redirectRegex:
+        regex: '^https?://create\.(.+?)/(.*)'
+        replacement: 'https://${1}/create/${2}'
+        permanent: true
+
+    cf-trade-to-apex:
+      redirectRegex:
+        regex: '^https?://trade\.(.+?)/(.*)'
+        replacement: 'https://${1}/trade/${2}'
+        permanent: true
+
     # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
     #
     # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
@@ -246,6 +263,33 @@ http:
       stripPrefix:
         prefixes:
           - "/market"
+
+    # Wave 3b's two. Decision 4 again, and the audit that cannot be automated —
+    # `stripPrefix` is invisible to the service, so a `Location:`, a cookie
+    # `Path` or a rooted URL in a JSON body would keep answering 200 while
+    # handing the browser an address on the apex root — was RE-RUN for each on
+    # 2026-08-20 rather than assumed from `market`:
+    #
+    #   micro-mint    0 redirects, 0 cookie Paths, 2 rooted-path hits
+    #   micro-trade   0 redirects, 0 cookie Paths, 17 rooted-path hits
+    #
+    # Both hit counts were READ rather than counted, and neither is a response
+    # field. micro-mint's two are OUTBOUND calls to micro-custody — `/v1/sign`
+    # and `/v1/addresses` on a different service, which this mount does not
+    # touch. micro-trade's seventeen are `exchangeRoute('GET', '/v1/exchange/…')`
+    # route REGISTRATIONS, the same shape as `market`'s `define(…)` and, like
+    # those, literals in `server.ts` rather than anything derived from the
+    # request path — so the routes the service serves do not move when the
+    # gateway strips a prefix in front of it.
+    cf-create-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/create"
+
+    cf-trade-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/trade"
 
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
@@ -681,12 +725,48 @@ http:
       service: cf-svc-market
 
     # ─────────────────────────────────────────────── create (micro-mint-web) ──
+    # ── WAVE 3b — `create.<apex>` BECOMES `<apex>/create` ────────────────────
+    #
+    # Four routers, exactly the arrangement `market` proved in wave 3a: the
+    # bundle at 600, its API at 700 with the mount stripped, the tombstone at
+    # 500, and the API on the old hostname unchanged and NOT redirected.
+    #
+    # The rule is not `PathPrefix(`/create`)`: Traefik 3.2.3's PathPrefix is a
+    # RAW STRING PREFIX, so the bare form would also claim `/creates` and
+    # `/create-old`. `check-base-paths-agree.py` rejects it.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
     cf-web-create:
-      rule: 'Host(`create{{ env "CF_WEB_SUFFIX" }}`)'
-      priority: 500
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/create`) || PathPrefix(`/create/`))'
+      priority: 600
       entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-create
+{{ end }}
+
+    # OUTSIDE the gate, and micro-deploy#174 is why: with the API router inside
+    # it, `testnet.<apex>/create/v1/…` fell through to `cf-retired-web-apex` at
+    # 550 and answered 302 TO MAINNET — which a cross-origin fetch follows, so
+    # the combined view showed the wrong estate's data with Testnet selected.
+    # 700 already outranks the bundle at 600 and the retirement band at 550.
+    cf-api-create-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/create/v1`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-create-strip-mount]
+      service: cf-svc-mint
+
+    # The hostname it left, answering 301 forever. It never gets deleted: a
+    # redirect served for two years is still the only thing between an old link
+    # and a 404.
+    cf-web-create-sub:
+      rule: 'Host(`create{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-create-to-apex]
+      service: cf-web-create
+
+    # And its API, unchanged and above the tombstone so the 301 never sees a
+    # `/v1` call. Third-party callers did not have to move; the bundle did.
     cf-api-create:
       rule: 'Host(`create{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
@@ -694,12 +774,33 @@ http:
       service: cf-svc-mint
 
     # ───────────────────────────────────────────────────────────────── trade ──
+    # ── WAVE 3b — `trade.<apex>` BECOMES `<apex>/trade` ──────────────────────
+    #
+    # The same four, and the same reasoning as `create` directly above. The bare
+    # `PathPrefix(`/trade`)` would also claim `/trademark`.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
     cf-web-trade:
-      rule: 'Host(`trade{{ env "CF_WEB_SUFFIX" }}`)'
-      priority: 500
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/trade`) || PathPrefix(`/trade/`))'
+      priority: 600
       entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-trade
+{{ end }}
+
+    cf-api-trade-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/trade/v1`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-trade-strip-mount]
+      service: cf-svc-trade
+
+    cf-web-trade-sub:
+      rule: 'Host(`trade{{ env "CF_WEB_SUFFIX" }}`)'
+      priority: 500
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-trade-to-apex]
+      service: cf-web-trade
+
     cf-api-trade-host:
       rule: 'Host(`trade{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600

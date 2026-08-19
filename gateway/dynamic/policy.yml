@@ -138,8 +138,21 @@ http:
           # same origin. Both arrangements are same-origin and neither ever appeared in this
           # list; recording it because the natural worry on reading decision 4 is that moving an
           # API across a mount introduces a cross-origin read, and it does not.
-          - https://create{{ env "CF_WEB_SUFFIX" }}
-          - https://trade{{ env "CF_WEB_SUFFIX" }}
+          # ── create AND trade HAVE NO LINES HERE ANY MORE, AND THE CF_SITE_HOST ENTRY IS WHY ──
+          #
+          # Both had one, for the ordinary reason: `consumeAuthCallback` POSTs to
+          # `nimbus.<apex>/auth/handoff/redeem` once at the end of a sign-in, and both surfaces
+          # have a sign-in because launching a token and placing an order each need an account.
+          # Wave 3b made them `<apex>/create` and `<apex>/trade`, so the origin those POSTs come
+          # FROM is the apex — already the first entry in this block. The grants are not
+          # relocated, they are SUBSUMED, and a line of their own would be a duplicate origin in a
+          # list keyed by origin.
+          #
+          # NEITHER SURFACE'S OWN API EVER NEEDED A LINE, before or after. `create` read
+          # `create.<apex>/v1` from a page on `create.<apex>`; it reads `<apex>/create/v1` from a
+          # page on the apex. Both same-origin. Same for `trade`. Recorded because the natural
+          # worry about decision 4 is that moving an API across a mount introduces a cross-origin
+          # read, and it does not.
           - https://worlds{{ env "CF_WEB_SUFFIX" }}
           - https://explorer{{ env "CF_WEB_SUFFIX" }}
           - https://network{{ env "CF_WEB_SUFFIX" }}
@@ -353,8 +366,15 @@ http:
           # itself on exactly this point. A reader who chooses Testnet on the mainpage keeps
           # reading the testnet market's listings from a mainnet origin, which is the grant this
           # entry was for and which the apex's entry covers unchanged.
-          - https://create{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          - https://trade{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `create` and `trade` STILL view in place and no longer need lines of their own, for
+          # the same reason they lost the ones in the same-environment list above: they are
+          # `<apex>/create` and `<apex>/trade` now, so the origin their cross-environment reads
+          # come FROM is the apex, and the apex is already in this block.
+          #
+          # Both remain `viewsAnyNetwork` in the registry — decision 5 reversed itself on exactly
+          # this point. A reader who chooses Testnet on the mainnet page goes on reading the
+          # testnet estate's tokens and order books from a mainnet origin, which is the grant
+          # these entries were for and which the apex's entry covers unchanged.
           - https://worlds{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://explorer{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://network{{ env "CF_VIEW_ORIGIN_SUFFIX" }}

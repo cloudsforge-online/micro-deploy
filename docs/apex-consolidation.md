@@ -948,6 +948,124 @@ where a wrong `base:` or a wrong `COPY` destination shows up first.
 
 ---
 
+## 6quater. Wave 3b — `create` → `/create`, `trade` → `/trade`
+
+Two surfaces in one wave, because 3a proved the template and nothing about
+either of these is novel: both serve their own bundle, both have a service
+behind them, both take decision 4's remount. `mint-web` and `trade-web` got the
+same six-file edit `market-web` got, and `estate-web.yml` got two more copies of
+the same four routers.
+
+What makes 3b worth its own section is not the two surfaces. It is that
+**moving them found three live defects in surfaces that had already moved**, and
+that two surfaces were taken out of the wave rather than forced through it.
+
+### The three defects, and why a wave keeps finding them
+
+None of the three were introduced by this wave. All three were live on
+`/journal`, `/exchange` and `/market` — shipped, verified, and wrong — and each
+was found by asking a question about `create` and `trade` that nobody had
+thought to ask about the surfaces already moved.
+
+**1. `cf-api-market-apex` sat inside the `CF_WEB_RETIRED` gate.** That gate is
+TESTNET. So on `testnet.<apex>`, `/market/v1/listings` answered **302 to
+mainnet** — and `fetch` follows redirects silently, cross-origin, without the
+caller ever learning it happened. The combined view rendered mainnet listings
+with "Testnet" selected in the switcher and no error anywhere. Fixed in #174.
+
+The rule this settles: **an API router is never gated on `CF_WEB_RETIRED`.**
+Retirement is a statement about a BUNDLE — the human-facing pages testnet no
+longer serves. It has never been a statement about data. `check-api-remount.py`
+now tracks gate depth while it parses and fails any API router that opens
+inside one, so surface number four cannot repeat it.
+
+**2. The canonical URL dropped the mount.** `seo.ts` composed
+`origin + page.path`, which was right when every surface was an origin root.
+After a surface becomes a folder, the canonical for the market's collections
+page was `https://cloudsforge.online/collections` — **an address that 404s**,
+declared as the preferred one, on every page of three shipped surfaces. Google's
+documented behaviour for a canonical pointing at a 404 is to ignore it and pick
+its own, so the observable damage was the loss of the signal rather than a
+de-indexing; the fix is still the difference between telling a crawler where a
+page lives and telling it somewhere it does not.
+
+Fixed in micro-ui#30 — and then **fixed again in #31**, because the first fix
+doubled the prefix for the three surfaces that are a route inside somebody
+else's bundle: `wallet`, `signin`, `faucet` have a `basePath` their router
+KEEPS rather than strips, so prefixing produced `/account/account/login`.
+`servesOwnBundle(s)` is the discriminator, and micro-hub-web's CI caught it.
+That distinction is now load-bearing in two places and worth stating plainly:
+
+> A `basePath` on a surface with its own `devPort` is a router `basename` — the
+> router strips it, so SEO must add it back. A `basePath` on a surface sharing
+> another's bundle is an ordinary route segment — the router keeps it, so SEO
+> must not.
+
+**3. `og:image` dropped the mount too.** Same root cause, different field, and
+it was still live after #31. Every consolidated surface advertised
+`https://cloudsforge.online/og-1200x630.png` — which resolves, because
+`micro-site` serves one there. So the market's link previews on every social
+network and every chat client showed **micro-site's 40,465-byte card instead of
+the market's own 54,174-byte one**: no error, no 404, no broken image, just the
+wrong brand on somebody else's product. Fixed in micro-ui#32.
+
+This is the wave's real lesson. A defect that 404s gets found. A defect that
+resolves to the wrong thing does not, and consolidation creates exactly that
+class — because the apex root now serves a real page and a real image for every
+path the mount was stripped from.
+
+### Two surfaces were taken OUT of the wave
+
+`explorer` and `developers` were in 3b's original scope and are not in it.
+
+- **`explorer`** keys cross-estate viewing on ORIGIN. Moving it to a folder is
+  not a mount change, it is a design change to how one estate's explorer views
+  another's chain. That deserves its own decision, not a `sed`.
+- **`developers`** has two enumerated route blocks in its nginx and
+  `BARE_PATHS` trailing-slash semantics that the mount interacts with. Also
+  fine — also not mechanical.
+
+Recording this because the wave order in §5 is a plan, not a promise. The test
+for "is this surface mechanical" is applied per surface, at the time, and a
+surface that fails it is parked rather than special-cased. Both remain in the
+fourteen; neither is in a wave yet.
+
+### A probe that read a 404 and blamed the server
+
+`micro-trade-web`'s Docker job failed with *"a hashed asset has the wrong
+Cache-Control (got 'no-store', wanted 'immutable')"*, which was a true statement
+about a response that was never the asset.
+
+The probe extracted the bundle's script path with
+`grep -oE '/assets/[^"]+\.js'`. vite emits `src="/trade/assets/index-x.js"`.
+`grep -o` restarts at successive offsets and treats each as a fresh start, so a
+leading `/` in the pattern is not an anchor — it matched from `/assets` onward
+and handed back the path with the mount cut off. The probe then asked for
+`/assets/index-x.js`, `location /` correctly 404'd it, and the 404 carried
+`no-store`.
+
+Worth writing down because **this estate has been bitten by that exact property
+of `grep -o` somewhere it mattered far more than a cache header**, and because
+the failure shape is the one to recognise: a correct server, a plausible error
+message, and a red build. The fix matches the attribute rather than a substring
+of its value, and then asserts the result starts with `$BASE` — an unmounted or
+empty path would otherwise make the three probes below it vacuous, which looks
+identical to passing.
+
+### What 3b cost, per surface
+
+Six files in the web repo (`routes.ts`, `vite.config.ts`, `app.tsx`,
+`Dockerfile`, `nginx.conf`, `hosts.ts`), four routers plus two middlewares in
+`estate-web.yml`, one registry row, and one `Sitemap:` line in `micro-site`.
+
+That last one is the number worth watching. In 3a it was an edit to a list of
+literals in a test. It is now derived from the registry — the test reads every
+surface with an empty `subdomain` and a `basePath`, and both new surfaces
+appeared in it without the test being touched. **The nine still to move will not
+touch it either.**
+
+---
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by

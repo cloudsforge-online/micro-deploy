@@ -366,6 +366,12 @@ CONSOLIDATED_HOSTS = {
     # "the hostname is gone" — and check 13 asserts the redirect on the pages
     # while the API keeps answering where third parties already call it.
     "market": ("market", "cf-market-to-apex"),
+    # Wave 3b, and the same split as `market`: the redirect covers the BUNDLE
+    # only. `cf-api-create` and `cf-api-trade-host` still route their old
+    # hostnames' `/v1` straight to the services at a priority above the
+    # tombstones, because a 301 answers a GET well and mangles a POST.
+    "create": ("create", "cf-create-to-apex"),
+    "trade": ("trade", "cf-trade-to-apex"),
 }
 
 
