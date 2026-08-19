@@ -118,17 +118,40 @@ def gateway():
     routers, strips = [], {}
     section = name = rule = svc = None
     mws = []
+    # ── HOW DEEP INSIDE A `CF_WEB_RETIRED` GATE THIS LINE IS ─────────────────
+    #
+    # The file is a Go template before it is YAML, and `{{ if ne (env
+    # "CF_WEB_RETIRED") "true" }}` deletes whole router blocks on testnet. Every
+    # other reader in this repository skips template lines as noise. That is
+    # what let the 2026-08-19 defect through: `cf-api-market-apex` sat inside
+    # such a gate, so on testnet it did not exist, and the surface's API fell
+    # through to the retirement redirect and answered 302 to MAINNET — which a
+    # cross-origin fetch follows, so the combined view showed the wrong estate's
+    # data with "Testnet" selected.
+    #
+    # Counted rather than flagged, because these gates nest and a boolean would
+    # be reset by the first `{{ end }}` of an inner one.
+    retired_gate = 0
     cur_mw, in_strip, prefixes = None, False, []
+    gate_at_open = 0
 
     def flush_router():
         if section == "routers" and name and rule:
-            routers.append({"name": name, "rule": rule, "service": svc, "middlewares": list(mws)})
+            routers.append({"name": name, "rule": rule, "service": svc,
+                            "middlewares": list(mws), "web_retired_gated": gate_at_open})
 
     def flush_mw():
         if cur_mw and prefixes:
             strips[cur_mw] = list(prefixes)
 
     for line in WEB_MAP.read_text().splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{{") and "CF_WEB_RETIRED" in stripped:
+            retired_gate += 1
+            continue
+        if stripped == "{{ end }}" and retired_gate:
+            retired_gate -= 1
+            continue
         s = SUBSECTION_RE.match(line)
         if s:
             flush_router(); flush_mw()
@@ -141,6 +164,10 @@ def gateway():
         if m:
             flush_router(); flush_mw()
             name = cur_mw = m.group(1)
+            # Sampled at the router's OPENING line, not at flush: a `{{ end }}`
+            # between the name and the last field would otherwise read as
+            # ungated and the check would pass on the arrangement it exists for.
+            gate_at_open = retired_gate
             rule = svc = None; mws = []; in_strip = False; prefixes = []
             continue
         if section == "routers":
@@ -195,6 +222,35 @@ def main():
             continue
 
         for r in api:
+            # ── AND IT MUST SURVIVE `CF_WEB_RETIRED`, WHICH IS THE COMBINED VIEW ────────────
+            #
+            # Found live on 2026-08-19, hours after wave 3a shipped, by probing testnet rather
+            # than by any check — which is why there is one now.
+            #
+            # `cf-api-market-apex` sat inside `{{ if ne (env "CF_WEB_RETIRED") "true" }}`
+            # alongside the bundle it serves. That reads as tidy and is wrong: on testnet the
+            # gate is false, so the router did not exist, and `testnet.<apex>/market/v1/…`
+            # fell through to `cf-retired-web-apex` at 550 — which answered **302 to
+            # mainnet**.
+            #
+            # A cross-origin fetch FOLLOWS a 302. So a reader on `<apex>/market` who pressed
+            # Testnet got a 200 full of MAINNET data with "Testnet" still selected. Nothing
+            # errored, nothing was logged, and the surface looked like it was working.
+            #
+            # THE BUNDLE IS RETIRED ON TESTNET AND THE API IS NOT. That split is not new —
+            # `cf-retired-web-sub` has carried `!PathPrefix(`/v1`)` since the frontends were
+            # retired, for exactly this reason. The consolidation just moved `/v1` to
+            # `/<mount>/v1`, where that negation no longer reaches it.
+            if r["web_retired_gated"]:
+                bad(
+                    f"'{key}'s API router '{r['name']}' is inside a CF_WEB_RETIRED gate, so it "
+                    f"does not exist on testnet — where the surface's own reads then fall "
+                    f"through to the retirement redirect and answer 302 TO MAINNET. A "
+                    f"cross-origin fetch follows that, so the combined view shows the wrong "
+                    f"estate's data with 'Testnet' selected, with no error anywhere. The BUNDLE "
+                    f"is retired on testnet; its API is not. Move this router outside the gate — "
+                    f"its priority already outranks the retirement band"
+                )
             strip_mws = [m for m in r["middlewares"] if m in strips]
             if not strip_mws:
                 bad(
