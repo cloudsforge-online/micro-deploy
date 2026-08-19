@@ -399,21 +399,43 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    step 4 — they are the only check in the suite that proves the re-import
    actually closed the gap.
 
-3. **Stop the compose estate** on the app host, inside WSL. There is no
-   `release-deploy.sh --down` — that script only ever brings things *up*, and
-   `deploy/down.sh` stops the telemetry plane, not the estate. Stop each project
-   by name:
+3. **Quiet the compose estate** on the app host, inside WSL — everything except
+   its postgres. There is no `release-deploy.sh --down` (that script only ever
+   brings things *up*), and `deploy/down.sh` stops the telemetry plane, not the
+   estate. Per project, by name:
    ```sh
    export DOCKER_CONFIG=/tmp/dockercfg-nocreds     # else every compose call re-authenticates
-   docker compose -p cf-stratum down                # FIRST — see below
-   docker compose -p cloudsforge-estate down
-   docker compose -p cf-testnet down
+   docker compose -p cf-stratum down                # see below — the one that must go
+
+   docker compose -p cloudsforge-estate stop
+   docker compose -p cloudsforge-estate start postgres
+   docker compose -p cf-testnet stop
+   docker compose -p cf-testnet start postgres
    ```
-   `down` by project name resolves containers and networks from their compose
-   labels, so it needs neither `-f` nor `--env-file`. **Never add `-v`** — that
-   deletes the named volumes, which on this host is the estate's data. **Never
-   add `--remove-orphans`**, which is a standing rule for the devkit and miner
-   projects and costs nothing to keep here.
+
+   **`stop` and not `down`, and postgres back up, and this ordering is not
+   stylistic.** Step 4 dumps FROM the compose postgres over ssh, and
+   `k8s-db-import.sh` refuses to start unless the source container is running:
+
+   > `fail "source container $SOURCE_CONTAINER is not running"`
+
+   …while `--cutover` separately refuses unless it has **zero** client backends.
+   Those two together are the definition of "quiet": the server is up, and
+   nothing is talking to it. `down` satisfies the second and breaks the first,
+   so a runbook that says `down` here stops the cutover dead at step 4 with the
+   estate already off. It said `down` until 2026-08-19.
+
+   `stop` is also the better half of the rollback. It leaves the containers in
+   place, so recovering is `docker compose -p <project> start` — the same images,
+   the same env, the same networks — instead of a full `release-deploy.sh` from a
+   host whose registry login may have expired.
+
+   Both projects resolve by name alone: compose reads the project from container
+   labels, so `stop`/`start`/`ps` need neither `-f` nor `--env-file` (verified —
+   `ps --services` lists all 55 for each, `postgres` among them). **Never add
+   `-v`** — that deletes the named volumes, which on this host is the estate's
+   data. **Never add `--remove-orphans`**, a standing rule for the devkit and
+   miner projects that costs nothing to keep here.
 
    The equivalent with files, if you want compose to re-read them, is
    `-f compose/docker-compose.estate.yml -f compose/docker-compose.release.yml
@@ -421,7 +443,10 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    two `--env-file`s must name the same estate, which is what
    `scripts/check-env-files-agree.sh` exists to enforce.
 
-   Nothing may write to the source databases after this point.
+   Nothing may write to the source databases after this point. `backup-runner`
+   is inside the estate project and stops with it, which is what makes the
+   backend count reach zero; if it does not, the gate in step 4 will say so
+   rather than dumping a moving target.
 
    **`cf-stratum` is stopped first, and it is the only one of the five
    outside-the-estate projects that has to be.** Five docker-compose projects on
@@ -460,11 +485,20 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    because "the estate is down" and "the chain stopped" are the same symptom from
    a frontend.
 
-4. **Re-import the databases**, now that the source is quiet:
+4. **Re-import the databases**, now that the source is quiet — from the VM, not
+   the app host; the script reaches back over ssh:
    ```sh
    ./scripts/k8s-db-import.sh --network mainnet --cutover
    ./scripts/k8s-db-import.sh --network testnet --cutover
    ```
+   Then, and only then, stop the two postgres containers as well:
+   ```sh
+   docker compose -p cloudsforge-estate stop postgres      # on the app host
+   docker compose -p cf-testnet stop postgres
+   ```
+   Leaving them up would not corrupt anything — nothing is pointed at them — but
+   a running postgres holding the pre-cutover copy of every table is exactly what
+   somebody debugging at 2am connects to by habit and then believes.
 
 5. **Deploy without the hold**, which is what starts `beacon` and `settlement`:
    ```sh
@@ -495,8 +529,11 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    hostnames, both networks, plus one authenticated journey.
 
 Rollback, at any point before step 6, is: scale `cf-edge` back to 0 (it already
-is), start the compose estate, and nothing else — the compose databases are
-untouched until step 4 and the tunnel never moved.
+is), then `docker compose -p cloudsforge-estate start` and
+`docker compose -p cf-testnet start` — and nothing else. Step 3 used `stop`, so
+the containers are still there and `start` is the exact inverse. The compose
+databases are only ever READ (step 4 dumps from them; the restore writes into the
+cluster), and the tunnel never moved.
 
 **Public hostnames are Cloudflare configuration and cannot be checked from this
 repository.** If a surface looks broken, prove the origin with a `Host` header
