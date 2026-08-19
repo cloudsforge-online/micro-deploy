@@ -2,11 +2,11 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.82  (2026.8.82.yaml)
+# Release:   2026.8.83  (2026.8.83.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.82.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.83.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -15,7 +15,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: activity-migrate-2026-8-82
+  name: activity-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: activity-migrate
@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
       - name: activity-migrate
-        image: ghcr.io/cloudsforge-online/micro-activity@sha256:581f750b6f758c66ef3eda6ef46d56e19e7f23c1fa36d3c48cc182ff600a614e
+        image: ghcr.io/cloudsforge-online/micro-activity@sha256:84814a23e17851fb45e9cc7ed44f0dc9abb874e7b55f3a070254966956b71254
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -87,7 +87,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: admin-api-migrate-2026-8-82
+  name: admin-api-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: admin-api-migrate
@@ -105,7 +105,7 @@ spec:
     spec:
       containers:
       - name: admin-api-migrate
-        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:7738d3f3c4bbd1a3eb3b6e970103547c621c5b54059ca98f3c54c30c4f75f4fb
+        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:fa46ce658cf25afd90d07a0987ac38bf190c92d85355984d36d4d64d86b2b103
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -177,7 +177,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: aetherholm-migrate-2026-8-82
+  name: aetherholm-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: aetherholm-migrate
@@ -195,7 +195,7 @@ spec:
     spec:
       containers:
       - name: aetherholm-migrate
-        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:67d585d6796c2e6a74486a43925df5cb399319c5899aaf7fe80736d0925fb50e
+        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:c2847030f7f230deba8f2302c397e99ee3809cec09e306534cfa78d64aa1ea53
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -249,7 +249,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: agora-migrate-2026-8-82
+  name: agora-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: agora-migrate
@@ -267,7 +267,7 @@ spec:
     spec:
       containers:
       - name: agora-migrate
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:20438c742387d69b2cb92273985f565566a77ab737063668243425d99e7fc088
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:6cd49d2449aa1227d70caa08ceb7c067cb46e365803efc3f500dab027dd70117
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -327,7 +327,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: analytics-migrate-2026-8-82
+  name: analytics-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: analytics-migrate
@@ -345,7 +345,7 @@ spec:
     spec:
       containers:
       - name: analytics-migrate
-        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:b805e046bdc842bb05fd85a81be27186ff46cd4dc1d5053b65486bacf1ad879d
+        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:289cd8c57b6575281b1e3e0f9c71d58c8c507ffd6471b52663a3eec9a0297d7e
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -408,7 +408,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: beacon-migrate-2026-8-82
+  name: beacon-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: beacon-migrate
@@ -426,7 +426,7 @@ spec:
     spec:
       containers:
       - name: beacon-migrate
-        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:4b17d0a3d13faa6e7aa64287a3046a11c61b7cf397e1397cb58194008e4aec34
+        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:857d2f8f6d92d986a1081532252d96b0aa2810c15b6a2f293271861ab998a8d7
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -482,7 +482,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: billing-migrate-2026-8-82
+  name: billing-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: billing-migrate
@@ -500,7 +500,7 @@ spec:
     spec:
       containers:
       - name: billing-migrate
-        image: ghcr.io/cloudsforge-online/micro-billing@sha256:dad826100a0cb6911e51c2cf354b251d04cce069de277e476c8a54f6bcc43a35
+        image: ghcr.io/cloudsforge-online/micro-billing@sha256:9674ac3ee61c870d9d4897249982861778aa9a00d20981a675654cec6aaf02f2
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -558,7 +558,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: community-migrate-2026-8-82
+  name: community-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: community-migrate
@@ -576,7 +576,7 @@ spec:
     spec:
       containers:
       - name: community-migrate
-        image: ghcr.io/cloudsforge-online/micro-community@sha256:d224366ba54ccb72ea24ff2c178c8d4e4ed04635d8d532a68026c5a07ebbdfa6
+        image: ghcr.io/cloudsforge-online/micro-community@sha256:ed8c6515f3fc4f40269636962bee258fde6787c99b0470581c01dc5bd90e4b12
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -640,7 +640,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-keys-init-2026-8-82
+  name: custody-keys-init-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: custody-keys-init
@@ -690,7 +690,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-migrate-2026-8-82
+  name: custody-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: custody-migrate
@@ -708,7 +708,7 @@ spec:
     spec:
       containers:
       - name: custody-migrate
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:0a52409778a0261bb4794e1f3631b780488336543bc0d69d992f58d0f8ded5d1
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:ef871c1033f92d6fa6f0ac35bb479e61363a0ed32aaa73ceb0b8780fda0ea762
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -767,7 +767,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: devplatform-migrate-2026-8-82
+  name: devplatform-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: devplatform-migrate
@@ -785,7 +785,7 @@ spec:
     spec:
       containers:
       - name: devplatform-migrate
-        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:f3e5a2bed8a181c8aff41f8a7ce3eb37916e836528ce6eb13dee51cf41a92557
+        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:a277e7aae4b3aa577b9a32815299e7c0d556309dc0e09c52b4abb5ff5414b5e3
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -839,7 +839,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: emberkin-migrate-2026-8-82
+  name: emberkin-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: emberkin-migrate
@@ -857,7 +857,7 @@ spec:
     spec:
       containers:
       - name: emberkin-migrate
-        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:25b059142d49a6c4cd5673410a92cd5d4482279b7a0806ee630fd6530266138f
+        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:58c0238dc5a4117ddf0a619c5e8a1864102bad029e51afc5f8771876df3dbd52
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -929,7 +929,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: faucet-migrate-2026-8-82
+  name: faucet-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: faucet-migrate
@@ -947,7 +947,7 @@ spec:
     spec:
       containers:
       - name: faucet-migrate
-        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:fa94854aa8a5e04bba674715b518c47b1178450ea9172f183c80e992bb1d9903
+        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:341628b7cdd392567f9bf5e8eda77f51d9e249fa308bfcf0eb5ba46f301ecb68
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1033,7 +1033,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: foresight-migrate-2026-8-82
+  name: foresight-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: foresight-migrate
@@ -1051,7 +1051,7 @@ spec:
     spec:
       containers:
       - name: foresight-migrate
-        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:f1120ce4b7f418d1d5417f70ea786687d33a5572d959191ec1cb27fcb4d18719
+        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:d10c7fc87424b2cbfd6eeecedcc2f08aab0db72cc5e1510e7d9344e7fc2a3419
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1141,7 +1141,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: identity-migrate-2026-8-82
+  name: identity-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: identity-migrate
@@ -1159,7 +1159,7 @@ spec:
     spec:
       containers:
       - name: identity-migrate
-        image: ghcr.io/cloudsforge-online/micro-identity@sha256:4efbd92e406274efd5fa3bdfaacd7d93cd78167d064ded0cb11437fcd50578ef
+        image: ghcr.io/cloudsforge-online/micro-identity@sha256:89db5e6e9680509ba5eb11bd14cdcc2f838a7c741590aa81631121133e2bf7ed
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1218,7 +1218,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: indexer-migrate-2026-8-82
+  name: indexer-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: indexer-migrate
@@ -1236,7 +1236,7 @@ spec:
     spec:
       containers:
       - name: indexer-migrate
-        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:d1f0631063fc454a9c9b59ad339194f660633cda2dd20b2d4ba35ff27e105bfb
+        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:992b8ddfd9a001ed5daddb127a3f997e4469625e511fdf86766d013d7cbd55ea
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1290,7 +1290,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: lantern-migrate-2026-8-82
+  name: lantern-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: lantern-migrate
@@ -1308,7 +1308,7 @@ spec:
     spec:
       containers:
       - name: lantern-migrate
-        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:09924721add4416bc7acb1b726a6efc986a390155451109421c0ac9cf14d47d0
+        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:2d0a8c36358d977af9c21c85a177f5e8528b55a5ff6e04787230f8297f1a5c9d
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1364,7 +1364,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ledger-migrate-2026-8-82
+  name: ledger-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: ledger-migrate
@@ -1382,7 +1382,7 @@ spec:
     spec:
       containers:
       - name: ledger-migrate
-        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:7b6f29d440c69ae1e9359fe16bb085e82652e9aaa7f2a1c5df9fa9796895e3d2
+        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:3d713202732f6e77d29ee8cd7345660d0c7f495e513d1bdca0f584a34adc3c0a
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1436,7 +1436,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: market-migrate-2026-8-82
+  name: market-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: market-migrate
@@ -1454,7 +1454,7 @@ spec:
     spec:
       containers:
       - name: market-migrate
-        image: ghcr.io/cloudsforge-online/micro-market@sha256:ef8ea1d175887868a73a62bfb8762dbc0516084f9d335f2dfc0fcc9ac08756b0
+        image: ghcr.io/cloudsforge-online/micro-market@sha256:54fc3e8974322825cbed57bae146079f5b3694195bc55b4c31919f20f807d9a7
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1522,7 +1522,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mint-migrate-2026-8-82
+  name: mint-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: mint-migrate
@@ -1540,7 +1540,7 @@ spec:
     spec:
       containers:
       - name: mint-migrate
-        image: ghcr.io/cloudsforge-online/micro-mint@sha256:9f7d6eb4433287acf1bc479146305251b28e2be34d3e00ec0889889e71f58757
+        image: ghcr.io/cloudsforge-online/micro-mint@sha256:278a10d5e6938f37264c18b43fee027569489f14fd5414c9b87b087c9ad89ecf
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1602,7 +1602,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: nda-migrate-2026-8-82
+  name: nda-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: nda-migrate
@@ -1620,7 +1620,7 @@ spec:
     spec:
       containers:
       - name: nda-migrate
-        image: ghcr.io/cloudsforge-online/micro-nda@sha256:347266625c667295abdd1db41b09016fa9acb2d4287390f0f0c1decddadca3f1
+        image: ghcr.io/cloudsforge-online/micro-nda@sha256:e7dccc42dfd40e37e792c6569a12cb542f0329611ffefe95880f2c1169b23f04
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1678,7 +1678,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: notify-migrate-2026-8-82
+  name: notify-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: notify-migrate
@@ -1696,7 +1696,7 @@ spec:
     spec:
       containers:
       - name: notify-migrate
-        image: ghcr.io/cloudsforge-online/micro-notify@sha256:c1135908eb6851524748c42236cc375e77b229b269413710b75d231cd0a1a648
+        image: ghcr.io/cloudsforge-online/micro-notify@sha256:4bc4944cd83d82b6a0b1658bbe0ac23dab50f1839c2552020b86efad620ab5f2
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1752,7 +1752,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: policy-migrate-2026-8-82
+  name: policy-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: policy-migrate
@@ -1770,7 +1770,7 @@ spec:
     spec:
       containers:
       - name: policy-migrate
-        image: ghcr.io/cloudsforge-online/micro-policy@sha256:930f19a001250f32832cbd0b20a708bed7fcf457abc567655823b8f55099247f
+        image: ghcr.io/cloudsforge-online/micro-policy@sha256:5c43840eb1d825fbfe0a85c2f49f18a6dcfcba41ac79beab311929b607c16ecb
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1824,7 +1824,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pricing-migrate-2026-8-82
+  name: pricing-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: pricing-migrate
@@ -1842,7 +1842,7 @@ spec:
     spec:
       containers:
       - name: pricing-migrate
-        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:905ac285d254d2b49524ade7c69e46a1d18a8640ab5b2c481456ea90b6619f15
+        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:4610fad9c9b764ce9728560de66229b94a68bc81bbbd0755c6a80dc3db43e34a
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1896,7 +1896,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: settlement-migrate-2026-8-82
+  name: settlement-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: settlement-migrate
@@ -1914,7 +1914,7 @@ spec:
     spec:
       containers:
       - name: settlement-migrate
-        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:b94ac5db0d0eac87a767193c5c89a5ba34fb55caf9641a817dba60ab80284d6f
+        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:d91475aafb85a2882898c97f26a39e4f06629c5418c30939a424f9aaa7e4f1d2
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1988,7 +1988,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-assets-init-2026-8-82
+  name: studio-assets-init-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: studio-assets-init
@@ -2038,7 +2038,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-migrate-2026-8-82
+  name: studio-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: studio-migrate
@@ -2056,7 +2056,7 @@ spec:
     spec:
       containers:
       - name: studio-migrate
-        image: ghcr.io/cloudsforge-online/micro-studio@sha256:4421e8f4d5f1ee43486d6d7b28ba2869f725d3a74e936da20d35923dfccadf5c
+        image: ghcr.io/cloudsforge-online/micro-studio@sha256:6d894529cabbf59672ca700d8d6a3c1a692608e08b499f57797eeb18356bf6a4
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2110,7 +2110,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-assets-check-2026-8-82
+  name: tessera-assets-check-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: tessera-assets-check
@@ -2157,7 +2157,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-migrate-2026-8-82
+  name: tessera-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: tessera-migrate
@@ -2175,7 +2175,7 @@ spec:
     spec:
       containers:
       - name: tessera-migrate
-        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:f70caba462bf1ee484e29e7435053abcc62d76c74337485fc188df186be31f8b
+        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:2042b3810d400b8ff1e913a6d9cace895b29f21b1582e553e166f309c6515499
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2229,7 +2229,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: trade-migrate-2026-8-82
+  name: trade-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: trade-migrate
@@ -2247,7 +2247,7 @@ spec:
     spec:
       containers:
       - name: trade-migrate
-        image: ghcr.io/cloudsforge-online/micro-trade@sha256:f2f3f6e5c911b9bb74a8e186fa447b1a3a66e44e3cf2d8fd389fe9498d6ad46d
+        image: ghcr.io/cloudsforge-online/micro-trade@sha256:b63efdbc7edcf912dd01390552a0d9c2f208fc61e28e383236e964540ecdc2f1
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2313,7 +2313,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: wallet-migrate-2026-8-82
+  name: wallet-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: wallet-migrate
@@ -2331,7 +2331,7 @@ spec:
     spec:
       containers:
       - name: wallet-migrate
-        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:a7416e09f9c30102dbd1c349afd331f383a66cd56bb486113b3b53caf7448405
+        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:4c81096cb69c2657505fd1ee3d6ecee4aad22e814350a58f632b25b193c24930
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2401,7 +2401,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: worlds-migrate-2026-8-82
+  name: worlds-migrate-2026-8-83
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: worlds-migrate
@@ -2419,7 +2419,7 @@ spec:
     spec:
       containers:
       - name: worlds-migrate
-        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:a28876ba6c83e487ad97d3fefbb8d9cafed94f05d23ecb50e330e31c7bc8a676
+        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:0f3c635e4ddf97130c7b9300988391f7bb13f1a69849f50090363a365a31d3db
         imagePullPolicy: IfNotPresent
         command:
         - node
