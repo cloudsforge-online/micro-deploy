@@ -2560,12 +2560,40 @@ GW_PORT=${CF_GATEWAY_HTTPS_PORT:-${CF_GATEWAY_PORT:-443}}
 # the gateway Service's ClusterIP — which routes from the node, and which is the
 # reason every hostname check below works unchanged on a cluster with no public
 # DNS pointed at it and no Ingress in front of it.
-if [ -z "${GW_ADDR:-}" ]; then
-  case "$CF_RUNTIME" in
-    k8s) GW_ADDR=$(kubectl get svc -n "$CF_NAMESPACE" gateway -o jsonpath='{.spec.clusterIP}' 2>/dev/null) ;;
-  esac
-  GW_ADDR=${GW_ADDR:-127.0.0.1}
+#
+# ── AND THE PORT COMES FROM THE SAME PLACE, FOR THE SAME REASON ──────────────
+#
+# `10443` is not a property of the testnet gateway. It is where DOCKER PUBLISHED
+# it, chosen so two gateways could share one host's 443. A Service has no such
+# problem — each gets its own address — so both gateways listen on 443 in the
+# cluster, and a testnet run that kept 10443 addressed a port that exists nowhere.
+#
+# That did not fail fast. A ClusterIP is a virtual address realised by kube-proxy
+# rules for the ports a Service declares, and a packet to any OTHER port on it
+# matches no rule and is silently dropped — no RST, no ICMP. So every one of the
+# thirty gateway assertions sat in a full TCP connect timeout before reporting
+# `000`, and the suite spent half an hour concluding that a gateway answering
+# perfectly well on the address beside it was dead. Measured 2026-08-19: one
+# testnet run reached the gateway section and was still inside it eight minutes
+# later, two hostnames in.
+#
+# Read from the Service rather than mapped, so this stays right if the port ever
+# moves; `websecure` by NAME rather than by index, because the manifest lists
+# web, websecure and tunnel and their order is not a promise.
+if [ "$CF_RUNTIME" = k8s ]; then
+  gw_svc=$(kubectl get svc -n "$CF_NAMESPACE" gateway \
+    -o jsonpath='{.spec.clusterIP} {.spec.ports[?(@.name=="websecure")].port}' 2>/dev/null)
+  gw_svc_addr=${gw_svc%% *}
+  gw_svc_port=${gw_svc##* }
+  [ -z "${GW_ADDR:-}" ] && [ -n "$gw_svc_addr" ] && GW_ADDR=$gw_svc_addr
+  # An explicit `CF_GATEWAY_HTTPS_PORT` still wins, as it does under compose;
+  # `CF_GATEWAY_PORT` does not, because that one is read out of the estate env
+  # file and is the docker fact this block exists to stop believing.
+  [ -z "${CF_GATEWAY_HTTPS_PORT:-}" ] && [ -n "$gw_svc_port" ] \
+    && [ "$gw_svc_port" != "$gw_svc" ] && GW_PORT=$gw_svc_port
+  unset gw_svc gw_svc_addr gw_svc_port
 fi
+GW_ADDR=${GW_ADDR:-127.0.0.1}
 
 gw() {
   gw_host=$1; gw_path=$2; shift 2
