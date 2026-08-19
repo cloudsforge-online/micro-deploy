@@ -1,0 +1,270 @@
+# The estate's front door: the Cloudflare tunnel connector.
+#
+# Applied by `scripts/k8s-cloudflared.sh`, which also creates the Secret this
+# reads. There is no per-network variant of this file and there cannot be one —
+# see below.
+#
+# This is the translation of a WINDOWS SERVICE, not of a compose service. On the
+# app host it is `Cloudflared`, Running/Automatic, running
+# `cloudflared tunnel run --token-file C:\ProgramData\cloudflared\token`.
+# Nothing about it was ever in this repo, which is most of why it is written
+# down at such length here.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# IT IS ONE CONNECTOR FOR BOTH NETWORKS, AND THAT IS MEASURED
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Every other estate component is per-namespace. This one is not, and the reason
+# is not a preference. Read from the live connector's own metrics endpoint on
+# 2026-08-19 (`/config` on its loopback metrics port), the running tunnel has:
+#
+#   61 ingress rules, 4 ready connections, ONE connector
+#     59 estate hostnames  -> http://127.0.0.1:9081   (mainnet gateway)
+#                          -> http://127.0.0.1:9181   (testnet gateway)
+#      1 stale hostname    -> http://localhost:8081   (savvanis.life; see below)
+#      1 catch-all         -> http_status:404
+#
+# The 9081/9181 split is exactly `CF_GW_PORT_BASE`: mainnet leaves it unset and
+# gets 90, testnet sets 91, and `compose/docker-compose.yml` publishes the
+# plaintext `tunnel` entrypoint at `127.0.0.1:${CF_GW_PORT_BASE:-90}81:81`. So
+# both networks have always arrived through ONE connector that fans out by
+# hostname to two loopback ports.
+#
+# THE INGRESS TABLE BELONGS TO THE TUNNEL, NOT TO A CONNECTOR. This install is
+# token-based with no local config file, so those 61 rules live in Cloudflare and
+# are handed to whatever connects. Running one connector per namespace would
+# therefore NOT give each network its own rules — both copies would receive all
+# 61 and Cloudflare would load-balance the estate across them at random. One
+# connector reaching both gateways is the only translation that preserves what
+# is running.
+#
+# Hence namespace `cf-edge`: it fronts both networks and belongs to neither.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY replicas: 0, AND WHY THAT IS THE POINT OF THIS FILE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# A tunnel load-balances across every connector registered to it. The moment a
+# second connector with this token reaches Ready, Cloudflare starts splitting
+# LIVE PUBLIC TRAFFIC between the compose estate on the app host and this
+# cluster — half of real users to each, with two different databases behind them.
+#
+# That is not a migration step. That IS the cutover, and it would happen as a
+# side effect of `kubectl apply` rather than as a decision. So this ships scaled
+# to zero: applying it is safe at any time, changes nothing public, and leaves a
+# complete, reviewed, already-pulled front door sitting one command from live.
+#
+# The cutover is then two actions and no third:
+#
+#   1. on the app host:  Stop-Service Cloudflared   (and set it to Manual)
+#   2. on this cluster:  kubectl -n cf-edge scale deploy/cloudflared --replicas=1
+#
+# and the rollback is those two in reverse. Both are local, both are seconds.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE LOOPBACK FORWARDERS, AND WHY THE DASHBOARD IS NOT EDITED
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Those 61 rules name `127.0.0.1:9081` and `127.0.0.1:9181`. Inside a pod, that
+# loopback is the POD's, so the obvious move is to rewrite all 59 origins to
+# `http://gateway.<ns>.svc.cluster.local:81` in the Cloudflare dashboard.
+#
+# This file deliberately does not do that, for one reason: ROLLBACK. A dashboard
+# edit is a change on Cloudflare's side of the boundary, so a cutover that goes
+# wrong at 3am is undone by editing 59 rules back through a web UI, over the
+# public internet, while the estate is down. Keeping the origins untouched makes
+# the rollback `Start-Service Cloudflared` — no external system involved, and no
+# window in which the dashboard describes neither the old world nor the new.
+#
+# So the pod satisfies the addresses instead of changing them. Two socat
+# sidecars share the pod's network namespace and hold those exact loopback
+# ports open, each forwarding one network to one gateway Service:
+#
+#   127.0.0.1:9081 -> gateway.cloudsforge-estate.svc.cluster.local:81
+#   127.0.0.1:9181 -> gateway.cf-testnet.svc.cluster.local:81
+#
+# The tunnel's contract — "mainnet is at :9081, testnet at :9181" — is honoured
+# verbatim; only what stands behind it moved. Two sidecars rather than one
+# process forwarding both, so that each has its own arguments, its own probe and
+# its own restart: if the mainnet forwarder dies, the pod notices.
+#
+# `bind=127.0.0.1` on both is load-bearing. These forwarders carry the whole
+# estate in PLAINTEXT, for the same reason the `tunnel` entrypoint does, and
+# binding them to 0.0.0.0 would offer that to anything that can reach a pod IP.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE STALE RULE THIS DOES NOT CARRY
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Rule 1 of 61 is `savvanis.life -> http://localhost:8081`, which is not part of
+# this estate. It is ALREADY DEAD and was before this migration touched it:
+# measured 2026-08-19, nothing listens on 8081 on the app host and
+# `https://savvanis.life/` returns 502 from Cloudflare's edge. Moving the
+# connector therefore breaks nothing that is not already broken. It is left
+# alone rather than deleted, because deleting somebody's DNS-attached hostname
+# is not a migration's call to make.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# VERSION AND SECRET
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# The image is pinned to 2026.7.3 because that is EXACTLY the version running on
+# the app host (`cloudflared version 2026.7.3`, built 2026-07-22). A cutover
+# should change where the connector runs and nothing else; picking up a newer
+# cloudflared in the same motion would make any behaviour change ambiguous
+# between "the cluster" and "the new version". Upgrading is a separate, later,
+# reversible act. `--no-autoupdate` keeps it that way — an autoupdating pod
+# would silently undo the pin.
+#
+# The token is NOT in this file and must never be. It is a bearer credential for
+# the estate's entire public surface: anyone holding it can register a connector
+# and receive a share of production traffic. `scripts/k8s-cloudflared.sh` moves
+# it from the Windows service's token file into the Secret below over a pipe
+# that never renders it.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cf-edge
+  labels:
+    app.kubernetes.io/part-of: cloudsforge-estate
+    # Deliberately NO `online.cloudsforge.network` label. Every other namespace
+    # carries one and guards key off it; this one fronts both networks, and
+    # labelling it either value would make it answer a question it cannot.
+    online.cloudsforge.role: edge
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cloudflared
+  namespace: cf-edge
+  labels:
+    app.kubernetes.io/name: cloudflared
+    app.kubernetes.io/part-of: cloudsforge-estate
+spec:
+  # ZERO. Read the section above before changing this. `kubectl scale` to 1 is
+  # the cutover, and it takes public traffic away from the app host the moment
+  # the connector reaches Ready.
+  replicas: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: cloudflared
+  strategy:
+    # RollingUpdate, unlike the estate's stateful services: two connectors
+    # briefly overlapping is the NORMAL way to replace one without dropping
+    # requests — the tunnel simply serves from both, then from the new one. This
+    # is the same overlap that makes `replicas: 0` necessary while the app host
+    # is still live, and the same overlap that is harmless once it is not.
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: cloudflared
+        app.kubernetes.io/part-of: cloudsforge-estate
+    spec:
+      containers:
+      - name: cloudflared
+        image: cloudflare/cloudflared:2026.7.3
+        imagePullPolicy: IfNotPresent
+        args:
+        - tunnel
+        # Pinned on purpose; see above.
+        - --no-autoupdate
+        # A FIXED metrics port, which the app host's install does not have: it
+        # binds a random high port, so reading the live ingress table there
+        # meant first finding the port from the process's open sockets. A
+        # readiness probe needs a port known in advance, and "is this connector
+        # actually registered with Cloudflare" is the only useful readiness
+        # signal there is — the process runs happily while failing to connect.
+        - --metrics
+        - 0.0.0.0:2000
+        - run
+        env:
+        # The documented env form of `--token-file`. Same value, same tunnel.
+        - name: TUNNEL_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: cloudflared-token
+              key: token
+              optional: false
+        ports:
+        - {name: metrics, containerPort: 2000}
+        readinessProbe:
+          # `/ready` answers 200 only with at least one established connection to
+          # Cloudflare's edge, and 503 otherwise. That is the real question, and
+          # gating on it means a rollout cannot retire the old pod until the new
+          # one is genuinely carrying traffic.
+          httpGet: {path: /ready, port: metrics}
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        livenessProbe:
+          # Deliberately weaker than readiness. A connector that has lost its
+          # edge connections should stop being Ready and keep trying, not be
+          # killed — restarting is exactly the wrong response to a network
+          # partition. So liveness only asks whether the metrics server is alive
+          # at all, which fails when the process is wedged rather than retrying.
+          httpGet: {path: /metrics, port: metrics}
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          failureThreshold: 5
+        resources:
+          requests: {cpu: 50m, memory: 64Mi}
+          limits: {memory: 256Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities: {drop: [ALL]}
+
+      # ── the two loopback forwarders ────────────────────────────────────────
+      # These exist so the 61 dashboard rules keep working unedited. See the
+      # section above. Ports are the compose ones: 9081 mainnet, 9181 testnet.
+      - name: origin-mainnet
+        image: alpine/socat@sha256:3ed1cd38741bd445ebffa3aecb9d80c46a83db45f5b5ef03332976c7ca9814af
+        imagePullPolicy: IfNotPresent
+        args:
+        - TCP-LISTEN:9081,bind=127.0.0.1,fork,reuseaddr
+        - TCP:gateway.cloudsforge-estate.svc.cluster.local:81
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 64Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities: {drop: [ALL]}
+      - name: origin-testnet
+        image: alpine/socat@sha256:3ed1cd38741bd445ebffa3aecb9d80c46a83db45f5b5ef03332976c7ca9814af
+        imagePullPolicy: IfNotPresent
+        args:
+        - TCP-LISTEN:9181,bind=127.0.0.1,fork,reuseaddr
+        - TCP:gateway.cf-testnet.svc.cluster.local:81
+        resources:
+          requests: {cpu: 10m, memory: 16Mi}
+          limits: {memory: 64Mi}
+        securityContext:
+          allowPrivilegeEscalation: false
+          runAsNonRoot: true
+          runAsUser: 65532
+          capabilities: {drop: [ALL]}
+---
+# Metrics only. cloudflared never accepts an inbound connection from the estate
+# — it dials Cloudflare outbound and forwards into the pod's own loopback — so
+# this Service exists for exactly one caller: Prometheus, once the telemetry
+# stack lands. Nothing routes through it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloudflared-metrics
+  namespace: cf-edge
+  labels:
+    app.kubernetes.io/name: cloudflared
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: cloudflared
+  ports:
+  - {name: metrics, port: 2000, targetPort: metrics}

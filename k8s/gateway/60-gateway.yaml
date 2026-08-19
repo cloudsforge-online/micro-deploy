@@ -35,10 +35,19 @@
 # cloudflared came through. `tunnel` is PLAINTEXT: it terminates no TLS, because
 # Cloudflare already did.
 #
-# cloudflared now runs in this namespace too, so that door is a ClusterIP:81 hop
+# cloudflared now runs in the cluster too, so that door is a ClusterIP:81 hop
 # between two pods and never touches the node's network. Publishing it on the LAN
 # would take a deliberately-plaintext entrypoint carrying the estate's whole
 # traffic and expose it to everything on 192.168.1.0/24. It is not published.
+#
+# It runs in `cf-edge`, NOT in this namespace, and that was measured rather than
+# chosen: the live tunnel has ONE connector serving 61 ingress rules across BOTH
+# networks — mainnet's hostnames to `127.0.0.1:9081` and testnet's to
+# `127.0.0.1:9181`, the two loopback ports the compose gateways published. The
+# ingress table belongs to the tunnel, not to a connector, so a second connector
+# would not split the networks; it would only load-balance all 61 rules across
+# both copies. One connector, reaching both gateways cross-namespace by FQDN, is
+# the honest translation. See `k8s/cloudflared/60-cloudflared.yaml`.
 #
 # Nothing binds a host port here, which also means this does not fight k3s's own
 # Traefik for :443. That bundled Traefik serves no route this estate declares —
