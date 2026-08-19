@@ -2327,13 +2327,40 @@ web_release_for() {
 # check starts passing for the wrong reason, so it is deliberately unlovely.
 WEB_MISSING=/cf-estate-verify-no-such-page
 
-# Fields: name  port  a-route-the-surface-DOES-own
+# Fields: name  port  a-route-the-surface-DOES-own  [mount]
 #
 # Each route below is read out of that repo's own nginx.conf enumeration (the one
 # `location ~ ^/(…)` block, which its test/routes.test.ts pins against app.tsx),
 # not out of doc 22 — a document is a lead, never evidence.
+#
+# ── THE FOURTH FIELD, AND WHY THE THIRD IS STILL A ROUTER PATH ───────────────
+#
+# `docs/apex-consolidation.md` moves surfaces off their own subdomains onto
+# folders of the apex, and a moved bundle answers at `/trade/…` INSIDE ITS OWN
+# CONTAINER — the mount is baked in at build time by `vite`'s `base:` and served
+# by an nginx whose every `location` carries it. So `GET /` on such a container
+# is a 404, CORRECTLY, and this suite read that as three dead frontends:
+#
+#     FAIL mint-web: GET / returned 404
+#     FAIL trade-web: GET / returned 404
+#     FAIL market-web: GET / returned 404
+#
+# while all three were serving perfectly. A verifier that reports a working
+# estate as broken is worse than one that reports nothing, because the next real
+# failure arrives in a list the reader has learned to skim.
+#
+# The mount goes in a FOURTH field and the third stays a ROUTER path — the same
+# distinction each of those repos draws in its own `routes.ts`, where a router
+# path is what react-router matches (`/bots`) and a public path is what the
+# address bar shows (`/trade/bots`). Composing the two here rather than writing
+# the composed form keeps one string per fact, and keeps this table readable as
+# "which route does this surface own" rather than "which URL do I type".
+#
+# `scripts/check-base-paths-agree.py` reads the fourth field back and compares it
+# to the registry, in both directions, so a surface that moves without landing
+# here fails there rather than going quietly unchecked.
 web_surface() {
-  name=$1; port=$2; owned=$3
+  name=$1; port=$2; owned=$3; mount=${4:-}
   # The published host port under compose; the Service's own ClusterIP under
   # Kubernetes, which publishes no host ports at all. `$port` stays in the
   # reported line either way, because it is what `scripts/web-check.py` reads
@@ -2345,11 +2372,11 @@ web_surface() {
   notes=""
 
   # 1. the shell, and the build identity
-  body=$(curl -s -w '\n%{http_code}' "$base/")
+  body=$(curl -s -w '\n%{http_code}' "$base$mount/")
   status=$(printf '%s' "$body" | tail -1)
   html=$(printf '%s' "$body" | sed '$d')
   if [ "$status" != 200 ]; then
-    bad "$name: GET / returned $status"
+    bad "$name: GET $mount/ returned $status"
     return
   fi
   want=$(web_release_for "$name")
@@ -2415,33 +2442,33 @@ print('\n'.join(sorted(set(urls))))
   fi
 
   # 5. an enumerated client route survives a hard refresh
-  owned_body=$(curl -s -w '\n%{http_code}' "$base$owned")
+  owned_body=$(curl -s -w '\n%{http_code}' "$base$mount$owned")
   owned_status=$(printf '%s' "$owned_body" | tail -1)
   if [ "$owned_status" != 200 ]; then
-    bad "$name: $owned answered $owned_status — an enumerated client route does not survive a hard refresh"
+    bad "$name: $mount$owned answered $owned_status — an enumerated client route does not survive a hard refresh"
     return
   fi
   if ! printf '%s' "$owned_body" | sed '$d' | grep -q "$js"; then
-    bad "$name: $owned answered 200 without the app shell — nginx served something that is not index.html"
+    bad "$name: $mount$owned answered 200 without the app shell — nginx served something that is not index.html"
     return
   fi
-  notes="$notes, $owned 200"
+  notes="$notes, $mount$owned 200"
 
   # 6. THE 404 RULE. Status AND body, because either alone passes the wrong way:
   #    `try_files $uri /index.html` gives the shell with a 200, and a bare nginx
   #    error page gives a 404 with no application in it. Both are wrong and they
   #    are wrong in opposite directions.
-  missing_body=$(curl -s -w '\n%{http_code}' "$base$WEB_MISSING")
+  missing_body=$(curl -s -w '\n%{http_code}' "$base$mount$WEB_MISSING")
   missing_status=$(printf '%s' "$missing_body" | tail -1)
   if [ "$missing_status" != 404 ]; then
-    bad "$name: $WEB_MISSING answered $missing_status, not 404 — an unknown address is being reported as a success"
+    bad "$name: $mount$WEB_MISSING answered $missing_status, not 404 — an unknown address is being reported as a success"
     return
   fi
   if ! printf '%s' "$missing_body" | sed '$d' | grep -q "$js"; then
-    bad "$name: $WEB_MISSING answered 404 without the app shell — the visitor gets nginx's error page, not NotFoundPage"
+    bad "$name: $mount$WEB_MISSING answered 404 without the app shell — the visitor gets nginx's error page, not NotFoundPage"
     return
   fi
-  notes="$notes, $WEB_MISSING 404-with-shell"
+  notes="$notes, $mount$WEB_MISSING 404-with-shell"
 
   # A missing ASSET must 404 rather than resolve to something. It currently
   # answers 404 with the shell's HTML body, because `error_page 404 /index.html`
@@ -2452,7 +2479,7 @@ print('\n'.join(sorted(set(urls))))
   # executing it, so the status is what is asserted here; the content type is
   # recorded as a finding for the fifteen frontend repositories rather than
   # asserted in a suite that cannot fix it.
-  ac=$(curl -s -o /dev/null -w '%{http_code}' "$base/assets/cf-estate-verify-missing.js")
+  ac=$(curl -s -o /dev/null -w '%{http_code}' "$base$mount/assets/cf-estate-verify-missing.js")
   if [ "$ac" != 404 ]; then
     bad "$name: a missing asset answered $ac — a broken deploy would serve the shell as JavaScript"
     return
@@ -2465,12 +2492,12 @@ for rec in \
   "hub-web 4126 /portfolio" \
   "site 4127 /products" \
   "admin-web 4128 /approvals" \
-  "mint-web 4129 /launch" \
-  "trade-web 4130 /bots" \
+  "mint-web 4129 /launch /create" \
+  "trade-web 4130 /bots /trade" \
   "worlds-web 4131 /player" \
   "explorer-web 4132 /chains" \
   "network-site 4133 /faucet" \
-  "market-web 4134 /listings" \
+  "market-web 4134 /listings /market" \
   "devportal-web 4135 /apps" \
   "status-web 4136 /history" \
   "foresight-web 4138 /rules" \
@@ -2495,7 +2522,7 @@ for rec in \
   # "a STALE ARTEFACT is being served". Both estates were correct. Observed on
   # 2026-08-11 verifying release 2026.08.22 on testnet; the mainnet run had
   # never shown it, because there the two happen to agree.
-  web_surface "$1" "$PB${2#?}" "$3"
+  web_surface "$1" "$PB${2#?}" "$3" "${4:-}"
 done
 
 echo
@@ -3075,7 +3102,27 @@ done
 # first release — and the composition worth stating is that one entry now serves
 # two bundles. That is the general shape of every consolidation wave: origins
 # shrink while surfaces do not, which is most of why the move is worth making.
-for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX" "https://$SITE_HOST" "https://agora$WEB_SUFFIX"; do
+#
+# ── AND `exchange` LEFT THE LOOP FOR EXACTLY THE REASON `journal` DID ────────
+#
+# It moved in wave 2. Its entry stayed, so this asserted a grant for
+# `exchange$WEB_SUFFIX` — a hostname that 301s to the apex and that no browser
+# is ever ON — and the estate correctly did not have one:
+#
+#     FAIL the RUM sink refused https://exchange.cloudsforge.online (400)
+#
+# A permission the estate deliberately gave up, demanded back by the suite that
+# is supposed to notice when a permission goes missing. That is the worst
+# direction for a check to fail in: the fix it asks for is to re-open something
+# that was closed on purpose.
+#
+# `https://$SITE_HOST` now stands for FIVE bundles — the apex itself, the
+# journal, the exchange, the market, Forge Create and Forge Trade — and it is
+# one entry, tested once. Nine surfaces still to move will not lengthen this
+# line either. Each wave has had to remember to shorten it, so
+# `check-base-paths-agree.py` now reads this file and fails when a consolidated
+# surface's old hostname is still named here.
+for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://$SITE_HOST" "https://agora$WEB_SUFFIX"; do
   sinkcode=$(gwv "lantern$WEB_SUFFIX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
     -H 'content-type: application/json' -d '{"samples":[]}')
   [ "$sinkcode" = 202 ] \
@@ -3332,7 +3379,12 @@ esac
 # it would have removed the only assertion covering the surface where the sign-in
 # seam is now MOST load-bearing: two bundles behind one origin, either of which
 # can be the page a reader presses the button on.
-for so_org in "exchange$WEB_SUFFIX" "$SITE_HOST" "agora$WEB_SUFFIX"; do
+#
+# `exchange` is gone from this loop for the same reason, one wave later than the
+# comment above was written: it moved in wave 2, so pressing Sign in on the
+# exchange happens on the APEX, and `$SITE_HOST` — already here — is that origin.
+# Leaving it in asserted that identity still mints for a hostname that redirects.
+for so_org in "$SITE_HOST" "agora$WEB_SUFFIX"; do
   so_xc=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
     --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
     "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \

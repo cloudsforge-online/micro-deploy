@@ -342,6 +342,73 @@ def gateway_rule_shape(surfaces):
             )
 
 
+VERIFY = ROOT / "scripts" / "estate-verify.sh"
+
+
+def verifier_agrees(mounted):
+    """A SIXTH statement of the same string, and a seventh place it must be absent.
+
+    `estate-verify.sh` drives each frontend container directly, and a mounted
+    bundle answers at its mount INSIDE its own container — `GET /` is a 404 there,
+    correctly. Its surface table therefore carries the mount as a fourth field,
+    and this reads it back.
+
+    Two directions, because the two failures are opposite and both were live:
+
+      MISSING   the table probed `/` on three moved surfaces and reported three
+                healthy frontends as dead. A verifier that cries wolf is worse
+                than one that says nothing, because the next real failure lands
+                in a list the reader has learned to skim.
+
+      STALE     the origin loops still named `exchange<suffix>`, a hostname the
+                estate 301s away from and deliberately removed from
+                LANTERN_RUM_ORIGINS and IDENTITY_HANDOFF_ORIGINS. So the suite
+                demanded back a permission that had been given up ON PURPOSE —
+                and the remedy it asked for was to re-open it.
+
+    Both are the same underlying mistake: a wave moved a surface and this file was
+    not one of the places anybody remembered. That is what a check is for.
+    """
+    if not VERIFY.exists():
+        bad(f"{VERIFY.name} is missing, so the verifier's own copy of every mount goes unchecked")
+        return
+
+    text = VERIFY.read_text()
+    table = dict(re.findall(r'^\s*"([a-z0-9][a-z0-9-]*) \d{4} (/\S*(?: /\S+)?)"', text, re.M))
+    by_repo = {repo: s for s in mounted for key, repo in BUNDLE_REPOS.items() if key == s["key"]}
+
+    for repo, fields in sorted(table.items()):
+        parts = fields.split()
+        declared = parts[1] if len(parts) > 1 else None
+        want = by_repo.get(repo, {}).get("basePath")
+        if want and declared != want:
+            bad(
+                f"estate-verify.sh probes '{repo}' with mount {declared!r}, and the registry says "
+                f"{want!r}. With no mount it asks the container for '/', which a mounted bundle "
+                f"404s correctly — so a working surface is reported dead"
+            )
+        elif not want and declared is not None:
+            bad(
+                f"estate-verify.sh probes '{repo}' with mount {declared!r}, and the registry gives "
+                f"that surface no basePath. Every probe is prefixed with a folder the container "
+                f"does not serve, so a working surface is reported dead"
+            )
+
+    # A surface that MOVED must no longer be named as a browser origin: its old
+    # hostname redirects, and the grants for it were deleted with the move.
+    for s in mounted:
+        stale = f'"https://{s["key"]}$WEB_SUFFIX"', f'"{s["key"]}$WEB_SUFFIX"'
+        for form in stale:
+            if form in text:
+                bad(
+                    f"estate-verify.sh still names {form} as an origin, and '{s['key']}' moved to "
+                    f"'{s['basePath']}' — that hostname 301s and its CORS, hand-off and RUM grants "
+                    f"were deleted with the move. The check demands the estate re-open a permission "
+                    f"it gave up on purpose. The origin is the apex now, and it is already tested"
+                )
+                break
+
+
 def main():
     surfaces = registry_surfaces()
     mounted = [s for s in surfaces if s["basePath"] and s["ownBundle"]]
@@ -375,6 +442,7 @@ def main():
             unread.append(missing)
 
     gateway_rule_shape(mounted)
+    verifier_agrees(mounted)
 
     for f in fails:
         print(f"FAIL {f}")
