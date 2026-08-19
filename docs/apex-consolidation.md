@@ -132,6 +132,32 @@ reads `cloudsforgeHosts()` and re-points itself. There is no sweep for
 hardcoded hostnames, because the estate already refuses to have any — that is
 what `surface-routes.py` exists to enforce.
 
+**That is true of SOURCE and it is not true of TEST FIXTURES**, which nothing
+enforces, and wave 2 proved it: `micro-hub-web`'s `main` went red without hub-web
+changing at all. Two assertions in `test/convert.test.ts` read
+`'https://exchange.cloudsforge.online'` as a literal — under a comment that said
+"Composed, never typed":
+
+```ts
+    // The hostname comes from the registry row's `subdomain: 'exchange'` … Composed, never typed
+    assert.equal(link.getAttribute('href'), 'https://exchange.cloudsforge.online')
+```
+
+The link had correctly become `https://cloudsforge.online/exchange`. Fixed by
+deriving the address from the registry (`micro-hub-web#50`), which is what the
+comment always claimed was happening.
+
+**Expect one of these per moved surface, in some sibling repository**, and expect
+to find it only when that sibling's `main` goes red after the merge. Two things
+follow for wave 3:
+
+- **grep the estate for the hostname before moving a surface**, not after —
+  `grep -rn '<sub>\.cloudsforge\.online' */test */src` across every checkout.
+  The source hits will be zero; the fixture hits are the work.
+- a red sibling is the GOOD outcome here. The bad one is a fixture that asserts
+  something weaker — a substring, a `toContain` — and keeps passing against an
+  address that no longer exists.
+
 What does *not* come free is the bundle: a page served at `/journal` must know
 it is at `/journal` to write its own asset URLs, its router basename, its
 canonical tags and its sitemap. That is the actual work, and it is the subject
