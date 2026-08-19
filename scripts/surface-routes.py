@@ -359,6 +359,13 @@ CONSOLIDATED_HOSTS = {
     # apex's grant that covers it now, so check 5 stops expecting an entry for
     # this subdomain at the same moment check 13 starts demanding the redirect.
     "exchange": ("exchange", "cf-exchange-to-apex"),
+    # Wave 3a, and the first with a service behind it. The redirect covers the
+    # BUNDLE only: `cf-api-market-host` still routes `market.<apex>/v1` straight
+    # to `cf-svc-market` at a priority above the tombstone, because a 301 answers
+    # a GET well and mangles a POST. So this entry means "the pages moved", not
+    # "the hostname is gone" — and check 13 asserts the redirect on the pages
+    # while the API keeps answering where third parties already call it.
+    "market": ("market", "cf-market-to-apex"),
 }
 
 
