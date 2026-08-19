@@ -353,6 +353,12 @@ CONSOLIDATED_HOSTS = {
     # is PERMANENT and that is a one-way door, argued in estate-web.yml where it
     # is written — deliberately unlike `cf-retired-*-to-mainnet`, which is a 302.
     "journal": ("journal", "cf-journal-to-apex"),
+    # Wave 2, same day, same shape. `exchange` had the one CORS grant in this
+    # estate that was load-bearing rather than incidental — every price on the
+    # page is a preflighted cross-origin read of `rpc.<apex>` — and it is the
+    # apex's grant that covers it now, so check 5 stops expecting an entry for
+    # this subdomain at the same moment check 13 starts demanding the redirect.
+    "exchange": ("exchange", "cf-exchange-to-apex"),
 }
 
 

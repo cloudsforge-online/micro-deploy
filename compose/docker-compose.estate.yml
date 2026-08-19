@@ -1001,9 +1001,17 @@ services:
       # anything, and a reader who never signs in loses no function whatsoever.
       # The line was here anyway, from the day the container shipped, because the
       # account bar is the estate's CHROME rather than a gate — and because
-      # `exchange.` is the worked example of what leaving it out costs. A bar
+      # `exchange.` was the worked example of what leaving it out costs. A bar
       # that renders a sign-in link and then 403s the hand-off does not read as
       # "this surface has no account"; it reads as a broken account.
+      #
+      # `exchange.` HAS SINCE LEFT TOO, in wave 2, for exactly the reason below —
+      # it is `<apex>/exchange` now. The worked example is preserved in the past
+      # tense rather than rewritten, because the lesson is about what an origin
+      # list costs when a surface is missing from it, and that is still the
+      # lesson. Twelve more surfaces follow, and each one leaves this list the
+      # same way: not by having its grant revoked, but by moving to an origin
+      # that already holds one.
       #
       # It is gone now, and NOT because any of that stopped being true. Wave 1 of
       # `docs/apex-consolidation.md` moved the surface from `journal.<apex>` to
@@ -1075,7 +1083,6 @@ services:
         https://market${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://create${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://trade${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://exchange${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
@@ -4836,7 +4843,6 @@ services:
         https://market${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://create${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://trade${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://exchange${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
