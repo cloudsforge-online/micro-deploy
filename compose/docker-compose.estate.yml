@@ -1093,7 +1093,6 @@ services:
         https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://agora${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
 
       # ── THE ACCOUNT LINK, WITHOUT WHICH A VERIFICATION MAIL CARRIES NOTHING ───
@@ -4849,8 +4848,7 @@ services:
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://agora${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate
     ports:
       # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.
@@ -5564,10 +5562,23 @@ services:
       # `agora.notification.mail_requested`. micro-notify renders links against
       # `NOTIFY_PUBLIC_URL`, which is the hub, and the hub has no route into the
       # square — so without this line every mail about a reply lands a reader on
-      # a notification centre that cannot show them the reply. Derived from
-      # `CF_WEB_SUFFIX` like every other public URL in this file: each estate
-      # then advertises its own hostname and neither can be handed the other's.
-      AGORA_PUBLIC_URL: https://agora${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+      # a notification centre that cannot show them the reply.
+      #
+      # ── `CF_SITE_HOST` PLUS A MOUNT, NOT `CF_WEB_SUFFIX`, SINCE WAVE 3c ──────
+      #
+      # The square is `<apex>/agora` now. The old value still WORKS — `agora.<apex>`
+      # 301s to exactly this address — and that is precisely why it is worth
+      # changing rather than leaving: a permanent redirect in a link that arrives
+      # by email is a hop taken by every reader, on a hostname the estate has
+      # stopped teaching anyone about, and mail clients are the least forgiving
+      # place to spend one. `notifications.ts` concatenates `${publicUrl}/p/<id>`
+      # after stripping trailing slashes, so the mount composes cleanly.
+      #
+      # `CF_SITE_HOST` is its own variable rather than `""${CF_WEB_SUFFIX}` for the
+      # reason stated wherever it appears: an empty subdomain plus the suffix is
+      # `-testnet.cloudsforge.online`, which is not a legal DNS label. Each estate
+      # still advertises its own hostname and neither can be handed the other's.
+      AGORA_PUBLIC_URL: https://${CF_SITE_HOST:-cloudsforge.localtest.me}/agora
       INSTANCE_ID: agora-estate
     env_file: *outbox-secrets
     ports:

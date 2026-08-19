@@ -3116,13 +3116,18 @@ done
 # direction for a check to fail in: the fix it asks for is to re-open something
 # that was closed on purpose.
 #
-# `https://$SITE_HOST` now stands for FIVE bundles — the apex itself, the
-# journal, the exchange, the market, Forge Create and Forge Trade — and it is
-# one entry, tested once. Nine surfaces still to move will not lengthen this
-# line either. Each wave has had to remember to shorten it, so
-# `check-base-paths-agree.py` now reads this file and fails when a consolidated
-# surface's old hostname is still named here.
-for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://$SITE_HOST" "https://agora$WEB_SUFFIX"; do
+# `agora` left the same way one wave later, and that time the check caught it
+# rather than a live run: `check-base-paths-agree.py` reads this file and fails
+# when a consolidated surface's old hostname is still named here. Wave 3c's
+# author — the same one who wrote this comment — removed the routers, moved the
+# robots rules, and left this line in. The guard is the reason that is a
+# paragraph rather than an incident.
+#
+# `https://$SITE_HOST` now stands for SEVEN bundles: the apex itself, the
+# journal, the exchange, the market, Forge Create, Forge Trade and Forge Agora.
+# One entry, tested once, and the eight surfaces still to move will not lengthen
+# this line either.
+for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://$SITE_HOST"; do
   sinkcode=$(gwv "lantern$WEB_SUFFIX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
     -H 'content-type: application/json' -d '{"samples":[]}')
   [ "$sinkcode" = 202 ] \
@@ -3380,11 +3385,16 @@ esac
 # seam is now MOST load-bearing: two bundles behind one origin, either of which
 # can be the page a reader presses the button on.
 #
-# `exchange` is gone from this loop for the same reason, one wave later than the
-# comment above was written: it moved in wave 2, so pressing Sign in on the
-# exchange happens on the APEX, and `$SITE_HOST` — already here — is that origin.
-# Leaving it in asserted that identity still mints for a hostname that redirects.
-for so_org in "$SITE_HOST" "agora$WEB_SUFFIX"; do
+# `exchange` and `agora` are gone from this loop for the same reason, one and two
+# waves later than the comment above was written: both moved, so pressing Sign in
+# on either happens on the APEX, and `$SITE_HOST` — already here — is that origin.
+# Leaving them in asserted that identity still mints for hostnames that redirect.
+#
+# ONE ENTRY IS NOT A WEAKER TEST THAN THREE WERE. All three were the same
+# assertion about the same allowlist, and two of them named hostnames the estate
+# had stopped serving. What matters is that the origin every consolidated bundle
+# now runs on can complete a hand-off, and that is exactly what is left.
+for so_org in "$SITE_HOST"; do
   so_xc=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
     --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
     "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \

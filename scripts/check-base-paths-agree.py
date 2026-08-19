@@ -97,6 +97,7 @@ BUNDLE_REPOS = {
     "market": "market-web",
     "create": "mint-web",
     "trade": "trade-web",
+    "agora": "agora-web",
 }
 
 
