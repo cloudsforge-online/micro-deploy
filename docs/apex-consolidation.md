@@ -13,12 +13,23 @@ priority, registry field and check named below was read out of the tree on
 2026-08-19, and the two live measurements are quoted with the command that
 produced them.
 
-> **Status.** Wave 1 (`journal`) is the only wave with a written step list.
-> That is deliberate — see [The wave order](#the-wave-order-and-what-decides-it).
-> Waves 2 and 3 get their step lists after wave 1 has been through a real
-> deploy, because the point of doing `journal` alone is to find out what this
-> plan gets wrong while the cost of being wrong is an archive nobody has
-> bookmarked yet.
+> **Status, 2026-08-19.** Three surfaces are live on mainnet at release
+> **2026.8.83**: `journal` (wave 1), `exchange` (wave 2), `market` (wave 3a).
+> Eleven remain — `developers`, `create`, `trade`, `worlds` (+`emberkin`,
+> `aetherholm`, `tessera`), `explorer`, `pool`, `foresight`, `agora`.
+>
+> Wave 1 was the only wave with a written step list, deliberately — see
+> [The wave order](#the-wave-order-and-what-decides-it). Waves 2 and 3a record
+> only what DIFFERED, in §6bis and §6ter, because the mechanism did not change
+> and a third full copy of it would be three places to update.
+>
+> **Wave 3a is the one that changes what the remaining eleven cost.** It is the
+> first surface to bring a SERVICE across a mount, so decision 4 stopped being a
+> plan and became a shipped arrangement with a measured shape: one extra router,
+> one `stripPrefix` middleware, a priority band above the bundle's, and an audit
+> that cannot be automated. Every one of the eleven needs all four. `foresight`
+> needs it six times over, on unversioned root prefixes — it is still the hardest
+> and is still last.
 
 ---
 
@@ -845,6 +856,95 @@ None of that changed; the origin did. The grant is subsumed by the apex's, which
 was already the first entry in the block. The order matters: deleting the old
 line before the apex was on the list would have taken every price on the page
 down.
+
+---
+
+## 6ter. Wave 3a — `market` → `/market`, and decision 4's first real use
+
+Only what DIFFERED from waves 1 and 2. Shipped in **2026.8.83** on 2026-08-19.
+
+### The service is the whole difference
+
+`journal` has no API and `exchange` reads Hearth cross-origin, so neither wave
+had to answer this. `micro-market` answers `/v1` on the surface's own hostname
+and `market-web` reaches it by a RELATIVE request — which is exactly what lets a
+bundle not know its own hostname, and exactly what breaks when the bundle moves.
+
+Decision 4 is the fix and §4 argues it. What the fix actually COSTS, now
+measured rather than estimated, is four things per surface:
+
+| part | where | what happens without it |
+|---|---|---|
+| the API router `PathPrefix(`/<mount>/v1`)` | `estate-web.yml` | every call 404s at the gateway — loud, and the good case |
+| `stripPrefix: ["/<mount>"]` on it | `estate-web.yml` | the service gets a path it never served and 404s **every route while the gateway reports healthy** |
+| the bundle's base = `${BASE}/v1` | the web repo | the call reaches **micro-site**, which answers its SPA shell: 200, HTML where JSON was expected, every panel dead, network tab clean |
+| the absolute-path audit | nowhere — it is a grep | a `Location:`, cookie `Path` or rooted JSON field keeps answering 200 while sending the browser to the apex root |
+
+Only the first fails in a way anybody notices. The fourth cannot be checked from
+the gateway at all, which is why it is an audit with a recorded result rather
+than a check: **micro-market, 2026-08-19 — 0 redirects, 0 cookie `Path`s, 0
+rooted response fields** outside route registrations and tests. Re-run the three
+greps in §4 before each of the remaining eleven.
+
+### A priority band that did not exist
+
+`/market/v1` CONTAINS `/market`, so the API router and the bundle router can both
+match `GET /market/v1/listings` and only `priority` decides. At equal priority
+Traefik falls back to rule LENGTH, which is nobody's decision. So the bands are
+now:
+
+    bundles on their own host   500
+    retirement redirects        550
+    APIs on their own host      600
+    bundles mounted on the apex 600
+    APIs mounted under a bundle 700   ← new in wave 3a
+
+`check-router-prefix-ordering.py` fails the tie rather than letting rule length
+settle it. Each of the eleven needs the 700 row.
+
+### The API on the old hostname is NOT redirected
+
+This is the one place wave 3a deliberately does less than waves 1 and 2.
+`cf-api-market-host` keeps routing `market.<apex>/v1` straight to the service at
+600, above the tombstone at 500, so the 301 never sees it.
+
+A redirect answers a GET well and mangles a POST: a client that follows one is
+entitled to drop the body and downgrade the method, so redirecting an API is how
+an integration starts silently losing writes. The BUNDLE moved; third-party
+callers did not have to. Verified live: `market.<apex>/v1/listings` → 200
+`application/json`, no `Location`.
+
+### The origin that stopped being needed, and the one that never was
+
+market's same-environment grant, cross-environment grant,
+`IDENTITY_HANDOFF_ORIGINS` entry and `LANTERN_RUM_ORIGINS` entry are all subsumed
+by the apex — same argument, same order dependency, as §6bis.
+
+Worth stating because the natural worry about decision 4 is the opposite one:
+**moving an API across a mount introduces no cross-origin read.** It was
+`market.<apex>/v1` from a page on `market.<apex>`; it is `<apex>/market/v1` from
+a page on the apex. Both same-origin, and neither ever needed a line in
+`policy.yml`.
+
+### What went red, and what that predicts for the eleven
+
+Three CI steps in `micro-market-web` asserted the bundle at `/` and failed the
+moment it moved — correctly. `Estate rules` grepped for the literal
+`error_page 404 /index.html`; the Docker probe asked for `/` and got the
+**correct** 404; the header probe walked root paths. Each was fixed by prefixing
+a single `BASE=/market`, and each of the eleven will need the same three edits.
+Both earlier waves made the same three, which is the point: this is now a known
+per-surface cost rather than a surprise.
+
+`micro-site` also went red once on my own new test, which had pinned `>= 3`
+consolidated surfaces — the literal-that-rots the test existed to remove, and a
+number this repository does not control because CI checks out micro-ui's `main`
+at job start. It is `> 0` now.
+
+Two probes are new and both assert a **404**: the image must not serve `/`, and
+must not serve `/robots.txt`. Behind the gateway neither would ever be reached,
+so they are invisible in production and immediate under `docker run` — which is
+where a wrong `base:` or a wrong `COPY` destination shows up first.
 
 ---
 
