@@ -291,6 +291,44 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-apex-prefix.py
 
+      # ── A SURFACE MOUNTED AT A PATH, AND THE FIVE PLACES THAT PATH IS WRITTEN ─
+      #
+      # Since the apex consolidation a surface can be a FOLDER on the apex rather
+      # than a hostname of its own (`docs/apex-consolidation.md`). `/journal` is
+      # then five independent statements — the registry's `basePath`, the
+      # bundle's `routes.ts`, its `vite.config.ts` `base`, its `nginx.conf`
+      # locations and the gateway rule — spread across four repositories, with
+      # nothing in the stack cross-checking them.
+      #
+      # Every disagreement between them is a 200-shaped failure somewhere
+      # upstream of the mistake: the HTML arrives and the modules 404; or the
+      # page renders and every link on it names an unrouted address; or the
+      # gateway routes to a container that answers its own 404. None of them
+      # turn a status page red.
+      #
+      # Runs in this job for the same reason as the two above: it EXECUTES the
+      # registry, so it needs the micro-ui checkout and pnpm install already
+      # done here.
+      - name: A path-mounted surface's base path agrees in all five places
+        working-directory: deploy
+        run: python3 scripts/check-base-paths-agree.py
+
+      # ── AND WHO WINS WHEN TWO ROUTERS CLAIM ONE URL ────────────────────────
+      #
+      # Mounting on the apex deliberately creates overlap: `cf-web-site` and
+      # `cf-web-journal` both match `/journal/…`, and only `priority` decides.
+      # Where it is unset Traefik computes one from the RULE LENGTH, so the
+      # winner would depend on how a hostname is spelled; where it is wrong the
+      # loser's URLs are answered by the winner's bundle, with a 200.
+      #
+      # Written in wave 1 with nothing to find. The instance it is for is
+      # `/worlds` against `/worlds/emberkin` in wave 3, where the shallower rule
+      # legitimately matches the deeper path and the two are authored weeks
+      # apart. A check that arrives with the problem arrives after it.
+      - name: A path-mounted router outranks everything that contends for its URLs
+        working-directory: deploy
+        run: python3 scripts/check-router-prefix-ordering.py
+
       # ── THE PROBER MUST STILL BE ABLE TO FIND THE ESTATE ───────────────────
       #
       # `uptime.yml` probes every public hostname on a schedule, and it derives

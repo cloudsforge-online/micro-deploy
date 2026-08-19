@@ -2747,6 +2747,25 @@ fi
 # LANTERN_RUM_ORIGINS entry. The rule that follows from the other three is
 # simple enough to state: a surface joins this list in the release that first
 # serves it, not in the release that first notices it is missing.
+#
+# ── AND A THIRD FIELD, BECAUSE A SURFACE IS NO LONGER ALWAYS A HOSTNAME ──────
+#
+# Wave 1 of `docs/apex-consolidation.md` moved `journal` to `subdomain: ''` +
+# `basePath: '/journal'`, so its record is now `. journal-web /journal`: the apex
+# host, the journal's checkout, and the path that separates it from `site`. The
+# field defaults to `/` so the other twenty records are unchanged.
+#
+# The assertion is STRONGER at a path than it was at a hostname, and that is
+# worth saying because the opposite is the intuition. On `journal.<apex>` a
+# misrouted request had one plausible wrong answer — some other bundle — and
+# `cf-web-journal` was the only router on the host, so there was nothing to be
+# confused with. On the apex the journal's router shares a hostname with
+# `cf-web-site`, and the priority band is the ONLY thing separating them: drop
+# `cf-web-journal` to 500 and Traefik's tie-break serves the SITE's shell at
+# `/journal`, with a 200 and a perfectly healthy-looking page. The cf-release
+# meta names the repository, so this loop is exactly the check that catches it —
+# it compares the shell that came back against `journal-web`'s revision, and the
+# site's shell carries `site`'s.
 for rec in \
   "hub hub-web" \
   ". site" \
@@ -2767,28 +2786,119 @@ for rec in \
   "beacon beacon-web" \
   "pool pool-web" \
   "exchange exchange-web" \
-  "journal journal-web" \
+  ". journal-web /journal" \
   "agora agora-web"; do
   set -- $rec
-  sub=$1; repo=$2
+  sub=$1; repo=$2; path=${3:-/}
   # `site` has an EMPTY subdomain in the registry, so it is the one surface whose
   # hostname is not `<sub>$WEB_SUFFIX`: concatenating would give
   # `-testnet.cloudsforge.online` on testnet, which is not a legal DNS label. It is
   # `$SITE_HOST` — `cloudsforge.online` on mainnet, `testnet.cloudsforge.online` on
   # testnet — which is why that is a variable of its own and not derived here.
   if [ "$sub" = "." ]; then host="$SITE_HOST"; else host="$sub$WEB_SUFFIX"; fi
-  gwc=$(gw "$host" /)
+  gwc=$(gw "$host" "$path")
   # Same marker, same source of truth as the direct-port section above — the
   # running image's `org.opencontainers.image.revision`, not the literal
   # `estate`, which on a released estate is stamped nowhere and failed all
   # sixteen of these a second time.
   want=$(web_release_for "$repo")
   if [ "$gwc" = 200 ] && grep -q "name=\"cf-release\" content=\"$want\"" /tmp/estate-gw.body; then
-    ok "https://$host → $repo"
+    ok "https://$host$([ "$path" = / ] || printf %s "$path") → $repo"
   else
-    bad "https://$host answered $gwc and did not serve $repo's shell (expected cf-release '$want')"
+    bad "https://$host$path answered $gwc and did not serve $repo's shell (expected cf-release '$want')"
   fi
 done
+
+echo "── the hostnames a surface left, and where they send a reader ───────────"
+# THE OTHER HALF OF A CONSOLIDATION, AND THE HALF NOBODY NOTICES BREAKING.
+#
+# `docs/apex-consolidation.md` moves a surface off its own subdomain onto a
+# subfolder of the apex. Everything about that move is visible: the new address
+# is checked directly above, the router is checked by `surface-routes.py` check
+# 13, and a person typing the new URL gets a page. What is INVISIBLE is the old
+# hostname, because nothing in this estate links to it any more — every link the
+# estate emits was rebuilt from the registry the moment the row changed. The only
+# traffic left on `journal.<apex>` comes from outside: search results indexed over
+# months, feed readers polling `/feed.xml`, and the links in five published
+# articles. None of it is in any test, and all of it is what the redirect is for.
+#
+# So the assertion is not "the host answers", it is "the host answers 301 AND
+# names the right address AND KEEPS THE PATH". The last clause is the one that
+# earns the check. A redirect that drops the path is a plausible thing to write —
+# `redirectRegex` with a single capture does exactly that — and it fails in the
+# most expensive possible way: every deep link in the world resolves to the
+# journal's index instead of the article it named, which reads to a search engine
+# as a soft 404 and to a reader as "the article is gone".
+#
+# 301 SPECIFICALLY. `cf-retired-*-to-mainnet` is a 302 and argues for it in
+# estate-web.yml: the testnet retirement might be undone. This one is permanent
+# on purpose — the point of the move is that the apex address becomes canonical
+# and accumulates the links — so a 302 here would be a real defect, not a
+# stylistic one, and it is asserted as a distinct code rather than as `3xx`.
+# The target is NOT fetched, so the article slug below is deliberately fictional:
+# what is under test is the gateway's rewrite, and a real slug would only add an
+# article that must never be renamed. `/feed.xml` is real and is the one an
+# aggregator polls unattended, which is why it gets a record of its own.
+#
+# ── AND THE TWO ENVIRONMENTS EXPECT DIFFERENT ANSWERS, ONE HOP APART ─────────
+#
+# On testnet the hostname is `journal-testnet.<apex>`, and `cf-retired-web-sub`
+# at priority 550 outranks `cf-web-journal-sub` at 500 — so the FIRST hop there
+# is the #459 retirement's 302 to mainnet's `journal.cloudsforge.online`, which
+# then 301s to the apex. Two hops, two routers, two environments, and only the
+# first is reachable from a gateway that serves one of them. Asserting 301 on
+# both would report the testnet retirement as a broken journal redirect, which is
+# the class of false alarm this file's own header calls worse than no check.
+#
+# `$GW_PORT` is in the mainnet expectation because `redirectRegex` matches the URL
+# the CLIENT sent, port and all: from a workstation `gw()` reaches the gateway on
+# whatever port the Service publishes, so the Location comes back carrying it.
+# Hard-coding `https://<apex>/…` would pass only on 443 and fail every
+# port-forwarded run with a message about a redirect that is in fact correct.
+#
+# The retirement's own regex, by contrast, is anchored `cloudsforge\.online/` with
+# NO port tolerance — a pre-existing property, not something this work introduced
+# — so off 443 it does not match at all and the request falls through to the
+# bundle. That is why the testnet arm SKIPS rather than fails there, and the skip
+# still asserts something: `surface-routes.py` check 13 reads the router and its
+# middleware straight out of `estate-web.yml` and needs no gateway at all.
+if [ "$GW_PORT" = 443 ]; then apex_hp="$SITE_HOST"; else apex_hp="$SITE_HOST:$GW_PORT"; fi
+redir_skip=""
+if [ "$EMBER_NETWORK" != mainnet ] && [ "$GW_PORT" != 443 ]; then
+  redir_skip="this is the testnet gateway on port $GW_PORT, and cf-retired-sub-to-mainnet's regex is anchored on 'cloudsforge.online/' with no port — off 443 it cannot match, so nothing here would be measuring the redirect"
+fi
+if [ -n "$redir_skip" ]; then
+  echo "  ..   THE OLD HOSTNAME'S REDIRECT WAS NOT MEASURED: $redir_skip."
+  if [ -f "$deploy_root/scripts/surface-routes.py" ] \
+     && grep -Fq 'cf-journal-to-apex' "$deploy_root/scripts/surface-routes.py"; then
+    ok "…and surface-routes.py check 13 still names cf-journal-to-apex — the static gate this skip defers to is intact"
+  else
+    bad "no live measurement of the old hostname's redirect AND surface-routes.py does not name cf-journal-to-apex — nothing in this run, static or live, has said the journal's old address still goes anywhere"
+  fi
+else
+  for rec in \
+    "journal /2026/08/any-article-slug /journal/2026/08/any-article-slug" \
+    "journal /feed.xml /journal/feed.xml" \
+    "journal / /journal/"; do
+    set -- $rec
+    oldsub=$1; oldpath=$2; newpath=$3
+    if [ "$EMBER_NETWORK" = mainnet ]; then
+      wantrc=301; want="https://$apex_hp$newpath"
+    else
+      # The retirement's hop, not the consolidation's: it strips `-testnet` and
+      # keeps the path verbatim, so the journal's own 301 happens on the mainnet
+      # gateway one request later and is asserted there, by the arm above.
+      wantrc=302; want="https://$oldsub.cloudsforge.online$oldpath"
+    fi
+    rc=$(gw "$oldsub$WEB_SUFFIX" "$oldpath" -D /tmp/estate-gw.head)
+    got=$(awk 'BEGIN{IGNORECASE=1} /^location:/{sub(/^[^:]*:[ \t]*/,""); sub(/\r$/,""); print; exit}' /tmp/estate-gw.head)
+    if [ "$rc" = "$wantrc" ] && [ "$got" = "$want" ]; then
+      ok "https://$oldsub$WEB_SUFFIX$oldpath → $wantrc $want"
+    else
+      bad "https://$oldsub$WEB_SUFFIX$oldpath answered $rc → '${got:-no location header}', expected $wantrc → '$want'. Every external link to the old hostname now lands somewhere other than the page it named; see cf-journal-to-apex in gateway/dynamic/estate-web.yml"
+    fi
+  done
+fi
 
 echo "── the surfaces' own APIs, behind the same hostname ─────────────────────"
 # Every frontend resolves its API base by comparing origins (`resolveApiBase`,
@@ -2922,10 +3032,25 @@ done
 # is fire-and-forget. The symptom of a missing entry is a surface with NO client
 # errors in Lantern at all, and that reads as a page nobody is having trouble with.
 # It is checked here so the next surface's absence is a failing line rather than a
-# quiet gap in the data. `journal.` is the fourth, and it was added WITH its
+# quiet gap in the data. `journal.` was the fourth, and it was added WITH its
 # container rather than two days after it — which is the whole return on writing
 # the previous sentence down. `agora.` is the fifth, added the same way.
-for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX" "https://journal$WEB_SUFFIX" "https://agora$WEB_SUFFIX"; do
+#
+# ── AND `journal.` IS GONE FROM THIS LIST, WHICH IS THE MOVE AND NOT A LOSS ──
+#
+# The journal is served at `<apex>/journal` since wave 1 of
+# `docs/apex-consolidation.md`, so the Origin its `src/lib/obs.ts` now sends is
+# `https://$SITE_HOST` — a path is not part of an origin — and that origin is the
+# FIRST entry in LANTERN_RUM_ORIGINS and has been since the list existed. Testing
+# `https://journal$WEB_SUFFIX` here would assert a grant for a hostname no browser
+# is ever on, and it would have to be re-added to the allowlist to pass: a check
+# demanding the estate keep a permission it no longer needs.
+#
+# The apex origin IS covered — micro-site's own RUM has exercised it from the
+# first release — and the composition worth stating is that one entry now serves
+# two bundles. That is the general shape of every consolidation wave: origins
+# shrink while surfaces do not, which is most of why the move is worth making.
+for origin in "https://lantern$WEB_SUFFIX" "https://beacon$WEB_SUFFIX" "https://exchange$WEB_SUFFIX" "https://$SITE_HOST" "https://agora$WEB_SUFFIX"; do
   sinkcode=$(gwv "lantern$WEB_SUFFIX" /ingest/client '%{http_code}' -X POST -H "Origin: $origin" \
     -H 'content-type: application/json' -d '{"samples":[]}')
   [ "$sinkcode" = 202 ] \
@@ -3148,17 +3273,33 @@ esac
 # posting, replying, following and every whisper are behind the session. A
 # missing allowlist entry there is not a degraded surface, it is a read-only one,
 # and the reader has no way to tell that from "this product is read-only".
-for so_org in exchange journal agora; do
+#
+# ── HOSTNAMES BECAME ORIGINS HERE, AND THE JOURNAL IS WHY ────────────────────
+#
+# This loop took SUBDOMAINS and appended `$WEB_SUFFIX`, which stopped being able
+# to say what it meant when `journal` moved to `<apex>/journal` in wave 1 of
+# `docs/apex-consolidation.md`. The apex origin cannot be written that way at all
+# — `-testnet.cloudsforge.online` is not a legal DNS label, the same reason
+# `$SITE_HOST` exists — so the loop now carries whole origins.
+#
+# The journal's entry is NOT dropped, it is respelled. It still mounts the shared
+# bar, a reader still presses Sign in on it, and identity must still mint for the
+# origin that bar runs on; that origin is now the apex. Dropping the row instead
+# would have been the easy reading of "the journal has no origin of its own", and
+# it would have removed the only assertion covering the surface where the sign-in
+# seam is now MOST load-bearing: two bundles behind one origin, either of which
+# can be the page a reader presses the button on.
+for so_org in "exchange$WEB_SUFFIX" "$SITE_HOST" "agora$WEB_SUFFIX"; do
   so_xc=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
     --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
     "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
     -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
-    -H "origin: https://$so_org$WEB_SUFFIX" \
-    -d "{\"redirectOrigin\":\"https://$so_org$WEB_SUFFIX\"}")
+    -H "origin: https://$so_org" \
+    -d "{\"redirectOrigin\":\"https://$so_org\"}")
   case "$so_xc" in
-    2*) ok "identity mints a hand-off code for https://$so_org$WEB_SUFFIX — the bar there can complete a sign-in" ;;
-    401) bad "the hand-off drill has no session (401) — this says NOTHING about $so_org$WEB_SUFFIX" ;;
-    *)  bad "identity refused a code for $so_org$WEB_SUFFIX ($so_xc) — IDENTITY_HANDOFF_ORIGINS does not name it, so pressing Sign in there returns the reader signed out" ;;
+    2*) ok "identity mints a hand-off code for https://$so_org — the bar there can complete a sign-in" ;;
+    401) bad "the hand-off drill has no session (401) — this says NOTHING about $so_org" ;;
+    *)  bad "identity refused a code for $so_org ($so_xc) — IDENTITY_HANDOFF_ORIGINS does not name it, so pressing Sign in there returns the reader signed out" ;;
   esac
 done
 
