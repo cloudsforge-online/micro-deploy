@@ -485,12 +485,45 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    because "the estate is down" and "the chain stopped" are the same symptom from
    a frontend.
 
-4. **Re-import the databases**, now that the source is quiet — from the VM, not
-   the app host; the script reaches back over ssh:
+4. **Quiet the TARGET too, then re-import** — from the VM, not the app host; the
+   script reaches back over ssh:
    ```sh
+   for ns in cloudsforge-estate cf-testnet; do
+     kubectl -n $ns scale $(kubectl -n $ns get deploy -o name | grep -v '/gateway$') --replicas=0
+   done
+   # wait until only gateway and postgres-1 remain in each namespace
    ./scripts/k8s-db-import.sh --network mainnet --cutover
    ./scripts/k8s-db-import.sh --network testnet --cutover
    ```
+
+   **The scale-down is not tidiness, and this step failed without it on
+   2026-08-19.** `--cutover` gates on the SOURCE being quiet and then compares an
+   exact row count on both sides, where any difference means data that did not
+   arrive. But the cluster estate has been running this whole time — that is the
+   point of the parallel run — so all 51 Deployments are connected to the target
+   while `pg_restore --clean --if-exists` drops and recreates their tables under
+   them. They reconnect and carry on writing. The first attempt came back:
+
+   ```
+   foresight   ok / ROWS 366 vs 362              (target 4 short)
+   indexer     ok / ROWS 12717506 vs 12718891    (target 1,385 over)
+   FAIL: these databases did not import cleanly: foresight indexer
+   ```
+
+   Both restores were clean — `RESULT` is `ok`, there was no `pg_restore: error:`
+   in either log. The only thing wrong was the count, and the count was right:
+   the cluster's own `indexer` watches the same live chain compose used to, so it
+   had inserted 1,385 rows into the copy in the seconds between the restore
+   finishing and the count being taken. A verification that catches that is doing
+   its job; a runbook that walks into it is not.
+
+   **`gateway` is the one Deployment left up**, because it holds no database
+   connection and `k8s-deploy.sh` does not apply it — `k8s-gateway.sh` does.
+   Scaling it with the rest would leave it at 0 after step 5 with nothing to
+   notice.
+
+   Step 5 is what brings the other 50 back: `50-deployments.yaml` carries an
+   explicit `replicas: 1`, so `kubectl apply` restores it.
    Then, and only then, stop the two postgres containers as well:
    ```sh
    docker compose -p cloudsforge-estate stop postgres      # on the app host
