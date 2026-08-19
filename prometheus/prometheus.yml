@@ -291,16 +291,53 @@ scrape_configs:
   - job_name: backup-runner
     static_configs:
       # The one estate target that was NOT ambiguous while micro-org#437 was
-      # open, and by luck rather than design: testnet runs no backup runner, so
+      # open, and by luck rather than design: testnet ran no backup runner, so
       # `backup-runner` had one answer when every other bare name had two. It is
       # named by container anyway. "Unique today" is not a property of an
       # address, it is a property of what happens to be deployed, and the day
       # testnet grows a backup runner this target would move estates in silence.
+      #
+      # THAT DAY WAS 2026-08-19 AND THE NAMING IS WHY NOTHING MOVED. See the
+      # testnet job directly below.
       - targets: ["cloudsforge-estate-backup-runner-1:4130"]
         labels:
           instance: backup-runner:4130
           team: platform
           service: backup-runner
+
+  # ------------------------------------------- the testnet backup runner ----
+  # TESTNET HAD NEVER BEEN BACKED UP ONCE, and unlike mainnet's forty-three-hour
+  # gap in micro-org#434 there was nothing to measure it against: the compose
+  # estate simply had no testnet backup runner to be down. Measured 2026-08-19
+  # against testnet's `admin_api`: every row in `backup_runs` was `queued` with a
+  # NULL `started_at` — enqueued by something, claimed by nothing, ever.
+  #
+  # The Kubernetes manifest is one file applied to both namespaces, so the
+  # migration gave testnet a runner rather than translating the absence. Its
+  # first set landed the same day: 36 artefacts, 32 databases, both asset
+  # volumes, the custody vault, and the coinbase keystore encrypted to the
+  # estate's age recipient.
+  #
+  # SCRAPED SEPARATELY RATHER THAN ADDED TO THE JOB ABOVE, for the reason the
+  # comment above predicted: one job with two targets makes `backup-runner:4130`
+  # ambiguous again, and every backup alert reads a bare metric name. Two jobs
+  # with two `instance` values keeps `BackupAgeExceeded`, `MinerCoinbaseKeyUnbacked`
+  # and `BackupDestinationFilesystemErrors` per-series and readable — the alert
+  # says which network without anyone having to know which estate is which.
+  #
+  # This does NOT start scraping the testnet estate; the same boundary the
+  # `cf-indexer-testnet` job draws below still holds. It is one target, for the
+  # one testnet deployable whose silence cannot be noticed any other way. Every
+  # other testnet service failing is visible in a browser within the hour; a
+  # backup that stopped is visible only on the day it is needed.
+  - job_name: backup-runner-testnet
+    static_configs:
+      - targets: ["cf-testnet-backup-runner-1:4130"]
+        labels:
+          instance: cf-testnet-backup-runner:4130
+          team: platform
+          service: backup-runner
+          estate: testnet
 
   # ----------------------------------------------- the testnet chain, ONLY ---
   # THE TESTNET ESTATE IS NOT SCRAPED AND THIS JOB IS NOT THE START OF SCRAPING

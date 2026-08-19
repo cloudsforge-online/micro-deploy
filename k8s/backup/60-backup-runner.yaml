@@ -1,0 +1,325 @@
+# The backup runner — the DATA PLANE of estate backup and restore, in the cluster.
+#
+# Applied per namespace by `scripts/k8s-backup-runner.sh --network <net>`, which
+# also builds the one ConfigMap this reads and refuses to apply if the image is
+# not in the node's image store.
+#
+# The compose original is `compose/docker-compose.backup.yml`, and every essay in
+# that file still governs. This header records only what the translation had to
+# decide differently, and why.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THIS IS THE ONE ESTATE DEPLOYABLE WITH NO PUBLISHED IMAGE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Every other service resolves to a digest-pinned `ghcr.io/cloudsforge-online/…`
+# reference out of the release manifest. This one has only ever existed as a
+# local `docker build` on whichever host happened to be running the estate —
+# `deploy/.github/workflows/ci.yml` runs its 97 tests and publishes nothing.
+#
+# That is not a detail. micro-org#434 is the ticket where this container was
+# left behind by a host migration and the estate went 43 hours with no backup,
+# and an image that only exists on the host you are migrating AWAY from is the
+# same fragility wearing a different hat. So the VM builds it itself, with
+# BuildKit driving k3s's own containerd (`/etc/buildkit/buildkitd.toml`), and
+# the tag below names both inputs:
+#
+#   82ca350  the last commit to touch `deploy/backup`
+#   1386974  micro-runtime HEAD, the named build context `runtimepkgs`
+#
+# `imagePullPolicy: Never` is deliberate and pairs with the unroutable
+# `cloudsforge.local/` prefix: a missing image fails instantly and visibly as
+# ErrImageNeverPull, rather than being chased to a registry that will never have
+# it. Rebuild with `scripts/k8s-backup-runner.sh --build`.
+#
+# THE DURABLE FIX IS STILL OWED: a publish job in deploy's CI, so this becomes a
+# digest like everything else. It needs a release cut, which this branch cannot
+# do yet.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# ONE DESTINATION ROOT FOR BOTH NETWORKS, WHICH IS SAFE FOR A MEASURED REASON
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Compose gave each network its own host directory — `cloudsforge-backups` and
+# `cloudsforge-backups-testnet`. Here both namespaces mount the SAME host
+# directory, and the manifest is therefore byte-identical for both.
+#
+# It separates anyway, because `run.ts` has always written to
+# `<root>/<environment>/<timestamp>`: mainnet's live destination on the app host
+# already contains exactly one entry, `mainnet/`. Merging the roots puts the two
+# environment directories side by side instead of in two trees.
+#
+# The question that matters is whether testnet's pruner can reach mainnet's
+# sets, because prune is the only job here that deletes. It cannot, twice over:
+#
+#   * `prune.ts` selects from `listSucceededRuns` — DATABASE ROWS, not a
+#     filesystem scan — and the two networks have separate Postgres clusters, so
+#     testnet's catalogue has only ever contained testnet's runs.
+#   * `prune.ts:145` independently refuses any directory that does not start
+#     with the configured root or that contains `..`.
+#
+# And separate roots would have bought nothing here regardless: `min_free_bytes`
+# is enforced through `statfs`, both paths are on the VM's single filesystem, and
+# statfs returns the same number for both. A shared root makes each network's
+# view of free space honest about the other's usage rather than blind to it.
+#
+# ── THE DESTINATION IS A hostPath, NOT A PVC, AND THAT IS THE POINT ──────────
+#
+# A dynamically-provisioned volume lands at
+# `/var/lib/rancher/k3s/storage/pvc-<uuid>_<ns>_<name>` — a path nobody can find
+# from a shell, on the same disk as the cluster that just failed, and removable
+# by `kubectl delete pvc`. This is the estate's only recovery point. It stays a
+# named directory an operator can `ls` while the cluster is the broken thing.
+#
+# `type: Directory` and not `DirectoryOrCreate`: an absent destination must be a
+# refusal to start, never an empty directory that swallows writes and reports
+# success. That failure — measured on the old snap-Docker host, 2026-08-05 — is
+# what `src/disk.ts`'s canary exists to catch, and this is the same rule one
+# layer up.
+#
+# ── KNOWN CAPACITY LIMIT, RECORDED RATHER THAN DESIGNED AROUND ──────────────
+#
+# `min_free_bytes` is 100 GiB and is a hard refusal. On the app host the
+# destination was a 2.0 TB filesystem with 1.4 TB free. On this VM it shares the
+# single 194 GB root volume with every container image, both Postgres clusters
+# and the telemetry PVCs — measured 2026-08-19 at 158 GB free, so it passes with
+# roughly 58 GB of margin. That margin is consumed by CLUSTER growth, not by
+# backups, which means unrelated growth can stop the backup system.
+#
+# The fix is a second virtual disk mounted here, and it is deliberately deferred:
+# the Windows host has only 136 GB free until cutover deletes WSL and Docker
+# Desktop, which alone reclaims ~118 GB of unreferenced images and build cache.
+# See the migration runbook.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT DID NOT SURVIVE THE TRANSLATION, AND WHY EACH IS FINE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+#   `ports: 127.0.0.1:4147:4130`  — a host publish for a human with a terminal,
+#     and the workaround for `trade-web` already owning 4130 on the host
+#     (micro-org#328). Nothing is published here; `kubectl port-forward` reaches
+#     it without a port war. The container still listens on 4130, which is what
+#     the Service below and the Prometheus job both use.
+#
+#   `depends_on: postgres: service_healthy` — has no Kubernetes equivalent and
+#     needs none. Without a database this pod exits and is restarted, which is
+#     the same wait expressed as a backoff.
+#
+#   `security_opt: no-new-privileges:true` — becomes
+#     `allowPrivilegeEscalation: false`. The variable existed only so the old
+#     snap-packaged Docker host, which could not exec ANYTHING under that flag,
+#     could opt out in a tracked file (micro-org#329). k3s runs containerd
+#     directly and has no such defect, so the hardened value is unconditional
+#     here and there is nothing left to opt out of.
+#
+# ── AND WHAT MUST NEVER BE ADDED ────────────────────────────────────────────
+#
+# There is NO envFrom pointing at `secret-custody`, and there must never be one.
+# `src/keyring.ts` refuses to start if any `CUSTODY_MASTER_SECRET_V<n>` is in
+# this process's environment, matched by pattern so a rotation to V4 cannot slip
+# past. This container archives the custody VAULT; putting the keyring beside it
+# would put the ciphertext and the key that opens it in one backup set. Do not
+# weaken it.
+#
+# There is also no service account token and no docker socket. A backup tool
+# holding a superuser DSN and a key vault does not also get an API credential.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backup-runner
+  labels:
+    app.kubernetes.io/name: backup-runner
+    app.kubernetes.io/part-of: cloudsforge-estate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backup-runner
+  strategy:
+    # Recreate. Two runners leasing `backup.*` jobs against one destination
+    # directory is not a throughput win — it is two processes writing sets while
+    # each other's prune decides what is old.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: backup-runner
+    spec:
+      # A full set takes minutes. SIGTERM mid-run leaves a `running` row, which
+      # `prune.ts` deliberately never selects, so the artefact is preserved and
+      # an operator reads it — but it is still better to let a run finish.
+      terminationGracePeriodSeconds: 300
+      # No API credential: nothing in this deployable talks to Kubernetes.
+      automountServiceAccountToken: false
+      securityContext:
+        # uid 1000 three times over: `node` in the image, `savva` on the VM, and
+        # the owner of both the custody vault (mode 0700) and the miner-key
+        # files (mode 0600). Running this as root to read a key vault would be
+        # the wrong default for the one container holding ciphertext for every
+        # coin the estate has mined.
+        runAsUser: 1000
+        runAsGroup: 1000
+        runAsNonRoot: true
+      containers:
+        - name: backup-runner
+          image: cloudsforge.local/backup-runner:82ca350-1386974
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          env:
+            # ── IDENTITY, baked in at creation and never taken from a job
+            #    payload. One half of the cross-environment restore refusal in
+            #    `src/manifest.ts`; the other half is written inside the
+            #    artefact. Neither is a parameter, because on 2026-08-05 the
+            #    thing that failed — twice — was a parameter that was ignored.
+            #
+            #    Under compose this was `${COMPOSE_PROJECT_NAME}`. Here it is
+            #    the namespace, read through the downward API, and those are the
+            #    same string by construction: the namespaces were named after
+            #    the compose projects precisely so this mapping needs no table.
+            #    `cloudsforge-estate` is compose's default project name and
+            #    `CF_PROJECT=cf-testnet` is set in `compose/testnet.env`.
+            - name: BACKUP_COMPOSE_PROJECT
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+
+            # BACKUP_ENVIRONMENT and INSTANCE_ID come from the ConfigMap below —
+            # they are the only two values that differ between the networks, and
+            # keeping them there is what lets this file be identical for both.
+
+            - name: CF_POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: estate-tokens
+                  key: CF_POSTGRES_PASSWORD
+                  optional: false
+
+            # TWO DSNs, which is the reason this is not part of admin-api: rule 1
+            # gives a service one database, and a process that dumps 29 OTHERS
+            # cannot satisfy that and should not. Reading every database in the
+            # cluster is a different trust domain from composing an operator's
+            # console.
+            - name: BACKUP_ADMIN_DATABASE_URL
+              value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/admin_api
+            - name: BACKUP_CLUSTER_URL
+              value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/postgres
+
+            # `root_path` in the catalogue is `/backups` on both networks —
+            # verified against the live admin_api databases 2026-08-19 — so the
+            # container path is what every recorded run already names, and the
+            # host directory can move without rewriting history.
+            - name: BACKUP_ROOT
+              value: /backups
+            - name: BACKUP_CUSTODY_VAULT_DIR
+              value: /vault/custody-keys/keys
+            - name: BACKUP_STUDIO_ASSETS_DIR
+              value: /volumes/studio-assets
+            - name: BACKUP_WORLD_ASSETS_DIR
+              value: /world-assets
+            - name: BACKUP_MINER_KEYS_DIR
+              value: /miner-keys
+
+            # A PUBLIC key. Safe here, safe in git, safe in a log line — which is
+            # the whole reason `age` with a recipient was chosen over a symmetric
+            # key in this container's environment. The private identity has never
+            # existed on any host that runs this.
+            #
+            # `optional: false`, where compose defaulted it to empty. Unset means
+            # the miner coinbase key is simply not backed up, and `run.ts:425`
+            # records that on mainnet the answer to "is the coinbase key in it"
+            # was NO for the entire life of the system before anyone asked. A
+            # refusal to start is a better answer than resuming that silently.
+            - name: BACKUP_AGE_RECIPIENT
+              valueFrom:
+                secretKeyRef:
+                  name: estate-tokens
+                  key: CF_BACKUP_AGE_RECIPIENT
+                  optional: false
+
+            - name: LOG_LEVEL
+              value: info
+            - name: NODE_ENV
+              value: production
+            - name: PORT
+              value: '4130'
+          envFrom:
+            - configMapRef:
+                name: backup-runner-env
+                optional: false
+          ports:
+            - {name: http, containerPort: 4130}
+          volumeMounts:
+            - {name: backups, mountPath: /backups}
+            # READ-ONLY, all four sources. This process copies; it has no
+            # business writing to any of them, and `readOnly` is the difference
+            # between a bug that fails and a bug that eats the vault.
+            - {name: custody-keys, mountPath: /vault/custody-keys, readOnly: true}
+            - {name: studio-assets, mountPath: /volumes/studio-assets, readOnly: true}
+            - {name: world-assets, mountPath: /world-assets, readOnly: true}
+            - {name: miner-keys, mountPath: /miner-keys, readOnly: true}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 4130}
+            periodSeconds: 30
+            timeoutSeconds: 5
+            failureThreshold: 3
+          startupProbe:
+            # `src/disk.ts` proves the destination is real before the process
+            # claims anything — a canary write, a read-back, and a filesystem
+            # size floor. That work happens before /readyz answers, so the
+            # startup budget has to cover it: 30 × 5s.
+            httpGet: {path: /readyz, port: 4130}
+            periodSeconds: 5
+            timeoutSeconds: 5
+            failureThreshold: 30
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+      volumes:
+        - name: backups
+          hostPath:
+            path: /srv/cloudsforge-backups
+            type: Directory
+        - name: custody-keys
+          persistentVolumeClaim:
+            claimName: custody-keys
+            readOnly: true
+        - name: studio-assets
+          persistentVolumeClaim:
+            claimName: studio-assets
+            readOnly: true
+        - name: world-assets
+          persistentVolumeClaim:
+            claimName: world-assets
+            readOnly: true
+        - name: miner-keys
+          hostPath:
+            # 240-byte sealed keystores and the passphrase that opens them,
+            # holding real mined coin. `type: Directory` for the same reason as
+            # the destination: absent must be a refusal, because a default that
+            # quietly resolved to an empty directory would read as "backed up"
+            # to anybody who did not go looking (micro-org#434).
+            path: /home/savva/dev/cloudsforge/miner-keys
+            type: Directory
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backup-runner
+  labels:
+    app.kubernetes.io/name: backup-runner
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: backup-runner
+  ports:
+    # The name Prometheus already resolves. The generated scrape target is
+    # `backup-runner.cloudsforge-estate.svc.cluster.local:4130/metrics`, rewritten
+    # from the compose host `backup-runner:4130` by
+    # `scripts/render-prometheus-targets.py`, so this Service name and port are
+    # load-bearing rather than cosmetic.
+    - {name: http, port: 4130, targetPort: http}

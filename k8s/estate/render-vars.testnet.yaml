@@ -6,9 +6,26 @@
 # renderer would mistake for configuration and write into a committed file.
 #
 # Verified against the host's `compose/estate/tokens.testnet.env` on 2026-08-19:
-# 56 assignments, 56 names, all `[A-Z][A-Z0-9_]*`, 53 distinct.
+# 57 assignments, 57 names, all `[A-Z][A-Z0-9_]*`, 54 distinct.
 #
-# THOSE THREE MISSING NAMES ARE A REAL DEFECT, NOT A ROUNDING ERROR.
+# ONE OF THOSE 57 IS NEW, AND IT IS NEW ON PURPOSE.
+# `CF_BACKUP_AGE_RECIPIENT` was mainnet-only, because testnet had no backup
+# runner to read it — measured on 2026-08-19, testnet's `backup_runs` held
+# nothing but `queued` rows with a NULL `started_at`, so this network has never
+# had a backup at all. The Kubernetes manifest is one file serving both
+# namespaces, so testnet gets a runner; and a runner with no recipient takes
+# `secrets.ts`'s "absent, nothing to encrypt" branch, publishes
+# `backup_secrets_included 0` and fires `MinerCoinbaseKeyUnbacked` forever —
+# correctly, because `miner-keys/testnet/coinbase-keystore.json` does exist.
+#
+# The value is MAINNET'S RECIPIENT, copied rather than freshly generated. An age
+# recipient is a PUBLIC key, so copying it creates no new secret; generating a
+# second keypair would create a new PRIVATE one, and private key custody is
+# already the estate's thinnest thread. The blast radius is unchanged either
+# way: whoever holds the identity that decrypts testnet's sets already decrypts
+# mainnet's, which carry a key that holds real EMBER.
+#
+# THREE MORE NAMES ARE A REAL DEFECT, NOT A ROUNDING ERROR.
 # `FAUCET_FUNDING_ADDRESS`, `FORESIGHT_ORACLE_ADDRESS` and
 # `FORESIGHT_TREASURY_ADDRESS` each appear TWICE in the file. Last-wins, so the
 # value a reader sees first is not necessarily the one in force — which for a
@@ -30,6 +47,7 @@ secret_vars:
   - BEACON_JOURNEY_ACCOUNTS
   - BEACON_TOKEN
   - BILLING_IDENTITY_CREDENTIAL
+  - CF_BACKUP_AGE_RECIPIENT
   - CF_CHAIN_HOST
   - CF_POSTGRES_PASSWORD
   - COMMUNITY_IDENTITY_CREDENTIAL
