@@ -151,12 +151,33 @@ comment always claimed was happening.
 to find it only when that sibling's `main` goes red after the merge. Two things
 follow for wave 3:
 
-- **grep the estate for the hostname before moving a surface**, not after —
-  `grep -rn '<sub>\.cloudsforge\.online' */test */src` across every checkout.
-  The source hits will be zero; the fixture hits are the work.
+- **grep the estate for the hostname before moving a surface**, not after.
 - a red sibling is the GOOD outcome here. The bad one is a fixture that asserts
   something weaker — a substring, a `toContain` — and keeps passing against an
   address that no longer exists.
+
+**Swept for all twelve of wave 3's surfaces, 2026-08-19**, before any of them
+moves:
+
+| | files |
+| --- | --- |
+| test fixtures naming a wave-3 hostname | **128** |
+| source files, in code | **0** |
+| source files, in COMMENT PROSE | 10 |
+
+So §3's claim is exactly right about source and exactly wrong about everything
+else. The one code hit the sweep turned up —
+`wallet-extension/src/background/storage.ts:194`, `const APEX =
+'cloudsforge.online'` — is the apex itself, which is not moving.
+
+**128 fixtures is the real cost of wave 3**, and it is not distributed evenly:
+`trade` has 28, `pool` 17, `explorer` 14. Budget it as part of each surface's
+move rather than discovering it when a sibling's `main` goes red.
+
+The 10 prose hits are comments describing addresses that will stop being true.
+They do not break a build and they do mislead a reader — treat them as part of
+the same edit, not a follow-up, because a follow-up for stale prose never
+happens.
 
 What does *not* come free is the bundle: a page served at `/journal` must know
 it is at `/journal` to write its own asset URLs, its router basename, its
