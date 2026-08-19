@@ -372,6 +372,44 @@ def utility_ports():
     return ports
 
 
+def consolidated_subdomains():
+    """The hostnames a surface LEFT, which must keep reaching the gateway forever.
+
+    ── WHY THIS IS NOT DERIVABLE FROM THE REGISTRY, AND WHY IT ALMOST BROKE ─────
+
+    `classify()` below drops every `basePath` surface, correctly: a surface
+    mounted at `<apex>/journal` has no hostname of its own for the tunnel to
+    route. But the hostname it CAME FROM is not gone — `journal.cloudsforge.online`
+    serves a permanent 301, and a 301 is only served by something the request
+    reaches. Drop the ingress rule and the request never arrives at Traefik at
+    all: cloudflared answers its own catch-all, and every link anyone has ever
+    shared to that hostname stops resolving.
+
+    MEASURED, on the merge of waves 1 and 2 and before any deploy: regenerating
+    without this deleted four rules — `journal` and `exchange` on mainnet, their
+    `-testnet` forms on testnet — and `--check` is what caught it. The registry
+    genuinely no longer knows those names, so no amount of reading it harder
+    would have produced them.
+
+    The list is `CONSOLIDATED_HOSTS` in `scripts/surface-routes.py`, IMPORTED
+    rather than restated. That file already keys each moved hostname to the
+    middleware that must still redirect it (its check 13), so a second copy here
+    would be a second place to forget — and the failure mode of forgetting is a
+    hostname that resolves to nothing, which is exactly the failure this function
+    exists to prevent. One table, two readers.
+    """
+    import importlib.util
+
+    src = pathlib.Path(__file__).resolve().parent.parent / "scripts" / "surface-routes.py"
+    if not src.exists():
+        die(f"{src} does not exist — the consolidated hostnames cannot be read, and generating "
+            f"without them would silently delete the tunnel rules that serve their redirects")
+    spec = importlib.util.spec_from_file_location("_cf_surface_routes", src)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return sorted(mod.CONSOLIDATED_HOSTS)
+
+
 def classify(surfaces):
     """The three tunnel classes, derived from the registry's own two booleans."""
     hosts = [s for s in surfaces if not s["basePath"]]
@@ -685,6 +723,20 @@ def main():
 
     fails = []
     declared = {s["subdomain"] for s in surfaces if not s["basePath"]}
+    consolidated = consolidated_subdomains()
+
+    # A consolidated hostname that is ALSO a live registry subdomain would produce
+    # two ingress rules for one name. That cannot happen while the move is done
+    # properly — the registry row is what stops declaring the subdomain — so it
+    # means a half-finished wave, and the honest response is to refuse rather than
+    # emit a file whose duplicate cloudflared would resolve by silent precedence.
+    for sub in consolidated:
+        if sub in declared:
+            fails.append(
+                f"'{sub}' is in CONSOLIDATED_HOSTS and is STILL a registry subdomain. One of the "
+                f"two is wrong: either the surface has not actually moved to a path, or it moved "
+                f"and the tombstone entry was added before the registry row was changed"
+            )
 
     # A NOT_ROUTED entry naming a subdomain the registry never declares, and that
     # is not a utility, is a stale claim about a surface that no longer exists.
@@ -712,7 +764,12 @@ def main():
         base = TUNNEL_PORT_BASE + (1 if offset else 0)
         origin = f"http://127.0.0.1:{base}81"
 
+        # The consolidated hostnames ride with the public class because that is what
+        # they were: a reader arriving on one is a reader who followed an old public
+        # link, and the 301 that answers them is served by the same gateway on the
+        # same origin as everything else here.
         pub_subs = [s["subdomain"] for s in public + api if s["subdomain"] not in NOT_ROUTED]
+        pub_subs += [sub for sub in consolidated if sub not in NOT_ROUTED]
         op_subs = [s["subdomain"] for s in operator if s["subdomain"] not in NOT_ROUTED]
 
         files = [
