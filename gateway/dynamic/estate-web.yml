@@ -610,14 +610,40 @@ http:
       entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-market
+{{ end }}
 
+    # ── THE API IS **OUTSIDE** THE GATE, AND THAT IS THE COMBINED VIEW ────────
+    #
+    # It was inside it for six hours on 2026-08-19 and that was a defect, found
+    # by probing testnet rather than by any check. On testnet CF_WEB_RETIRED is
+    # `true`, so the whole block above disappears — and with the API router
+    # inside it, `testnet.<apex>/market/v1/listings` fell through to
+    # `cf-retired-web-apex` at 550 and answered **302 to mainnet**.
+    #
+    # A cross-origin fetch FOLLOWS that redirect. So a reader on
+    # `<apex>/market` who pressed Testnet got a 200 full of MAINNET listings
+    # with "Testnet" selected in the switcher — the combined view silently
+    # showing the wrong estate, which is the exact class of defect micro-org#459
+    # and #133 exist about, reintroduced by the consolidation.
+    #
+    # THE BUNDLE IS RETIRED ON TESTNET AND THE API IS NOT, which is the same
+    # split the estate already runs on every `-testnet` hostname:
+    # `cf-retired-web-sub` carries `!PathPrefix(`/v1`)` for precisely this
+    # reason — "the web hostname is retired and 302s to its mainnet sibling;
+    # `/v1` on it is exempt and still answers from the testnet service, which is
+    # what makes this readable at all."
+    #
+    # 700 is what enforces it here rather than a `!PathPrefix`: it already had
+    # to outrank the bundle at 600, and it outranks the retirement band at 550
+    # for free. Adding `/market/v1` to the retirement rule's negation instead
+    # would need one more clause per surface, in a rule whose failure mode is
+    # silent.
     cf-api-market-apex:
       rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/market/v1`)'
       priority: 700
       entryPoints: [websecure, tunnel]
       middlewares: [cf-market-strip-mount]
       service: cf-svc-market
-{{ end }}
 
     # ── THE HOSTNAME IT LEFT, WHICH KEEPS ANSWERING FOREVER ──────────────────
     #
