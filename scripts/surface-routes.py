@@ -320,6 +320,42 @@ EXPECTED_UNROUTED = {
 }
 
 
+# ── hostnames a surface LEFT, which still carry a redirect to where it went ──
+#
+# `docs/apex-consolidation.md` moves product surfaces off their own subdomain and
+# onto a subfolder of the apex. The old hostname does not stop existing when that
+# happens: the DNS record, the Cloudflare tunnel ingress and years of links all
+# still point at it, so a router stays behind on it whose only job is to 301 to
+# the new address. Check 2 asks "does any surface declare this host?", and for
+# these the answer is now NO by design — the surface that used to answer here
+# declares the apex and a `basePath` instead.
+#
+# THIS IS NOT AN EXEMPTION LIST, it is a five-part claim, and every part is
+# checked below in `consolidated_hosts_redirect()`:
+#
+#   1. the named surface EXISTS in the registry — a typo here is a silenced check
+#   2. it has a non-empty `basePath` — it really did become a subfolder
+#   3. its `subdomain` is no longer this host — it really did leave
+#   4. NO surface declares this host — otherwise the exemption is unnecessary and
+#      hides a real router-without-a-surface next to a legitimate one
+#   5. a router matches the host AND carries the named middleware
+#
+# Part 5 is the one that earns the table. Without it, deleting `middlewares:` from
+# the leftover router leaves a live router pointing at the SAME bundle service, so
+# `journal.<apex>` quietly starts serving the journal again — a second origin for
+# one surface, with no CORS grant (check 10 deleted it), no canonical pointing at
+# it, and Google indexing both. A redirect that has stopped redirecting looks
+# exactly like a redirect, from every angle except a request.
+CONSOLIDATED_HOSTS = {
+    # Wave 1, 2026-08-19. `journal` is `subdomain: ''` + `basePath: '/journal'`;
+    # `cf-web-journal-sub` is the tombstone router on the old hostname and
+    # `cf-journal-to-apex` is the 301 that inserts the path segment. The redirect
+    # is PERMANENT and that is a one-way door, argued in estate-web.yml where it
+    # is written — deliberately unlike `cf-retired-*-to-mainnet`, which is a 302.
+    "journal": ("journal", "cf-journal-to-apex"),
+}
+
+
 # ── surfaces whose backend compose service has a DIFFERENT name ──────────────
 #
 # Check 3 otherwise resolves a surface to its backend by name equality, and every
@@ -443,6 +479,105 @@ def gateway_routers():
                 found.setdefault(sub, []).append((name, serves_api))
             name, pending = None, None
     return found
+
+
+MIDDLEWARES_RE = re.compile(r"^\s*middlewares:\s*\[(?P<list>[^\]]*)\]\s*$")
+
+
+def router_middlewares():
+    """{router-name: [middleware, ...]} for the routers of estate-web.yml.
+
+    Separate from `gateway_routers()` on purpose: that function's callers unpack a
+    two-tuple in four places, and widening it to carry middlewares would edit four
+    checks to serve one. This reads the same file again — it is a few hundred lines
+    — and keeps both readable.
+
+    SCOPED TO THE `routers:` SUBSECTION, which is not fussiness. A `chain`
+    middleware definition also has a `middlewares:` key, and its parent is indented
+    exactly like a router, so an unscoped read would file a chain's members under
+    the chain's own name and answer a question about a router with a fact about a
+    middleware. Nothing in this directory chains today; the parser should not be
+    the reason that stays true.
+    """
+    if not WEB_MAP.exists():
+        return {}
+    found, name, subsection = {}, None, None
+    for line in WEB_MAP.read_text().splitlines():
+        if line.lstrip().startswith("#"):
+            continue
+        s = SUBSECTION_RE.match(line)
+        if s:
+            subsection, name = s.group(1), None
+            continue
+        m = ROUTER_RE.match(line)
+        if m:
+            name = m.group("name")
+            continue
+        if subsection != "routers" or name is None:
+            continue
+        mw = MIDDLEWARES_RE.match(line)
+        if mw:
+            found[name] = [x.strip() for x in mw.group("list").split(",") if x.strip()]
+    return found
+
+
+def consolidated_hosts_redirect(surfaces, routers):
+    """── 13: a hostname a surface left still redirects to where it went ────────
+
+    The five parts of the CONSOLIDATED_HOSTS claim, checked. See that table for
+    what each one is worth; the costly one is part 5, a tombstone router that has
+    quietly stopped redirecting and serves the bundle on a second origin instead.
+    """
+    by_key = {s["key"]: s for s in surfaces}
+    declared = {s["subdomain"] for s in surfaces}
+    middlewares = router_middlewares()
+
+    for host, (key, middleware) in sorted(CONSOLIDATED_HOSTS.items()):
+        s = by_key.get(key)
+        if s is None:
+            bad(
+                f"CONSOLIDATED_HOSTS says surface '{key}' moved off '{host}.<apex>', and no surface "
+                f"with that KEY is in the registry. The entry exempts a host from check 2 on behalf "
+                f"of a surface that does not exist, so that host's routers are now unchecked"
+            )
+            continue
+        if not s["basePath"]:
+            bad(
+                f"CONSOLIDATED_HOSTS says '{key}' moved off '{host}.<apex>' onto a subfolder, and "
+                f"its registry row has NO `basePath`. Either the move was reverted — in which case "
+                f"this entry, the redirect middleware and the deleted CORS grants all come back "
+                f"together — or the row lost the field and every link to it now 404s"
+            )
+        if s["subdomain"] == host:
+            bad(
+                f"CONSOLIDATED_HOSTS says '{key}' LEFT '{host}.<apex>', and its registry row still "
+                f"declares that subdomain. The surface never moved, so the host needs no exemption "
+                f"and the 301 on it is a redirect loop away from the surface's own address"
+            )
+        if host in declared:
+            owner = next(x["key"] for x in surfaces if x["subdomain"] == host)
+            bad(
+                f"CONSOLIDATED_HOSTS exempts '{host}.<apex>' from check 2 because '{key}' left it, "
+                f"and surface '{owner}' declares that host. A live host must not be exempt: the "
+                f"exemption would cover a genuinely dead router sitting beside the real one"
+            )
+        if host not in routers:
+            bad(
+                f"'{key}' moved off '{host}.<apex>' and NO router matches that host any more. Every "
+                f"link, bookmark, feed subscription and search result pointing at the old address "
+                f"now 404s at the gateway — the redirect is the entire reason the move was safe"
+            )
+            continue
+        carrying = [n for n, _ in routers[host] if middleware in middlewares.get(n, [])]
+        if not carrying:
+            named = ", ".join(sorted(n for n, _ in routers[host]))
+            bad(
+                f"routers [{named}] match '{host}.<apex>' and NONE carries the '{middleware}' "
+                f"middleware, so nothing on that host redirects. The router still points at the "
+                f"bundle's service, so the surface is served on TWO origins: the apex, which is "
+                f"canonical and holds the CORS grant, and this one, which holds neither and which "
+                f"a search engine will index anyway"
+            )
 
 
 def api_host_subdomain():
@@ -1096,8 +1231,30 @@ VIEW_ORIGIN_RE = re.compile(
 # only that, is the table. Its keys are asserted below to be exactly the
 # `viewsAnyNetwork` set, so a new viewing surface cannot be added to the registry
 # without landing here too.
+#
+# ── KEYED ON THE SURFACE KEY, NOT THE SUBDOMAIN, SINCE THE APEX CONSOLIDATION ──
+#
+# It was keyed on subdomain until wave 1 of `deploy/docs/apex-consolidation.md`,
+# and that stopped working the moment two surfaces shared a hostname. `journal`
+# became `subdomain: ''` + `basePath: '/journal'`, so `site` and `journal` both
+# answer to `""` — and a dict cannot hold two checkouts under one key. Keyed that
+# way the table silently lost a row and check 10 reported the OPPOSITE of the
+# truth: "VIEW_WITNESS_REPOS names 'journal', which is not `viewsAnyNetwork` in
+# the registry", about a surface whose row says `viewsAnyNetwork: true` on the
+# line above its `basePath`.
+#
+# A subdomain identifies an ORIGIN and a key identifies a SURFACE, and this table
+# was always about surfaces: it answers "which checkout holds this bundle", and
+# two bundles on one hostname are still two checkouts. The origin comparisons in
+# check 10 stay keyed on the subdomain — that is what a browser puts in the
+# `Origin` header and what the gateway grants — so the check now reads the same
+# registry through two keys on purpose, with the reason written at each use.
+#
+# The only row that visibly changed is the apex's, from `""` to `"site"`. Every
+# other key equals its subdomain today, which is exactly why this is worth a
+# comment: the table looks unchanged and is now answering a different question.
 VIEW_WITNESS_REPOS = {
-    "": "site",
+    "site": "site",
     "hub": "hub-web",
     "explorer": "explorer-web",
     "network": "network-site",
@@ -1195,31 +1352,64 @@ def view_origin_drift(surfaces):
     list spells it `{{ env "CF_SITE_HOST" }}`, and `VIEW_ORIGIN_RE` reads both
     forms into the same set with `""` for the apex — the same shape as
     `CORS_ENTRY_RE`, so the two lists stay comparable.
+
+    ── AND SINCE THE APEX CONSOLIDATION, TWO SURFACES SHARE THAT SPELLING ───────
+
+    This check reads the registry through TWO keys, and the split is the whole
+    point rather than an implementation detail:
+
+      * The ORIGIN half — everything compared against `granted` — is keyed on the
+        SUBDOMAIN, because an origin is what a browser puts in the `Origin` header
+        and what the gateway matches. `journal` moved to `subdomain: ''` +
+        `basePath: '/journal'` in wave 1 of `docs/apex-consolidation.md`, so it and
+        `site` are ONE origin. `https://{{ env "CF_VIEW_SITE_HOST" }}` grants both,
+        and the journal's own line was deleted from `policy.yml` because a second
+        grant for the same string is not a second permission — it is a duplicate
+        that reads like a second surface. Collapsing two surfaces to one entry here
+        is CORRECT, and a set does it for free.
+      * The WITNESS half — `VIEW_WITNESS_REPOS`, and the module existence it proves
+        — is keyed on the SURFACE KEY, because it answers "which checkout holds
+        this bundle" and two bundles on one hostname are still two checkouts. Keyed
+        on subdomain the journal's row could not coexist with the apex's, and the
+        check reported `VIEW_WITNESS_REPOS names 'journal', which is not
+        viewsAnyNetwork in the registry` about a row that says exactly that.
+
+    So a surface disappearing from the origin half is not automatically a fault:
+    ask which half. `declared_origins` shrinking while `declared_keys` holds steady
+    is what consolidating a surface onto the apex LOOKS like, and the containment
+    assertions above still bind every origin that remains.
     """
     if not POLICY.exists():
         bad(f"{POLICY} does not exist — the cross-environment origins cannot be checked")
         return
     granted = {m.group(1) or "" for line in POLICY.read_text().splitlines()
                if (m := VIEW_ORIGIN_RE.match(line))}
-    declared = {s["subdomain"] for s in surfaces if s["viewsAnyNetwork"]}
+    # Two keys, one registry — see "TWO SURFACES SHARE THAT SPELLING" above. The
+    # origin half compares hostnames, so it keys on the subdomain and two surfaces
+    # on one host collapse to one entry on purpose. The witness half asks which
+    # checkout a bundle lives in, so it keys on the surface key and they do not.
+    declared_origins = {s["subdomain"] for s in surfaces if s["viewsAnyNetwork"]}
+    declared_keys = {s["key"] for s in surfaces if s["viewsAnyNetwork"]}
 
     # The one thing this file still states by hand — the checkout each surface
     # lives in — must cover exactly what the registry declares, or the witness
     # half below silently stops witnessing the surfaces it has no path for.
-    for sub in sorted(declared - set(VIEW_WITNESS_REPOS)):
+    for key in sorted(declared_keys - set(VIEW_WITNESS_REPOS)):
         bad(
-            f"surface '{sub or '<apex>'}' is `viewsAnyNetwork` in the registry and has no entry in "
+            f"surface '{key}' is `viewsAnyNetwork` in the registry and has no entry in "
             f"VIEW_WITNESS_REPOS, so this check cannot tell which checkout holds its "
             f"src/lib/viewed.ts. Its origin grant is still checked; its module is not"
         )
-    for sub in sorted(set(VIEW_WITNESS_REPOS) - declared):
+    for key in sorted(set(VIEW_WITNESS_REPOS) - declared_keys):
         bad(
-            f"VIEW_WITNESS_REPOS names '{sub or '<apex>'}', which is not `viewsAnyNetwork` in the "
+            f"VIEW_WITNESS_REPOS names '{key}', which is not `viewsAnyNetwork` in the "
             f"registry. Either the row lost the field — in which case its cross-environment origin "
-            f"is now an unearned credentialed grant and goes with it — or the surface was renamed"
+            f"is now an unearned credentialed grant and goes with it — or the surface was renamed. "
+            f"Note this table is keyed on the SURFACE KEY, not the subdomain: a surface that moved "
+            f"to a subfolder of the apex keeps its key and changes its origin"
         )
 
-    for sub in sorted(declared - granted):
+    for sub in sorted(declared_origins - granted):
         bad(
             f"'{sub or '<apex>'}' is `viewsAnyNetwork` in the registry — it re-points its reads at "
             f"the sibling estate IN PLACE — and has NO origin in the cross-environment block of "
@@ -1227,7 +1417,7 @@ def view_origin_drift(surfaces):
             f"the browser refuses them and the page reads 'cannot reach the server' with the "
             f"service behind it healthy — and nothing server-side records that anything was refused"
         )
-    for sub in sorted(granted - declared):
+    for sub in sorted(granted - declared_origins):
         bad(
             f"the cf-cors allowlist grants 'https://{sub or '<apex>'}<CF_VIEW_ORIGIN_SUFFIX>' — a "
             f"CREDENTIALED cross-origin read from ANOTHER environment's hostname — and that surface "
@@ -1237,6 +1427,12 @@ def view_origin_drift(surfaces):
         )
 
     if granted:
+        # `not s["basePath"]` for the reason check 5 gives: a surface mounted at a
+        # subfolder contributes NO origin of its own — it is served from its host's,
+        # which the bare surface on that host already puts in this set. Excluding
+        # them keeps the set a list of origins rather than of surfaces; including
+        # them would change nothing today and would silently start passing a
+        # subfolder mounted on a hostname with no bundle at its root.
         ui_hosts = {s["subdomain"] for s in surfaces if not s["basePath"] and s["servesUi"]}
         for sub in sorted(granted - ui_hosts):
             bad(
@@ -1257,20 +1453,20 @@ def view_origin_drift(surfaces):
     # The witness, where it can be read. Absence of a checkout is REPORTED, not
     # passed over: this file's rule is that a check which cannot run says so.
     unread = []
-    for sub in sorted(declared & set(VIEW_WITNESS_REPOS)):
-        witness = f"{VIEW_WITNESS_REPOS[sub]}/src/lib/viewed.ts"
-        repo = MICRO / VIEW_WITNESS_REPOS[sub]
+    for key in sorted(declared_keys & set(VIEW_WITNESS_REPOS)):
+        witness = f"{VIEW_WITNESS_REPOS[key]}/src/lib/viewed.ts"
+        repo = MICRO / VIEW_WITNESS_REPOS[key]
         if not repo.is_dir():
             unread.append(repo.name)
             continue
         if not (MICRO / witness).exists():
             bad(
-                f"the registry says '{sub or '<apex>'}' views any network in place, and "
+                f"the registry says '{key}' views any network in place, and "
                 f"{witness} does not exist. Either the bundle stopped viewing in place — in "
                 f"which case its `viewsAnyNetwork` row and its cross-environment origin go with it "
                 f"— or the module moved and this claim has stopped being checkable"
             )
-    known = {VIEW_WITNESS_REPOS[sub] for sub in declared & set(VIEW_WITNESS_REPOS)}
+    known = {VIEW_WITNESS_REPOS[key] for key in declared_keys & set(VIEW_WITNESS_REPOS)}
     for path in sorted(MICRO.glob("*/src/lib/viewed.ts")):
         repo = path.parent.parent.parent.name
         if repo not in known:
@@ -1634,8 +1830,13 @@ def main():
             )
 
     # ── 2: no router for a host the registry does not declare ─────────────────
+    #
+    # CONSOLIDATED_HOSTS is the one class of host that is legitimately routed and
+    # legitimately undeclared: the surface moved to a subfolder and left a 301
+    # behind. It is skipped here and checked HARDER in check 12 — the exemption
+    # buys the host five assertions it did not have, not zero.
     for sub, entries in sorted(routers.items()):
-        if sub in declared:
+        if sub in declared or sub in CONSOLIDATED_HOSTS:
             continue
         bad(
             f"routers {[n for n, _ in entries]} match host '{sub}.<apex>', which NO surface in "
@@ -1670,6 +1871,9 @@ def main():
 
     # ── 12: the estate's two origin allowlists agree with the registry too ────
     estate_origin_drift(surfaces)
+
+    # ── 13: a hostname a surface left still redirects to where it went ────────
+    consolidated_hosts_redirect(surfaces, routers)
 
     routed = sum(1 for s in surfaces if not s["basePath"] and s["subdomain"] in routers)
     if fails:

@@ -158,6 +158,40 @@ http:
         replacement: 'https://${1}'
         permanent: true
 
+    # ── the subdomain a surface used to live at, folded into its path ─────────
+    #
+    # Wave 1 of `docs/apex-consolidation.md`: Forge Journal moved from
+    # `journal.<apex>` to `<apex>/journal`, and this is what keeps the old
+    # hostname answering. Used by `cf-web-journal-sub` below, where the priority
+    # reasoning and the 301-vs-302 decision are written down.
+    #
+    # TWO CAPTURES RATHER THAN ONE, unlike `cf-www-to-apex` directly above,
+    # because this rewrite has to INSERT a segment between the host and the path
+    # instead of only dropping a label off the front. `(.+?)` is non-greedy so
+    # it stops at the first `/` and the host lands in `${1}` — greedy would
+    # swallow the path into the hostname and emit a URL with no path at all.
+    # A port survives it (`journal.localtest.me:8080/x` keeps the `:8080`),
+    # which is what makes a laptop behave like the estate.
+    #
+    # `${2}` may be EMPTY and that is the common case: a reader arriving at
+    # `journal.<apex>/` produces `<apex>/journal/`, which `PathPrefix(`/journal/`)`
+    # matches and the bundle serves as its index. The bare `<apex>/journal` form
+    # is served by the `Path()` half of the same alternation, so both spellings
+    # of the front page work and neither needs a second redirect.
+    #
+    # THE HOSTNAME IS NOT TEMPLATED, and the `journal\.` literal is doing a job:
+    # it cannot match `journal-testnet.<apex>`, so this middleware is inert on
+    # the retired estate no matter what the priorities are. Templating it with
+    # `CF_WEB_SUFFIX` would need the dots escaped for a regex — the suffix is
+    # `.cloudsforge.online`, where an unescaped `.` matches any character — and
+    # would produce a testnet redirect that only the router ordering suppresses.
+    # `cf-retired-*-to-mainnet` above hardcodes the apex for the same reason.
+    cf-journal-to-apex:
+      redirectRegex:
+        regex: '^https?://journal\.(.+?)/(.*)'
+        replacement: 'https://${1}/journal/${2}'
+        permanent: true
+
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
     # `rpc.<apex>` and `p2p.<apex>` are the only two hostnames in this estate that
@@ -1532,11 +1566,125 @@ http:
     # container's invariant rather than dead code: it is what makes a
     # `localtest.me` build, a laptop and any future second hostname right by
     # construction rather than by remembering.
+    #
+    # ══════════════════════════════════════════════════════════════════════════
+    # WAVE 1 OF THE APEX CONSOLIDATION: THIS SURFACE IS A PATH NOW
+    # ══════════════════════════════════════════════════════════════════════════
+    #
+    # `docs/apex-consolidation.md`. The registry says it in one line —
+    # `subdomain: ''`, `basePath: '/journal'` in `ui/.../surfaces.ts` — and this
+    # is the routing half. The bundle is built with `BASE = '/journal'`, its
+    # nginx serves `location = /journal` and `location /journal/`, and every
+    # absolute URL it writes to disk is already `__CF_ORIGIN__/journal/…`, so
+    # the `sub_filter` above composes `https://cloudsforge.online/journal/…`
+    # with no second substitution and no rewrite here. Verified in the built
+    # artefact before this router was written:
+    #
+    #     $ grep -o '<loc>[^<]*</loc>' dist/sitemap.xml | head -1
+    #     <loc>__CF_ORIGIN__/journal</loc>
+    #
+    # ── THE RULE IS NOT `PathPrefix(`/journal`)`, AND THAT IS MEASURED ────────
+    #
+    # Traefik's `PathPrefix` is a RAW STRING PREFIX with no segment boundary. It
+    # is easy to assume otherwise and the assumption is wrong in the direction
+    # that silently steals traffic from the apex bundle. Measured on 2026-08-19
+    # against traefik:v3.2.3 — the exact image this gateway runs — with one
+    # router `PathPrefix(`/journal`)` pointing at a dead backend, so 502 means
+    # the router MATCHED and 404 means nothing did:
+    #
+    #     /journal      502     /journalism    502   ← the hazard
+    #     /journal/     502     /journalism/x  502   ← the hazard
+    #     /journal/a/x  502     /jour          404
+    #
+    # And the same probe against the alternation actually used below:
+    #
+    #     /journal          502     /journalism      404
+    #     /journal/         502     /journalism/x    404
+    #     /journal/a/x      502     /journal-testnet 404
+    #     /journal/feed.xml 502
+    #
+    # `Path` is exact and `PathPrefix(`/journal/`)` cannot match a longer first
+    # segment because the boundary is IN the literal. So a future `/journalism`
+    # article on the marketing site keeps reaching `cf-web-site`, which is the
+    # only outcome nobody would have noticed going wrong.
+    #
+    # ── PRIORITY 600, AND WHY IT IS THE API BAND RATHER THAN A NEW ONE ────────
+    #
+    # `cf-web-site` matches this same Host at 500 and would otherwise win every
+    # path on it. The bands in this file are bundles 500, retirement 550, APIs
+    # 600, and an apex-mounted bundle belongs in the 600 band for the same
+    # reason an API does: it is a NARROWER rule on a host whose broad rule is
+    # already claimed. A new band would say these are a different kind of thing,
+    # and they are not — `cf-api-market-host` at 600 is `Host + PathPrefix` over
+    # `cf-web-market` at 500, which is exactly this shape.
+    #
+    # ── RENDERED ONLY ON THE ESTATE THAT IS NOT RETIRED, AND THAT IS THE BUG ──
+    # ── THIS GATE EXISTS TO PREVENT ──────────────────────────────────────────
+    #
+    # `CF_SITE_HOST` is `testnet.cloudsforge.online` on the testnet gateway, and
+    # `cf-retired-web-apex` matches that host at 550. Ungated, this router at
+    # 600 would OUTRANK the retirement on its own apex and serve the testnet
+    # journal bundle at `testnet.cloudsforge.online/journal` — a hole in the
+    # retirement, punched by a router that never mentions testnet, on the one
+    # surface whose duplicate-content case is spelled out four paragraphs up.
+    # The API routers outrank the retirement on purpose (`/v1` is how the
+    # combined view reads the other estate); a BUNDLE outranking it is the
+    # opposite of purpose. Raising the retirement above 600 is not the fix —
+    # that would retire the APIs the combined view depends on.
+    #
+    # So the gate is the same variable, the same comparison and the same file as
+    # the block that creates the redirect: an estate that is retired serves no
+    # bundle of its own on its apex, by construction. `ne` rather than `not`
+    # because `env` returns a STRING and every non-empty string is true to a Go
+    # template — `not (env "CF_WEB_RETIRED")` would be FALSE on mainnet, where
+    # the value is the four characters `false`, and this router would vanish
+    # from the only estate that needs it. Check 6 of `surface-routes.py` already
+    # refuses an empty value in both files, so both spellings are answered.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
     cf-web-journal:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/journal`) || PathPrefix(`/journal/`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-journal
+{{ end }}
+
+    # ── the hostname the archive used to live at, kept as a 301 ───────────────
+    #
+    # `journal.<apex>` is still a real tunnel hostname (`cloudflared/
+    # config.mainnet.public.yml`) and still resolves, so it must answer rather
+    # than 404 — five published articles, an RSS feed subscribers already point
+    # a reader at, and whatever links exist off this estate. It answers by
+    # sending everyone to the path, PRESERVING THE PATH: `/feed.xml` becomes
+    # `/journal/feed.xml` and a subscriber's reader follows it without being
+    # told, which is the difference between a consolidation and an outage.
+    #
+    # 301 RATHER THAN THE RETIREMENT'S 302, and the difference is the entire
+    # point of the wave. A 302 asks a crawler to keep the old address indexed; a
+    # 301 transfers the accumulated signal to the new one, which is why the
+    # surface is moving at all. The cost is that it is a one-way door — browsers
+    # cache a 301 indefinitely and a reader who follows this once cannot be sent
+    # back to the subdomain by changing this file. That is accepted here and is
+    # NOT accepted in `cf-retired-*-to-mainnet` above, where the 302 is
+    # deliberate because retiring a network's frontends is a decision that might
+    # be revisited. Moving a publication to its permanent home is not.
+    #
+    # It sits at 500 rather than 600 and that is load-bearing on testnet, where
+    # the hostname is `journal-testnet.<apex>` and `cf-retired-web-sub` at 550
+    # gets it first. The chain there is two hops and lands in the right place:
+    #
+    #     journal-testnet.<apex>/x  →302→  journal.<apex>/x  →301→  <apex>/journal/x
+    #
+    # The middleware's regex also declines to match the `-testnet` spelling on
+    # its own (`journal\.` cannot match `journal-testnet.`), so even if the
+    # priorities were ever reordered it would fall through rather than compose a
+    # testnet apex URL. Two independent reasons for one outcome, because the
+    # failure is invisible: a redirect to a page that exists, just the wrong one.
+    cf-web-journal-sub:
       rule: 'Host(`journal{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-journal-to-apex]
       service: cf-web-journal
 
     # ── agora — A BUNDLE AND ITS SERVICE ON ONE HOSTNAME, SPLIT BY PATH ───────

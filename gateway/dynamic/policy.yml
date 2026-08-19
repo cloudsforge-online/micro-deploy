@@ -207,17 +207,30 @@ http:
           # `access-control-allow-credentials: true`, and NO `access-control-allow-origin`. The
           # same request with a `pool.` or `foresight.` origin got one.
           - https://exchange{{ env "CF_WEB_SUFFIX" }}
-          # ── the journal, which is here for the ORDINARY reason after all ────────────
+          # ── the journal HAS NO LINE HERE ANY MORE, and the apex above is why ────────
           #
-          # Worth one line because the surface invites the opposite guess. Forge Journal is
-          # an archive: nothing on it is gated, no page fetches anything to render, and a
-          # reader who never signs in loses no function. So "a static archive needs no CORS
-          # grant" is a reasonable thing to think and it is wrong — the bundle carries the
-          # estate's account bar, and the bar calls `nimbus.<apex>/auth/handoff/redeem` at
-          # the end of a sign-in exactly like every origin above it. Without this line a
-          # reader who signs in from an article is returned to a page showing them signed
-          # out, which reads as a broken account rather than as a surface with none.
-          - https://journal{{ env "CF_WEB_SUFFIX" }}
+          # It had one, for the ordinary reason and worth stating because the surface
+          # invites the opposite guess: Forge Journal is an archive, nothing on it is gated
+          # and no page fetches anything to render, so "a static archive needs no CORS
+          # grant" is reasonable and wrong. The bundle carries the estate's account bar and
+          # the bar calls `nimbus.<apex>/auth/handoff/redeem` at the end of a sign-in like
+          # every origin here. Without a grant, a reader who signs in from an article is
+          # returned to a page showing them signed out — a broken account, not a surface
+          # with none.
+          #
+          # All of that is still true and it is now covered by `https://{{ env
+          # "CF_SITE_HOST" }}`, the FIRST entry in this list. Wave 1 of
+          # `docs/apex-consolidation.md` moved the surface to `<apex>/journal`, and CORS is
+          # decided on the ORIGIN — scheme, host, port. A path is none of the three, so the
+          # apex's grant covers every bundle mounted on it, and the journal's reads are
+          # preflighted against the same entry the marketing site uses.
+          #
+          # THE LINE IS DELETED RATHER THAN LEFT AS A NO-OP. `journal.<apex>` now 301s to
+          # the apex (`cf-journal-to-apex`, estate-web.yml), so no browser is ever on that
+          # origin and the grant could never fire. Check 5 of `scripts/surface-routes.py`
+          # enforces the deletion rather than leaving it to taste — it derives this list
+          # from `servesUi AND NOT basePath`, so a surface that becomes a path must leave
+          # this list or CI goes red with the `mint`/`devportal` message.
           # ── agora, which needs this for the one request it makes off its own origin ──
           #
           # Every read micro-agora-web performs is RELATIVE — the bundle and the service share
@@ -332,14 +345,25 @@ http:
           # `viewedNetwork()`, so a reader who chooses Testnet on the mainnet page reads the
           # testnet chain from a mainnet origin. Same shape as every line above, one layer down.
           - https://exchange{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          # `journal` views in place for a reason none of the lines above share: its CONTENT
-          # does not vary by network at all. An article is the same words on both, so there is
-          # nothing here for the switch to re-point except the account bar's own reads — and
-          # that is the whole point of the row. Without `viewsAnyNetwork` the Testnet button
-          # on an article throws the reader out of the piece and onto Forge Network, which is
-          # the defect the owner reported about the other surfaces. With it the chrome
-          # switches and the reader keeps their place.
-          - https://journal{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `journal` STILL views in place and no longer needs a line of its own, for the
+          # same reason it lost the one in the same-environment list above: it is
+          # `<apex>/journal` now, so the origin its cross-environment reads come FROM is
+          # `{{ env "CF_VIEW_SITE_HOST" }}` — the first entry in this block.
+          #
+          # The registry row keeps `viewsAnyNetwork: true`, which is not a formality here.
+          # The journal is the one viewer whose CONTENT does not vary by network at all —
+          # an article is the same words on both — so the switch re-points nothing but the
+          # account bar's own reads, and the row exists for what the Testnet button does
+          # WITHOUT it: throw a reader out of the piece they were reading and onto Forge
+          # Network, the defect the owner reported about the other surfaces. With it the
+          # chrome switches and the reader keeps their place.
+          #
+          # So the grant is unchanged in substance and the LINE is gone, and check 10 in
+          # `scripts/surface-routes.py` had to learn the difference: it compares this block
+          # against the registry by SUBDOMAIN, and two surfaces now share one. See the
+          # comment on VIEW_WITNESS_REPOS there — the origin half stays keyed on the origin,
+          # because that is what a browser sends; the witness half moved to the surface key,
+          # because that is what a checkout holds.
           # `agora` views in place, and here the switch re-points MORE than anywhere else on this
           # list. Everywhere else the two networks hold the same KIND of thing at different
           # stakes — a testnet balance is a real balance of a coin worth nothing. Agora holds

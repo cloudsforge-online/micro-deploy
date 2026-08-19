@@ -995,15 +995,32 @@ services:
       # registry instead of trusting it. Nineteen of twenty correct is exactly the
       # shape of drift no human reading finds, and this file had two such lists.
       #
-      # ── `journal.` IS THE NINETEENTH, AND IT LANDED WITH ITS CONTAINER ────────
+      # ── `journal.` WAS THE NINETEENTH, AND IT LEFT WITH ITS SUBDOMAIN ─────────
       #
       # Forge Journal is an archive: nothing on it is gated, no page fetches
       # anything, and a reader who never signs in loses no function whatsoever.
-      # The line is here anyway, on the day the container shipped, because the
+      # The line was here anyway, from the day the container shipped, because the
       # account bar is the estate's CHROME rather than a gate — and because
       # `exchange.` is the worked example of what leaving it out costs. A bar
       # that renders a sign-in link and then 403s the hand-off does not read as
       # "this surface has no account"; it reads as a broken account.
+      #
+      # It is gone now, and NOT because any of that stopped being true. Wave 1 of
+      # `docs/apex-consolidation.md` moved the surface from `journal.<apex>` to
+      # `<apex>/journal` — `subdomain: ''`, `basePath: '/journal'` on the registry
+      # row — so the ORIGIN a reader signs in from is the apex, and the apex is
+      # the FIRST line of this list. The grant did not need deleting and
+      # re-adding; it was already there, because an origin is a scheme, a host and
+      # a port, and a path is none of those.
+      #
+      # Leaving the old line would not have been harmless bloat. `journal.<apex>`
+      # now 301s to the apex (`cf-journal-to-apex` in `gateway/dynamic/
+      # estate-web.yml`), so no browser is ever ON that origin, and a grant to an
+      # origin that cannot exist is one nobody can audit by looking at what uses
+      # it. `scripts/surface-routes.py` refuses it in those terms: it derives this
+      # list from `servesUi AND NOT basePath` in the registry, so a surface that
+      # becomes a path leaves this list automatically or CI goes red. The deletion
+      # is a consequence of the registry edit rather than something to remember.
       #
       # ── `exchange.` WAS THE EIGHTEENTH, AND IT WAS ADDED THE DAY IT NEEDED ONE ─
       #
@@ -1069,7 +1086,6 @@ services:
         https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://journal${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
@@ -4761,6 +4777,16 @@ services:
       # empty `subdomain` in the registry — which is why the first entry carries
       # no label.
       #
+      # THE COUNT IN THAT SENTENCE WAS WRONG UNTIL THE LINE BELOW IT WAS DELETED,
+      # and both facts are recorded rather than quietly fixed. It said twenty
+      # while the list held twenty-one; `journal.` left in wave 1 of
+      # `docs/apex-consolidation.md` (see IDENTITY_HANDOFF_ORIGINS above for why
+      # a surface that becomes a path on the apex keeps its grant through the
+      # apex's own entry), and the number became true again by arithmetic rather
+      # than by anyone checking. A hand-written count next to a hand-written list
+      # is a second thing to keep in step, which is the argument for check 9
+      # deriving the whole list from the registry instead of reading this prose.
+      #
       # ── `pool.` WAS MISSING HERE TOO, AND HERE IT WAS COSTING SOMETHING ───────
       #
       # The micro-org#480 sweep found `pool.` absent from both lists. Above it was
@@ -4821,7 +4847,6 @@ services:
         https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://journal${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
