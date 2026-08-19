@@ -1,8 +1,29 @@
-# The telemetry plane
+# micro-deploy
 
 [![ci](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml/badge.svg)](https://github.com/cloudsforge-online/micro-deploy/actions/workflows/ci.yml)
 ![licence](https://img.shields.io/badge/licence-MIT-97CA00)
-![runbooks](https://img.shields.io/badge/runbooks-34-EF6C00)
+![runbooks](https://img.shields.io/badge/runbooks-35-EF6C00)
+
+> ### The estate runs on Kubernetes
+>
+> Since **07:44 UTC on 2026-08-19**, every public request is served by k3s on a
+> Hyper-V Linux VM — `cf-k8s`, `192.168.1.171`. No WSL, no Docker Desktop. The
+> compose estate this repository grew up around is **stopped**, and the app
+> host's `Cloudflared` service is Stopped and Disabled.
+>
+> - **Operating it** — start, stop, deploy, reboot, move to another machine:
+>   [`docs/kubernetes-operations.md`](docs/kubernetes-operations.md)
+> - **Why it is shaped this way**, and what the cutover did:
+>   [`docs/kubernetes-migration.md`](docs/kubernetes-migration.md)
+>
+> **Deploys are `./scripts/k8s-deploy.sh` run on the VM**, not
+> `release-deploy.sh` run here. Everything below still describes the compose
+> estate: accurate for how a release is *cut*, and for rolling back, but it is
+> no longer how the live estate is deployed.
+
+---
+
+## The telemetry plane
 
 AD-20, built. A **parallel** stack: it runs beside the existing eighteen-container
 estate without touching it, shares no port, no container name and no volume with

@@ -1,9 +1,14 @@
 # Migrating the estate to Kubernetes
 
-The estate is moving off `docker compose` on a WSL host and onto k3s on a
-Hyper-V Linux VM. This document is the runbook: what exists, where it lives,
-what has to be done by hand if the VM is ever rebuilt, and the exact sequence
-that flips public traffic.
+The estate moved off `docker compose` on a WSL host and onto k3s on a Hyper-V
+Linux VM. This document is the *history*: what exists, where it lives, what has
+to be done by hand if the VM is ever rebuilt, and the exact sequence that
+flipped public traffic — with what each step actually did.
+
+> **Looking for how to run it day to day?** Start, stop, deploy a release,
+> survive a reboot, move it to another machine, roll back:
+> **[`kubernetes-operations.md`](kubernetes-operations.md)**. This file explains
+> *why*; that one is what you do.
 
 ---
 
