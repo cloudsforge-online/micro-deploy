@@ -25,12 +25,17 @@ cutover (step 3's `down`, step 4's live target). What the estate measures now:
 
 | | real failures | of which pre-existing, documented below |
 | --- | --- | --- |
-| mainnet | **2** | 2 — `app` not in `initdb.sql`, `market.listings is EMPTY` |
+| mainnet | **3** | 2 — `app` not in `initdb.sql`, `market.listings is EMPTY`; the third is a race in the verifier, not the estate |
 | testnet | **59** | 59 — the documented baseline exactly |
 
 Mainnet's items 3–6 — the parallel-run drift — closed on the cutover, which is
 what step 1's stopped-source dump was for. Testnet's 59 is unchanged from the
 pre-cutover measurement: no new failure shape appeared on either network.
+
+Measured a second time with **every** estate container on the app host stopped
+and no estate port bound there, so that the cluster was demonstrably the only
+thing that could answer: same numbers, and all 21 mainnet public hostnames 200.
+That is step 8.
 
 The interlock this section used to describe is now spent, and the direction it
 guards has reversed. It was: a second connector splits live traffic across two
@@ -495,7 +500,7 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    |---|---|---|
    | `cf-miners` | `cf-miner-mainnet-apphost`, the estate's *second* EMBER coinbase | leave up — it mines to the chain host, not to the estate |
    | `cf-stratum` | `stratum-endpoint` | **stop it** |
-   | `cfmicro` | the compose telemetry plane (6 containers) | leave up; it goes red on a down estate, which is true |
+   | `cfmicro` | the compose telemetry plane (6 containers) | leave up during the window; it goes red on a down estate, which is true. **Stopped at step 8** — the cluster has its own `cf-telemetry`, and leaving it up meant an estate container was still running on the app host |
    | `cfwg` | WireGuard to the chain host | leave up — the miner needs it |
    | `ft_userdata` | freqtrade, unrelated to the estate | leave up |
 
@@ -656,12 +661,57 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    `HearthConformanceVectorsFailing` (severity `ticket`, pre-existing content),
    and `backup_last_success_unixtime` 889s old inside the cluster.
 
+8. **Stop everything on the app host, and re-measure.** *Not in the original
+   plan.* Steps 1–7 prove the cluster answers; they do not prove the app host
+   has stopped answering, because a surface that works has no way to say which
+   machine served it.
+
+   Step 3 had already stopped both estate projects. What was still running was
+   nine containers in four projects the runbook designates "leave up": the
+   `cfmicro` compose telemetry plane (6), `cf-miner-mainnet-apphost` (1), its
+   `cf-wg` (1), and freqtrade (1, unrelated and crash-looping). The telemetry
+   plane is the only one of those that is *estate* infrastructure, and the
+   cluster has its own — so it was stopped too, and that is a state change this
+   document is the record of. What remains on the app host is the second EMBER
+   miner, the WireGuard tunnel it mines through, and freqtrade. None of them
+   can serve a request.
+
+   The proof is a negative and has to be read as one: `ss -lntp` on the app host
+   binds **no estate port at all** — not 80, 443, 9081, 9181, 4000 or 5432.
+   Then, from a machine outside the estate, all **21** mainnet public hostnames
+   answered 200 with their real titles. With nothing estate-shaped listening on
+   the app host, the cluster is the only thing that could have answered.
+
+   | | real failures | what they are |
+   | --- | --- | --- |
+   | mainnet | **3** | the 2 pre-existing, plus one race in the verifier itself |
+   | testnet | **59** | the documented baseline, unchanged |
+
+   The third mainnet failure is **not a defect in the estate**. `estate-verify`
+   empties the custody address set, asserts the reconciliation fails closed,
+   restores it, and re-asserts — with no settle time for the indexer to re-scan
+   the twenty restored addresses. `reconciliation_runs` shows the whole drill in
+   fourteen seconds: `clean` drift 0 at 08:09:46, the deliberate
+   `failed/indexer_error` at 08:09:51, `drift_exceeded` at 08:09:57 — which is
+   what the verifier reads — and `clean` drift 0 again at 08:10:00. The drift at
+   08:09:57 is **negative**, the signature of an indexer that has not caught up
+   rather than of custody holding less than the ledger says. `asset_freezes` is
+   empty: EMBER was never frozen and the estate was not left worse. Filed as
+   follow-up 8.
+
 Rollback, at any point before step 6, is: scale `cf-edge` back to 0 (it already
 is), then `docker compose -p cloudsforge-estate start` and
 `docker compose -p cf-testnet start` — and nothing else. Step 3 used `stop`, so
 the containers are still there and `start` is the exact inverse. The compose
 databases are only ever READ (step 4 dumps from them; the restore writes into the
 cluster), and the tunnel never moved.
+
+After step 8 the rollback is the same three projects plus `cfmicro`, and the
+order matters in the other direction: bring compose **up first**, then
+`Start-Service Cloudflared` on Windows, then scale `cf-edge` to 0 — reversing
+those last two leaves the tunnel registered and pointing at nothing. That
+sequence is written out at the top of `k8s/cloudflared/60-cloudflared.yaml`,
+which is where anyone scaling that deployment will actually be looking.
 
 **Public hostnames are Cloudflare configuration and cannot be checked from this
 repository.** If a surface looks broken, prove the origin with a `Host` header
@@ -691,6 +741,16 @@ In order, none of them urgent enough to do during the window:
    digest like the other 51.
 7. **Task #168:** rotate the four exposed tokens and de-duplicate the three
    repeated names in `tokens.testnet.env`.
+8. **Give the custody drill a settle window.** `estate-verify`'s custody drill
+   restores the address set and asserts reconciliation about three seconds
+   later, before the indexer has re-scanned it, so it intermittently reads the
+   catching-up run and reports `drift_exceeded` — under a headline claiming the
+   estate has been left worse than it was found. The drift is negative every
+   time, which is the tell: custody has not shrunk, the indexer has not caught
+   up yet. Either poll until a run starts *after* the restore, or require two
+   consecutive runs to agree. Pre-existing; it belongs to the verifier and not
+   to this migration, and it is only visible here because this is the first
+   time the drill has been run repeatedly in one morning.
 
 ---
 
