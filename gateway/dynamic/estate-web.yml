@@ -239,6 +239,17 @@ http:
         replacement: 'https://${1}/trade/${2}'
         permanent: true
 
+    # Wave 3c's one. Same shape, and the same "the API routers outrank this"
+    # argument — which matters MORE here than for the three above, because
+    # agora's service answers `/livez` and `/readyz` at its root as well as
+    # `/v1`, and a monitor that followed a 301 to the bundle would be handed an
+    # HTML page with a 200 and would call it healthy.
+    cf-agora-to-apex:
+      redirectRegex:
+        regex: '^https?://agora\.(.+?)/(.*)'
+        replacement: 'https://${1}/agora/${2}'
+        permanent: true
+
     # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
     #
     # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
@@ -290,6 +301,27 @@ http:
       stripPrefix:
         prefixes:
           - "/trade"
+
+    # Wave 3c's, and the un-automatable audit re-run for it on 2026-08-20 rather
+    # than assumed from the three above:
+    #
+    #   micro-agora   0 redirects, 0 cookie Paths, 56 rooted-path hits
+    #
+    # All 56 READ rather than counted, and every one is a `define('GET', '/v1/…')`
+    # route REGISTRATION in `server.ts` — the same shape as `market`'s and
+    # `trade`'s, and, like those, a literal rather than anything derived from the
+    # request path. The routes a service SERVES do not move when the gateway
+    # strips a prefix in front of it. (98 hits before excluding `*.test.ts`; the
+    # remaining 42 are the suite calling its own endpoints.)
+    #
+    # The one worth naming is what is NOT in that list. micro-agora emits no
+    # `Location:` at all — every write answers the created object rather than
+    # redirecting to it — which is the property that makes a mount invisible to
+    # it, and the property a future endpoint could quietly break.
+    cf-agora-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/agora"
 
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
@@ -2015,11 +2047,55 @@ http:
     # half of `cf-cors` — the grant this surface's `viewsAnyNetwork: true`
     # registry row earns and that check 10 of `scripts/surface-routes.py`
     # verifies against `src/lib/viewed.ts` existing. Nothing here grants it.
+    # ── WAVE 3c — `agora.<apex>` BECOMES `<apex>/agora` ───────────────────────
+    #
+    # The same four routers as `market`, `create` and `trade`, and ONE DIFFERENCE
+    # that is the whole reason this surface got a wave of its own: agora's
+    # service answers `/livez` and `/readyz` AT ITS ROOT as well as `/v1`.
+    #
+    # On its own hostname that was three prefixes on one name with nothing else
+    # to collide with. Mounted, all three have to be named in BOTH API rules or
+    # the health endpoints fall through to the bundle router — which answers them
+    # with an HTML page and a 200. A monitor reading that as healthy is the
+    # failure this note exists to prevent, and it is the failure that looks most
+    # like success.
+    #
+    # `Path(`/agora`) || PathPrefix(`/agora/`)` and not a bare
+    # `PathPrefix(`/agora`)`: Traefik 3's PathPrefix is a RAW STRING PREFIX, so
+    # the bare form would also claim `/agoraphobia`.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
     cf-web-agora:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/agora`) || PathPrefix(`/agora/`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-agora
+{{ end }}
+
+    # ── OUTSIDE THE GATE, AND #174 IS WHY ─────────────────────────────────────
+    #
+    # `CF_WEB_RETIRED` is TESTNET. An API router inside that gate answers
+    # testnet's own reads with a 301 to mainnet — and `fetch` follows redirects
+    # silently and cross-origin, so the combined view renders MAINNET DATA with
+    # Testnet selected in the switcher and nothing anywhere reports an error.
+    # That was live on `/market` until micro-deploy#174.
+    #
+    # Retirement is a statement about a BUNDLE — the human-facing pages testnet
+    # no longer serves. It has never been a statement about data.
+    # `check-api-remount.py` tracks gate depth and fails any API router that
+    # opens inside one, so this cannot regress into a fifth surface.
+    cf-api-agora-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (PathPrefix(`/agora/v1`) || Path(`/agora/livez`) || Path(`/agora/readyz`))'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-agora-strip-mount]
+      service: cf-svc-agora
+
+    cf-web-agora-sub:
       rule: 'Host(`agora{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-agora-to-apex]
       service: cf-web-agora
     # `/livez` and `/readyz` alongside `/v1` for `cf-api-pool`'s reason: they are
     # what an external prober asks, and a prober that can only reach the bundle's
@@ -2028,6 +2104,11 @@ http:
     # Prometheus over the compose network, and publishing it would put the
     # whisper counter and every route's latency on the open internet.
     cf-api-agora:
+    # And its API on the old hostname, unchanged and ABOVE the tombstone so the
+    # 301 never sees it. A redirect answers a GET well and mangles a POST: a
+    # client that follows one may drop the body and downgrade the method, which
+    # is how an integration starts silently losing writes. The BUNDLE moved;
+    # callers did not have to — and that includes whatever is probing `/livez`.
       rule: 'Host(`agora{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
       priority: 600
       entryPoints: [websecure, tunnel]

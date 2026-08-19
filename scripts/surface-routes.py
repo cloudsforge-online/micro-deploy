@@ -372,6 +372,13 @@ CONSOLIDATED_HOSTS = {
     # tombstones, because a 301 answers a GET well and mangles a POST.
     "create": ("create", "cf-create-to-apex"),
     "trade": ("trade", "cf-trade-to-apex"),
+    # Wave 3c, and the same split again — with one thing the four above did not
+    # have. agora's service answers `/livez` and `/readyz` AT ITS ROOT as well as
+    # `/v1`, so `cf-api-agora` keeps all three prefixes on the old hostname above
+    # the tombstone, and `cf-api-agora-apex` names all three under the mount. A
+    # health probe that followed a 301 into the BUNDLE would be handed an HTML
+    # page with a 200 and would report the service up.
+    "agora": ("agora", "cf-agora-to-apex"),
 }
 
 
