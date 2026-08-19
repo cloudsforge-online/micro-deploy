@@ -1,0 +1,191 @@
+# The estate's own Traefik, in the cluster, reading the estate's own files.
+#
+# Applied per namespace by `scripts/k8s-gateway.sh --network <net>`, which is
+# also what builds the three objects this mounts.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY THIS RUNS TRAEFIK INSTEAD OF TRANSLATING TO IngressRoute
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# The obvious Kubernetes answer is to turn `gateway/dynamic/` into IngressRoute
+# CRDs and let k3s's bundled Traefik serve them. Measured, that is 3,318 lines,
+# 67 routers, 59 services and 14 middlewares of hand-translation — and the
+# routing is not incidental detail. `policy.yml` refuses `/internal` with a
+# router at priority 100000 (a middleware cannot refuse a request, so it had to
+# be a router); the two entrypoint middleware chains must stay identical or the
+# tunnel silently loses request-id, security headers and CORS while :443 stays
+# green. Every one of those is a rule somebody arrived at from an incident, and
+# a translation is a chance to lose one silently.
+#
+# The files also do not need translating. They proxy BY DNS NAME —
+# `http://identity:4000` — and a Service named `identity` in this namespace
+# resolves exactly the same way the compose alias did. The one thing that had to
+# change is the file provider's source: a bind mount becomes a ConfigMap.
+#
+# So this is the same Traefik, the same version, the same arguments, reading the
+# same four files. `scripts/check-k8s-gateway-matches-compose.py` is what keeps
+# that claim true rather than merely intended.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY IT IS ClusterIP AND PUBLISHES NOTHING
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Under compose the gateway published five host ports, four of them bound to
+# 127.0.0.1 for debugging and one — `tunnel`, port 81 — as the single door
+# cloudflared came through. `tunnel` is PLAINTEXT: it terminates no TLS, because
+# Cloudflare already did.
+#
+# cloudflared now runs in the cluster too, so that door is a ClusterIP:81 hop
+# between two pods and never touches the node's network. Publishing it on the LAN
+# would take a deliberately-plaintext entrypoint carrying the estate's whole
+# traffic and expose it to everything on 192.168.1.0/24. It is not published.
+#
+# It runs in `cf-edge`, NOT in this namespace, and that was measured rather than
+# chosen: the live tunnel has ONE connector serving 61 ingress rules across BOTH
+# networks — mainnet's hostnames to `127.0.0.1:9081` and testnet's to
+# `127.0.0.1:9181`, the two loopback ports the compose gateways published. The
+# ingress table belongs to the tunnel, not to a connector, so a second connector
+# would not split the networks; it would only load-balance all 61 rules across
+# both copies. One connector, reaching both gateways cross-namespace by FQDN, is
+# the honest translation. See `k8s/cloudflared/60-cloudflared.yaml`.
+#
+# Nothing binds a host port here, which also means this does not fight k3s's own
+# Traefik for :443. That bundled Traefik serves no route this estate declares —
+# it is left alone rather than disabled, because disabling it is a cluster-wide
+# change made for a reason local to one namespace.
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/name: gateway
+    app.kubernetes.io/part-of: cloudsforge-estate
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+  strategy:
+    # Recreate, not RollingUpdate. Two Traefiks briefly serving one Service is
+    # how a request for one surface gets answered from another's config while
+    # the new pod is still loading 208KB of dynamic files — the failure
+    # micro-org#428 is about. One at a time, always.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gateway
+      annotations:
+        # The file provider watches the mounted directory, and a ConfigMap
+        # update does eventually reach the pod — but "eventually" is up to a
+        # minute of kubelet sync, and a deploy that returns before the gateway
+        # has the new routes is a deploy that lies. The apply script stamps the
+        # content hash here, so a changed file is a new pod, deterministically.
+        cloudsforge.online/dynamic-hash: "unset"
+    spec:
+      containers:
+        - name: traefik
+          image: traefik:v3.2.3
+          args:
+            - --global.checknewversion=false
+            - --global.sendanonymoususage=false
+            - --log.level=INFO
+            - --accesslog=true
+            - --accesslog.format=json
+            - --accesslog.fields.headers.names.X-Request-Id=keep
+            - --accesslog.fields.headers.names.Traceparent=keep
+            # Authorization and Cookie are dropped at the logger, not redacted
+            # downstream. A bearer token that reaches a log file has leaked
+            # whatever the log's retention is.
+            - --accesslog.fields.headers.names.Authorization=drop
+            - --accesslog.fields.headers.names.Cookie=drop
+            - --providers.file.directory=/etc/traefik/dynamic
+            - --providers.file.watch=true
+            - --entrypoints.web.address=:80
+            - --entrypoints.websecure.address=:443
+            - --entrypoints.websecure.http.tls=true
+            - --entrypoints.websecure.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+            - --entrypoints.tunnel.address=:81
+            # IDENTICAL to websecure's chain, and it has to stay that way: the
+            # tunnel is how all public traffic actually arrives, so a chain that
+            # drifts here loses request-id, security headers and CORS for real
+            # users while :443 — which only a debugger uses — stays green.
+            - --entrypoints.tunnel.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+            - --metrics.prometheus=true
+            - --metrics.prometheus.entrypoint=metrics
+            - --metrics.prometheus.addrouterslabels=true
+            - --entrypoints.metrics.address=:8082
+            - --tracing.otlp=true
+            # FQDN, and the ONLY line in this file that had to change for the
+            # cluster. Under compose this was the bare `otel-collector:4317`,
+            # which resolved because the telemetry plane and both gateways sat
+            # on the same shared external `app` network. The collector is now in
+            # `cf-telemetry`, one copy for both networks exactly as before, so
+            # the name has to be qualified. Measured: Traefik is the collector's
+            # only in-cluster client — no estate service sets an OTLP endpoint
+            # variable at all.
+            - --tracing.otlp.grpc.endpoint=otel-collector.cf-telemetry.svc.cluster.local:4317
+            - --tracing.otlp.grpc.insecure=true
+            - --tracing.sampleRate=1.0
+            - --ping=true
+          envFrom:
+            # CF_API_HOST, CF_WEB_SUFFIX, CF_SITE_HOST and the upstreams. The
+            # dynamic files are Go templates over `env`, so this Secret is what
+            # makes one file set serve both networks — and an unset name renders
+            # an EMPTY host, which is a valid rule matching no request ever sent
+            # and logs nothing. `k8s-gateway.sh` checks the names are present.
+            - secretRef:
+                name: env-traefik
+          ports:
+            - {name: web, containerPort: 80}
+            - {name: websecure, containerPort: 443}
+            - {name: tunnel, containerPort: 81}
+            - {name: metrics, containerPort: 8082}
+          volumeMounts:
+            - {name: dynamic, mountPath: /etc/traefik/dynamic, readOnly: true}
+            - {name: certs, mountPath: /etc/traefik/certs, readOnly: true}
+          readinessProbe:
+            # `traefik healthcheck --ping` is what the compose healthcheck used.
+            # It answers once the entrypoints are listening AND the file
+            # provider has loaded, which is the distinction that matters: a
+            # Traefik that is listening with no routes 404s everything.
+            exec:
+              command: ["traefik", "healthcheck", "--ping"]
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+          resources:
+            # The only pod in the namespace with a CPU request. Everything else
+            # is BestEffort and therefore gets the kernel's minimum share, which
+            # is right for 49 services that idle — but if the gateway loses a
+            # scheduling race the whole estate is unreachable rather than one
+            # service being slow. This is a floor, not a limit; no limit is set
+            # because throttling the gateway under load is the same outage.
+            requests:
+              cpu: 100m
+              memory: 96Mi
+      volumes:
+        - name: dynamic
+          configMap:
+            name: gateway-dynamic
+        - name: certs
+          secret:
+            secretName: gateway-certs
+            defaultMode: 0400
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: gateway
+  labels:
+    app.kubernetes.io/name: gateway
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: gateway
+  ports:
+    - {name: web, port: 80, targetPort: web}
+    - {name: websecure, port: 443, targetPort: websecure}
+    - {name: tunnel, port: 81, targetPort: tunnel}
+    - {name: metrics, port: 8082, targetPort: metrics}

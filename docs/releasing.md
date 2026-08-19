@@ -2,6 +2,22 @@
 
 What is deployed right now, and the one rule that governs how it changes.
 
+> **⚠ THIS DOCUMENT NO LONGER DESCRIBES THE LIVE ESTATE.** At 07:44 UTC on
+> 2026-08-19 public traffic moved to k3s on a Hyper-V Linux VM (`cf-k8s`,
+> `192.168.1.171`). The compose estate described below is **stopped** — its
+> volumes are intact and it can be restarted, but it serves nobody, and the app
+> host's `Cloudflared` service is Stopped and **Disabled** so that a Windows
+> reboot cannot re-attach it to the tunnel.
+>
+> **Deploys are `scripts/k8s-deploy.sh` on the VM, not `release-deploy.sh` here.**
+> The authority for how a release reaches production is now
+> [`docs/kubernetes-migration.md`](kubernetes-migration.md). This file is kept,
+> unrewritten, for two things it still describes accurately: how a release is
+> *cut* (`cfctl bump`, immutable version tags, the dirty-checkout rule), and how
+> to bring the compose estate back if the cluster has to be rolled back. Every
+> command below that touches the app host assumes an estate that is not
+> currently running.
+
 ---
 
 ## Which machine, before anything else

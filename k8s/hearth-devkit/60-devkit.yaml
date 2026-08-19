@@ -1,0 +1,275 @@
+# The two read surfaces for the EMBER chain: an address index and a verifier.
+#
+# Applied per namespace by `scripts/k8s-hearth-devkit.sh --network <net>`, which
+# is also what supplies the chain id and refuses to run without one.
+#
+# This is the Kubernetes translation of `compose/docker-compose.hearth-devkit.yml`
+# and of nothing else. Read that file first: it argues the SHA pin, the separate
+# compose project, and why these two join the estate's network rather than
+# standing alone. Every one of those arguments survives translation intact, and
+# the three that changed shape are the only ones restated here.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT CHANGED, AND WHY EACH CHANGE WAS FORCED
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# 1. THEY NEED SERVICES, WHICH COMPOSE DID NOT MAKE THEM DECLARE.
+#
+#    The compose file's load-bearing paragraph is "they join the estate's
+#    network": an alias equal to the service name, resolvable from the gateway
+#    across compose projects, with no `ports:` anywhere in the file. That is
+#    complete under Docker. A Kubernetes Pod has no DNS name — only a Service
+#    does — so the two names the gateway proxies to have to exist as Services or
+#    `rpc.<apex>/api` answers 502 behind a gateway that reports healthy. This is
+#    the same failure that took out six frontends on this cluster; see the note
+#    on it in `scripts/k8s-gateway.sh`.
+#
+#    AND THESE TWO ARE THE ONE CASE THAT GUARD CANNOT SEE. It compares the
+#    router table's upstreams against the Services that exist, but it reads
+#    `url: "http://name:port"` literals, and these two upstreams are
+#    `{{ env "CF_EXPLORER_INDEX_UPSTREAM" }}` and `{{ env "CF_VERIFY_UPSTREAM" }}`
+#    — templated, so deliberately skipped. `k8s-hearth-devkit.sh` closes that
+#    hole by checking the two env values against the two Services below.
+#
+# 2. THE PORTS ARE NOT GUESSED — the compose file simply never had to say them.
+#
+#      9648  `HEARTH_VERIFY_URL: http://hearth-verify:9648`, stated in the
+#            compose file, because the index calls the verifier by it.
+#      9647  the port `CF_EXPLORER_INDEX_UPSTREAM` names in BOTH traefik env
+#            files. The apply script re-derives both from those files rather
+#            than trusting this comment, and fails on a mismatch.
+#
+# 3. THE CHAIN ID IS A PLACEHOLDER, ON PURPOSE.
+#
+#    Compose writes `${CF_HEARTH_CHAIN_ID:?set CF_HEARTH_CHAIN_ID (7411 mainnet,
+#    7412 testnet)}` — a hard failure, never a default, because `tools/explorer-
+#    api/src/env.js` defaults to mainnet's 7411 and an index silently following
+#    the wrong chain is confidently wrong about every balance rather than
+#    visibly broken. A committed manifest cannot express `:?`. So the value is
+#    stamped in at apply time FROM `compose/<network>.env`, the same single
+#    statement per environment compose reads, and the script exits non-zero when
+#    that file does not carry it. Same failure, same reason, same source of
+#    truth.
+#
+#    That is not hypothetical: `compose/mainnet.env` deliberately does not carry
+#    the line, and `compose/testnet.env` says why in the comment above its own —
+#    the devkit reaching 7411 is a phase-F decision somebody has to make, not a
+#    default that arrives with a copied file. So `--network mainnet` refuses
+#    here exactly as `docker compose` refuses there, and mainnet's five
+#    `rpc.<apex>` devkit routes answer 502 in this cluster precisely as they do
+#    on the live compose estate today. Measured 2026-08-19 against production:
+#    `https://rpc.cloudsforge.online/api` → 502, `/verify` → 502.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHAT DID NOT CHANGE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# The image SHA is a LITERAL here for the same reason it is a literal there: an
+# index and a verifier are things people cite, and "Etherscan says the source is
+# X" is worth something only if the build that said so is identifiable
+# afterwards. A variable would move that answer into untracked host state. The
+# apply script compares this pin against the compose file's byte-for-byte, so
+# the two cannot drift into two different claims about which build is running.
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hearth-explorer-index
+  labels:
+    app.kubernetes.io/name: hearth-explorer-api
+    app.kubernetes.io/part-of: cloudsforge-estate
+    online.cloudsforge.network: unset
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: cf-retain
+  resources:
+    requests:
+      # Measured in the live compose volume on 2026-08-19: 2.4 MB across 3 files
+      # for a ~16,000-block chain indexed from genesis. 1Gi is sized for the
+      # destination cluster rather than for today, exactly as the estate's other
+      # volume sizes are — k3s's local-path provisioner does not enforce
+      # capacity, so the number buys nothing now and costs nothing either.
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hearth-verify-state
+  labels:
+    app.kubernetes.io/name: hearth-verify
+    app.kubernetes.io/part-of: cloudsforge-estate
+    online.cloudsforge.network: unset
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: cf-retain
+  resources:
+    requests:
+      # Measured 2026-08-19: 9.7 MB across 5 files — essentially one downloaded
+      # solc. This one is given twice the index's room because it grows per
+      # COMPILER VERSION, ~9 MB each, and the compose file spells out the cost of
+      # losing it: every verification anyone ever submitted, plus a re-download
+      # from the Solidity team's server on the next request.
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hearth-explorer-api
+  labels:
+    app.kubernetes.io/name: hearth-explorer-api
+    app.kubernetes.io/part-of: cloudsforge-estate
+    online.cloudsforge.network: unset
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hearth-explorer-api
+  strategy:
+    # Recreate, not RollingUpdate, and the reason is the PVC rather than the
+    # traffic. `ReadWriteOnce` on one node does permit two pods to mount the same
+    # volume, which is worse than refusing: two indexers would write one LevelDB
+    # -shaped state directory concurrently during every rollout. One at a time.
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hearth-explorer-api
+        app.kubernetes.io/part-of: cloudsforge-estate
+        online.cloudsforge.network: unset
+    spec:
+      containers:
+      - name: hearth-explorer-api
+        image: ghcr.io/cloudsforge-online/hearth-explorer-api:sha-7fae1bc8c28b96802b858f23792acf5b75136e61
+        imagePullPolicy: IfNotPresent
+        env:
+        # The chain, by the SAME NAME compose reads. `EMBER_RPC_URL` is a
+        # `secret_vars` entry in both render-vars files, so it is already a key
+        # of `estate-tokens` in both namespaces and this reference is
+        # network-independent — no per-network key name, nothing to stamp.
+        #
+        # Compose's `${EMBER_RPC_URL:-http://host.docker.internal:8545}` default
+        # is dropped rather than translated, for the reason `render-vars.*.yaml`
+        # gives at length: nothing in this estate resolves `host.docker.internal`
+        # any more, so the fallback can only ever produce a service that silently
+        # indexes nothing. `optional: false` makes a missing key a boot failure.
+        - name: HEARTH_RPC_URL
+          valueFrom:
+            secretKeyRef:
+              name: estate-tokens
+              key: EMBER_RPC_URL
+              optional: false
+        - name: HEARTH_CHAIN_ID
+          value: 'CHAIN_ID_UNSET'
+        # Genesis. The chain is small and starting anywhere else makes "every
+        # transaction of this address" quietly mean "since we happened to look".
+        - name: HEARTH_EXPLORER_API_START_BLOCK
+          value: '0'
+        # Where a contract's source comes from. Without it, `getsourcecode`
+        # answers "not verified" for every address, including the verified ones.
+        # The name resolves to the Service below, in this namespace.
+        - name: HEARTH_VERIFY_URL
+          value: http://hearth-verify:9648
+        ports:
+        - containerPort: 9647
+        readinessProbe:
+          # The compose file declares NO healthcheck for either service, so
+          # there is no proven HTTP path to probe and this does not invent one.
+          # A TCP connect proves the only thing the Service actually needs — that
+          # something is listening on the port the gateway will address — and it
+          # gates Endpoints, so a rollout cannot publish a pod that is still
+          # opening its state directory. That is strictly more than compose had.
+          tcpSocket:
+            port: 9647
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: state
+          mountPath: /state
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: hearth-explorer-index
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hearth-verify
+  labels:
+    app.kubernetes.io/name: hearth-verify
+    app.kubernetes.io/part-of: cloudsforge-estate
+    online.cloudsforge.network: unset
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: hearth-verify
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: hearth-verify
+        app.kubernetes.io/part-of: cloudsforge-estate
+        online.cloudsforge.network: unset
+    spec:
+      containers:
+      - name: hearth-verify
+        image: ghcr.io/cloudsforge-online/hearth-verify:sha-7fae1bc8c28b96802b858f23792acf5b75136e61
+        imagePullPolicy: IfNotPresent
+        env:
+        - name: HEARTH_RPC_URL
+          valueFrom:
+            secretKeyRef:
+              name: estate-tokens
+              key: EMBER_RPC_URL
+              optional: false
+        - name: HEARTH_CHAIN_ID
+          value: 'CHAIN_ID_UNSET'
+        ports:
+        - containerPort: 9648
+        readinessProbe:
+          tcpSocket:
+            port: 9648
+          initialDelaySeconds: 5
+          periodSeconds: 10
+        volumeMounts:
+        - name: state
+          mountPath: /state
+      volumes:
+      - name: state
+        persistentVolumeClaim:
+          claimName: hearth-verify-state
+---
+# The two objects compose never needed. `CF_EXPLORER_INDEX_UPSTREAM` and
+# `CF_VERIFY_UPSTREAM` name exactly these two names on exactly these two ports,
+# in both networks' traefik env files; the apply script checks that rather than
+# taking this comment's word for it.
+apiVersion: v1
+kind: Service
+metadata:
+  name: hearth-explorer-api
+  labels:
+    app.kubernetes.io/name: hearth-explorer-api
+    online.cloudsforge.network: unset
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hearth-explorer-api
+  ports:
+  - {name: p9647, port: 9647, targetPort: 9647}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hearth-verify
+  labels:
+    app.kubernetes.io/name: hearth-verify
+    online.cloudsforge.network: unset
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: hearth-verify
+  ports:
+  - {name: p9648, port: 9648, targetPort: 9648}

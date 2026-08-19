@@ -152,6 +152,35 @@ esac
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; }
 
+# ── WHICH RUNTIME, AND WHY THE QUESTION CHANGES SHAPE WITH IT ─────────────────
+#
+# Under compose the dynamic directory is BIND-MOUNTED: the files the gateway
+# reads and the files in this checkout are the same inodes, so "is the gateway
+# serving what is on disk" is entirely a question about TIME — did Traefik reload
+# after the last write. There is nothing to compare, because there is only one
+# copy.
+#
+# Under Kubernetes there are two copies. `gateway/dynamic/*.yml` is rendered into
+# the `gateway-dynamic` ConfigMap and the pod mounts that, so the same sentence
+# splits into two independent questions:
+#
+#   1. Does the ConfigMap still say what the repository says?  (a CONTENT
+#      question — someone edited a `Host()` rule and never re-applied, and no
+#      timestamp anywhere on the cluster would show it)
+#   2. Has Traefik reloaded since the ConfigMap changed, and did that reload
+#      SUCCEED?  (the time question, unchanged in meaning)
+#
+# Only 2 has a compose analogue. 1 is a failure mode this runtime adds, and it is
+# the more likely of the two in practice: a kubelet syncs a changed ConfigMap into
+# the mount within a minute and Traefik's watch fires on it, whereas a forgotten
+# `kubectl apply` sits there indefinitely looking exactly like a healthy gateway.
+CF_RUNTIME=${CF_RUNTIME:-compose}
+CF_NAMESPACE=${CF_NAMESPACE:-${CF_PROJECT:-cloudsforge-estate}}
+case "$CF_RUNTIME" in
+  compose | k8s) ;;
+  *) echo "gateway-reload: CF_RUNTIME='$CF_RUNTIME' is neither 'compose' nor 'k8s'." >&2; exit 2 ;;
+esac
+
 # ── the pieces this script must not carry a second copy of ────────────────────
 #
 # The image and the metrics port are READ from the compose file and from the
@@ -279,6 +308,148 @@ gateway_container() {
   docker ps -q \
     --filter "label=com.docker.compose.project=$GW_PROJECT" \
     --filter "label=com.docker.compose.service=gateway" | head -1
+}
+
+# The pod behind the gateway Deployment. `app.kubernetes.io/name` and not `app`:
+# that is the selector every Deployment in `k8s/estate` was written with, and a
+# label that matches nothing returns an empty string, which every caller here
+# treats as "no gateway" — the same conservative answer `gateway_container`
+# gives.
+gateway_pod() {
+  kubectl get pod -n "$CF_NAMESPACE" -l app.kubernetes.io/name=gateway \
+    --field-selector=status.phase=Running \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
+}
+
+# ── 1. THE CONFIGMAP AGAINST THE REPOSITORY ───────────────────────────────────
+#
+# Compared as CONTENT, key by key, and reported by NAME. A digest of the whole
+# set would answer "something differs" for a check whose entire value is saying
+# which file, and the repository has an essay two screens up about exactly that
+# distinction for the mtime trigger.
+#
+# The certificates live in a SECRET rather than a ConfigMap, because the same
+# volume carries the keys. Only entries ending `.crt` are read — a certificate is
+# a public document and its bytes are what TLS staleness is about — and the
+# private keys beside them are never fetched, never decoded and never named. The
+# comparison prints file names and nothing else on either side of it.
+k8s_config_matches_repo() {
+  CF_NAMESPACE="$CF_NAMESPACE" DYNAMIC="$DYNAMIC" CERTS="$CERTS" python3 - <<'PY'
+import base64, json, os, subprocess, sys
+
+ns = os.environ["CF_NAMESPACE"]
+
+def api(kind, name):
+    p = subprocess.run(["kubectl", "get", kind, name, "-n", ns, "-o", "json"],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        return None
+    return json.loads(p.stdout)
+
+def disk(directory, suffix):
+    out = {}
+    if not os.path.isdir(directory):
+        return out
+    for n in sorted(os.listdir(directory)):
+        p = os.path.join(directory, n)
+        if n.endswith(suffix) and os.path.isfile(p):
+            out[n] = open(p, "rb").read()
+    return out
+
+# `both` says whether a file present in the repository and absent from the
+# cluster is a failure.
+#
+# For the dynamic directory it is: a `*.yml` that was never applied is a router
+# file the gateway has never seen, which is the whole drift this function exists
+# to catch.
+#
+# For the certificates it is NOT, and `trust.crt` is why. That is the CA bundle
+# CLIENTS verify against — `CF_ESTATE_CA`, what `estate-verify.sh` passes to
+# `curl --cacert` — and the gateway has no use for its own issuer. It is in the
+# directory, it is correctly not in the Secret, and demanding symmetry here would
+# produce a permanent red about a file that is exactly where it belongs. What
+# still holds in both directions is the assertion that matters: every certificate
+# the gateway IS mounting is byte-identical to the one in this checkout.
+problems, checked = [], 0
+for kind, name, directory, suffix, both in (
+    ("configmap", "gateway-dynamic", os.environ["DYNAMIC"], ".yml", True),
+    ("secret", "gateway-certs", os.environ["CERTS"], ".crt", False),
+):
+    obj = api(kind, name)
+    if obj is None:
+        problems.append("%s/%s does not exist in namespace %s" % (kind, name, ns))
+        continue
+    # A ConfigMap may carry `data` (text) or `binaryData`; a Secret carries
+    # base64 in `data`. Normalised to bytes so one comparison serves both.
+    live = {}
+    for k, v in (obj.get("data") or {}).items():
+        live[k] = v.encode() if kind == "configmap" else base64.b64decode(v)
+    for k, v in (obj.get("binaryData") or {}).items():
+        live[k] = base64.b64decode(v)
+    live = {k: v for k, v in live.items() if k.endswith(suffix)}
+    repo = disk(directory, suffix)
+    for k in sorted(set(repo) | set(live)):
+        if k not in live and not both:
+            continue
+        checked += 1
+        if k not in live:
+            problems.append("%s is in %s and NOT in %s/%s" % (k, directory, kind, name))
+        elif k not in repo:
+            problems.append("%s is in %s/%s and NOT in %s" % (k, kind, name, directory))
+        elif repo[k] != live[k]:
+            problems.append("%s DIFFERS between %s and %s/%s" % (k, directory, kind, name))
+
+if problems:
+    for p in problems:
+        print("FAIL " + p)
+    sys.exit(1)
+print("OK %d file(s) identical to the ConfigMap and the certificate Secret" % checked)
+PY
+}
+
+# ── 2. THE TIME QUESTION, WITH THE CLUSTER AS THE CLOCK ───────────────────────
+#
+# `newest_config` reads mtimes off this checkout, which under Kubernetes is the
+# wrong file set: the gateway does not read those files, and on a freshly cloned
+# repository every one of them is newer than any reload that ever happened. The
+# equivalent fact is when the CONFIGMAP was last written, and the API records it
+# — `metadata.managedFields[*].time`, one entry per field manager, so the answer
+# is the newest of them.
+#
+# Emits `<epoch> <what>`. An object that cannot be read emits `0`, and 0 makes
+# the comparison below pass; that is deliberate and safe only because
+# `k8s_config_matches_repo` has already failed loudly on a missing object.
+k8s_config_changed_at() {
+  CF_NAMESPACE="$CF_NAMESPACE" python3 - <<'PY'
+import calendar, json, os, subprocess, time
+
+ns = os.environ["CF_NAMESPACE"]
+best, who = 0, ""
+for kind, name in (("configmap", "gateway-dynamic"), ("secret", "gateway-certs")):
+    p = subprocess.run(["kubectl", "get", kind, name, "-n", ns, "-o", "json"],
+                       capture_output=True, text=True)
+    if p.returncode != 0:
+        continue
+    meta = json.loads(p.stdout).get("metadata", {})
+    stamps = [f["time"] for f in (meta.get("managedFields") or []) if f.get("time")]
+    if meta.get("creationTimestamp"):
+        stamps.append(meta["creationTimestamp"])
+    for s in stamps:
+        t = calendar.timegm(time.strptime(s, "%Y-%m-%dT%H:%M:%SZ"))
+        if t > best:
+            best, who = t, "%s/%s" % (kind, name)
+print("%d %s" % (best, who))
+PY
+}
+
+# The metrics port, read from the RUNNING container's arguments for the same
+# reason the compose branch reads it off `.Config.Cmd`: a hardcoded 8082 goes
+# stale the day the entrypoint moves, and this file already refuses that trade
+# for the image and the entrypoint list.
+k8s_metrics_port() {
+  kubectl get pod -n "$CF_NAMESPACE" "$1" \
+    -o jsonpath='{.spec.containers[0].args[*]}' 2>/dev/null \
+    | tr ' ' '\n' | awk -F: '/^--entrypoints\.metrics\.address=/ { print $NF; exit }'
 }
 
 # ── the probe's environment, resolved the way the deploy resolves it ──────────
@@ -524,7 +695,105 @@ EOF
   return 1
 }
 
+# ── the same assertion, against a cluster ─────────────────────────────────────
+#
+# Both halves run, and both are reported, even when the first fails. A ConfigMap
+# that has drifted from the repository and a gateway that has not reloaded are
+# different incidents with different fixes — `kubectl apply` versus `kubectl
+# rollout restart` — and collapsing them into one early return would hand the
+# reader whichever happened to be checked first.
+k8s_freshness() {
+  local rc=0 pod port metrics reload failure changed changed_by gap
+
+  local content
+  if content=$(k8s_config_matches_repo 2>&1); then
+    ok "${content#OK }"
+  else
+    rc=1
+    bad "THE DEPLOYED CONFIGURATION IS NOT WHAT THIS REPOSITORY SAYS."
+    printf '%s\n' "$content" | sed 's/^FAIL /       /' | sed 's/^/    /'
+    bad "Re-render and apply it: kubectl apply -k k8s/gateway (then $0)"
+  fi
+
+  pod=$(gateway_pod)
+  if [ -z "$pod" ]; then
+    bad "no running gateway pod in namespace '$CF_NAMESPACE' — nothing to compare the files against"
+    return 1
+  fi
+
+  port=$(k8s_metrics_port "$pod")
+  if [ -z "$port" ]; then
+    bad "the gateway exposes no metrics entrypoint, so the reload timestamp cannot be read."
+    bad "That is not a passing check — staleness would be invisible. Restore --entrypoints.metrics.address"
+    return 1
+  fi
+
+  metrics=$(kubectl exec -n "$CF_NAMESPACE" "$pod" -c traefik -- \
+    wget -qO- "http://127.0.0.1:$port/metrics" 2>/dev/null </dev/null)
+  if [ -z "$metrics" ]; then
+    bad "could not read the gateway's metrics on :$port in pod $pod — the reload timestamp is unknown, which is reported as a failure rather than a pass"
+    return 1
+  fi
+
+  reload=$(printf '%s\n' "$metrics" | awk '/^traefik_config_last_reload_success/ { printf "%.0f", $2; exit }')
+  failure=$(printf '%s\n' "$metrics" | awk '/^traefik_config_last_reload_failure/ { printf "%.0f", $2; exit }')
+  read -r changed changed_by <<EOF
+$(k8s_config_changed_at)
+EOF
+
+  if [ -z "$reload" ] || [ "$reload" = "0" ]; then
+    bad "the gateway has never successfully loaded a configuration (traefik_config_last_reload_success is unset)"
+    return 1
+  fi
+
+  # Identical in intent to the compose branch: a failed reload leaves the success
+  # timestamp untouched, so a gateway serving the last good table looks fresh.
+  if [ -n "$failure" ] && [ "$failure" != "0" ] && [ "$failure" -gt "$reload" ]; then
+    bad "the gateway's LAST reload FAILED ($(date -u -r "$failure" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "$failure")) and it is still serving the table from before it."
+    bad "The mounted directory does not render. Read it: kubectl logs -n $CF_NAMESPACE $pod"
+    return 1
+  fi
+
+  gap=$((changed - reload))
+  if [ "$gap" -le "$TOLERANCE_S" ]; then
+    ok "the gateway is serving the ConfigMap that is applied (reloaded $((reload - changed))s after it was written)"
+    return $rc
+  fi
+
+  # No digest marker here, and none is needed. Under compose the trigger is an
+  # mtime, which a `touch` or a restore moves without changing a byte; the
+  # cluster's timestamp moves only when a write actually reached the API server,
+  # so there is no false alarm to suppress and nothing derived to keep on disk.
+  bad "THE GATEWAY IS SERVING CONFIGURATION OLDER THAN THE APPLIED ONE, by ${gap}s."
+  bad "  written     : ${changed_by:-the ConfigMap} at $(date -u -r "$changed" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "$changed")"
+  bad "  last reload : $(date -u -r "$reload" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "$reload")"
+  bad "A kubelet syncs a changed ConfigMap into the mount within its sync period; if this"
+  bad "persists the mount is stale. Force it:  kubectl rollout restart -n $CF_NAMESPACE deploy/gateway"
+  return 1
+}
+
 # ── modes ─────────────────────────────────────────────────────────────────────
+#
+# `validate` and `reload` stay compose-only, and say so rather than degrading.
+#
+# `validate` runs a THROWAWAY TRAEFIK against the directory and counts the
+# routers it builds, which is how a configuration that does not render is caught
+# BEFORE it reaches the live gateway. The Kubernetes equivalent is a throwaway
+# Pod mounting the same ConfigMap, and it is not written yet. `reload` refuses
+# for the same reason it refuses when `validate` fails: restarting a gateway
+# against a configuration nobody has rendered is how you turn a stale router
+# table into no router table, and a rollout gives you a NEW pod with nothing.
+# Until the probe Pod exists, that step is a person's to take deliberately.
+if [ "$CF_RUNTIME" = k8s ] && [ "$mode" != check ]; then
+  bad "'$mode' is not implemented for CF_RUNTIME=k8s — only --check is."
+  bad "There is no probe-Pod validator yet, and a rollout without one replaces a stale"
+  bad "router table with an empty one. Apply and restart deliberately:"
+  bad "    kubectl apply -k k8s/gateway"
+  bad "    kubectl rollout restart -n $CF_NAMESPACE deploy/gateway"
+  bad "    $0 --check"
+  exit 2
+fi
+
 case "$mode" in
   validate)
     validate || exit 1
@@ -532,7 +801,10 @@ case "$mode" in
     ;;
   check)
     echo "── is the gateway serving what is on disk? ──────────────────────────"
-    freshness || exit 1
+    case "$CF_RUNTIME" in
+      compose) freshness || exit 1 ;;
+      k8s) k8s_freshness || exit 1 ;;
+    esac
     exit 0
     ;;
   reload)

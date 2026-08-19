@@ -1,0 +1,92 @@
+# The testnet database, as a CloudNativePG Cluster.
+#
+# Read k8s/database/20-cluster-mainnet.yaml first — every design decision is
+# argued there and is not repeated. This file records only what DIFFERS, and why.
+#
+# ── TESTNET IS NOT A COPY OF MAINNET WITH SMALLER NUMBERS ────────────────────
+#
+# It is a separate cluster in a separate namespace with a SEPARATE PASSWORD, and
+# that last part is not a formality. `compose/docker-compose.estate.yml` says it
+# at length: the password was once a literal, byte-identical across both
+# networks, in a public repository — so "testnet access was mainnet access at the
+# database layer" (micro-org#157). The fix was two gitignored files, and CI
+# asserts the two values differ. That property has to survive this migration,
+# and two Secrets in two namespaces is how.
+#
+# ── AND IT IS NOT DORMANT, WHICH THIS MIGRATION NEARLY ASSUMED ───────────────
+#
+# It was on record here as leftover residue from the 2026-08-10 host move. That
+# was wrong, and measuring it rather than trusting the note is what caught it.
+# On 2026-08-19 `cf-testnet-postgres-1` had THIRTY live client backends, one per
+# service, and real write traffic since its last stats reset — indexer 8,891
+# inserts and 18,325 updates, beacon 7,816 inserts, identity 1,760. 655 MB
+# across the same 30 databases as mainnet.
+#
+# So testnet migrates with its data, on the same schedule, and a cutover that
+# skipped it would have taken the network the frontend integrates with down.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: postgres
+  namespace: cf-testnet
+  labels:
+    online.cloudsforge.network: testnet
+spec:
+  instances: 1
+
+  # Tag AND digest together — CNPG's webhook refuses a bare digest because it
+  # cannot tell an upgrade from a restart without a version. Argued in full in
+  # 20-cluster-mainnet.yaml; the pull still resolves by digest.
+  imageName: ghcr.io/cloudnative-pg/postgresql:17.11-standard-trixie@sha256:91e0de662d53895a45f1396f4ee1a75daeb0c26fc87853afc9c8f43e01fdaa21
+  imagePullPolicy: IfNotPresent
+
+  enableSuperuserAccess: false
+
+  bootstrap:
+    initdb:
+      database: app
+      owner: cloudsforge
+      # A DIFFERENT Secret in a DIFFERENT namespace from mainnet's, holding a
+      # different value — read by scripts/k8s-secrets.sh from
+      # `compose/estate/tokens.testnet.env`, which is the testnet half of the
+      # pair CI compares.
+      secret:
+        name: pg-cloudsforge
+      localeCollate: en_US.utf8
+      localeCType: en_US.utf8
+      encoding: UTF8
+
+  postgresql:
+    parameters:
+      # Same 400 as mainnet, and for the same measured reason: the connection
+      # count is driven by the number of SERVICES times their pool size, and
+      # testnet runs the same service list. A smaller limit here would fail
+      # under testnet's real load, which is 30 backends before anyone logs in.
+      max_connections: "400"
+      shared_buffers: 256MB
+      effective_cache_size: 512MB
+      work_mem: 4MB
+      maintenance_work_mem: 64MB
+
+  resources:
+    requests:
+      memory: 1Gi
+      cpu: "250m"
+    limits:
+      memory: 1Gi
+
+  storage:
+    storageClass: cf-retain
+    # 655 MB in use. 20Gi is thirty times that, and still small enough that
+    # both clusters plus the estate's images fit the VM's 180 GB with room.
+    # As on mainnet, this is a directory rather than a quota under local-path.
+    size: 20Gi
+
+  walStorage:
+    storageClass: cf-retain
+    size: 8Gi
+
+  primaryUpdateStrategy: unsupervised
+
+  monitoring:
+    enablePodMonitor: false

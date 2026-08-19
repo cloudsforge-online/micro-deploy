@@ -353,10 +353,47 @@ export const SERVICES = {
     base: process.env.CF_STUDIO_URL || `http://127.0.0.1:${PORT_BASE}111`,
     gateway: false,
   },
-  ledger: { base: `http://127.0.0.1:${PORT_BASE}102`, gateway: false },
-  billing: { base: `http://127.0.0.1:${PORT_BASE}106`, gateway: false },
-  nda: { base: `http://127.0.0.1:${PORT_BASE}116`, gateway: false },
-  community: { base: `http://127.0.0.1:${PORT_BASE}117`, gateway: false },
+  // The other four, overridable for the same reason `studio` is — and now for a
+  // second one that applies to all five at once.
+  //
+  // ── A PUBLISHED HOST PORT IS A COMPOSE FACT, NOT AN ESTATE FACT ─────────────
+  //
+  // `127.0.0.1:4116` is where nda answers *because docker published it there*.
+  // Kubernetes publishes nothing: the estate's forty-six host ports do not exist
+  // on the k3s node, and each service is reachable only at its Service's
+  // ClusterIP. So on that runtime all four of these resolve to a closed port,
+  // `fetch` throws, and `--check` reports
+  //
+  //     community: http://127.0.0.1:4117/v1/communities?limit=200 … fetch failed
+  //
+  // which reads as "the community service is down" and means "this file assumed
+  // docker". Measured on the migration VM on 2026-08-19: three of the five,
+  // three failures, none of them about content.
+  //
+  // The four https surfaces above needed no such knob because a hostname is a
+  // property of the ESTATE and survives the runtime change intact — which is the
+  // whole argument for why these four are the exceptions. They are addressed by
+  // deployment topology, so they take a deployment variable.
+  //
+  // `CF_STUDIO_URL` was already here and keeps its name; the other four follow
+  // its shape rather than inventing a second convention, because a reader who
+  // has found one of them has found all five.
+  ledger: {
+    base: process.env.CF_LEDGER_URL || `http://127.0.0.1:${PORT_BASE}102`,
+    gateway: false,
+  },
+  billing: {
+    base: process.env.CF_BILLING_URL || `http://127.0.0.1:${PORT_BASE}106`,
+    gateway: false,
+  },
+  nda: {
+    base: process.env.CF_NDA_URL || `http://127.0.0.1:${PORT_BASE}116`,
+    gateway: false,
+  },
+  community: {
+    base: process.env.CF_COMMUNITY_URL || `http://127.0.0.1:${PORT_BASE}117`,
+    gateway: false,
+  },
 }
 
 /* ── the chain, in the places this deployment actually keeps it ─────────────── */

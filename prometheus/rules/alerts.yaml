@@ -1221,7 +1221,28 @@ groups:
         # container which failed to come back is noticed the same morning. The
         # boot-time seed is what makes 30m safe — the gauge is repopulated from
         # `backup_runs` as the process starts, not on the next successful run.
-        expr: absent(backup_last_success_unixtime)
+        # ── PER INSTANCE, AND THAT IS THE WHOLE POINT OF THE MATCHERS ─────────
+        #
+        # `absent()` answers about the WHOLE SERIES SET, so the bare
+        # `absent(backup_last_success_unixtime)` this used to be went empty the
+        # moment ANY runner succeeded anywhere. That was harmless while one
+        # estate had a runner and the other had none — and it became a hole on
+        # 2026-08-19, when the Kubernetes migration gave testnet a backup runner
+        # of its own. From that day a healthy mainnet would have covered for a
+        # testnet that never once succeeded: exactly the silent-green this rule
+        # exists to remove, reintroduced by a second copy of the thing it
+        # watches.
+        #
+        # So one `absent()` per instance, `or`-ed. `absent()` with matchers
+        # returns 1 CARRYING those matchers as labels, so the firing alert names
+        # its own estate and the two cannot mask each other. The instances are
+        # written out rather than derived because that is what makes ADDING A
+        # THIRD RUNNER WITHOUT ADDING A CLAUSE HERE a visible omission instead of
+        # a quiet one — there is no expression over an empty set that can notice
+        # a runner nobody told it about.
+        expr: >-
+          absent(backup_last_success_unixtime{instance="backup-runner:4130"})
+          or absent(backup_last_success_unixtime{instance="cf-testnet-backup-runner:4130"})
         for: 30m
         labels:
           severity: ticket
@@ -1229,13 +1250,13 @@ groups:
           service: backup-runner
           sev: "3"
         annotations:
-          summary: "Nothing has ever backed this estate up, and the backup page cannot say so"
+          summary: "Nothing has ever backed {{ $labels.instance }} up, and the backup page cannot say so"
           description: >-
-            No series exists for backup_last_success_unixtime, so
-            BackupAgeExceeded is green because there is nothing to compare rather
-            than because a backup is recent. Establish which of the three states
-            this is — no runner, no scrape, or no successful run — before
-            touching anything.
+            No series exists for backup_last_success_unixtime on
+            {{ $labels.instance }}, so BackupAgeExceeded is green for it because
+            there is nothing to compare rather than because a backup is recent.
+            Establish which of the three states this is — no runner, no scrape,
+            or no successful run — before touching anything.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-never-run.md
 
       - alert: MinerCoinbaseKeyUnbacked

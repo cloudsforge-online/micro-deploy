@@ -149,6 +149,203 @@ TESSERA_WEB=${TESSERA_WEB:-http://127.0.0.1:${PB}140}
 LANTERN=${LANTERN:-http://127.0.0.1:${PB}141}
 COMPOSE=${COMPOSE:-compose/docker-compose.estate.yml}
 
+# ── WHICH RUNTIME THIS ESTATE RUNS ON ─────────────────────────────────────────
+#
+# Since 2026-08-19 the same estate exists twice: as compose on the Windows/WSL
+# app host, and as Kubernetes on `cf-k8s`. Everything above this line already
+# worked on both — the ports and hostnames are variables, and `k8s-estate-verify.sh`
+# supplies ClusterIPs for them. What did NOT work is the forty-one places below
+# that shell out to `docker compose`, and they did not work in the worst way
+# available: `docker` is not installed on the VM, so every one of them produced an
+# empty string on stderr-suppressed failure, and an empty string is what a
+# genuinely absent row also looks like. Six sections would have reported the
+# estate broken; the rest would have reported it fine, having asked nothing.
+#
+# So the runtime is named, and the four shapes of container access are functions.
+# `compose` is the default and its expansion is CHARACTER-FOR-CHARACTER what was
+# written inline before, so a mainnet run is the same run it was.
+#
+# `CF_NAMESPACE` defaults to `CF_PROJECT` because that is not a coincidence: the
+# Kubernetes namespaces were named after the compose projects precisely so that
+# `<project>` == `<namespace>` and this line could be a default rather than a
+# second list to keep in step. See `docs/kubernetes-migration.md`.
+CF_RUNTIME=${CF_RUNTIME:-compose}
+CF_NAMESPACE=${CF_NAMESPACE:-${CF_PROJECT:-cloudsforge-estate}}
+case "$CF_RUNTIME" in
+  compose | k8s) ;;
+  *)
+    echo "estate-verify: CF_RUNTIME='$CF_RUNTIME' is neither 'compose' nor 'k8s'." >&2
+    exit 2
+    ;;
+esac
+
+# Run a command inside a service's container. STDIN IS NOT FORWARDED under k8s,
+# which is the whole reason `cfx_in` exists separately: `kubectl exec` without
+# `-i` closes the child's stdin, and a `psql` or a `node` reading a program off
+# stdin then reads EOF and succeeds at doing nothing. `docker compose exec -T`
+# forwards stdin either way, so under compose the two are the same command — the
+# distinction costs the compose path nothing and saves the k8s path from a class
+# of silent empty answer this file has already been bitten by twice.
+cfx() {
+  cfx_svc=$1
+  shift
+  case "$CF_RUNTIME" in
+    compose) docker compose -f "$COMPOSE" exec -T "$cfx_svc" "$@" ;;
+    k8s) kubectl exec -n "$CF_NAMESPACE" "deploy/$cfx_svc" -- "$@" ;;
+  esac
+}
+cfx_in() {
+  cfx_svc=$1
+  shift
+  case "$CF_RUNTIME" in
+    compose) docker compose -f "$COMPOSE" exec -T "$cfx_svc" "$@" ;;
+    k8s) kubectl exec -i -n "$CF_NAMESPACE" "deploy/$cfx_svc" -- "$@" ;;
+  esac
+}
+
+# The primary's pod name, resolved from CloudNativePG's own label rather than
+# assumed to be `postgres-1`. A single-instance cluster makes that literal true
+# today and a failover makes it false without warning, and a wrong pod name is
+# again an empty string that reads like an empty table.
+cf_pg_pod() {
+  if [ -z "${CF_PG_POD:-}" ]; then
+    CF_PG_POD=$(kubectl get pod -n "$CF_NAMESPACE" \
+      -l 'cnpg.io/cluster=postgres,cnpg.io/instanceRole=primary' \
+      -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+    [ -n "$CF_PG_POD" ] || CF_PG_POD=postgres-1
+  fi
+  printf '%s' "$CF_PG_POD"
+}
+
+# THE THIRTY-ODD DATABASE READS, AND WHY THE k8s BRANCH IS NOT `-U cloudsforge`.
+# The CNPG image's `pg_hba.conf` gives local connections PEER auth, and the pod
+# runs as `postgres`. `psql -U cloudsforge` from inside it is therefore not a
+# password problem to be solved with a password — it is
+# `FATAL: Peer authentication failed for user "cloudsforge"`, always, and putting
+# the estate's postgres password in this file's argv to escape it would be a
+# worse trade than the one it fixes.
+#
+# So: connect as the superuser peer auth already accepts, then `SET ROLE` to the
+# role the compose path connects AS. Privileges, `current_user` and the
+# `"$user"` in `search_path` all then resolve to `cloudsforge` exactly as they do
+# under compose — verified against both namespaces, where `current_user` reads
+# back `cloudsforge`. A role name is not a credential, so its appearance in argv
+# is not the thing the estate's rules are about.
+#
+# `-U cloudsforge` is supplied HERE rather than at the call sites, so the
+# contract is "run this psql as the estate's role" and there is one place where
+# that sentence is true.
+cfpsql() {
+  case "$CF_RUNTIME" in
+    compose) docker compose -f "$COMPOSE" exec -T postgres psql -U cloudsforge "$@" ;;
+    k8s)
+      kubectl exec -n "$CF_NAMESPACE" "$(cf_pg_pod)" -c postgres -- \
+        env PGOPTIONS=-crole=cloudsforge psql -U postgres "$@"
+      ;;
+  esac
+}
+cfpsql_in() {
+  case "$CF_RUNTIME" in
+    compose) docker compose -f "$COMPOSE" exec -T postgres psql -U cloudsforge "$@" ;;
+    k8s)
+      kubectl exec -i -n "$CF_NAMESPACE" "$(cf_pg_pod)" -c postgres -- \
+        env PGOPTIONS=-crole=cloudsforge psql -U postgres "$@"
+      ;;
+  esac
+}
+
+# Is this service running? Compose answers by name from `ps --services`;
+# Kubernetes by ready replicas, because a Deployment that exists with zero ready
+# pods is present and is not running, and the difference is the whole question.
+# Both print a count, so the callers below are unchanged.
+cf_service_running() {
+  case "$CF_RUNTIME" in
+    compose) docker compose -f "$COMPOSE" ps --status running --services 2>/dev/null | grep -cx "$1" ;;
+    k8s)
+      kubectl get deploy -n "$CF_NAMESPACE" "$1" -o jsonpath='{.status.readyReplicas}' 2>/dev/null \
+        | grep -cx '[1-9][0-9]*'
+      ;;
+  esac
+}
+
+# The image reference a service is actually running, and the git SHA baked into
+# it. Compose reads it through `docker inspect`; k3s has no docker daemon at all,
+# so the k8s branch asks containerd through `crictl inspecti` and reads the same
+# OCI label out of the image spec. Both print the SHA or nothing, and "nothing"
+# is a real answer — see `web_release_for`, which falls back rather than fails.
+cf_image_revision() {
+  case "$CF_RUNTIME" in
+    compose)
+      ci_ref=$(docker compose -f "$COMPOSE" ps -q "$1" 2>/dev/null | head -1)
+      [ -n "$ci_ref" ] && ci_ref=$(docker inspect "$ci_ref" --format '{{.Config.Image}}' 2>/dev/null)
+      [ -n "$ci_ref" ] || return 0
+      docker inspect "$ci_ref" \
+        --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null
+      ;;
+    k8s)
+      ci_ref=$(kubectl get deploy -n "$CF_NAMESPACE" "$1" \
+        -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
+      [ -n "$ci_ref" ] || return 0
+      sudo k3s crictl inspecti "$ci_ref" 2>/dev/null | python3 -c 'import sys, json
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+labels = (d.get("info", {}).get("imageSpec", {}).get("config", {}) or {}).get("Labels") or {}
+sys.stdout.write(labels.get("org.opencontainers.image.revision", ""))'
+      ;;
+  esac
+}
+
+# The address a Service answers on, as `host:port`. ClusterIPs route from the
+# node itself — kube-proxy's iptables rules live on the node, not only inside
+# pods — so this file reaches every service directly and there is not one
+# `kubectl port-forward` anywhere in it. Cluster DNS is a different matter and
+# does NOT resolve from the host, which is why this asks for the IP and not the
+# name.
+cf_svc_addr() {
+  kubectl get svc -n "$CF_NAMESPACE" "$1" \
+    -o jsonpath='{.spec.clusterIP}:{.spec.ports[0].port}' 2>/dev/null
+}
+
+# A service's environment as `NAME=VALUE` lines.
+#
+# NOTHING MAY PRINT THIS. Every caller pipes it straight into `grep -c` and
+# counts, which is the whole design: the two ledger checks below need to know
+# that a credential is present and has the right PREFIX, and neither the value
+# nor its length nor a hash of it is any part of that question. A `printf` of
+# this function's output would put the estate's entire credential set on a
+# terminal, and the repository has already paid for that mistake twice.
+#
+# It also fixes a mainnet-only bug it inherited. The two callers named the
+# container `cloudsforge-estate-ledger-1` as a LITERAL, so on testnet — where it
+# is `cf-testnet-ledger-1` — `docker inspect` matched nothing, the first check
+# reported a missing credential that was present, and the second reported a
+# retired token absent without having looked. Both now go through `$CF_PROJECT`.
+cf_service_env() {
+  case "$CF_RUNTIME" in
+    compose)
+      docker inspect "${CF_PROJECT:-cloudsforge-estate}-$1-1" \
+        --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null
+      ;;
+    k8s) kubectl exec -n "$CF_NAMESPACE" "deploy/$1" -- printenv 2>/dev/null ;;
+  esac
+}
+
+# When the service's container started, as an ISO-8601 instant or nothing.
+cf_service_started() {
+  case "$CF_RUNTIME" in
+    compose)
+      docker inspect "${CF_PROJECT:-cloudsforge-estate}-$1-1" \
+        --format '{{.State.StartedAt}}' 2>/dev/null
+      ;;
+    k8s)
+      kubectl get pod -n "$CF_NAMESPACE" -l "app.kubernetes.io/name=$1" \
+        -o jsonpath='{.items[0].status.startTime}' 2>/dev/null
+      ;;
+  esac
+}
+
 # WHICH CHAIN THIS ESTATE IS ON — 0x1cf3 is 7411 (`hearth`), 0x1cf4 is 7412
 # (`hearth-testnet`), per `hearth/node/src/params.js`.
 #
@@ -258,8 +455,7 @@ else
   # The same `docker compose exec -T postgres` path the thirty-three database
   # checks below use, so this asks the postgres of the estate named at the top of
   # this run and not whichever one happens to answer.
-  db_live=$(docker compose -f "$COMPOSE" exec -T postgres \
-    psql -qtA -U cloudsforge -d postgres \
+  db_live=$(cfpsql -qtA -d postgres \
     -c "select datname from pg_database where datistemplate = false and datname <> 'postgres' order by 1" \
     2>/dev/null | tr -d '\r' | sed '/^$/d')
   # `template0`, `template1` and `postgres` are the server's own and are excluded
@@ -438,8 +634,7 @@ printf '%s' "$reg" | grep -q '"verificationRequired":true' \
 # recipients share, and earn a bounce, on a schedule. Spending the mail allowance
 # on synthetic accounts is the exact defect #243 exists to have fixed; a
 # verification drill that reintroduced it would be an unusually good joke.
-vtok=$(docker compose -f "$COMPOSE" exec -T postgres \
-  psql -qtA -U cloudsforge -d identity </dev/null 2>/dev/null \
+vtok=$(cfpsql -qtA -d identity </dev/null 2>/dev/null \
   -c "select payload->>'verifyUrl' from outbox where topic = 'identity.email.verification_requested' and payload->>'email' = '$EMAIL' order by occurred_at desc limit 1" \
   | tr -d ' \r' | sed 's/.*[#?&]token=//; s/&.*//')
 if [ -n "$vtok" ]; then
@@ -525,8 +720,8 @@ fi
 # so a check for "did this fail" would have passed for entirely the wrong reason —
 # the assertion would have been green while testing nothing. Caught by running it.
 psql_identity_verbose() {
-  docker compose -f "$COMPOSE" exec -T postgres \
-    psql -qtA -U cloudsforge -d identity 2>&1
+  # `_in`, not `cfpsql`: every caller feeds this a heredoc.
+  cfpsql_in -qtA -d identity 2>&1
 }
 
 bare=$(psql_identity_verbose <<SQL
@@ -772,7 +967,7 @@ echo
 echo "── THE EVENT SEAM: outbox → signed HTTP → inbox ─────────────────────────"
 # No route creates a subscription — deliberately: who receives which topic is deploy
 # configuration, not something a caller decides. The deploy is this file, so it seeds the row.
-docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+cfpsql -q -d identity -c \
   "insert into event_subscriptions (topic, url) values ('identity.session.created', 'http://activity:4000/ingest') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: identity.session.created → activity" \
   || bad "could not seed the subscription row"
@@ -854,7 +1049,7 @@ echo "── WALLET'S MONEY INTAKE: one scheme accepted, the other refused ─�
 # means a rotation that reached the verifier but not the producer — exactly the
 # partition a staged rotation exists to prevent — shows up here as a mismatch
 # rather than as a green run.
-wi_secret=$(docker compose -f "$COMPOSE" exec -T indexer printenv OUTBOX_SIGNING_SECRET 2>/dev/null | tr -d '\r\n')
+wi_secret=$(cfx indexer printenv OUTBOX_SIGNING_SECRET 2>/dev/null | tr -d '\r\n')
 [ -n "$wi_secret" ] \
   && ok "read the estate outbox secret out of the running indexer container" \
   || bad "indexer holds no OUTBOX_SIGNING_SECRET — the two signature checks below would pass vacuously"
@@ -868,7 +1063,7 @@ wi_event=$(python3 -c 'import uuid;print(uuid.uuid4())')
 
 # Seeded here as well as in the bootstrap, so this section is true against an
 # estate bootstrapped before those rows existed. Idempotent, exactly as 5c's are.
-docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d indexer -c \
+cfpsql -q -d indexer -c \
   "insert into event_subscriptions (topic, url) values ('indexer.deposit.confirmed', 'http://wallet:4000/events') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: indexer.deposit.confirmed → wallet" \
   || bad "could not seed indexer.deposit.confirmed → wallet; is indexer migrated?"
@@ -879,9 +1074,9 @@ docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d indexer 
 # (wallet/src/outbox.ts), so the inbox row is the proof the delivery was
 # authenticated, parsed and dispatched. Crediting a real balance to prove a
 # signature scheme would put a money movement inside a security check.
-wi_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d wallet \
+wi_before=$(cfpsql -qtA -d wallet \
   -c "select count(*) from deposit_credits" 2>/dev/null | tr -d '\r ')
-docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d indexer >/dev/null 2>&1 <<SQL
+cfpsql_in -q -d indexer >/dev/null 2>&1 <<SQL
 insert into outbox (id, topic, key, producer, version, actor, correlation_id, payload)
 values ('$wi_event', 'indexer.deposit.confirmed',
         'ethereum:sepolia:0x000000000000000000000000000000000000dead', 'indexer', 1, 'system', '$wi_event',
@@ -895,7 +1090,7 @@ SQL
 # makes this a producer-to-consumer test rather than a test of curl.
 wi_landed=""
 for _ in $(seq 1 30); do
-  wi_landed=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d wallet \
+  wi_landed=$(cfpsql -qtA -d wallet \
     -c "select event_id from inbox where topic = 'indexer.deposit.confirmed' and event_id = '$wi_event'" \
     2>/dev/null | tr -d '\r ')
   [ -n "$wi_landed" ] && break
@@ -904,12 +1099,12 @@ done
 if [ -n "$wi_landed" ]; then
   ok "indexer's relay signed it, wallet verified it, and it is in wallet's inbox — THE MONEY BUS CARRIES"
 else
-  wi_why=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d indexer \
+  wi_why=$(cfpsql -qtA -d indexer \
     -c "select attempts || ' attempt(s): ' || coalesce(last_error, 'none') from outbox_deliveries where event_id = '$wi_event'" 2>/dev/null | tr -d '\r')
   bad "no contract-signed delivery reached wallet's inbox within 30s — ${wi_why:-no delivery row at all}"
 fi
 
-wi_after=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d wallet \
+wi_after=$(cfpsql -qtA -d wallet \
   -c "select count(*) from deposit_credits" 2>/dev/null | tr -d '\r ')
 [ "$wi_before" = "$wi_after" ] \
   && ok "and it credited nothing ($wi_after credit rows, unchanged) — an unowned address is ignored, not paid" \
@@ -958,11 +1153,11 @@ echo "── THE ERASURE SEAM: the GDPR path, driven end to end ─────�
 # subscriber anywhere, which is precisely why there is no GDPR erasure path at all." The bus works
 # now and a subscription is deploy configuration, so this drill makes the sentence false: delete
 # an account and PROVE the consumer forgot the person.
-docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+cfpsql -q -d identity -c \
   "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://activity:4000/ingest') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: identity.user.deleted → activity" \
   || bad "could not seed the erasure subscription"
-docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+cfpsql -q -d identity -c \
   "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://notify:4000/ingest') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: identity.user.deleted → notify" \
   || bad "could not seed notify's erasure subscription"
@@ -977,13 +1172,13 @@ uid=$(curl -s "$IDENTITY/auth/me" -H "authorization: Bearer $utok" \
 curl -s -X PUT "$NOTIFY/preferences" -H "authorization: Bearer $utok" \
   -H 'content-type: application/json' \
   -d '{"preferences":[{"category":"security","channel":"in_app","digest":"instant"}]}' >/dev/null
-nbefore=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+nbefore=$(cfpsql -qtA -d notify -c \
   "select count(*) from preferences where user_id = '$uid'" 2>/dev/null | tr -d ' ')
 [ "${nbefore:-0}" -ge 1 ] && ok "notify holds $nbefore preference(s) for the user before the drill" \
   || bad "notify holds nothing for the user; its half of the drill would be vacuous"
 
 # The user must EXIST in activity first — an erasure of nothing proves nothing.
-before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+before=$(cfpsql -qtA -d activity -c \
   "select count(*) from activity_records where user_id = '$uid'" 2>/dev/null | tr -d ' ')
 [ "${before:-0}" -ge 1 ] && ok "activity holds $before record(s) for $uid before the drill" \
   || bad "activity holds nothing for the user; the erasure would be vacuous"
@@ -1002,9 +1197,9 @@ before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge 
 # nothing in it to scope to this user. So the wait is on a NEW acknowledgement
 # relative to the baseline, and the actual assertion is the property that matters:
 # this subject's rows reach zero.
-inbox_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+inbox_before=$(cfpsql -qtA -d activity -c \
   "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
-ninbox_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+ninbox_before=$(cfpsql -qtA -d notify -c \
   "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
 
 # Request deletion (grace is 0 in this environment), then pull the HOURLY tombstone sweep forward.
@@ -1012,19 +1207,19 @@ ninbox_before=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloud
 # is still written by the real tombstone path, in the same transaction as the state change.
 curl -s -X DELETE "$IDENTITY/users/me" -H "authorization: Bearer $utok" \
   -H 'content-type: application/json' -d "{\"password\":\"$PASS\"}" >/dev/null
-docker compose -f "$COMPOSE" exec -T postgres psql -q -U cloudsforge -d identity -c \
+cfpsql -q -d identity -c \
   "update jobs set run_at = now() where kind = 'identity.tombstone'" >/dev/null 2>&1
 
 # Wait on the ERASURE ITSELF, not on a proxy for it: this subject's rows reaching
 # zero is the thing the GDPR path promises.
 left=""
 for _ in $(seq 1 45); do
-  left=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+  left=$(cfpsql -qtA -d activity -c \
     "select count(*) from activity_records where user_id = '$uid'" 2>/dev/null | tr -d ' ')
   [ "${left:-1}" -eq 0 ] && break
   sleep 1
 done
-ack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+ack=$(cfpsql -qtA -d activity -c \
   "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
 if [ "${left:-1}" -eq 0 ] && [ "${ack:-0}" -gt "${inbox_before:-0}" ]; then
   ok "identity.user.deleted crossed the bus and activity forgot $uid ($before → 0; a NEW inbox row, ${inbox_before:-0} → ${ack:-0}, is the acknowledgement)"
@@ -1036,12 +1231,12 @@ fi
 
 nleft=""
 for _ in $(seq 1 30); do
-  nleft=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+  nleft=$(cfpsql -qtA -d notify -c \
     "select count(*) from preferences where user_id = '$uid'" 2>/dev/null | tr -d ' ')
   [ "${nleft:-1}" -eq 0 ] && break
   sleep 1
 done
-nack=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d notify -c \
+nack=$(cfpsql -qtA -d notify -c \
   "select count(*) from inbox where topic = 'identity.user.deleted'" 2>/dev/null | tr -d ' ')
 if [ "${nleft:-1}" -eq 0 ] && [ "${nack:-0}" -gt "${ninbox_before:-0}" ]; then
   ok "and notify forgot the user too ($nbefore preference(s) → 0)"
@@ -1179,7 +1374,7 @@ echo "── THE ONBOARDING TOPIC THAT HAD NO SUBSCRIBER ───────�
 # another repository.
 areg=""
 for _ in $(seq 1 30); do
-  areg=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d activity -c \
+  areg=$(cfpsql -qtA -d activity -c \
     "select count(*) from inbox where topic = 'identity.user.registered'" 2>/dev/null | tr -d ' ')
   [ "${areg:-0}" -ge 1 ] && break
   sleep 1
@@ -1553,11 +1748,11 @@ else
       shex=${ssum#sha256:}
       # `sh -c` inside the container: the asset root is a named volume and is
       # not visible from the host at all, which is the point of it.
-      sfound=$(docker compose -f "$COMPOSE" exec -T studio sh -c \
+      sfound=$(cfx studio sh -c \
         'find "$STUDIO_ASSET_ROOT" -type f -name "'"$shex"'.*" 2>/dev/null | head -1' 2>/dev/null | tr -d '\r')
       if [ -n "$sfound" ]; then
         ok "the generated bytes are on disk at the checksum's own path ($(printf '%.8s' "$shex")…)"
-        sreal=$(docker compose -f "$COMPOSE" exec -T studio node -e \
+        sreal=$(cfx studio node -e \
           'const c=require("crypto"),f=require("fs");console.log("sha256:"+c.createHash("sha256").update(f.readFileSync(process.argv[1])).digest("hex"))' \
           "$sfound" 2>/dev/null | tr -d '\r')
         [ "$sreal" = "$ssum" ] \
@@ -1815,7 +2010,7 @@ if [ -n "$tward" ]; then
 
   # And the index itself, asked directly rather than inferred from the 409 above. A handler that
   # returned 409 from its own `if` would pass that check with the index dropped.
-  hidx=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d tessera \
+  hidx=$(cfpsql -qtA -d tessera \
     -c "select count(*) from pg_indexes where tablename='parcels' and indexname='tessera_one_homestead'" 2>/dev/null | tr -d '[:space:]')
   [ "${hidx:-0}" = 1 ] \
     && ok "tessera_one_homestead exists in the schema — the 409 above is the database's answer, not the handler's" \
@@ -1992,7 +2187,7 @@ echo "── THE AUDIT MIRROR: admin-api receives the audited topics ───�
 # subscription works. The ledger posting earlier in this file is the event under
 # test: `ledger.entry.posted` is one of the audited topics.
 for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-  mirror=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge \
+  mirror=$(cfpsql -qtA \
     -d admin_api -c "select count(*) from audit_events where action = 'ledger.entry.posted'" 2>/dev/null | tr -d ' ')
   [ "${mirror:-0}" -ge 1 ] && break
   sleep 1
@@ -2114,19 +2309,18 @@ echo "── THE SIXTEEN FRONTENDS: served, and proved to be more than a 200 ─
 # Resolved per surface rather than once, because the sixteen are sixteen
 # repositories at sixteen commits — there is no single estate-wide SHA to read.
 WEB_RELEASE=${CLOUDSFORGE_RELEASE:-estate}
-# The expected marker for one compose service. Empty output is impossible: the
-# literal is the floor. `2>/dev/null` on both hops because a surface that is not
-# running at all is a different failure, reported by the caller as such.
+# The expected marker for one service. Empty output is impossible: the literal is
+# the floor. The label read is delegated to `cf_image_revision`, because the two
+# runtimes disagree about who holds the image — a docker daemon under compose, a
+# containerd with no docker in front of it under k3s — and about nothing else.
+# Both answer with the SHA or with nothing, and nothing falls through here as it
+# always did: a surface that is not running at all is a different failure,
+# reported by the caller as such.
 web_release_for() {
   wr_svc=$1
   [ -n "${CLOUDSFORGE_RELEASE:-}" ] && { printf '%s' "$CLOUDSFORGE_RELEASE"; return; }
-  wr_img=$(docker compose -f "$COMPOSE" ps -q "$wr_svc" 2>/dev/null | head -1)
-  [ -n "$wr_img" ] && wr_img=$(docker inspect "$wr_img" --format '{{.Config.Image}}' 2>/dev/null)
-  if [ -n "$wr_img" ]; then
-    wr_rev=$(docker inspect "$wr_img" \
-      --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' 2>/dev/null)
-    [ -n "$wr_rev" ] && { printf '%s' "$wr_rev"; return; }
-  fi
+  wr_rev=$(cf_image_revision "$wr_svc" 2>/dev/null | tr -d '\r\n')
+  [ -n "$wr_rev" ] && { printf '%s' "$wr_rev"; return; }
   printf '%s' "$WEB_RELEASE"
 }
 # A path no surface enumerates, on purpose. If a surface ever claims it, this
@@ -2140,7 +2334,14 @@ WEB_MISSING=/cf-estate-verify-no-such-page
 # not out of doc 22 — a document is a lead, never evidence.
 web_surface() {
   name=$1; port=$2; owned=$3
-  base="http://127.0.0.1:$port"
+  # The published host port under compose; the Service's own ClusterIP under
+  # Kubernetes, which publishes no host ports at all. `$port` stays in the
+  # reported line either way, because it is what `scripts/web-check.py` reads
+  # back out of this file's surface table.
+  case "$CF_RUNTIME" in
+    compose) base="http://127.0.0.1:$port" ;;
+    k8s) base="http://$(cf_svc_addr "$name")" ;;
+  esac
   notes=""
 
   # 1. the shell, and the build identity
@@ -2354,10 +2555,50 @@ SITE_HOST=${CF_SITE_HOST:-$WEB_APEX}
 # real one.
 GW_PORT=${CF_GATEWAY_HTTPS_PORT:-${CF_GATEWAY_PORT:-443}}
 
+# WHERE `--resolve` POINTS. Loopback under compose, because the gateway publishes
+# 443 on the host. Under Kubernetes it publishes nothing on the host, so this is
+# the gateway Service's ClusterIP — which routes from the node, and which is the
+# reason every hostname check below works unchanged on a cluster with no public
+# DNS pointed at it and no Ingress in front of it.
+#
+# ── AND THE PORT COMES FROM THE SAME PLACE, FOR THE SAME REASON ──────────────
+#
+# `10443` is not a property of the testnet gateway. It is where DOCKER PUBLISHED
+# it, chosen so two gateways could share one host's 443. A Service has no such
+# problem — each gets its own address — so both gateways listen on 443 in the
+# cluster, and a testnet run that kept 10443 addressed a port that exists nowhere.
+#
+# That did not fail fast. A ClusterIP is a virtual address realised by kube-proxy
+# rules for the ports a Service declares, and a packet to any OTHER port on it
+# matches no rule and is silently dropped — no RST, no ICMP. So every one of the
+# thirty gateway assertions sat in a full TCP connect timeout before reporting
+# `000`, and the suite spent half an hour concluding that a gateway answering
+# perfectly well on the address beside it was dead. Measured 2026-08-19: one
+# testnet run reached the gateway section and was still inside it eight minutes
+# later, two hostnames in.
+#
+# Read from the Service rather than mapped, so this stays right if the port ever
+# moves; `websecure` by NAME rather than by index, because the manifest lists
+# web, websecure and tunnel and their order is not a promise.
+if [ "$CF_RUNTIME" = k8s ]; then
+  gw_svc=$(kubectl get svc -n "$CF_NAMESPACE" gateway \
+    -o jsonpath='{.spec.clusterIP} {.spec.ports[?(@.name=="websecure")].port}' 2>/dev/null)
+  gw_svc_addr=${gw_svc%% *}
+  gw_svc_port=${gw_svc##* }
+  [ -z "${GW_ADDR:-}" ] && [ -n "$gw_svc_addr" ] && GW_ADDR=$gw_svc_addr
+  # An explicit `CF_GATEWAY_HTTPS_PORT` still wins, as it does under compose;
+  # `CF_GATEWAY_PORT` does not, because that one is read out of the estate env
+  # file and is the docker fact this block exists to stop believing.
+  [ -z "${CF_GATEWAY_HTTPS_PORT:-}" ] && [ -n "$gw_svc_port" ] \
+    && [ "$gw_svc_port" != "$gw_svc" ] && GW_PORT=$gw_svc_port
+  unset gw_svc gw_svc_addr gw_svc_port
+fi
+GW_ADDR=${GW_ADDR:-127.0.0.1}
+
 gw() {
   gw_host=$1; gw_path=$2; shift 2
   curl -sk -o /tmp/estate-gw.body -w '%{http_code}' \
-    --resolve "$gw_host:$GW_PORT:127.0.0.1" "https://$gw_host:$GW_PORT$gw_path" "$@"
+    --resolve "$gw_host:$GW_PORT:$GW_ADDR" "https://$gw_host:$GW_PORT$gw_path" "$@"
 }
 
 # ── THE TLS ASSERTION, AND WHY IT IS THE FIRST ONE IN THIS SECTION ────────────
@@ -2427,7 +2668,7 @@ else
   # routed, and it is the one a third party is handed.
   for tls_host in "$SITE_HOST" "hub$WEB_SUFFIX" "nimbus$WEB_SUFFIX" "api$WEB_SUFFIX"; do
     tls_code=$(curl -s --cacert "$CA_FILE" -o /dev/null -w '%{http_code}' \
-      --resolve "$tls_host:$GW_PORT:127.0.0.1" "https://$tls_host:$GW_PORT/livez" 2>/dev/null)
+      --resolve "$tls_host:$GW_PORT:$GW_ADDR" "https://$tls_host:$GW_PORT/livez" 2>/dev/null)
     # 000 is curl's "the transfer never completed", which is what a rejected
     # certificate produces. Any HTTP status at all means the handshake VERIFIED —
     # a 404 from a host that serves no /livez still proves the certificate.
@@ -2624,7 +2865,7 @@ echo "── the two OPERATOR consoles: the bundle and the API must not shadow �
 gwv() {
   gwv_host=$1; gwv_path=$2; gwv_fmt=$3; shift 3
   curl -s --cacert "$CA_FILE" -o /tmp/estate-gwv.body -w "$gwv_fmt" \
-    --resolve "$gwv_host:$GW_PORT:127.0.0.1" "https://$gwv_host:$GW_PORT$gwv_path" "$@"
+    --resolve "$gwv_host:$GW_PORT:$GW_ADDR" "https://$gwv_host:$GW_PORT$gwv_path" "$@"
 }
 
 for rec in \
@@ -2727,7 +2968,7 @@ esac
 # silence: the browser discards the response and nothing server-side records that
 # anything was refused.
 allow=$(curl -sk -D - -o /dev/null -X OPTIONS \
-  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   -H "origin: https://hub$WEB_SUFFIX" \
   -H 'access-control-request-method: POST' \
   -H 'access-control-request-headers: content-type' \
@@ -2755,7 +2996,7 @@ for rec in "pay /v1/deposits wallet" "vault /v1/exports custody"; do
     404|000|502) bad "https://$sub$WEB_SUFFIX$path answered $pc — $svc is not reachable on the hostname Hub calls it by" ;;
     *) ok "https://$sub$WEB_SUFFIX → $svc ($pc)" ;;
   esac
-  pa=$(curl -sk -D - -o /dev/null -X OPTIONS --resolve "$sub$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  pa=$(curl -sk -D - -o /dev/null -X OPTIONS --resolve "$sub$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
     -H "origin: https://hub$WEB_SUFFIX" -H 'access-control-request-method: POST' \
     -H 'access-control-request-headers: content-type,authorization' \
     "https://$sub$WEB_SUFFIX:$GW_PORT$path" | tr -d '\r' \
@@ -2823,7 +3064,7 @@ if [ -z "$so_tok" ]; then
   # deliberately not dressed up as a test of verification: whether registration
   # mail is actually delivered is its own assertion elsewhere, and doing it here
   # would hide a broken mail path behind a passing SSO check.
-  docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d identity -c \
+  cfpsql -qtA -d identity -c \
     "update users set email_verified_at = now() where email = lower(btrim('$so_email'))" >/dev/null 2>&1
   so_tok=$(curl -s -X POST "$IDENTITY/auth/login" -H 'content-type: application/json' \
     -d "{\"identifier\":\"$so_email\",\"password\":\"$PASS\"}" \
@@ -2841,7 +3082,7 @@ fi
 # different things here and reporting them as one line is what made this section
 # accuse the allowlist of a fault that was a missing session.
 so_mint=$(curl -sk -o /tmp/estate-sso-mint.json -w '%{http_code}' \
-  -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -H "origin: https://hub$WEB_SUFFIX" \
@@ -2859,7 +3100,7 @@ fi
 # assertion that proves the whole path: the code is bound to the origin it was
 # minted for and matched against the browser's own header
 # (identity/src/handoff.ts).
-so_new=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+so_new=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff/redeem" \
   -H 'content-type: application/json' -H "origin: https://market$WEB_SUFFIX" \
   -d "{\"code\":\"${so_code:-nothing-was-minted}\"}" \
@@ -2872,13 +3113,13 @@ fi
 
 # THE BINDING ITSELF. A code minted for Market must be worthless from anywhere
 # else, or the allowlist is decoration. Minted fresh: the one above is spent.
-so_code2=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+so_code2=$(curl -sk -X POST --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -d "{\"redirectOrigin\":\"https://market$WEB_SUFFIX\"}" \
   | python3 -c "import sys,json;print(json.load(sys.stdin).get('code',''))" 2>/dev/null)
 so_theft=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
-  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff/redeem" \
   -H 'content-type: application/json' -H 'origin: https://not-a-cloudsforge-surface.example' \
   -d "{\"code\":\"${so_code2:-nothing-was-minted}\"}")
@@ -2909,7 +3150,7 @@ esac
 # and the reader has no way to tell that from "this product is read-only".
 for so_org in exchange journal agora; do
   so_xc=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
-    --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+    --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
     "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
     -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
     -H "origin: https://$so_org$WEB_SUFFIX" \
@@ -2923,7 +3164,7 @@ done
 
 # And an origin that is not a surface must not get a code at all.
 so_bad=$(curl -sk -o /dev/null -w '%{http_code}' -X POST \
-  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:127.0.0.1" \
+  --resolve "nimbus$WEB_SUFFIX:$GW_PORT:$GW_ADDR" \
   "https://nimbus$WEB_SUFFIX:$GW_PORT/auth/handoff" \
   -H "authorization: Bearer $so_tok" -H 'content-type: application/json' \
   -d '{"redirectOrigin":"https://not-a-cloudsforge-surface.example"}')
@@ -3005,8 +3246,7 @@ cb_tok=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $a
 # it per call. A JWT here would be the retired `LEDGER_SERVICE_TOKEN`, so the prefix is asserted:
 # `cfsc_` and not `ey`, which is the difference between a credential that outlives the job's timer
 # and a token that does not.
-lsvc=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
-  | grep -c '^LEDGER_IDENTITY_CREDENTIAL=cfsc_' || true)
+lsvc=$(cf_service_env ledger | grep -c '^LEDGER_IDENTITY_CREDENTIAL=cfsc_' || true)
 [ "${lsvc:-0}" -ge 1 ] \
   && ok "the ledger container holds a real long-lived LEDGER_IDENTITY_CREDENTIAL — it can authenticate to the indexer on EVERY run, not just the first" \
   || bad "ledger has no LEDGER_IDENTITY_CREDENTIAL in its environment; its custody call goes out unauthenticated, the 401 maps to undefined, and EMBER freezes on an auth error while LOOKING exactly like the honest no-chain freeze"
@@ -3015,8 +3255,7 @@ lsvc=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}
 # `legacyServiceTokenPresent` only to COMPLAIN about it: handing it back would be ignored, so a
 # deploy that still set it would look configured and behave unconfigured. It is also a live JWT with
 # a real `sub` and real scopes sitting in a file for no reader.
-lleg=$(docker inspect cloudsforge-estate-ledger-1 --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
-  | grep -c '^LEDGER_SERVICE_TOKEN=ey' || true)
+lleg=$(cf_service_env ledger | grep -c '^LEDGER_SERVICE_TOKEN=ey' || true)
 [ "${lleg:-0}" -eq 0 ] \
   && ok "the retired LEDGER_SERVICE_TOKEN is not in ledger's environment — nothing mints a credential no code reads" \
   || bad "ledger still holds a LEDGER_SERVICE_TOKEN; it is IGNORED by env.ts:363 and is a live bearer token minted for no reader"
@@ -3130,7 +3369,7 @@ fi
 # be recorded `unavailable` / `failed` and frozen — never `liability_sum`, which
 # is the vacuous branch, and never `clean`. `LEDGER_RECONCILE_ASSETS` names EMBER
 # deliberately; see the compose comment for why it is not exempted.
-cb_src=$(docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d ledger \
+cb_src=$(cfpsql -qtA -d ledger \
   -c "select observed_source||'/'||status from reconciliation_runs where asset_code='EMBER' order by started_at desc limit 1" 2>/dev/null | tr -d '[:space:]')
 case "$cb_src" in
   "")                 ok "no EMBER reconciliation has run yet in this environment (the sweep is 15-minutely)" ;;
@@ -3256,9 +3495,9 @@ ember_chain_id() {
         r.on("end",()=>{try{process.stdout.write(String(JSON.parse(d).result||""))}catch(e){}})});
       q.on("error",()=>{});q.setTimeout(5000,()=>q.destroy());
       q.end("{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_chainId\",\"params\":[]}");
-  ' | docker compose -f "$COMPOSE" exec -T \
-      -e CF_VERIFY_NET="$(printf '%s' "$EMBER_NETWORK" | tr '[:lower:]' '[:upper:]')" \
-      indexer node 2>/dev/null | tr -d '\r\n'
+  ' | cfx_in indexer \
+      env CF_VERIFY_NET="$(printf '%s' "$EMBER_NETWORK" | tr '[:lower:]' '[:upper:]')" \
+      node 2>/dev/null | tr -d '\r\n'
 }
 ember_chain=$(ember_chain_id)
 ember_probe_via="the indexer container, on its own INDEXER_RPC_EMBER_$(printf '%s' "$EMBER_NETWORK" | tr '[:lower:]' '[:upper:]')"
@@ -3270,8 +3509,8 @@ if [ -z "$ember_chain" ]; then
 fi
 
 # psql against the estate's own databases. `-qtA` so a value is a value.
-lsql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d ledger "$@" 2>/dev/null; }
-isql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d indexer "$@" 2>/dev/null; }
+lsql() { cfpsql -qtA -d ledger "$@" 2>/dev/null; }
+isql() { cfpsql -qtA -d indexer "$@" 2>/dev/null; }
 
 # Force the leased job to be due now and wait for a run row NEWER than the one we
 # started with. Waiting on a NEW ROW rather than sleeping a fixed amount is the
@@ -3349,11 +3588,57 @@ else
   # Every candidate is now examined rather than the first one found: a plaintext
   # key left behind beside a sealed keystore is precisely the residue #206 was
   # closed to remove, and stopping at the keystore would have hidden it.
+  # ── WHY NONE OF THESE CANDIDATES IS A USERNAME ANY MORE ───────────────────
+  #
+  # This list used to end in two absolute paths with a person's login inside
+  # them — `/home/savvaniss/…` as the app host's default and `/home/malf/…` as
+  # the chain host's. Both were true, and both stopped being true the day the
+  # estate acquired a third machine. On the Kubernetes VM the operator is
+  # `savva`, the sealed keystore is exactly where the layout says it should be,
+  # and this check reported
+  #
+  #     Searched: 'no candidate directory exists on this machine'
+  #
+  # about a key sitting one directory above the checkout it was run from. That
+  # is the same failure the block above was written to fix, wearing a different
+  # hat: a guard that cannot find the thing it guards, announcing it in a
+  # sentence that reads like the key is missing rather than like the search is.
+  # And it recurs on every new host, because a username is not a property of the
+  # estate.
+  #
+  # So the roots are DERIVED instead. `../..` of this script is the checkout's
+  # parent, which is where `miner-keys` lives in the layout all three hosts
+  # actually use — `~/dev/cloudsforge/{deploy,org,runtime,miner-keys}` — and it
+  # is computed from `$0` rather than `$PWD` so it holds however this was
+  # invoked. `$HOME` covers a checkout kept somewhere else by the same operator.
+  # The estate env file's own `CF_MINER_KEYS` is asked too, because that is the
+  # variable `docker-compose.miners.yml` interpolates for the mount: the file
+  # that DECIDES where the keys are ought to be consulted about where they are.
+  #
+  # The two literal paths stay, last, so a root shell or a second operator on
+  # the two hosts that have them still finds the key. They are extra reach now
+  # rather than the only reach, which is the whole difference.
+  ember_key_roots=()
+  ember_checkout_parent=$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd -P)
+  for kroot in \
+    "${CF_APPHOST_MINER_KEYS:-}" \
+    "${CF_MINER_KEYS:-}" \
+    "$(envget CF_MINER_KEYS)" \
+    "${ember_checkout_parent:+$ember_checkout_parent/miner-keys}" \
+    "${HOME:+$HOME/dev/cloudsforge/miner-keys}" \
+    /home/savvaniss/dev/cloudsforge/miner-keys \
+    /home/malf/dev/cloudsforge/miner-keys
+  do
+    # An unset root must not become the string "/mainnet", which is a real
+    # absolute path and would be searched on any machine that happens to have
+    # one.
+    [ -n "$kroot" ] && ember_key_roots+=("$kroot/$EMBER_NETWORK")
+  done
+
   ember_key_dirs=()
   for kdir in \
     "${EMBER_MINER_DATA:-}" \
-    "${CF_APPHOST_MINER_KEYS:-/home/savvaniss/dev/cloudsforge/miner-keys}/$EMBER_NETWORK" \
-    "${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/$EMBER_NETWORK" \
+    ${ember_key_roots[@]+"${ember_key_roots[@]}"} \
     "$HOME/.cloudsforge/ember-$EMBER_NETWORK/miner" \
     "$HOME/.cloudsforge/ember-testnet/miner"
   do
@@ -3611,7 +3896,7 @@ sys.exit(0 if isinstance(secret,str) and secret and str(d.get('address','')).low
   # is the class of check this file exists to eliminate. It can be skipped
   # explicitly for a fast local loop, and skipping SAYS SO instead of passing.
   cliff=${CF_VERIFY_TOKEN_CLIFF_SECONDS:-600}
-  started=$(docker inspect cloudsforge-estate-ledger-1 --format '{{.State.StartedAt}}' 2>/dev/null)
+  started=$(cf_service_started ledger)
   up=$(STARTED="$started" python3 -c "
 import os,datetime,sys
 s=os.environ['STARTED']
@@ -3666,7 +3951,7 @@ echo "── the browser telemetry sink, driven to the ROW ───────
 # reported to the caller as fine. That is the exact shape of the defect this
 # whole section exists to catch, and asserting on the status code would step
 # straight into it. So the positive check reads the row back out of Postgres.
-lansql() { docker compose -f "$COMPOSE" exec -T postgres psql -qtA -U cloudsforge -d lantern "$@" 2>/dev/null; }
+lansql() { cfpsql -qtA -d lantern "$@" 2>/dev/null; }
 # `$WEB_SUFFIX` from the gateway section above, not a second reading of
 # `CF_WEB_APEX`. This line used to re-derive its own `APEX` and compose
 # `hub.${APEX}`, which is a duplicate of a value already in scope — and after the
@@ -3840,7 +4125,7 @@ echo "── THE FAUCET, AND THE CHAIN THIS ESTATE ACTUALLY RUNS ─────
 # asserted to differ — so the SERVICE could not have been fooled. What had no
 # check was the ESTATE: which chain this project's node is actually on, and
 # whether a faucet is published for it.
-FAUCET_RUNNING=$(docker compose -f "$COMPOSE" ps --status running --services 2>/dev/null | grep -cx faucet)
+FAUCET_RUNNING=$(cf_service_running faucet)
 
 # 1. The node this environment points at is the chain this environment claims.
 #    `ember_chain_dec` is derived from CF_EMBER_NETWORK at the head of this file.
@@ -3933,11 +4218,25 @@ echo "── the backup runner, which no deploy path renders ──────�
 # so it is the one container in the estate that a migration can leave behind
 # while every green check above stays green.
 #
-# It is also why this section cannot use `docker compose -f "$COMPOSE" ps` like
-# the faucet check above: the overlay is not $COMPOSE and never will be. The
+# It is also why the COMPOSE branch cannot use `docker compose -f "$COMPOSE" ps`
+# like the faucet check above: the overlay is not $COMPOSE and never will be. The
 # project LABEL is what the two files share, so that is what is asked.
-BACKUP_RUNNING=$(docker ps --filter "label=com.docker.compose.project=${CF_PROJECT:-cloudsforge-estate}" \
-  --filter "label=com.docker.compose.service=backup-runner" --format '{{.Names}}' 2>/dev/null | grep -c . || true)
+#
+# NONE OF THAT IS TRUE ON KUBERNETES, and pretending it were would be the kind of
+# faithfulness that hides a fact. There the runner is not an overlay at all: it is
+# a Deployment in the same manifest as everything else, applied by the same
+# `kubectl apply`, so the failure this paragraph describes — a migration that
+# leaves the runner behind while every check above stays green — cannot happen in
+# that shape. The check is kept anyway, because the runner can still be scaled to
+# zero or crash-loop, and "no recovery point" is the fact being asserted rather
+# than "no container with this label".
+case "$CF_RUNTIME" in
+  compose)
+    BACKUP_RUNNING=$(docker ps --filter "label=com.docker.compose.project=${CF_PROJECT:-cloudsforge-estate}" \
+      --filter "label=com.docker.compose.service=backup-runner" --format '{{.Names}}' 2>/dev/null | grep -c . || true)
+    ;;
+  k8s) BACKUP_RUNNING=$(cf_service_running backup-runner) ;;
+esac
 
 if [ "${BACKUP_RUNNING:-0}" -eq 0 ]; then
   bad "NO backup-runner container in project ${CF_PROJECT:-cloudsforge-estate}. This estate has no recovery point and nothing on this host is writing one — every service above can be green while the RPO is unbounded, which is exactly the 43 hours micro-org#434 records. Start it with the command in compose/docker-compose.backup.yml's header (both --env-file flags, and --no-deps)"
@@ -3949,11 +4248,15 @@ else
   # not come through this publish; reading the same /metrics through the host
   # mapping is deliberate, because a runner that is up and unreachable from the
   # host is the state the overlay's own header calls "a runner nobody scrapes".
-  BACKUP_METRICS=$(curl -s --max-time 5 "http://127.0.0.1:${PB}147/metrics" 2>/dev/null)
+  case "$CF_RUNTIME" in
+    compose) BACKUP_ADDR="127.0.0.1:${PB}147" ;;
+    k8s) BACKUP_ADDR=$(cf_svc_addr backup-runner) ;;
+  esac
+  BACKUP_METRICS=$(curl -s --max-time 5 "http://$BACKUP_ADDR/metrics" 2>/dev/null)
   backup_last=$(printf '%s\n' "$BACKUP_METRICS" | sed -n 's/^backup_last_success_unixtime \([0-9][0-9]*\).*/\1/p' | head -1)
 
   if [ -z "$BACKUP_METRICS" ]; then
-    bad "the backup-runner container is up but http://127.0.0.1:${PB}147/metrics answered nothing — it is running and unscrapable, so BackupNeverRun will fire on a host that is in fact backing itself up and the ticket will send the next reader looking for the wrong thing"
+    bad "the backup-runner container is up but http://$BACKUP_ADDR/metrics answered nothing — it is running and unscrapable, so BackupNeverRun will fire on a host that is in fact backing itself up and the ticket will send the next reader looking for the wrong thing"
   elif [ -z "$backup_last" ]; then
     # The runner publishes NO sample until a run has succeeded, on purpose: a zero
     # would be a series claiming the last backup finished in 1970, which satisfies

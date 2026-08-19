@@ -1,0 +1,154 @@
+# What `scripts/k8s-render.py` needs to know that the compose file does not say.
+#
+# NAMES ONLY — see the header of `render-vars.mainnet.yaml` for why this list is
+# committed rather than computed, and for the two-directional check that keeps it
+# honest. The short version: a name missing from here is a live credential the
+# renderer would mistake for configuration and write into a committed file.
+#
+# Verified against the host's `compose/estate/tokens.testnet.env` on 2026-08-19:
+# 57 assignments, 57 names, all `[A-Z][A-Z0-9_]*`, 54 distinct.
+#
+# ONE OF THOSE 57 IS NEW, AND IT IS NEW ON PURPOSE.
+# `CF_BACKUP_AGE_RECIPIENT` was mainnet-only, because testnet had no backup
+# runner to read it — measured on 2026-08-19, testnet's `backup_runs` held
+# nothing but `queued` rows with a NULL `started_at`, so this network has never
+# had a backup at all. The Kubernetes manifest is one file serving both
+# namespaces, so testnet gets a runner; and a runner with no recipient takes
+# `secrets.ts`'s "absent, nothing to encrypt" branch, publishes
+# `backup_secrets_included 0` and fires `MinerCoinbaseKeyUnbacked` forever —
+# correctly, because `miner-keys/testnet/coinbase-keystore.json` does exist.
+#
+# The value is MAINNET'S RECIPIENT, copied rather than freshly generated. An age
+# recipient is a PUBLIC key, so copying it creates no new secret; generating a
+# second keypair would create a new PRIVATE one, and private key custody is
+# already the estate's thinnest thread. The blast radius is unchanged either
+# way: whoever holds the identity that decrypts testnet's sets already decrypts
+# mainnet's, which carry a key that holds real EMBER.
+#
+# THREE MORE NAMES ARE A REAL DEFECT, NOT A ROUNDING ERROR.
+# `FAUCET_FUNDING_ADDRESS`, `FORESIGHT_ORACLE_ADDRESS` and
+# `FORESIGHT_TREASURY_ADDRESS` each appear TWICE in the file. Last-wins, so the
+# value a reader sees first is not necessarily the one in force — which for a
+# treasury address is a question worth being able to answer by reading. A Secret
+# has no such ambiguity: `k8s-secrets.py` builds a map, so the duplicate resolves
+# the same way and then stops being invisible. Recorded in task #168 to be
+# de-duplicated at the same time as the token rotation, on the file, before the
+# cutover.
+
+network: testnet
+namespace: cf-testnet
+
+secret_vars:
+  - ADMIN_API_IDENTITY_CREDENTIAL
+  - ADMIN_API_SERVICE_TOKEN
+  - AGORA_IDENTITY_CREDENTIAL
+  - ANALYTICS_TOKEN
+  - BEACON_IDENTITY_CREDENTIAL
+  - BEACON_JOURNEY_ACCOUNTS
+  - BEACON_TOKEN
+  - BILLING_IDENTITY_CREDENTIAL
+  - CF_BACKUP_AGE_RECIPIENT
+  - CF_CHAIN_HOST
+  - CF_POSTGRES_PASSWORD
+  - COMMUNITY_IDENTITY_CREDENTIAL
+  - COMMUNITY_SERVICE_CREDENTIAL
+  - CUSTODY_IDENTITY_CREDENTIAL
+  - EMBERKIN_IDENTITY_CREDENTIAL
+  - EMBERKIN_SERVICE_TOKEN
+  - EMBER_RPC_URL
+  - EMBER_SEED_PASSWORD
+  - ESTATE_ADMIN_EMAIL
+  - ESTATE_ADMIN_PASSWORD
+  - FAUCET_CUSTODY_TOKEN
+  - FAUCET_FUNDING_ADDRESS
+  - FAUCET_IDENTITY_CREDENTIAL
+  - FAUCET_REQUESTER_SALT
+  - FAUCET_TOKEN
+  - FORESIGHT_IDENTITY_CREDENTIAL
+  - FORESIGHT_ORACLE_ADDRESS
+  - FORESIGHT_SERVICE_TOKEN
+  - FORESIGHT_TREASURY_ADDRESS
+  - HUB_API_IDENTITY_CREDENTIAL
+  - LANTERN_TOKEN
+  - LEDGER_IDENTITY_CREDENTIAL
+  - LTC_REGTEST_RPC_PASSWORD
+  - LTC_REGTEST_RPC_USER
+  - MAIL_DOMAIN
+  - MARKET_IDENTITY_CREDENTIAL
+  - MARKET_SERVICE_TOKEN
+  - MINT_IDENTITY_CREDENTIAL
+  - NDA_IDENTITY_CREDENTIAL
+  - POOL_IDENTITY_CREDENTIAL
+  - SETTLEMENT_IDENTITY_CREDENTIAL
+  - SETTLEMENT_SERVICE_TOKEN
+  - SMTP_FROM
+  - SMTP_HOST
+  - SMTP_PASS
+  - SMTP_PORT
+  - SMTP_REPLY_TO
+  - SMTP_USER
+  - TESSERA_IDENTITY_CREDENTIAL
+  - TESSERA_SERVICE_CREDENTIAL
+  - TRADE_IDENTITY_CREDENTIAL
+  - TRADE_SERVICE_TOKEN
+  - WALLET_IDENTITY_CREDENTIAL
+  - WORLDS_IDENTITY_CREDENTIAL
+
+# The same expression as mainnet, because it is the same compose file — but here
+# it demonstrates the point rather than merely stating it. Testnet's tokens file
+# defines ONLY `EMBER_RPC_URL`; there is no testnet BTC, LTC or DOGE node. So the
+# three conditional clauses each contribute nothing and the assembled value is
+# `{"ember":"..."}` alone.
+#
+# That is the whole argument for keeping the conditional. Rendering the clauses
+# unconditionally would give settlement `{"ember":"...","btc":"","ltc":"","doge":""}`
+# on testnet, and `jsonMap` refuses an empty URL at import — so settlement and its
+# migrator would both fail to boot, on the network where nobody would notice until
+# a withdrawal was tried.
+derived_vars:
+  SETTLEMENT_RPC_URLS:
+    consumers: [settlement, settlement-migrate]
+    from: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${BTC_RPC_URL:+,"btc":"$BTC_RPC_URL"}${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}${DOGE_RPC_URL:+,"doge":"$DOGE_RPC_URL"}${ETC_RPC_URL:+,"etc":"$ETC_RPC_URL"}}'
+
+# Dropped, as on mainnet and for the same measured reason: no value in
+# `tokens.testnet.env` contains `host.docker.internal`, and its one RPC URL does
+# not use it. See `render-vars.mainnet.yaml` for the full argument.
+extra_hosts:
+  host.docker.internal: drop
+
+# Measured on the host, 2026-08-19:
+#   studio-assets  8.2 MB across 15 files
+#   custody-keys   320 kB across 39 files
+# Sized to match mainnet rather than to match usage — testnet exists to rehearse
+# mainnet, and a testnet that fills a volume mainnet would not have proves
+# nothing about mainnet.
+volume_sizes:
+  studio-assets: 10Gi
+  custody-keys: 1Gi
+  # The tessera world artwork redirected out of a bind mount above. 151 MB
+  # measured; 1Gi leaves room for a second art set without a resize, which is
+  # the point of keeping the old one switchable.
+  world-assets: 1Gi
+
+# Mounted into every container; see render-vars.mainnet.yaml for why. It matters
+# more here than there: all 28 of this namespace's services verify tokens against
+# `https://nimbus.cloudsforge.online` — the SHARED MAINNET identity, which is
+# micro-org#472 and predates the migration — so in the cluster every one of them
+# is making a TLS call to a gateway leaf no public root store signs.
+cluster_tls_trust:
+  volume: gateway-trust
+  configMap: gateway-trust
+  key: trust.crt
+  mountPath: /etc/ssl/estate/trust.crt
+
+bind_mounts:
+  ../gateway/certs/trust.crt:
+    kind: configMap
+    name: gateway-trust
+    configMap: gateway-trust
+    subPath: trust.crt
+
+  ./estate/world-assets-gpt-image-2:
+    kind: persistentVolumeClaim
+    name: world-assets
+    claimName: world-assets

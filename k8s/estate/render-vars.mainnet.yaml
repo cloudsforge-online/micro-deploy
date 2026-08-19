@@ -1,0 +1,217 @@
+# What `scripts/k8s-render.py` needs to know that the compose file does not say.
+#
+# NAMES ONLY. No value from `compose/estate/tokens.env` appears in this file or in
+# anything rendered from it, and that is the property the whole design protects:
+# `k8s/estate/` is committed, so a credential written into it is a credential
+# published. Every name below becomes a `secretKeyRef` pointing at the Secret
+# `estate-tokens`, which `scripts/k8s-secrets.py` builds on the cluster from the
+# real file and which is never rendered.
+#
+# ─── WHY THIS LIST IS COMMITTED AND NOT COMPUTED ─────────────────────────────
+#
+# The renderer has to decide, for each `${VAR}` in the compose file, whether VAR
+# is a credential or a setting. It cannot ask `tokens.env` — that file is not in
+# the repository, so CI has no copy and `check-k8s-render-matches-compose.py`
+# could not regenerate anything.
+#
+# So the classification is committed here, and the check runs the other way: on
+# the host, `scripts/k8s-secrets.py --verify` compares this list against the real
+# file's keys and fails on either a name here that the file lacks (a service
+# would start with a `secretKeyRef` to a missing key) or a name in the file that
+# is missing here (the renderer would treat a live credential as config and
+# WRITE IT INTO A COMMITTED FILE). The second direction is the one that matters.
+#
+# Verified against the host's `compose/estate/tokens.env` on 2026-08-19: 61
+# assignments, 61 names, all `[A-Z][A-Z0-9_]*`, no duplicates.
+
+network: mainnet
+namespace: cloudsforge-estate
+
+secret_vars:
+  - ADMIN_API_IDENTITY_CREDENTIAL
+  - ADMIN_API_SERVICE_TOKEN
+  - AGORA_IDENTITY_CREDENTIAL
+  - ANALYTICS_TOKEN
+  - BEACON_IDENTITY_CREDENTIAL
+  - BEACON_JOURNEY_ACCOUNTS
+  - BEACON_TOKEN
+  - BILLING_IDENTITY_CREDENTIAL
+  - BTC_RPC_URL
+  - CF_BACKUP_AGE_RECIPIENT
+  - CF_CHAIN_HOST
+  - CF_CONFORMANCE_ACCOUNT
+  - CF_POSTGRES_PASSWORD
+  - COMMUNITY_IDENTITY_CREDENTIAL
+  - COMMUNITY_SERVICE_CREDENTIAL
+  - CUSTODY_IDENTITY_CREDENTIAL
+  - DOGE_RPC_URL
+  - EMBERKIN_IDENTITY_CREDENTIAL
+  - EMBERKIN_SERVICE_TOKEN
+  - EMBER_RPC_URL
+  - ESTATE_ADMIN_EMAIL
+  - ESTATE_ADMIN_PASSWORD
+  - FAUCET_CUSTODY_TOKEN
+  - FAUCET_FUNDING_ADDRESS
+  - FAUCET_IDENTITY_CREDENTIAL
+  - FAUCET_REQUESTER_SALT
+  - FAUCET_TOKEN
+  - FORESIGHT_IDENTITY_CREDENTIAL
+  - FORESIGHT_ORACLE_ADDRESS
+  - FORESIGHT_SERVICE_TOKEN
+  - FORESIGHT_TREASURY_ADDRESS
+  - HUB_API_IDENTITY_CREDENTIAL
+  - LANTERN_TOKEN
+  - LEDGER_IDENTITY_CREDENTIAL
+  - LTC_RPC_URL
+  - MAIL_DOMAIN
+  - MARKET_IDENTITY_CREDENTIAL
+  - MARKET_SERVICE_TOKEN
+  - MINT_IDENTITY_CREDENTIAL
+  - NDA_IDENTITY_CREDENTIAL
+  - POOL_BTC_PAYOUT_ADDRESS
+  - POOL_DOGE_PAYOUT_ADDRESS
+  - POOL_LTC_PAYOUT_ADDRESS
+  - SETTLEMENT_IDENTITY_CREDENTIAL
+  - SETTLEMENT_SERVICE_TOKEN
+  - SMTP_FROM
+  - SMTP_HOST
+  - SMTP_PASS
+  - SMTP_PORT
+  - SMTP_REPLY_TO
+  - SMTP_SECURE
+  - SMTP_USER
+  - TESSERA_IDENTITY_CREDENTIAL
+  - TESSERA_SERVICE_CREDENTIAL
+  - TRADE_IDENTITY_CREDENTIAL
+  - TRADE_SERVICE_TOKEN
+  - TURNSTILE_HOSTNAMES
+  - TURNSTILE_SECRET
+  - TURNSTILE_SITE_KEY
+  - WALLET_IDENTITY_CREDENTIAL
+  - WORLDS_IDENTITY_CREDENTIAL
+
+# ─── THE ONE VALUE KUBERNETES CANNOT ASSEMBLE ────────────────────────────────
+#
+# `SETTLEMENT_RPC_URLS` is a JSON object built out of four credentials, each
+# contributing a key ONLY IF IT IS SET. Kubernetes' `$(VAR)` expansion has no
+# conditional form, so the alternative would be to emit `,"btc":"$(BTC_RPC_URL)"`
+# unconditionally — and the compose file spends thirty-five lines explaining why
+# that is a boot failure rather than a cosmetic difference: `jsonMap` in an eager
+# `env.ts` refuses `,"doge":""` at import, taking down settlement AND its
+# migrator, on a chain the estate simply is not running yet.
+#
+# So `scripts/k8s-secrets.py` evaluates the expression once, with the real values,
+# and stores the finished string as one key of the Secret `estate-derived`. The
+# expression is recorded here verbatim; the renderer compares it byte-for-byte
+# against what it finds in the compose file and refuses to run if they differ,
+# because a drift would point settlement at a Secret built from a stale chain
+# list — and a silently-absent chain is exactly the failure the compose file's
+# comment is about.
+#
+# `ETC_RPC_URL` is in neither network's tokens.env, so it contributes nothing
+# today; it is kept because the expression is copied, not paraphrased.
+derived_vars:
+  SETTLEMENT_RPC_URLS:
+    consumers: [settlement, settlement-migrate]
+    from: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${BTC_RPC_URL:+,"btc":"$BTC_RPC_URL"}${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}${DOGE_RPC_URL:+,"doge":"$DOGE_RPC_URL"}${ETC_RPC_URL:+,"etc":"$ETC_RPC_URL"}}'
+
+# ─── `extra_hosts`, WHICH TURNS OUT TO BE DEAD ───────────────────────────────
+#
+# Five services carry `extra_hosts: ["host.docker.internal:host-gateway"]` —
+# indexer, settlement, settlement-migrate, foresight, faucet. Kubernetes has no
+# equivalent because it has no Docker bridge, so each name needs an explicit
+# decision here rather than a silent drop.
+#
+# Measured on the host, 2026-08-19: NOTHING RESOLVES IT. All four of mainnet's
+# RPC URLs (`EMBER_`, `BTC_`, `LTC_`, `DOGE_`) point at 10.10.0.1, the chain host
+# over WireGuard. No value in `tokens.env` contains the string at all — the one
+# grep hit in that file is a comment. Every remaining mention in the compose file
+# is the DEFAULT half of `${EMBER_RPC_URL:-http://host.docker.internal:8545}`,
+# and the renderer drops secret defaults on purpose, so the default cannot fire.
+#
+# It is therefore dropped rather than translated. `drop` is spelled out because
+# the renderer refuses to discard an `extra_hosts` entry it was not told about:
+# the failure mode of guessing wrong here is a money-tier service resolving a
+# chain RPC to the wrong machine, which is not a failure that announces itself.
+extra_hosts:
+  host.docker.internal: drop
+
+# ─── PERSISTENT VOLUMES ──────────────────────────────────────────────────────
+#
+# Measured on the host, 2026-08-19 (`du -sh` inside the live volume):
+#   studio-assets  12.9 MB across 39 files   — generated studio artwork, grows
+#   custody-keys    4.3 MB across 544 files  — encrypted key blobs, grows slowly
+#
+# The requests are far above today's usage because k3s's local-path provisioner
+# does NOT enforce capacity — the number buys nothing now and is only honoured
+# when this moves to a real StorageClass on the multi-node cluster, which is the
+# stated plan. Sizing to measured usage would mean revisiting it then; sizing for
+# the destination costs nothing today.
+volume_sizes:
+  studio-assets: 10Gi
+  custody-keys: 1Gi
+  # The tessera world artwork redirected out of a bind mount above. 151 MB
+  # measured; 1Gi leaves room for a second art set without a resize, which is
+  # the point of keeping the old one switchable.
+  world-assets: 1Gi
+
+# ─── THE TRUST BUNDLE EVERY CONTAINER NEEDS IN THE CLUSTER ───────────────────
+#
+# Under compose exactly one service asked for this — beacon, below, because
+# beacon is the only one that deliberately calls the estate at the addresses a
+# person uses. Every other service that names a public hostname resolved it on
+# the public internet, went out through Cloudflare, and came back to a
+# publicly-trusted certificate, so it needed nothing.
+#
+# In the cluster that is no longer true. `scripts/k8s-cluster-dns.sh` answers
+# the estate's own hostnames with the gateway's ClusterIP — it has to, or a pod
+# probing `hub.cloudsforge.online` is answered by the LIVE estate — and the
+# gateway presents a Cloudflare Origin CA leaf here and the estate CA's leaf on
+# testnet. Neither is in a public root store. Measured from `deploy/ledger` in
+# cf-testnet before this existed: `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, which
+# turned every authenticated assertion in estate-verify from `401` into
+# `503 verifier_unavailable` — including "an EXPIRED service token was answered
+# 503", because a verifier that cannot fetch its JWKS stops being able to say
+# anything about a token at all.
+#
+# Applied to every container rather than to the ones whose env happens to hold
+# an `https://…` URL today: `trust.crt` is the estate CA PLUS every public root,
+# so a container that gets it loses no public trust, and the uniform rule does
+# not quietly stop covering a service that later gains such a URL, builds one
+# from two variables, or follows a redirect into one.
+#
+# A service that sets `NODE_EXTRA_CA_CERTS` itself keeps its own value.
+cluster_tls_trust:
+  volume: gateway-trust
+  configMap: gateway-trust
+  key: trust.crt
+  mountPath: /etc/ssl/estate/trust.crt
+
+# ─── BIND MOUNTS, WHICH HAVE NO HOST TO BIND TO ──────────────────────────────
+#
+# Compose mounted these out of the repository checkout beside it. There is no
+# checkout on the cluster, so each becomes an object — and each needs something
+# to have PUT THE CONTENT THERE, which is the part a manifest cannot express and
+# `scripts/k8s-estate-seed.sh` does.
+bind_mounts:
+  # beacon's `NODE_EXTRA_CA_CERTS`. Public certificates only, never a key — the
+  # estate CA plus the public roots — so a ConfigMap is the right shape and its
+  # 1 MB limit is not close. `subPath` because the mount target is a FILE; without
+  # it Kubernetes mounts a directory over `/etc/ssl/estate/` and Node reports the
+  # cert as unreadable rather than as absent.
+  ../gateway/certs/trust.crt:
+    kind: configMap
+    name: gateway-trust
+    configMap: gateway-trust
+    subPath: trust.crt
+
+  # tessera's world artwork: 151 MB, mounted read-only by `tessera-web` to serve
+  # and by `tessera-assets-check` to count. Too large for a ConfigMap by two
+  # orders of magnitude, and it is release content rather than configuration, so
+  # it is a PVC seeded once by tar. The path is the RESOLVED value of
+  # `${CF_WORLD_ASSETS:-./estate/world-assets}` — mainnet.env selects the
+  # gpt-image-2 set, and the old set stays switchable exactly as it does today.
+  ./estate/world-assets-gpt-image-2:
+    kind: persistentVolumeClaim
+    name: world-assets
+    claimName: world-assets

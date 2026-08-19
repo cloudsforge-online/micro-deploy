@@ -1,0 +1,632 @@
+# The estate's telemetry plane: six components, one namespace, both networks.
+#
+# Applied by `scripts/k8s-telemetry.sh`, which also builds every ConfigMap and
+# Secret this mounts and renders the scrape targets.
+#
+# There is no per-network variant of this file, for the same reason there is
+# none of `k8s/cloudflared/`: under compose these six ran on the SHARED external
+# `app` network, one copy serving mainnet and testnet together. Prometheus
+# additionally joined `cloudsforge-estate_default` and `cf-testnet_default` to
+# scrape, and Alertmanager joined `cloudsforge-estate_default` to open incidents.
+# Nothing here was ever duplicated per network and duplicating it now would
+# split fifteen days of TSDB across two stores that neither dashboard reads.
+#
+# Hence namespace `cf-telemetry`: it observes both networks and belongs to
+# neither, exactly like `cf-edge`.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# FOUR OF THE SIX CONFIGS MIGRATE BYTE-IDENTICAL
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# `otel/collector.yaml`, `tempo/tempo.yaml`, `loki/loki.yaml` and all of
+# `grafana/provisioning/` are applied here UNCHANGED, and that is not luck. Every
+# address they contain — `tempo:4317`, `loki:3100`, `prometheus:9090`,
+# `alertmanager:9093` — points at another member of this same plane, and a bare
+# name resolves within a namespace exactly the way a compose alias resolved
+# within a network. Six services that only ever talked to each other move as one
+# unit and notice nothing.
+#
+# Only two addresses cross the namespace boundary, and `k8s-telemetry.sh`
+# rewrites both at apply time from the committed originals rather than forking
+# them: Prometheus's six static targets in `prometheus/prometheus.yml`, and
+# Alertmanager's Beacon receiver in `alertmanager/alertmanager.yml`. See that
+# script for the rule and the guard that keeps it complete.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE TWO FAILURE CLASSES prometheus/targets/README.md DOCUMENTS, AND WHY THIS
+# FILE ENDS BOTH OF THEM STRUCTURALLY
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# (a) THE SNAPSHOT RELOAD. Under Docker Desktop on WSL2 a SINGLE-FILE bind mount
+#     is a snapshot: editing `prometheus.yml` on the host does not change the
+#     file inside the container, so `POST /-/reload` re-reads `--config.file`,
+#     resolves it to the stale snapshot, parses it happily and RETURNS 200. A
+#     reload that reports success and changes nothing is the worst possible
+#     shape for this bug, and `make prometheus-config-drift FIX=1` exists to
+#     work around it.
+#
+#     A ConfigMap is mounted as a DIRECTORY of symlinks and updated by atomic
+#     symlink swap, so new content genuinely appears in the container and
+#     `/-/reload` genuinely re-reads it. The workaround has nothing left to
+#     work around. Note the mounts below use `subPath` NOWHERE for this reason —
+#     a `subPath` mount is a copy and reintroduces exactly the snapshot
+#     semantics this paragraph is about.
+#
+# (b) THE SECOND ANSWER. Docker's embedded DNS resolves a bare name against the
+#     container's networks in name order. Prometheus had to join `cf-testnet`'s
+#     network to scrape one testnet target (micro-org#398), `cf-testnet_default`
+#     sorts before `cloudsforge-estate_default`, and from 2026-08-11T23:59:45Z
+#     every bare-name target in `targets/` was silently answered by the TESTNET
+#     container while keeping the mainnet job's labels (micro-org#437). The fix
+#     was to address containers rather than services — `<project>-<service>-<n>`.
+#
+#     A Kubernetes name is qualified by namespace and cannot acquire a second
+#     answer: `indexer.cf-testnet.svc.cluster.local` is one address forever.
+#     So the container-name form is NOT carried forward — it was a scar for a
+#     wound that no longer exists, and it carries a replica ordinal that changes
+#     when a pod is rescheduled. `render-prometheus-targets.py --k8s-namespace`
+#     emits Service FQDNs instead, and pins `instance` to the same
+#     `<service>:<port>` it always pinned, so not one series moves.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# NO HOST PORTS, AND HOW AN OPERATOR REACHES GRAFANA NOW
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Under compose all six published to 127.0.0.1 on the app host — 9090 Prometheus,
+# 9091 Grafana, 9092 Loki, 9093 Alertmanager, 9094 Tempo, 9098/9099 collector —
+# and an operator reached them by ssh port-forward. Measured: the gateway's
+# `gateway/dynamic/` declares no router for any of the six, so this plane has
+# never had a public surface and no Cloudflare rule points at it.
+#
+# So nothing here publishes a host port. The replacement for the ssh tunnel is
+#
+#   kubectl -n cf-telemetry port-forward svc/grafana 9091:3000
+#
+# which is strictly better in one respect worth writing down: the loopback
+# listener existed continuously whether or not anybody was looking, and this one
+# exists only while a person is holding it open.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cf-telemetry
+  labels:
+    app.kubernetes.io/part-of: cloudsforge-estate
+    # Deliberately NO `online.cloudsforge.network` label, same as `cf-edge`.
+    # This plane observes both networks; labelling it either value would make it
+    # answer a question it cannot.
+    online.cloudsforge.role: telemetry
+---
+# ── volumes ───────────────────────────────────────────────────────────────────
+# All five on `cf-retain`, whose reclaim policy is Retain: deleting a PVC by
+# accident should not delete fifteen days of the estate's metrics. Sizes come
+# from the retention each component is actually configured for — Prometheus's
+# `--storage.tsdb.retention.size=8GB` is the only hard number any of them
+# declares, and the PVC is deliberately larger than it so the size-based
+# retention, not the filesystem, is what evicts.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: prometheus-data
+  namespace: cf-telemetry
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cf-retain
+  resources:
+    requests:
+      storage: 12Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: tempo-data
+  namespace: cf-telemetry
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cf-retain
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: loki-data
+  namespace: cf-telemetry
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cf-retain
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: alertmanager-data
+  namespace: cf-telemetry
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cf-retain
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: grafana-data
+  namespace: cf-telemetry
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: cf-retain
+  resources:
+    requests:
+      storage: 2Gi
+---
+# ── otel-collector ────────────────────────────────────────────────────────────
+# ONE collector, not one per network, because that is what runs today: the
+# compose collector sat on the shared `app` network and both gateways traced to
+# it. Its `OTEL_ENV` is therefore a single value covering both, which is a
+# pre-existing labelling question and NOT one a migration should answer in the
+# same motion that moves the process.
+#
+# Measured, its only in-cluster client is Traefik: `--tracing.otlp.grpc.endpoint`
+# in `k8s/gateway/60-gateway.yaml`, once per namespace. No estate service sets an
+# OTLP endpoint variable at all, and the gateway declares no router to :4318, so
+# the browser path the receiver's CORS block anticipates has never been wired.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: otel-collector
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: otel-collector, app.kubernetes.io/part-of: cloudsforge-estate}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: otel-collector}
+  strategy: {type: Recreate}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: otel-collector}
+      annotations:
+        cloudsforge.online/config-hash: "unset"
+    spec:
+      containers:
+        - name: otel-collector
+          image: otel/opentelemetry-collector-contrib:0.115.1
+          args: ["--config=/etc/otel/collector.yaml"]
+          envFrom:
+            - configMapRef: {name: env-otel-collector}
+          ports:
+            - {name: otlp-grpc, containerPort: 4317}
+            - {name: otlp-http, containerPort: 4318}
+            - {name: health, containerPort: 13133}
+            - {name: metrics, containerPort: 8889}
+          volumeMounts:
+            - {name: config, mountPath: /etc/otel, readOnly: true}
+          readinessProbe:
+            # The `health_check` extension the config already enables on 13133.
+            # Compose could only run `--version`, which proves the binary exists
+            # and nothing about whether the pipelines built — a collector with a
+            # bad exporter starts, logs, and drops everything.
+            httpGet: {path: /, port: health}
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /, port: health}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: config
+          configMap: {name: otel-config}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: otel-collector
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: otel-collector}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: otel-collector}
+  ports:
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+    - {name: otlp-http, port: 4318, targetPort: otlp-http}
+    - {name: health, port: 13133, targetPort: health}
+    - {name: metrics, port: 8889, targetPort: metrics}
+---
+# ── prometheus ────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: prometheus, app.kubernetes.io/part-of: cloudsforge-estate}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: prometheus}
+  strategy:
+    # Recreate: the TSDB is a ReadWriteOnce volume and two Prometheis cannot
+    # hold it at once. A RollingUpdate would deadlock on the PVC rather than
+    # fail, which looks like a slow deploy and is actually a stuck one.
+    type: Recreate
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: prometheus}
+      annotations:
+        # Stamped by the apply script from the content of every mounted config,
+        # so a changed rule file is a new pod deterministically rather than
+        # after up to a minute of kubelet sync. `/-/reload` still works for the
+        # targets file, which is why THAT one is not in the hash.
+        cloudsforge.online/config-hash: "unset"
+    spec:
+      securityContext:
+        # 65534 (`nobody`) is the image's own user. `fsGroup` is what replaces
+        # compose's `group_add: ${CF_SECRETS_GID:-1000}`: it makes both the
+        # TSDB volume and the mounted token Secret group-readable by the process
+        # without anybody choosing a numeric gid on the host.
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.55.1
+          args:
+            # `/etc/prometheus/conf/` and not `/etc/prometheus/` — the one arg
+            # that differs from compose, and it is forced. `rules/`, `targets/`
+            # and `secrets/` must mount as siblings, and a ConfigMap volume is a
+            # read-only tmpfs the kubelet cannot create mountpoints inside, so a
+            # ConfigMap at `/etc/prometheus` would make the other three
+            # unmountable. Four sibling mounts under the image's own writable
+            # `/etc/prometheus` instead. The three paths INSIDE prometheus.yml
+            # are unchanged, which is what matters.
+            - --config.file=/etc/prometheus/conf/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=15d
+            - --storage.tsdb.retention.size=8GB
+            - --web.enable-lifecycle
+            - --enable-feature=exemplar-storage
+            - --web.enable-remote-write-receiver
+            - --web.external-url=http://localhost:9090
+          ports:
+            - {name: http, containerPort: 9090}
+          volumeMounts:
+            # NOT subPath, anywhere. A subPath mount is a one-time copy and
+            # would restore exactly the snapshot semantics that made `/-/reload`
+            # lie under compose; whole directories are mounted so updates
+            # propagate and a reload re-reads what it claims to.
+            - {name: config, mountPath: /etc/prometheus/conf, readOnly: true}
+            - {name: rules, mountPath: /etc/prometheus/rules, readOnly: true}
+            - {name: targets, mountPath: /etc/prometheus/targets, readOnly: true}
+            - {name: secrets, mountPath: /etc/prometheus/secrets, readOnly: true}
+            - {name: data, mountPath: /prometheus}
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: http}
+            initialDelaySeconds: 60
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: {cpu: 100m, memory: 512Mi}
+            limits: {memory: 2Gi}
+      volumes:
+        - name: config
+          configMap: {name: prometheus-config}
+        - name: rules
+          configMap: {name: prometheus-rules}
+        - name: targets
+          configMap: {name: prometheus-targets}
+        - name: secrets
+          secret: {secretName: prometheus-secrets, defaultMode: 0440}
+        - name: data
+          persistentVolumeClaim: {claimName: prometheus-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: prometheus}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: prometheus}
+  ports:
+    - {name: http, port: 9090, targetPort: http}
+---
+# ── tempo ─────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tempo
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: tempo, app.kubernetes.io/part-of: cloudsforge-estate}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: tempo}
+  strategy: {type: Recreate}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: tempo}
+      annotations:
+        cloudsforge.online/config-hash: "unset"
+    spec:
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: tempo
+          image: grafana/tempo:2.6.1
+          args: ["-config.file=/etc/tempo/tempo.yaml"]
+          ports:
+            - {name: http, containerPort: 3200}
+            - {name: otlp-grpc, containerPort: 4317}
+          volumeMounts:
+            - {name: config, mountPath: /etc/tempo, readOnly: true}
+            - {name: data, mountPath: /var/tempo}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {memory: 1Gi}
+      volumes:
+        - name: config
+          configMap: {name: tempo-config}
+        - name: data
+          persistentVolumeClaim: {claimName: tempo-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: tempo
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: tempo}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: tempo}
+  ports:
+    - {name: http, port: 3200, targetPort: http}
+    - {name: otlp-grpc, port: 4317, targetPort: otlp-grpc}
+---
+# ── loki ──────────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: loki
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: loki, app.kubernetes.io/part-of: cloudsforge-estate}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: loki}
+  strategy: {type: Recreate}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: loki}
+      annotations:
+        cloudsforge.online/config-hash: "unset"
+    spec:
+      securityContext:
+        # `user: "0:0"` verbatim from compose, where it carries no comment
+        # explaining itself — almost certainly a bind-mount ownership fix for
+        # `/loki`, which `fsGroup` on a PVC would now solve properly at uid
+        # 10001. It is preserved rather than corrected because a migration that
+        # also changes who a process runs as makes any later misbehaviour
+        # ambiguous between the two. Dropping to 10001 is a one-line, separately
+        # testable follow-up.
+        runAsUser: 0
+        runAsGroup: 0
+        fsGroup: 0
+      containers:
+        - name: loki
+          image: grafana/loki:3.3.2
+          args: ["-config.file=/etc/loki/loki.yaml"]
+          ports:
+            - {name: http, containerPort: 3100}
+          volumeMounts:
+            - {name: config, mountPath: /etc/loki, readOnly: true}
+            - {name: data, mountPath: /loki}
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: {cpu: 50m, memory: 256Mi}
+            limits: {memory: 1Gi}
+      volumes:
+        - name: config
+          configMap: {name: loki-config}
+        - name: data
+          persistentVolumeClaim: {claimName: loki-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: loki
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: loki}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: loki}
+  ports:
+    - {name: http, port: 3100, targetPort: http}
+---
+# ── alertmanager ──────────────────────────────────────────────────────────────
+# v0.28.1 IS LOAD-BEARING. v0.27.0 segfaults on any non-2xx response from a
+# `url_file` webhook (prometheus/alertmanager#3798), and every receiver here
+# except the Beacon one is a `url_file`. Do not float this tag.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: alertmanager
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: alertmanager, app.kubernetes.io/part-of: cloudsforge-estate}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: alertmanager}
+  strategy: {type: Recreate}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: alertmanager}
+      annotations:
+        cloudsforge.online/config-hash: "unset"
+    spec:
+      securityContext:
+        runAsUser: 65534
+        runAsGroup: 65534
+        fsGroup: 65534
+      containers:
+        - name: alertmanager
+          image: prom/alertmanager:v0.28.1
+          args:
+            # `conf/` for the same forced reason as Prometheus above: `secrets/`
+            # has to be a sibling, not a child of a read-only ConfigMap mount.
+            # The `credentials_file` and `url_file` paths inside
+            # alertmanager.yml are unchanged.
+            - --config.file=/etc/alertmanager/conf/alertmanager.yml
+            - --storage.path=/alertmanager
+            - --web.external-url=http://localhost:9093
+          ports:
+            - {name: http, containerPort: 9093}
+          volumeMounts:
+            - {name: config, mountPath: /etc/alertmanager/conf, readOnly: true}
+            - {name: secrets, mountPath: /etc/alertmanager/secrets, readOnly: true}
+            - {name: data, mountPath: /alertmanager}
+          readinessProbe:
+            httpGet: {path: /-/ready, port: http}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: {path: /-/healthy, port: http}
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 5
+          resources:
+            requests: {cpu: 25m, memory: 64Mi}
+            limits: {memory: 256Mi}
+      volumes:
+        - name: config
+          configMap: {name: alertmanager-config}
+        - name: secrets
+          # The three files `../up.sh` used to write: `beacon_token`,
+          # `page_webhook_url`, `ticket_webhook_url`. EMPTY is a supported mode
+          # for all three; ABSENT is not, which is why the apply script creates
+          # all three keys unconditionally.
+          secret: {secretName: alertmanager-secrets, defaultMode: 0440}
+        - name: data
+          persistentVolumeClaim: {claimName: alertmanager-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: alertmanager
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: alertmanager}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: alertmanager}
+  ports:
+    - {name: http, port: 9093, targetPort: http}
+---
+# ── grafana ───────────────────────────────────────────────────────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grafana
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: grafana, app.kubernetes.io/part-of: cloudsforge-estate}
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: grafana}
+  strategy: {type: Recreate}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: grafana}
+      annotations:
+        cloudsforge.online/config-hash: "unset"
+    spec:
+      securityContext:
+        runAsUser: 472
+        runAsGroup: 472
+        fsGroup: 472
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.4.0
+          envFrom:
+            - configMapRef: {name: env-grafana}
+          env:
+            # The one credential this plane holds, and it keeps the treatment
+            # `docker-compose.telemetry.yml` argued for at length: no default
+            # anywhere, so a Grafana that comes up with a password nobody chose
+            # cannot happen. `optional: false` is the k8s spelling of `:?` —
+            # the pod stays in CreateContainerConfigError rather than starting.
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: grafana-admin
+                  key: password
+                  optional: false
+          ports:
+            - {name: http, containerPort: 3000}
+          volumeMounts:
+            # Mount order matters and Kubernetes gets it right: it sorts by path
+            # depth, so `/var/lib/grafana` is mounted before the dashboards land
+            # inside it. This is the same nesting compose had.
+            - {name: data, mountPath: /var/lib/grafana}
+            - {name: provisioning, mountPath: /etc/grafana/provisioning, readOnly: true}
+            - {name: dashboards, mountPath: /var/lib/grafana/dashboards, readOnly: true}
+          readinessProbe:
+            httpGet: {path: /api/health, port: http}
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            failureThreshold: 30
+          resources:
+            requests: {cpu: 50m, memory: 128Mi}
+            limits: {memory: 512Mi}
+      volumes:
+        - name: provisioning
+          # Projected, not a plain ConfigMap mount, because `provisioning/` is a
+          # TREE — datasources/, dashboards/, alerting/, plugins/ — and a
+          # ConfigMap is flat. Each subdirectory gets its own ConfigMap and its
+          # own path here, which is what preserves the layout Grafana walks.
+          projected:
+            sources:
+              - configMap:
+                  name: grafana-provisioning-datasources
+                  items: [{key: datasources.yaml, path: datasources/datasources.yaml}]
+              - configMap:
+                  name: grafana-provisioning-dashboards
+                  items: [{key: dashboards.yaml, path: dashboards/dashboards.yaml}]
+        - name: dashboards
+          configMap: {name: grafana-dashboards}
+        - name: data
+          persistentVolumeClaim: {claimName: grafana-data}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grafana
+  namespace: cf-telemetry
+  labels: {app.kubernetes.io/name: grafana}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: grafana}
+  ports:
+    - {name: http, port: 3000, targetPort: http}

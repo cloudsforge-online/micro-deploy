@@ -132,6 +132,16 @@ parser.add_argument(
     "not also emitted as an anonymous file_sd target",
 )
 parser.add_argument("--tiers", default=str(ROOT / "prometheus" / "tiers.yaml"))
+parser.add_argument(
+    "--k8s-namespace",
+    metavar="NAMESPACE",
+    help=(
+        "emit Kubernetes Service FQDNs (`<service>.<NAMESPACE>.svc.cluster.local`) "
+        "instead of compose container names. The service list, the port discovery, "
+        "the skip rules and every emitted label are identical either way — only the "
+        "address form changes. See `container_names()`."
+    ),
+)
 parser.add_argument("--out", help="write here instead of stdout")
 parser.add_argument(
     "--check",
@@ -287,14 +297,46 @@ def container_names(name, spec):
     machinery, it is the reason a second replica would be scraped instead of
     dropped.
     """
-    pinned = spec.get("container_name")
-    if pinned:
-        return [str(pinned)]
     replicas = ((spec.get("deploy") or {}).get("replicas")) or 1
     try:
         replicas = max(1, int(replicas))
     except (TypeError, ValueError):
         replicas = 1
+
+    # -----------------------------------------------------------------------
+    # KUBERNETES: the Service FQDN, and a REFUSAL rather than a silent sample.
+    #
+    # A namespace-qualified name cannot acquire a second answer the way a bare
+    # compose name could (micro-org#437), so the container-name workaround is
+    # not carried forward — it was a scar for a wound the platform no longer
+    # has, and it carries a replica ordinal that changes on reschedule.
+    #
+    # But a Service is not N addresses. A ClusterIP LOAD-BALANCES, so scraping
+    # `svc:4000` with three pods behind it returns a DIFFERENT pod each scrape:
+    # one series flipping between three processes, with counters that appear to
+    # go backwards. That is worse than the bug this replaces, because it looks
+    # like data. It cannot happen today — measured on mainnet, every service is
+    # replicas 1 — so this refuses rather than guessing, and the day somebody
+    # sets `deploy.replicas: 3` they get a failed render instead of a plausible
+    # graph. The fix at that point is a headless Service and `dns_sd_configs`,
+    # which returns every pod address; that is a real change and deserves to be
+    # a deliberate one.
+    # -----------------------------------------------------------------------
+    if args.k8s_namespace:
+        if replicas > 1:
+            fail(
+                f"`{name}` declares {replicas} replicas, and a ClusterIP Service address\n"
+                f"       resolves to ONE of them per scrape at random. Emitting\n"
+                f"       `{name}.{args.k8s_namespace}.svc.cluster.local` would produce a single\n"
+                f"       series silently sampled across {replicas} processes — counters that go\n"
+                f"       backwards, and nothing that looks broken. Give it a headless Service\n"
+                f"       and a `dns_sd_configs` job instead of a static target."
+            )
+        return [f"{name}.{args.k8s_namespace}.svc.cluster.local"]
+
+    pinned = spec.get("container_name")
+    if pinned:
+        return [str(pinned)]
     return [f"{project}-{name}-{index}" for index in range(1, replicas + 1)]
 
 
@@ -467,17 +509,31 @@ lines = [
     f"# Release:  {version}",
     f"# Manifest: {manifest_path}",
     "#",
-    "# Rewritten by scripts/release-deploy.sh on every deploy and every rollback, from",
-    "# the same manifest that renders the pinned compose overlay. Prometheus re-reads",
+    "# Rewritten by scripts/release-deploy.sh on every deploy and every rollback (and by",
+    "# scripts/k8s-telemetry.sh on the cluster), from the same manifest that renders the",
+    "# pinned compose overlay. Prometheus re-reads",
     "# this file every 30s (`refresh_interval` on the `cf-services` job), so it costs",
     "# no restart and there is no window in which the scrape list and the running",
     "# estate disagree by more than half a minute.",
     "#",
-    "# Each target is a CONTAINER NAME, not a service name, and carries an explicit",
-    "# `instance` that keeps the old `<service>:<port>` series identity. A bare service",
-    "# name resolves to whichever project's container Docker's DNS reaches first, and on",
-    "# this host that is the testnet one — see micro-org#437 and the generator.",
-    "#",
+] + (
+    [
+        f"# Each target is a Kubernetes Service FQDN in namespace `{args.k8s_namespace}`, and",
+        "# carries an explicit `instance` pinned to the old `<service>:<port>` so that not one",
+        "# series moved in the migration. A namespace-qualified name has exactly one answer,",
+        "# which is why the compose CONTAINER-name workaround for micro-org#437 is not carried",
+        "# forward here — see `container_names()` in the generator.",
+        "#",
+    ]
+    if args.k8s_namespace
+    else [
+        "# Each target is a CONTAINER NAME, not a service name, and carries an explicit",
+        "# `instance` that keeps the old `<service>:<port>` series identity. A bare service",
+        "# name resolves to whichever project's container Docker's DNS reaches first, and on",
+        "# this host that is the testnet one — see micro-org#437 and the generator.",
+        "#",
+    ]
+) + [
     "# A service is here because ITS OWN HEALTH CHECK probes /readyz on this port, and",
     "# rule 4 of docs/ecosystem/03 §2 makes /livez, /readyz and /metrics one obligation.",
     "# Nothing below is hand-typed and nothing is hand-excluded; see the generator.",
