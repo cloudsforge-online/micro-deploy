@@ -6,6 +6,11 @@
 #   ./scripts/k8s-deploy.sh --network mainnet --rerun-migrations
 #   ./scripts/k8s-deploy.sh --network mainnet --wave 50
 #   ./scripts/k8s-deploy.sh --network mainnet --batch 0     # all at once
+#   ./scripts/k8s-deploy.sh --network mainnet --no-hold     # cutover: start everything
+#
+# Before the cutover `settlement` and `beacon` are HELD BACK AUTOMATICALLY —
+# see THE HOLD IS NOT OPT-IN. `--no-hold` is what starts them, and it is a
+# cutover step, not a convenience.
 #
 # ── WHY WAVES, WHEN KUBERNETES IS SUPPOSED TO SELF-ORDER ─────────────────────
 #
@@ -69,7 +74,12 @@ NETWORK=""
 DRY_RUN=0
 RERUN_MIGRATIONS=0
 ONLY_WAVE=""
-HOLD=""
+# Unset rather than empty: empty is a legitimate value meaning "hold nothing",
+# and it has to be distinguishable from "the operator said nothing", which is
+# what selects the default below. See THE HOLD IS NOT OPT-IN.
+HOLD=
+HOLD_SET=0
+HOLD_DEFAULT="settlement,beacon"
 JOB_TIMEOUT=${JOB_TIMEOUT:-900}
 ROLLOUT_TIMEOUT=${ROLLOUT_TIMEOUT:-900}
 # Deployments per batch in wave 50, and how long one batch is waited on before
@@ -84,7 +94,8 @@ while [ $# -gt 0 ]; do
     --dry-run)           DRY_RUN=1; shift ;;
     --rerun-migrations)  RERUN_MIGRATIONS=1; shift ;;
     --wave)              ONLY_WAVE="${2:-}"; shift 2 ;;
-    --hold)              HOLD="${2:-}"; shift 2 ;;
+    --hold)              HOLD="${2:-}"; HOLD_SET=1; shift 2 ;;
+    --no-hold)           HOLD=""; HOLD_SET=1; shift ;;
     --batch)             BATCH="${2:-}"; shift 2 ;;
     -h|--help)           sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
@@ -128,6 +139,41 @@ fi
 say "cluster:   $(kubectl config current-context)  (node/$EXPECTED_NODE)"
 say "network:   $NETWORK"
 say "namespace: $NAMESPACE"
+
+# ── THE HOLD IS NOT OPT-IN ───────────────────────────────────────────────────
+#
+# `--hold settlement,beacon` used to be something the operator remembered. On
+# 2026-08-19 the operator did not, and both ran for 22 minutes beside the live
+# compose estate — the exact scenario the `--hold` comment below describes as a
+# double-spend race. It did not fire (`outbound_transactions` newest was two
+# weeks old, 0 rows created; beacon registered 2 synthetic accounts), so the
+# cost was a few messages of shared Mailtrap quota. It was luck, not design: a
+# safety property that depends on remembering a flag is not a safety property.
+#
+# So the DEFAULT is now derived from the one fact that says whether a second
+# estate is live: `cf-edge/cloudflared`'s replica count, which is 0 until the
+# cutover and 1 after it, and which `scripts/k8s-cloudflared.sh` already treats
+# as the whole interlock. Before the cutover the hold applies by itself; after
+# it, this deploy IS the estate and holding would be the wrong default.
+#
+# An explicit `--hold` or `--no-hold` always wins, so the deliberate case is
+# still one flag away — it is only the SILENT case that changed sides.
+if [ "$HOLD_SET" = 0 ]; then
+  CONNECTORS="$(kubectl -n cf-edge get deploy cloudflared -o jsonpath='{.spec.replicas}' 2>/dev/null)"
+  case "$CONNECTORS" in
+    ""|0)
+      HOLD="$HOLD_DEFAULT"
+      say "hold:      $HOLD  (cf-edge/cloudflared replicas=${CONNECTORS:-<absent>} — not cut over)"
+      ;;
+    *)
+      say "hold:      none  (cf-edge/cloudflared replicas=$CONNECTORS — this estate is live)"
+      ;;
+  esac
+elif [ -n "$HOLD" ]; then
+  say "hold:      $HOLD  (explicit)"
+else
+  say "hold:      none  (explicit --no-hold)"
+fi
 
 # ── PREFLIGHT ────────────────────────────────────────────────────────────────
 

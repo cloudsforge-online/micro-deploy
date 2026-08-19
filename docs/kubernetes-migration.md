@@ -383,8 +383,17 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    services silently went backwards and nothing was unhealthy.
 
 2. **Verify the k8s estate answers**, with hostnames mapped to the gateway
-   rather than to Cloudflare, and run the real `scripts/estate-verify.sh`
-   against it. *(Not yet done — see "What is not finished" below.)*
+   rather than to Cloudflare:
+   ```sh
+   ./scripts/k8s-cluster-dns.sh --check     # the zone still matches gateway/dynamic/
+   ./scripts/k8s-estate-verify.sh mainnet
+   ./scripts/k8s-estate-verify.sh testnet
+   ```
+   Compare against the counts in "Where verification stands" below. What matters
+   is not the number but the DELTA: a failure that is not on that list is new,
+   and a cutover is the wrong moment to meet it. On mainnet the four drift
+   failures are expected HERE and must be gone after step 4 — they are the only
+   check in the suite that proves the re-import actually closed the gap.
 
 3. **Stop the compose estate** on the app host, inside WSL. There is no
    `release-deploy.sh --down` — that script only ever brings things *up*, and
@@ -481,9 +490,76 @@ Things the Kubernetes estate does differently, each on purpose.
 | No testnet backup runner | testnet has one | It never had a backup at all. One manifest, both namespaces. |
 | `CF_BACKUP_AGE_RECIPIENT` mainnet-only | on both | See §7 above; shared public key, no new private key. |
 | `BackupNeverRun: absent(backup_last_success_unixtime)` | one `absent()` per instance, `or`-ed | The bare form answers about the whole series set and goes empty the moment *any* runner succeeds anywhere. Harmless with one runner; with two, a healthy mainnet covers for a testnet that never succeeds. |
-| `estate:` network `aliases:` | *not yet reproduced* | See below. |
+| `estate:` network `aliases:` | a CoreDNS zone per namespace | `scripts/k8s-cluster-dns.sh` renders every `Host()` in `gateway/dynamic/` — 29 names per network — to that network's gateway ClusterIP, so a pod resolving `hub.cloudsforge.online` reaches ITS OWN estate rather than the live one. `hostAliases` would have needed the same list on all 51 pod specs. Names not in the zone fall through to the internet. |
+| `NODE_EXTRA_CA_CERTS` on beacon only | on every container | Consequence of the row above. Once those names resolve in-cluster, every caller meets the gateway's own leaf — the estate CA's on testnet, a Cloudflare Origin CA's on mainnet — and neither is in a public root store. `trust.crt` is the estate CA plus every public root, so carrying it costs nothing. Without it the whole testnet suite turned `401` into `503 verifier_unavailable`. |
 | host-published ports | ClusterIP only | Nothing but the tunnel should ever reach the gateway. |
 | kubelet default 110 pods | `max-pods=250` | ~104 pods steady state across two estates. |
+
+---
+
+## Where verification stands
+
+`./scripts/k8s-estate-verify.sh <network>` runs the estate's own
+`estate-verify.sh` against the cluster. Measured 2026-08-19, both estates at
+release 2026.8.81:
+
+| | mainnet | testnet |
+| --- | --- | --- |
+| **k8s** | **6 failed** | **59 failed** |
+| compose, same day, same suite | — | 54 failed |
+
+The testnet gap is 5 checks and every one is accounted for below. Mainnet has no
+compose control because running the suite against the live estate writes test
+data into it; its 6 are read directly instead.
+
+### Mainnet's six, in full
+
+1. `app` database present on the server and not declared in `initdb.sql` — a
+   pre-existing divergence, not a migration one. See the row in the table above.
+2. `market.listings is EMPTY` — the four seeded listings are `draft` and cannot
+   be activated until a `cf:brand:` URN resolves to something a buyer could be
+   given (micro-org#407). The check prints this itself.
+3–6. Four faces of ONE fact: `the observed run is drift_exceeded`, `EMBER is
+   still frozen after a clean run`, `after restoring the custody set the run is
+   indexer/drift_exceeded`, `the post-600s run recorded indexer/drift_exceeded`.
+   **This is the parallel-run drift and the cutover closes it.** The cluster's
+   ledger came from a dump taken while compose kept trading; its indexer watches
+   the same live chain compose does. The books are therefore behind the chain by
+   exactly the traffic that has happened since the dump. Cutover step 1 takes the
+   dump with compose STOPPED, which is what makes the two agree.
+
+### Testnet's five, over compose
+
+Everything else in testnet's 59 reproduces verbatim under compose — including
+the whole `401 unauthenticated` cluster, which is micro-org#472: all 28 testnet
+services carry `IDENTITY_JWKS_URL`/`IDENTITY_URL` pointing at the SHARED MAINNET
+identity while the suite mints its token at testnet's own. That predates the
+migration by months. The five that do not reproduce:
+
+- **22 web surfaces answer `302` where compose answers `200`.** Not a defect on
+  either side — both fail the check. `CF_WEB_RETIRED=true` in
+  `compose/env/traefik.testnet.env` makes the TESTNET gateway render
+  `cf-retired-web-sub` and `cf-retired-web-apex`, which redirect every testnet
+  frontend to its mainnet equivalent (micro-org#459 step 5). It has been true
+  since that shipped. `estate-verify.sh` **has no reader of `CF_WEB_RETIRED`**
+  and has never known the frontends are retired, so it asserts a shell that is
+  deliberately not served. The 302 is the retirement working.
+- **`no gateway on https://…:443`.** Same cause: the liveness probe is
+  `gw "hub$WEB_SUFFIX" /healthz`, and on testnet `hub-testnet…` is one of the
+  names the retirement redirects. The gateway is up; the probe asks a retired
+  name.
+- **`testnet.cloudsforge.online answered 302`** appeared only once cluster DNS
+  started answering it. Same retirement, apex router.
+- **`no backup_last_verified_unixtime`.** Here Kubernetes is AHEAD: compose fails
+  this as `NO backup-runner container in project cf-testnet` because testnet has
+  never had one at all.
+- **`app` not declared in `initdb.sql`** — the same pre-existing divergence as
+  mainnet's, surfacing on both.
+
+**Two fixes for `estate-verify.sh` fall out of this and are not migration work:**
+teach it to read `CF_WEB_RETIRED` and skip the 25 web-surface assertions and the
+`/healthz` probe when a network's frontends are retired; and stop asserting a
+testnet shell that the estate deliberately redirects away.
 
 ---
 
@@ -491,19 +567,18 @@ Things the Kubernetes estate does differently, each on purpose.
 
 Honest list, as of 2026-08-19:
 
-- **Host aliases.** The compose file gives services extra names on the `estate:`
-  network via `aliases:`. Kubernetes gives each Service its own DNS name, which
-  covers most of it, but the aliases have to be reproduced as `hostAliases`
-  computed from the router `Host()` rules before anything can be verified by
-  hostname. **This blocks cutover step 2.**
 - **`scripts/check-k8s-render-matches-compose.py`** and
   **`scripts/check-k8s-gateway-matches-compose.py`** — the drift guards. The
   database one exists; these two do not, so today a compose change can land
   without the k8s tree noticing.
-- **A full `estate-verify.sh` run against the cluster.** Not attempted yet, for
-  the host-aliases reason above.
+- **The cutover itself**, below. Nothing public points at the cluster.
 - **Nothing is on `main`.** All of this is branch `migration/kubernetes`, and it
   merges when the migration is complete and verified — not before.
+
+Closed since the first draft of this list: host aliases (superseded by
+`scripts/k8s-cluster-dns.sh`, which gives CoreDNS a zone per namespace instead of
+per-pod `hostAliases`), and the full `estate-verify.sh` run, which is the section
+above.
 
 ### Smaller items noticed on the way
 
