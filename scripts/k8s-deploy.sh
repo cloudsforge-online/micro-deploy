@@ -5,6 +5,7 @@
 #   ./scripts/k8s-deploy.sh --network testnet --dry-run
 #   ./scripts/k8s-deploy.sh --network mainnet --rerun-migrations
 #   ./scripts/k8s-deploy.sh --network mainnet --wave 50
+#   ./scripts/k8s-deploy.sh --network mainnet --batch 0     # all at once
 #
 # ── WHY WAVES, WHEN KUBERNETES IS SUPPOSED TO SELF-ORDER ─────────────────────
 #
@@ -30,6 +31,31 @@
 # If that ever stops being true the symptom is a Job failing on a missing table,
 # which this script prints in full rather than summarising.
 #
+# ── AND WHY WAVE 50 IS APPLIED IN BATCHES ────────────────────────────────────
+#
+# Every service here is Node, and the most expensive twenty seconds of a Node
+# container's life are its first: module graph, JIT warm-up, a TLS handshake to
+# postgres, a schema check. Applying 49 Deployments at once is not 49 services'
+# worth of load, it is 49 cold starts' worth arriving together.
+#
+# Measured on this node with both estates present — 99 services starting at once
+# drove load average to 155 on 8 vCPU. Nothing was short of memory (5.6Gi free);
+# the run queue was simply longer than the scheduler could clear, and the first
+# things to lose were the pods with the least CPU to spare: CoreDNS, whose
+# timeouts made migrators fail on `getaddrinfo EAI_AGAIN postgres`, the CNPG
+# controller, and k3s's own Traefik. A starved control plane then keeps the
+# estate from converging, so the overload is self-sustaining rather than a spike
+# that passes.
+#
+# The same 49, applied eight at a time, converged in seven minutes at a peak
+# load of 2.6. The batching is not a capacity workaround — it is the difference
+# between a queue the node drains and a herd it cannot.
+#
+# A batch that does not converge is REPORTED AND LEFT RUNNING, not waited on
+# forever: a service that is slow to start is usually waiting for one that has
+# not been applied yet, so blocking the batches behind it is how a soluble wait
+# becomes a deadlock. The whole-wave check at the end is what decides success.
+#
 # ── THE ORDER IS THE FILENAMES ───────────────────────────────────────────────
 #
 # 20-pvc → 30-migrate-jobs → 40-services → 50-deployments. `k8s-render.py` names
@@ -46,6 +72,11 @@ ONLY_WAVE=""
 HOLD=""
 JOB_TIMEOUT=${JOB_TIMEOUT:-900}
 ROLLOUT_TIMEOUT=${ROLLOUT_TIMEOUT:-900}
+# Deployments per batch in wave 50, and how long one batch is waited on before
+# the next is applied. `--batch 0` restores the old all-at-once behaviour, which
+# is right on a node with cores to spare and wrong on this one.
+BATCH=${BATCH:-8}
+BATCH_WAIT=${BATCH_WAIT:-240}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -54,7 +85,8 @@ while [ $# -gt 0 ]; do
     --rerun-migrations)  RERUN_MIGRATIONS=1; shift ;;
     --wave)              ONLY_WAVE="${2:-}"; shift 2 ;;
     --hold)              HOLD="${2:-}"; shift 2 ;;
-    -h|--help)           sed -n '2,12p' "$0"; exit 0 ;;
+    --batch)             BATCH="${2:-}"; shift 2 ;;
+    -h|--help)           sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
@@ -237,6 +269,21 @@ drop_held_docs() {
   ' "$1"
 }
 
+# The same split, keeping a named subset instead of dropping one. Used to apply
+# wave 50 a batch at a time from the one rendered file, so a batch is a slice of
+# what would have been applied anyway and never a differently-rendered thing.
+select_docs() {
+  awk -v want=" $2 " '
+    function flush() {
+      if (name != "" && index(want, " " name " ")) printf "---\n%s", buf
+      buf = ""; name = ""
+    }
+    /^---$/ { flush(); next }
+    { buf = buf $0 "\n"; if ($0 ~ /^  name: / && name == "") name = $2 }
+    END { flush() }
+  ' "$1"
+}
+
 # ── WAVE 20: THE CLAIMS ──────────────────────────────────────────────────────
 if want_wave 20; then
   say "── wave 20: volumes ─────────────────────────────────────────────────────"
@@ -366,16 +413,39 @@ if want_wave 50; then
     done
   fi
 
-  drop_held_docs "$DIR/50-deployments.yaml" | kubectl apply -n "$NAMESPACE" -f - >/dev/null || fail "wave 50 apply failed"
-  say "  applied $DEPLOY_COUNT Deployment(s)"
-
   # `readyReplicas` alone is a trap during a rolling update: it counts the OLD
   # ReplicaSet's pods, so a Deployment reads fully ready one second after being
   # given an image that cannot start. observedGeneration and updatedReplicas are
   # what make the answer about THIS revision.
   deploy_states() {
-    kubectl get deployment -n "$NAMESPACE" $DEPLOYS -o go-template='{{range .items}}{{.metadata.name}} {{.metadata.generation}} {{if .status}}{{or .status.observedGeneration 0}} {{or .status.updatedReplicas 0}} {{or .status.readyReplicas 0}}{{else}}0 0 0{{end}} {{or .spec.replicas 1}}{{"\n"}}{{end}}' 2>/dev/null
+    kubectl get deployment -n "$NAMESPACE" ${1:-$DEPLOYS} -o go-template='{{range .items}}{{.metadata.name}} {{.metadata.generation}} {{if .status}}{{or .status.observedGeneration 0}} {{or .status.updatedReplicas 0}} {{or .status.readyReplicas 0}}{{else}}0 0 0{{end}} {{or .spec.replicas 1}}{{"\n"}}{{end}}' 2>/dev/null
   }
+  ready_in() { printf '%s\n' "$(deploy_states "$1")" | awk '$2==$3 && $4==$6 && $5==$6' | wc -l | tr -d ' '; }
+
+  if [ "${BATCH:-0}" -gt 0 ] 2>/dev/null && [ "$DEPLOY_COUNT" -gt "$BATCH" ]; then
+    n=0; batch=0; slice=""
+    for d in $DEPLOYS; do
+      slice="$slice $d"; n=$((n + 1))
+      [ "$n" -lt "$BATCH" ] && continue
+
+      batch=$((batch + 1))
+      select_docs "$DIR/50-deployments.yaml" "$slice" | kubectl apply -n "$NAMESPACE" -f - >/dev/null || fail "wave 50 apply failed (batch $batch)"
+      b_started=$SECONDS
+      b_count="$(printf '%s' "$slice" | wc -w | tr -d ' ')"
+      while [ "$(ready_in "$slice")" != "$b_count" ] && [ $((SECONDS - b_started)) -lt "$BATCH_WAIT" ]; do sleep 5; done
+      say "  batch $batch: $(ready_in "$slice")/$b_count ready in $((SECONDS - b_started))s — load $(cut -d' ' -f1-3 /proc/loadavg 2>/dev/null)"
+      n=0; slice=""
+    done
+    if [ -n "$slice" ]; then
+      batch=$((batch + 1))
+      select_docs "$DIR/50-deployments.yaml" "$slice" | kubectl apply -n "$NAMESPACE" -f - >/dev/null || fail "wave 50 apply failed (batch $batch)"
+      say "  batch $batch: applied $(printf '%s' "$slice" | wc -w | tr -d ' ')"
+    fi
+    say "  applied $DEPLOY_COUNT Deployment(s) in $batch batch(es) of $BATCH"
+  else
+    drop_held_docs "$DIR/50-deployments.yaml" | kubectl apply -n "$NAMESPACE" -f - >/dev/null || fail "wave 50 apply failed"
+    say "  applied $DEPLOY_COUNT Deployment(s)"
+  fi
 
   started=$SECONDS
   while :; do
