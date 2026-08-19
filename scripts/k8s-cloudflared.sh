@@ -1,30 +1,37 @@
 #!/usr/bin/env bash
-# Put the Cloudflare tunnel connector in the cluster — scaled to zero.
+# Apply the Cloudflare tunnel connector — THE ESTATE'S LIVE FRONT DOOR.
 #
 #   ./scripts/k8s-cloudflared.sh --token-file /run/cfd-token   # first time
 #   ./scripts/k8s-cloudflared.sh                               # Secret exists
 #   ./scripts/k8s-cloudflared.sh --dry-run
 #   ./scripts/k8s-cloudflared.sh --status
 #
-# ── THIS SCRIPT NEVER TURNS THE TUNNEL ON ────────────────────────────────────
+# ── THIS SCRIPT'S DANGEROUS DIRECTION REVERSED AT THE CUTOVER ────────────────
 #
-# It applies `k8s/cloudflared/60-cloudflared.yaml`, which carries `replicas: 0`,
-# and then REFUSES TO FINISH if anything has scaled it up. Read that file's
-# header for why: a tunnel load-balances across its connectors, so the instant a
-# second one goes Ready, Cloudflare starts splitting live public traffic between
-# the compose estate and this cluster — two different databases, half the real
-# users each. That is the cutover, and it should be a decision rather than a
-# side effect of an apply.
+# Until 2026-08-19 07:44 UTC the manifest carried `replicas: 0` and this script
+# refused to run unless it still did, because scaling UP would have registered a
+# second connector on a tunnel the compose estate was still serving — and a
+# tunnel load-balances, so Cloudflare would have split live traffic across two
+# estates with two different databases.
 #
-# The cutover itself is deliberately NOT automated here. It is two commands on
-# two machines, in this order, and nothing else:
+# The cutover happened. The app host's `Cloudflared` service is Stopped and
+# Disabled; this pod is the only connector on the tunnel. So the manifest now
+# carries `replicas: 1` and the assertion is inverted: this script refuses to
+# apply a file that would scale the LIVE connector down, and refuses to finish
+# if the result is not 1. The same guard, aimed the other way — because the
+# thing worth preventing is no longer "going live by accident", it is "going
+# dark by accident", and an apply of a stale checkout is exactly how that
+# happens.
 #
-#   app host:  powershell -Command "Stop-Service Cloudflared; Set-Service Cloudflared -StartupType Manual"
-#   cluster:   kubectl -n cf-edge scale deploy/cloudflared --replicas=1
+# Rolling back to compose is still two commands on two machines, but the order
+# now matters more than the commands: bring the compose estate up FIRST, then
 #
-# Rollback is the same two in reverse. Both are local and take seconds, which is
-# the whole reason the 61 dashboard ingress rules are left unedited — see the
-# manifest's section on the loopback forwarders.
+#   app host:  powershell -Command "Start-Service Cloudflared"
+#   cluster:   kubectl -n cf-edge scale deploy/cloudflared --replicas=0
+#
+# Both are local and take seconds, which is the whole reason the 61 dashboard
+# ingress rules are left unedited — see the manifest's section on the loopback
+# forwarders.
 #
 # ── WHAT IT CHECKS BEFORE APPLYING ───────────────────────────────────────────
 #
@@ -107,8 +114,9 @@ if [ "$STATUS_ONLY" = 1 ]; then
   say "namespace $NAMESPACE:"
   kubectl get deploy,pod -n "$NAMESPACE" 2>&1 | sed 's/^/  /'
   say ""
-  say "The tunnel is served by THIS cluster only when the deployment is 1/1 Ready."
-  say "While it is 0/0, public traffic is still the app host's Windows service."
+  say "Since the 2026-08-19 cutover this deployment IS the estate's front door."
+  say "1/1 Ready is the healthy state. Anything less is a public outage, not a"
+  say "fallback: the app host's Windows service is Stopped and Disabled."
   exit 0
 fi
 
@@ -146,9 +154,16 @@ for want in \
 done
 say "forwarders: 127.0.0.1:9081 -> mainnet gateway, 127.0.0.1:9181 -> testnet gateway (both derived from compose)"
 
-# ── replicas: 0 IS AN INVARIANT OF THE FILE, NOT A DEFAULT ───────────────────
-grep -q '^  replicas: 0$' "$MANIFEST" \
-  || fail "the manifest no longer declares 'replicas: 0'. Applying it would register a SECOND connector on the live tunnel and Cloudflare would immediately split public traffic between the app host and this cluster. Refusing."
+# ── replicas: 1 IS AN INVARIANT OF THE FILE, NOT A DEFAULT ───────────────────
+#
+# This assertion used to demand 0, when the compose estate was serving and going
+# live by accident was the hazard. The cutover inverted it. Now this pod IS the
+# public estate, the manifest is the thing `kubectl apply` writes over the live
+# spec, and a checkout carrying the old value would scale the only connector on
+# the tunnel to zero — every hostname 502 at once, from an apply that looked
+# routine.
+grep -q '^  replicas: 1$' "$MANIFEST" \
+  || fail "the manifest does not declare 'replicas: 1'. Since the 2026-08-19 cutover this deployment is the estate's ONLY Cloudflare connector, so applying a file that says anything else takes every public hostname down at once. Refusing."
 
 # ── THE NAMESPACE AND THE TOKEN ──────────────────────────────────────────────
 #
@@ -222,24 +237,31 @@ fi
 say ""
 kubectl apply -f "$MANIFEST"
 
-# ── AND PROVE IT DID NOT GO LIVE ─────────────────────────────────────────────
+# ── AND PROVE THE FRONT DOOR IS STILL OPEN ───────────────────────────────────
 #
-# `kubectl apply` on a Deployment does not reset `replicas` if something else
-# scaled it — the field is in the manifest, so apply DOES set it back to 0, but
-# this asserts the outcome rather than trusting the mechanism. If a human scaled
-# it up between the check and here, this is where it is caught.
+# The field is in the manifest, so apply DOES set it — but this asserts the
+# outcome rather than trusting the mechanism, and it is the last chance to catch
+# a spec that reached the cluster saying zero.
 REPLICAS="$(kubectl get deploy cloudflared -n "$NAMESPACE" -o jsonpath='{.spec.replicas}' 2>/dev/null || true)"
-[ "$REPLICAS" = "0" ] || fail "deployment cloudflared is at replicas=$REPLICAS after apply. The tunnel may now be serving from BOTH the app host and this cluster. Scale it back with: kubectl -n $NAMESPACE scale deploy/cloudflared --replicas=0"
+[ "$REPLICAS" = "1" ] || fail "deployment cloudflared is at replicas=$REPLICAS after apply, and it is the estate's only connector. THE PUBLIC SITE IS DOWN RIGHT NOW. Fix it with: kubectl -n $NAMESPACE scale deploy/cloudflared --replicas=1"
+
+# Ready, not merely scheduled. `/ready` answers 200 only with an established
+# edge connection, so this is the difference between "a pod exists" and "the
+# estate is reachable" — and if the apply rolled the pod, that gap is real.
+say ""
+say "waiting for the connector to register with Cloudflare's edge"
+kubectl rollout status deploy/cloudflared -n "$NAMESPACE" --timeout=120s \
+  || fail "the connector did not become Ready within 120s. Public traffic is not being served. Check: kubectl -n $NAMESPACE logs deploy/cloudflared -c cloudflared"
 
 say ""
-say "cloudflared is installed in $NAMESPACE at replicas=0."
+say "cloudflared is live in $NAMESPACE at replicas=1, Ready, serving both"
+say "networks through the loopback forwarders."
 say ""
-say "Nothing public changed. The app host's Windows service is still the only"
-say "connector on this tunnel. To hand the estate over, in this order:"
+say "This is the estate's front door. To roll back to the compose estate, bring"
+say "that estate UP FIRST, then:"
 say ""
-say "  1. app host:  powershell -Command \"Stop-Service Cloudflared; Set-Service Cloudflared -StartupType Manual\""
-say "  2. cluster:   kubectl -n $NAMESPACE scale deploy/cloudflared --replicas=1"
-say "  3. verify:    ./scripts/k8s-cloudflared.sh --status   then the real estate-verify"
+say "  1. app host:  powershell -Command \"Start-Service Cloudflared\""
+say "  2. cluster:   kubectl -n $NAMESPACE scale deploy/cloudflared --replicas=0"
 say ""
-say "Reverse those two to roll back. The 61 Cloudflare ingress rules are not"
-say "touched by either direction, which is why rollback needs no dashboard."
+say "The 61 Cloudflare ingress rules are not touched by either direction, which"
+say "is why rollback needs no dashboard."

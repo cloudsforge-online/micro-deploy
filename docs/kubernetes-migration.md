@@ -38,18 +38,20 @@ estates with two databases. **That is still true**, so the Windows service is
 `Disabled` rather than merely stopped — `Automatic` plus a Windows reboot would
 re-attach a connector to the compose estate, which is stopped but still on disk
 with its volumes, and Cloudflare would load-balance onto it. Do not re-enable it.
-**`scripts/k8s-cloudflared.sh` must not be re-run as it stands.** It applies
-`k8s/cloudflared/60-cloudflared.yaml`, and that file carries `replicas: 0` as a
-hard invariant the script refuses to proceed without:
+The other half of that interlock lived in `scripts/k8s-cloudflared.sh`, and it
+**was turned around rather than left**. Before the cutover it applied a manifest
+carrying `replicas: 0` and refused to proceed unless it still said so — going
+live had to be a decision, not the side effect of an apply. Immediately after
+the cutover that same line was an outage button: the manifest is what `kubectl
+apply` writes over the live spec, so a routine apply of an unchanged checkout
+would have scaled the estate's only connector to zero and 502'd every public
+hostname at once. The protection and the outage were the same line.
 
-```
-grep -q '^  replicas: 0$' "$MANIFEST" || fail "the manifest no longer declares 'replicas: 0' …"
-```
-
-Before the cutover that was the interlock. After it, applying the same file
-scales the LIVE connector to zero and every public hostname 502s at once. The
-protection and the outage are now the same line. Listed under "What is not
-finished".
+The manifest now carries `replicas: 1`, the assertion demands 1, and the
+post-apply check fails if the result is anything else — plus a `rollout status`
+wait, because "a pod exists" and "the connector registered with Cloudflare's
+edge" are different claims and only the second one means the estate is
+reachable. Same guard, aimed at the direction that is now dangerous.
 
 `docs/releasing.md` still describes the compose release path. **This document
 governs deploys now**, until that one is rewritten.
@@ -313,7 +315,7 @@ not a bare `kubectl apply`. This is the sequence.
 | 7 | Hearth devkit | `./scripts/k8s-hearth-devkit.sh --network testnet` | Testnet only; refuses mainnet, which runs no devkit. |
 | 8 | Telemetry | `./scripts/k8s-telemetry.sh` | One plane in `cf-telemetry` for both networks, as compose has. |
 | 9 | Backup runner | `./scripts/k8s-backup-runner.sh --network <net>` | Both networks. Add `--build` first on a fresh VM. |
-| 10 | Tunnel | `./scripts/k8s-cloudflared.sh --token-file <path>` | Installs at `replicas: 0` and refuses to finish if anything scaled it up. |
+| 10 | Tunnel | `./scripts/k8s-cloudflared.sh --token-file <path>` | The public front door. Refuses a manifest that is not `replicas: 1`, and waits for the connector to reach Ready rather than merely Scheduled. |
 
 Rendering is separate from applying, and both generated trees are committed:
 
@@ -342,21 +344,27 @@ the backup runner take `BACKUP_COMPOSE_PROJECT` straight from the downward API
 
 ---
 
-## What is running now, and what is deliberately not
+## What is running now, and what was deliberately not
 
-Measured 2026-08-19:
+Measured 2026-08-19, **after** the cutover:
 
 | Namespace | Pods | Notes |
 | --- | --- | --- |
-| `cloudsforge-estate` | 52/52 Running | 49 estate + gateway + postgres + backup-runner |
-| `cf-testnet` | 54/54 Running | the same, plus 2 hearth-devkit |
+| `cloudsforge-estate` | 54/54 Running | 51 estate + gateway + postgres + backup-runner |
+| `cf-testnet` | 56/56 Running | the same, plus 2 hearth-devkit |
 | `cf-telemetry` | 6/6 Running | prometheus, alertmanager, grafana, loki, tempo, otel-collector |
 | `cnpg-system` | 1/1 Running | the operator |
-| `cf-edge` | **0** | cloudflared, `replicas: 0` — the interlock |
+| `cf-edge` | 1/1 Running | cloudflared — **the estate's public front door** |
 
-**`beacon` and `settlement` are held on both networks** — `--hold
-beacon,settlement`. They are held rather than applied-and-scaled-to-zero, so
-nothing about them exists to be accidentally started.
+Both estate namespaces also hold 32 `Completed` migrate Jobs each, which
+`kubectl get pods` lists and which are not failures.
+
+### The two that were held, and are not any more
+
+Through the whole parallel run `beacon` and `settlement` were held on both
+networks — `--hold beacon,settlement` — and held rather than
+applied-and-scaled-to-zero, so nothing about them existed to be accidentally
+started:
 
 - **`beacon`** synthesises registrations against live surfaces. Two beacons on
   two estates would double the load *and* double the mail: Mailtrap's free tier
@@ -364,16 +372,23 @@ nothing about them exists to be accidentally started.
 - **`settlement`** moves real money. Two settlement processes against two
   databases and one set of chain nodes is a double-spend engine.
 
-Prometheus reports **40 targets, 38 up**. The two down are exactly these. That
-is the intended reading: the held services are visible as down rather than
-absent, so "everything green" cannot be reached by forgetting them.
+Both reasons said "two estates", and after the cutover there is one. Both are
+now `1/1 Ready` on both networks, which is why the counts above are two higher
+per namespace than the parallel-run measurement they replace.
+
+Prometheus reports **40 targets, 40 up**. During the parallel run it was 40/38,
+and the two down were exactly these — the held services were visible as down
+rather than absent, so "everything green" could not be reached by forgetting
+them. It is now green because they are actually running.
 
 ---
 
 ## Reaching things without a public hostname
 
-Nothing in the cluster is exposed on a node port; the gateway is `ClusterIP`.
-Until cutover, reach things from the VM:
+Nothing in the cluster is exposed on a node port; the gateway is `ClusterIP`,
+and that did not change at the cutover — public traffic arrives through the
+`cf-edge` pod's own loopback, never through the node's network. So the operator
+routes are still these, from the VM:
 
 ```sh
 # Grafana — replaces the old ssh tunnel to the app host
@@ -876,14 +891,6 @@ Honest list, as of 2026-08-19:
 - **No `stratum-endpoint` in the cluster.** Equivalent to today while
   `CF_STRATUM_PUBLISH` is off, and a real gap the day hardware miners are meant to
   dial in. See cutover step 3 for why it was never rendered and what it would take.
-- **`k8s/cloudflared/60-cloudflared.yaml` still says `replicas: 0`, and
-  `scripts/k8s-cloudflared.sh` still refuses to run without it.** Correct until
-  07:44 UTC on 2026-08-19 and an outage button ever since: re-running the script
-  scales the live connector down and 502s every public hostname. The manifest
-  should carry `replicas: 1` and the script's assertion should invert — it is
-  now "this cluster serves the public, refuse to zero it" rather than "this
-  cluster is a standby, refuse to start it". Left as-is during the cutover
-  because changing the interlock while relying on it is how interlocks get lost.
 - **`estate-seed.mjs --check` is not pinned to the cluster.** The one part of the
   suite that still resolves the estate's hostnames through public DNS, so its ten
   assertions answer about whatever the tunnel currently points at rather than

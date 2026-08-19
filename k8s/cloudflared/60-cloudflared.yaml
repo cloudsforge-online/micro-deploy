@@ -41,25 +41,35 @@
 # Hence namespace `cf-edge`: it fronts both networks and belongs to neither.
 #
 # ══════════════════════════════════════════════════════════════════════════════
-# WHY replicas: 0, AND WHY THAT IS THE POINT OF THIS FILE
+# replicas: 1 — AND WHY IT WAS 0 UNTIL 2026-08-19
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# A tunnel load-balances across every connector registered to it. The moment a
-# second connector with this token reaches Ready, Cloudflare starts splitting
-# LIVE PUBLIC TRAFFIC between the compose estate on the app host and this
-# cluster — half of real users to each, with two different databases behind them.
+# THIS IS THE ESTATE'S LIVE FRONT DOOR. Since 07:44 UTC on 2026-08-19 every
+# public request for every hostname the estate serves arrives through the pod
+# described below. Scaling it to zero is a total public outage, and not a step
+# back to the app host: that machine's `Cloudflared` service is Stopped and
+# Disabled, and no other connector holds this token.
 #
-# That is not a migration step. That IS the cutover, and it would happen as a
-# side effect of `kubectl apply` rather than as a decision. So this ships scaled
-# to zero: applying it is safe at any time, changes nothing public, and leaves a
-# complete, reviewed, already-pulled front door sitting one command from live.
+# It shipped at `replicas: 0` and stayed there for the whole parallel run, for a
+# reason worth keeping written down. A tunnel LOAD-BALANCES across every
+# connector registered to it. While the compose estate was still serving, the
+# moment a second connector with this token reached Ready, Cloudflare would have
+# started splitting LIVE PUBLIC TRAFFIC between two estates with two different
+# databases behind them — half of real users to each. That is not a migration
+# step. That IS the cutover, and at zero it could not happen as a side effect of
+# `kubectl apply` rather than as a decision.
 #
-# The cutover is then two actions and no third:
+# So the cutover was two actions and no third:
 #
-#   1. on the app host:  Stop-Service Cloudflared   (and set it to Manual)
+#   1. on the app host:  Stop-Service Cloudflared   (and Set-Service … Disabled)
 #   2. on this cluster:  kubectl -n cf-edge scale deploy/cloudflared --replicas=1
 #
-# and the rollback is those two in reverse. Both are local, both are seconds.
+# Both done, in that order, ~6s apart. The rollback is still those two in
+# reverse and both are still local and still seconds — which is what the
+# untouched dashboard rules below buy. What changed is its scope: it is now a
+# rollback of the whole estate rather than of one connector, so the compose
+# stack has to be brought up FIRST, or reversing this leaves the tunnel
+# registered and pointing at nothing.
 #
 # ══════════════════════════════════════════════════════════════════════════════
 # THE LOOPBACK FORWARDERS, AND WHY THE DASHBOARD IS NOT EDITED
@@ -142,10 +152,12 @@ metadata:
     app.kubernetes.io/name: cloudflared
     app.kubernetes.io/part-of: cloudsforge-estate
 spec:
-  # ZERO. Read the section above before changing this. `kubectl scale` to 1 is
-  # the cutover, and it takes public traffic away from the app host the moment
-  # the connector reaches Ready.
-  replicas: 0
+  # ONE, and live. Read the section above before changing this. `kubectl scale`
+  # to 0 is not a safety measure any more; it is the estate going dark. It was 0
+  # until the cutover, and `scripts/k8s-cloudflared.sh` asserts this file's value
+  # in whichever direction is currently the dangerous one — now that direction is
+  # down.
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: cloudflared
@@ -153,8 +165,8 @@ spec:
     # RollingUpdate, unlike the estate's stateful services: two connectors
     # briefly overlapping is the NORMAL way to replace one without dropping
     # requests — the tunnel simply serves from both, then from the new one. This
-    # is the same overlap that makes `replicas: 0` necessary while the app host
-    # is still live, and the same overlap that is harmless once it is not.
+    # is the same overlap that made `replicas: 0` necessary while the app host
+    # was still live, and the same overlap that is harmless now that it is not.
     type: RollingUpdate
     rollingUpdate:
       maxUnavailable: 0
