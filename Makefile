@@ -24,7 +24,9 @@ OTEL_IMG  := otel/opentelemetry-collector-contrib:0.115.1
         dashboards estate clean
 
 help:
-	@grep -E '^[a-z-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "  %-18s %s\n", $$1, $$2}'
+	@# `0-9` because `check-k8s` was invisible here without it — a target that is
+	@# in `make check` but not in `make help` is one nobody runs on its own.
+	@grep -E '^[a-z0-9-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "};{printf "  %-18s %s\n", $$1, $$2}'
 
 up: ## Bring the telemetry plane up beside the existing estate
 	@./up.sh
@@ -54,7 +56,7 @@ dashboards: ## Regenerate dashboard JSON from the validated palette
 # ------------------------------------------------------------------ checks --
 # These are the CI job. Every one of them fails a build rather than producing a
 # warning nobody reads.
-check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-prometheus-target-ambiguity check-compose-ports check-token-resolution check-custody-backup-guard check-secret-backups check-stray-secrets check-siblings check-release-deploy check-backup ## Run every check
+check: config check-rules check-rule-tests check-alert-job-labels check-alertmanager check-collector check-runbooks check-prometheus-targets check-prometheus-target-ambiguity check-compose-ports check-token-resolution check-custody-backup-guard check-secret-backups check-stray-secrets check-siblings check-release-deploy check-backup check-k8s ## Run every check
 	@echo "ok: all checks passed"
 
 check-rules: ## promtool over the recording and alerting rules
@@ -563,3 +565,21 @@ check-web: ## Recompute every host port from micro-org's registry and compare
 	@# while the compose file carried a comment claiming this script guarded it.
 	@# The script did not exist. Now it does.
 	@python3 scripts/web-check.py
+
+check-k8s: ## The generated Kubernetes tree still matches the compose file it came from
+	@# Under compose, editing the compose file IS the deploy: the next
+	@# `release-deploy.sh` reads the edited file and there is no second artefact
+	@# that can disagree with it. The migration breaks that — the compose file
+	@# becomes a SOURCE and `k8s/estate/<network>/` is what gets applied — so an
+	@# edit that is not re-rendered is written, reviewed, merged and never
+	@# deployed, while `k8s-deploy.sh` reports a completely green deploy of the
+	@# previous shape. All three regenerate and compare bytes rather than
+	@# comparing structure, so anything the generators would emit differently,
+	@# for any reason, fails here.
+	@#
+	@# In `make check` as well as in CI on purpose. The estate is edited on the
+	@# host far more often than a pull request is opened, and a guard an operator
+	@# cannot run before pushing is one that only ever fires after the fact.
+	@python3 scripts/check-k8s-databases-match-initdb.py
+	@python3 scripts/check-k8s-render-matches-compose.py
+	@python3 scripts/check-k8s-gateway-matches-compose.py

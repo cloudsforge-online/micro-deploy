@@ -1098,3 +1098,88 @@ jobs:
       - name: No document prescribes an overlay no deploy path passes
         working-directory: deploy
         run: python3 scripts/check-docs-prescribe-deployed-overlays.py
+
+  # ── THE KUBERNETES TREE IS GENERATED, AND NOTHING RAN THE GUARDS ────────────
+  #
+  # Under compose, editing `compose/docker-compose.estate.yml` IS the deploy: the next
+  # `release-deploy.sh` reads the edited file and there is no second artefact that can
+  # disagree with it. The migration in `docs/kubernetes-migration.md` breaks that. The compose
+  # file becomes a SOURCE, and what gets applied is `k8s/estate/<network>/`, rendered from it —
+  # so an edit that is not re-rendered is written, reviewed, merged, and never deployed, while
+  # `k8s-deploy.sh` reports a completely green deploy of the previous shape.
+  #
+  # All three scripts below existed before this job and NOTHING RAN THEM, which is the same
+  # failure the `drift` job's own header records about `surface-routes.py`: a check that only
+  # runs when somebody remembers is not a check, and the thing it guards is exactly what went
+  # wrong while nobody was remembering.
+  #
+  # A SEPARATE JOB rather than three more steps in `drift`, for two reasons. It needs a
+  # different checkout set — micro-org, and none of micro-ui/foresight/billing — and it fails
+  # for a different reason: `drift` answers "does the estate's routing agree with its registry",
+  # this answers "is the generated tree still what its generator produces". Running in parallel
+  # also means the k8s answer arrives whether or not the pnpm install above succeeded.
+  #
+  # NOTE FOR THE CUTOVER: this job is real on `migration/kubernetes` and green on `main`, since
+  # the k8s tree merges with the branch. Nothing here deploys anything or reads a cluster —
+  # `k8s-deploy.sh` and `k8s-gateway.sh` are what talk to the cluster, and they run on the node.
+  k8s:
+    name: The generated Kubernetes tree matches its source
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: deploy
+
+      # `k8s-render.py` resolves images from a release manifest, and the rendered files name the
+      # one they were built from — `../org/releases/<version>.yaml`, in the sibling layout
+      # `scripts/provision-siblings.sh` declares, where `org` is a REQUIRED row. The `path:` is
+      # explicit for the reason the `drift` job's are: GitHub checks a repository out to
+      # `work/<repo>/<repo>` by default, and the check resolves `ROOT.parent / "org"`.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-org
+          path: org
+
+      # ── THE DATABASES ────────────────────────────────────────────────────────
+      #
+      # The one that already existed. `k8s/database/21-databases-{mainnet,testnet}.yaml` are
+      # generated from `compose/estate/initdb.sql`, the same file the compose estate initialises
+      # from, and a database in one and not the other is a service whose migration Job fails on
+      # a connection to a database that was never created — after 51 other Deployments rolled.
+      #
+      # No PyYAML: it re-runs `k8s-render-databases.py`, which parses SQL.
+      - name: Every database the compose estate creates is a database the cluster creates
+        working-directory: deploy
+        run: python3 scripts/check-k8s-databases-match-initdb.py
+
+      # ── THE WORKLOADS ────────────────────────────────────────────────────────
+      #
+      # Re-renders `k8s/estate/{mainnet,testnet}/` and compares bytes, against the release each
+      # tree names rather than the newest one — cutting a release deliberately does NOT turn
+      # this red, because a check that is red by default is a check nobody reads. What fails
+      # here is a change to the compose file, the render-vars, or the renderer.
+      #
+      # PyYAML installed in this step rather than relied upon from the step below, for the
+      # reason the `drift` job's steps give: a check whose correctness depends on the ORDER of
+      # the steps around it breaks silently when somebody reorders them. Both scripts treat a
+      # missing PyYAML as a failure and never a skip.
+      - name: The rendered workloads are what the renderer produces from the compose file
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-k8s-render-matches-compose.py
+
+      # ── THE GATEWAY ──────────────────────────────────────────────────────────
+      #
+      # `gateway/dynamic/` was NOT translated into IngressRoute CRDs — 3,318 lines, 67 routers,
+      # every rule of which somebody arrived at from an incident. The migration runs the same
+      # Traefik over the same files instead, and `k8s/gateway/60-gateway.yaml` names this script
+      # as what keeps that claim true rather than merely intended. Every drift it catches ends
+      # in a gateway that starts, reports Ready, and serves the estate wrong.
+      - name: The cluster's gateway is the compose gateway
+        working-directory: deploy
+        run: |
+          python3 -m pip install --quiet pyyaml
+          python3 scripts/check-k8s-gateway-matches-compose.py

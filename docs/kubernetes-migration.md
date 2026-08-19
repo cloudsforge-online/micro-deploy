@@ -567,18 +567,14 @@ testnet shell that the estate deliberately redirects away.
 
 Honest list, as of 2026-08-19:
 
-- **`scripts/check-k8s-render-matches-compose.py`** and
-  **`scripts/check-k8s-gateway-matches-compose.py`** — the drift guards. The
-  database one exists; these two do not, so today a compose change can land
-  without the k8s tree noticing.
 - **The cutover itself**, below. Nothing public points at the cluster.
 - **Nothing is on `main`.** All of this is branch `migration/kubernetes`, and it
   merges when the migration is complete and verified — not before.
 
 Closed since the first draft of this list: host aliases (superseded by
 `scripts/k8s-cluster-dns.sh`, which gives CoreDNS a zone per namespace instead of
-per-pod `hostAliases`), and the full `estate-verify.sh` run, which is the section
-above.
+per-pod `hostAliases`); the full `estate-verify.sh` run, which is the section
+above; and the drift guards, which are the section below.
 
 ### Smaller items noticed on the way
 
@@ -594,3 +590,58 @@ above.
 - Mainnet's `traefik.env` sets `CF_EXPLORER_INDEX_UPSTREAM` and
   `CF_VERIFY_UPSTREAM` even though mainnet runs no devkit, so those routers
   exist and 502. **Operator's call** whether to remove them.
+
+---
+
+## The drift guards
+
+The migration's one structural cost is that **the compose file stops being the
+deploy**. Under compose, editing `compose/docker-compose.estate.yml` IS the
+deploy: the next `release-deploy.sh` reads the edited file, and there is no
+second artefact that can disagree with it. Under Kubernetes the compose file
+becomes a *source*, and what gets applied is a generated tree.
+
+So an edit that is not re-rendered is an edit that is written, reviewed, merged —
+and never deployed. Worse, `k8s-deploy.sh` reports a completely green deploy of
+the previous shape, because from its side nothing is wrong: the manifests it
+applied are the manifests it was given.
+
+Three scripts close that. Each **regenerates and compares bytes** rather than
+comparing structure, so anything a generator would emit differently, for any
+reason, fails — not only the cases somebody thought to check for.
+
+| Script | Regenerates | Catches |
+|---|---|---|
+| `check-k8s-databases-match-initdb.py` | `k8s/database/21-databases-*.yaml` from `compose/estate/initdb.sql` | a database in one and not the other — a migration Job connecting to a database that was never created |
+| `check-k8s-render-matches-compose.py` | `k8s/estate/{mainnet,testnet}/` from the compose file + `render-vars.<network>.yaml` | a new env var read as absent by every `env.ts`; a changed healthcheck port leaving the ClusterIP behind so the gateway 502s while healthy; a new service with no Deployment while `kubectl get deploy` says 51 of 51 |
+| `check-k8s-gateway-matches-compose.py` | nothing — it compares the two gateway definitions directly | a version bump on one side; an argument added to one gateway only; a middleware missing from the `tunnel` chain, which nothing local drives; an entrypoint with no Service port; a certificate filename that `tls.yml` and `k8s-gateway.sh` disagree about |
+
+Run them together:
+
+```sh
+make check-k8s          # also part of `make check`
+```
+
+They are in CI as the **`k8s` job**, which checks out `micro-org` at `path: org`
+beside `deploy` because the renderer resolves images from a release manifest.
+A separate job from `drift`: a different checkout set, a different question, and
+running in parallel means the k8s answer arrives whether or not `drift`'s pnpm
+install succeeded.
+
+**Two deliberate holes, both stated in the scripts:**
+
+- **Cutting a release does not turn the render guard red.** It re-renders against
+  the release each tree *names in its own header* — the same line `k8s-deploy.sh`
+  reads — not against the newest one. A check that is red by default is a check
+  nobody reads. What catches a forgotten re-render is the deploy naming a release
+  the operator did not expect.
+- **The gateway guard does not read `gateway/dynamic/*.yml` as routing.** That is
+  `surface-routes.py`'s much larger job. Those files are *mounted* by both
+  platforms — `k8s-gateway.sh` rebuilds the ConfigMap from the directory on every
+  apply — so they cannot drift between the two. What can drift is everything
+  around them.
+
+Every difference between the two gateways' argument lists must be declared in
+`ARG_TRANSLATIONS`, with the reason. There is exactly one today: the OTLP
+endpoint, which needs an FQDN now that the collector lives in `cf-telemetry`
+rather than on the shared `app` network.
