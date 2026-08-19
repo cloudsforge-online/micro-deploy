@@ -2771,8 +2771,8 @@ for rec in \
   "hub hub-web" \
   ". site" \
   ". market-web /market" \
-  "create mint-web" \
-  "trade trade-web" \
+  ". mint-web /create" \
+  ". trade-web /trade" \
   "worlds worlds-web" \
   "explorer explorer-web" \
   "network network-site" \
@@ -2886,7 +2886,13 @@ else
     "exchange / /exchange/" \
     "market /listings/00000000-0000-0000-0000-000000000000 /market/listings/00000000-0000-0000-0000-000000000000" \
     "market /sitemap.xml /market/sitemap.xml" \
-    "market / /market/"; do
+    "market / /market/" \
+    "create /tokens/00000000-0000-0000-0000-000000000000 /create/tokens/00000000-0000-0000-0000-000000000000" \
+    "create /sitemap.xml /create/sitemap.xml" \
+    "create / /create/" \
+    "trade /backtests/00000000-0000-0000-0000-000000000000 /trade/backtests/00000000-0000-0000-0000-000000000000" \
+    "trade /sitemap.xml /trade/sitemap.xml" \
+    "trade / /trade/"; do
     set -- $rec
     oldsub=$1; oldpath=$2; newpath=$3
     if [ "$EMBER_NETWORK" = mainnet ]; then
@@ -2923,8 +2929,8 @@ for rec in \
   "hub /v1/dashboard hub-api" \
   "admin /v1/approvals admin-api" \
   ". /market/v1/listings market" \
-  "create /v1/catalogue mint" \
-  "trade /v1/bots trade" \
+  ". /create/v1/catalogue mint" \
+  ". /trade/v1/bots trade" \
   "worlds /v1/titles worlds" \
   "developers /v1/scopes devplatform" \
   "tessera /v1/wards tessera" \
