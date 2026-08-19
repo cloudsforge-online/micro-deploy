@@ -3560,11 +3560,57 @@ else
   # Every candidate is now examined rather than the first one found: a plaintext
   # key left behind beside a sealed keystore is precisely the residue #206 was
   # closed to remove, and stopping at the keystore would have hidden it.
+  # ── WHY NONE OF THESE CANDIDATES IS A USERNAME ANY MORE ───────────────────
+  #
+  # This list used to end in two absolute paths with a person's login inside
+  # them — `/home/savvaniss/…` as the app host's default and `/home/malf/…` as
+  # the chain host's. Both were true, and both stopped being true the day the
+  # estate acquired a third machine. On the Kubernetes VM the operator is
+  # `savva`, the sealed keystore is exactly where the layout says it should be,
+  # and this check reported
+  #
+  #     Searched: 'no candidate directory exists on this machine'
+  #
+  # about a key sitting one directory above the checkout it was run from. That
+  # is the same failure the block above was written to fix, wearing a different
+  # hat: a guard that cannot find the thing it guards, announcing it in a
+  # sentence that reads like the key is missing rather than like the search is.
+  # And it recurs on every new host, because a username is not a property of the
+  # estate.
+  #
+  # So the roots are DERIVED instead. `../..` of this script is the checkout's
+  # parent, which is where `miner-keys` lives in the layout all three hosts
+  # actually use — `~/dev/cloudsforge/{deploy,org,runtime,miner-keys}` — and it
+  # is computed from `$0` rather than `$PWD` so it holds however this was
+  # invoked. `$HOME` covers a checkout kept somewhere else by the same operator.
+  # The estate env file's own `CF_MINER_KEYS` is asked too, because that is the
+  # variable `docker-compose.miners.yml` interpolates for the mount: the file
+  # that DECIDES where the keys are ought to be consulted about where they are.
+  #
+  # The two literal paths stay, last, so a root shell or a second operator on
+  # the two hosts that have them still finds the key. They are extra reach now
+  # rather than the only reach, which is the whole difference.
+  ember_key_roots=()
+  ember_checkout_parent=$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd -P)
+  for kroot in \
+    "${CF_APPHOST_MINER_KEYS:-}" \
+    "${CF_MINER_KEYS:-}" \
+    "$(envget CF_MINER_KEYS)" \
+    "${ember_checkout_parent:+$ember_checkout_parent/miner-keys}" \
+    "${HOME:+$HOME/dev/cloudsforge/miner-keys}" \
+    /home/savvaniss/dev/cloudsforge/miner-keys \
+    /home/malf/dev/cloudsforge/miner-keys
+  do
+    # An unset root must not become the string "/mainnet", which is a real
+    # absolute path and would be searched on any machine that happens to have
+    # one.
+    [ -n "$kroot" ] && ember_key_roots+=("$kroot/$EMBER_NETWORK")
+  done
+
   ember_key_dirs=()
   for kdir in \
     "${EMBER_MINER_DATA:-}" \
-    "${CF_APPHOST_MINER_KEYS:-/home/savvaniss/dev/cloudsforge/miner-keys}/$EMBER_NETWORK" \
-    "${CF_MINER_KEYS:-/home/malf/dev/cloudsforge/miner-keys}/$EMBER_NETWORK" \
+    ${ember_key_roots[@]+"${ember_key_roots[@]}"} \
     "$HOME/.cloudsforge/ember-$EMBER_NETWORK/miner" \
     "$HOME/.cloudsforge/ember-testnet/miner"
   do

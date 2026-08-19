@@ -194,6 +194,33 @@ if [ -n "$creds" ]; then
   exit 2
 fi
 
+# ── THE FIVE ADDRESSES THAT LEAVE THIS PROCESS ───────────────────────────────
+#
+# "THE PAGES HAVE SOMETHING ON THEM" does not curl anything itself. It shells out
+# to `scripts/estate-seed.mjs --check`, deliberately — `scripts/seed/lib.mjs`
+# already holds the map of where each surface is, and restating it in bash would
+# be the second copy of it. That map is therefore a SECOND reader of the estate's
+# addresses, in a different language, in a different process, and it does not see
+# the twenty-six exports above.
+#
+# Eleven of its entries are https hostnames and survive the runtime change
+# untouched. Five are published host ports, which is a docker fact and not an
+# estate one, so on k3s they resolve to a closed port and `--check` reports three
+# live services as unreadable. `lib.mjs` takes `CF_<SERVICE>_URL` for each of the
+# five; the ClusterIPs the join already computed are exactly what they want.
+#
+# Assigned from the joined variables rather than re-derived, so there is still
+# one mapping in this file and not two — and left empty if a name somehow did not
+# join, because `lib.mjs` falls back to the loopback default and an empty
+# override must not become the string "http://:".
+for cf_seed_pair in CF_LEDGER_URL:LEDGER CF_BILLING_URL:BILLING CF_NDA_URL:NDA \
+  CF_COMMUNITY_URL:COMMUNITY CF_STUDIO_URL:STUDIO; do
+  cf_seed_dst=${cf_seed_pair%%:*}
+  eval "cf_seed_val=\${${cf_seed_pair#*:}:-}"
+  [ -n "$cf_seed_val" ] && eval "export $cf_seed_dst=\"\$cf_seed_val\""
+done
+unset cf_seed_pair cf_seed_dst cf_seed_val
+
 export CF_RUNTIME=k8s
 export CF_NAMESPACE
 export ESTATE_ENV
