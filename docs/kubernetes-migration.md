@@ -391,9 +391,13 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    ```
    Compare against the counts in "Where verification stands" below. What matters
    is not the number but the DELTA: a failure that is not on that list is new,
-   and a cutover is the wrong moment to meet it. On mainnet the four drift
-   failures are expected HERE and must be gone after step 4 — they are the only
-   check in the suite that proves the re-import actually closed the gap.
+   and a cutover is the wrong moment to meet it. Expect **9 on mainnet** —
+   6 documented, plus 3 that are the hold itself (`settlement /livez`,
+   `settlement /readyz`, `beacon /v1/gate` 504), which step 5 clears.
+
+   On mainnet the four drift failures are expected HERE and must be gone after
+   step 4 — they are the only check in the suite that proves the re-import
+   actually closed the gap.
 
 3. **Stop the compose estate** on the app host, inside WSL. There is no
    `release-deploy.sh --down` — that script only ever brings things *up*, and
@@ -401,6 +405,7 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    by name:
    ```sh
    export DOCKER_CONFIG=/tmp/dockercfg-nocreds     # else every compose call re-authenticates
+   docker compose -p cf-stratum down                # FIRST — see below
    docker compose -p cloudsforge-estate down
    docker compose -p cf-testnet down
    ```
@@ -418,6 +423,43 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
 
    Nothing may write to the source databases after this point.
 
+   **`cf-stratum` is stopped first, and it is the only one of the five
+   outside-the-estate projects that has to be.** Five docker-compose projects on
+   the app host are not `cloudsforge-estate` or `cf-testnet`, so `down` by
+   project name leaves every one of them running:
+
+   | Project | What it is | At step 3 |
+   |---|---|---|
+   | `cf-miners` | `cf-miner-mainnet-apphost`, the estate's *second* EMBER coinbase | leave up — it mines to the chain host, not to the estate |
+   | `cf-stratum` | `stratum-endpoint` | **stop it** |
+   | `cfmicro` | the compose telemetry plane (6 containers) | leave up; it goes red on a down estate, which is true |
+   | `cfwg` | WireGuard to the chain host | leave up — the miner needs it |
+   | `ft_userdata` | freqtrade, unrelated to the estate | leave up |
+
+   `stratum-endpoint` holds `/var/run/docker.sock` and its whole job is to run
+   `docker compose -p cloudsforge-estate up -d --no-deps pool` when the WAN
+   address changes. Against a torn-down project that is a single `pool` container
+   with no dependencies, pointed at the compose database this cutover exists to
+   stop writing to. It is inert *today* — `CF_STRATUM_PUBLISH` is unset on both
+   networks, so it defaults to `false`, writes nothing, and never applies;
+   `compose/generated/stratum.env` does not exist, which is the observable proof.
+   But "inert because a flag nobody is thinking about is still off" is not a
+   property to run a cutover on, and the container costs nothing to stop.
+
+   **The cluster has no `stratum-endpoint`, and that is not a regression.**
+   `scripts/k8s-render.py` never saw it — it is deliberately not in
+   `docker-compose.estate.yml` (a `build:` the release manifest cannot pin), so
+   there was nothing to render. With publishing off, compose and cluster agree
+   exactly: no generated file, `pool` reads no public host, `GET /v1/pool`
+   answers `stratumEndpoint: null`. It becomes real work the day an operator
+   wants hardware miners to dial in; see "What is not finished".
+
+   **The EMBER chain itself is on the chain host and no step here touches it** —
+   `cf-hearth-seed` and `cf-hearth-seed-testnet`, beside `cf-miner-mainnet` and
+   `cf-miner-testnet` and the three UTXO daemons. Verified rather than assumed,
+   because "the estate is down" and "the chain stopped" are the same symptom from
+   a frontend.
+
 4. **Re-import the databases**, now that the source is quiet:
    ```sh
    ./scripts/k8s-db-import.sh --network mainnet --cutover
@@ -426,9 +468,16 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
 
 5. **Deploy without the hold**, which is what starts `beacon` and `settlement`:
    ```sh
-   ./scripts/k8s-deploy.sh --network mainnet
-   ./scripts/k8s-deploy.sh --network testnet
+   ./scripts/k8s-deploy.sh --network mainnet --no-hold
+   ./scripts/k8s-deploy.sh --network testnet --no-hold
    ```
+   **`--no-hold` is not optional at this step, and it was missing here until
+   2026-08-19.** The default hold is derived from `cf-edge/cloudflared`'s replica
+   count — 0 means "this estate is not live, hold `settlement,beacon`" — and the
+   tunnel does not move until step 6. So a bare `k8s-deploy.sh` run here reads
+   the pre-cutover world correctly and holds exactly the two services the cutover
+   exists to start. It would say so on stdout (`hold: settlement,beacon`) and
+   deploy everything else green.
 
 6. **Move the tunnel.** Off first, then on — never both:
    ```sh
@@ -505,12 +554,44 @@ release 2026.8.81:
 
 | | mainnet | testnet |
 | --- | --- | --- |
-| **k8s** | **6 failed** | **59 failed** |
+| **k8s, held** (`settlement,beacon` unapplied) | **9 failed** | **62 failed** |
+| **k8s, of which are the hold itself** | 3 | 3 |
+| **k8s, the rest** | **6 failed** | **59 failed** |
 | compose, same day, same suite | — | 54 failed |
 
-The testnet gap is 5 checks and every one is accounted for below. Mainnet has no
-compose control because running the suite against the live estate writes test
-data into it; its 6 are read directly instead.
+Both held totals are measured, not derived: mainnet 9 and testnet 62, each
+run with `cf-edge/cloudflared` at 0 replicas and therefore each carrying the same
+three hold failures. The testnet gap over compose is 5 checks and every one is
+accounted for below. Mainnet has no compose control because running the suite
+against the live estate writes test data into it; its 6 are read directly instead.
+
+Testnet's three are the same shape as mainnet's but on testnet hostnames —
+`settlement /livez`, `settlement /readyz`, and `beacon-testnet.cloudsforge.online/v1/gate
+answered 504`. Do not confuse the last one with the two *other* beacon-testnet
+failures in the same run (`answered 302`, `the bundle is NOT in front of the
+service`): those are the retirement, they are inside the 59, and step 5 will not
+clear them.
+
+### Three of those failures ARE the hold, and only appear before step 5
+
+**Read this before comparing your run against the numbers above.** The first
+measurement was taken during the window when `settlement` and `beacon` had been
+deployed unheld — the incident that made the hold default-on. With the hold
+correctly applied, three more checks fail, because the two services they ask
+about are not there:
+
+```
+FAIL settlement /livez
+FAIL settlement /readyz
+FAIL https://beacon.cloudsforge.online/v1/gate answered 504
+```
+
+That is the hold working, not a defect: `kubectl get deploy -n cloudsforge-estate`
+shows no `settlement` and no `beacon` (only `beacon-web`, which is the frontend
+and a different service). **Cutover step 5's `--no-hold` is what clears them**, at
+the same moment it clears the four drift failures below. So the honest
+expectation at step 2 is **9 on mainnet**, and **0 of those 9 after step 5**
+except items 1 and 2 below, which are not migration failures at all.
 
 ### Mainnet's six, in full
 
@@ -570,6 +651,19 @@ Honest list, as of 2026-08-19:
 - **The cutover itself**, below. Nothing public points at the cluster.
 - **Nothing is on `main`.** All of this is branch `migration/kubernetes`, and it
   merges when the migration is complete and verified — not before.
+- **`scripts/gateway-reload.sh --validate|reload` is compose-only.** It runs
+  `docker exec` against a gateway container and `docker compose up -d gateway`,
+  neither of which exists here. The cluster's equivalent of `reload` is already
+  covered — `k8s-gateway.sh` stamps the dynamic files' content hash onto the pod
+  template, so a changed file is a new pod deterministically, which is stronger
+  than a reload. What has no equivalent is `--validate`: checking a Traefik config
+  is loadable *before* replacing the live one. That wants a throwaway Pod running
+  the same image over the candidate ConfigMap, and it does not exist yet. Until it
+  does, a broken dynamic file is caught by the new pod failing its readiness
+  probe — the old pod is already gone by then, because the strategy is `Recreate`.
+- **No `stratum-endpoint` in the cluster.** Equivalent to today while
+  `CF_STRATUM_PUBLISH` is off, and a real gap the day hardware miners are meant to
+  dial in. See cutover step 3 for why it was never rendered and what it would take.
 
 Closed since the first draft of this list: host aliases (superseded by
 `scripts/k8s-cluster-dns.sh`, which gives CoreDNS a zone per namespace instead of
