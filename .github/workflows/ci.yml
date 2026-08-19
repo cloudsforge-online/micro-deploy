@@ -329,6 +329,32 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-router-prefix-ordering.py
 
+      # ── AND ITS API MOVED WITH IT, AND THE GATEWAY TAKES THE PREFIX BACK OFF ──
+      #
+      # Twelve of the fourteen surfaces have a service on their own hostname, and
+      # their bundles issue RELATIVE requests — which is exactly what lets a
+      # bundle not know its own hostname. Mount the bundle at `/market` and a
+      # relative `/v1/titles` still resolves at the apex ROOT, which is
+      # micro-site's.
+      #
+      # So the API moves too, and `stripPrefix` removes `/market` before the
+      # service sees it — the service is unchanged and never learns it moved.
+      # Three parts, three different silences:
+      #
+      #   no router      every call 404s. Loud, and the good case.
+      #   no stripPrefix the service gets `/market/v1/…`, a path it has never
+      #                  served, and answers its own 404 for every route — while
+      #                  Traefik reports a healthy backend.
+      #   no base change the BUNDLE still calls `/v1/…` on the apex, reaches
+      #                  micro-site, and gets a 200 with an HTML body where JSON
+      #                  was expected. Nothing else in the estate can see this.
+      #
+      # The third is checked by check-base-paths-agree.py, which reads the
+      # frontend. The first two are checked here.
+      - name: A remounted API is routed under its mount and stripped before the service
+        working-directory: deploy
+        run: python3 scripts/check-api-remount.py
+
       # ── THE PROBER MUST STILL BE ABLE TO FIND THE ESTATE ───────────────────
       #
       # `uptime.yml` probes every public hostname on a schedule, and it derives
