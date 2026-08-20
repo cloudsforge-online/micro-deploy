@@ -1170,6 +1170,96 @@ than by assertion.
 
 ---
 
+## 6sexies. Wave 3d — `pool` → `/pool`
+
+The mining pool was held back for its own wave because of one thing, and that
+thing turned out not to be true.
+
+### The WebSocket that does not move
+
+`pool.<apex>/v1/pool/stratum/<chain>` is a Stratum-over-WebSocket connection a
+browser miner holds open for hours. Moving the console looked like it would drag
+that socket to a new address and put it through a `stripPrefix` — a pattern this
+estate had never run.
+
+It does neither. `hub-web` opens `chain.websocketEndpoint`, and micro-pool
+**publishes** that string from `POOL_WEBSOCKET_PUBLIC_ORIGIN`, an operator-set
+absolute URL, rather than composing it from `window.location`. Read from the
+running estate before anything was written, and again after the deploy:
+
+```
+wss://pool.cloudsforge.online/v1/pool/stratum/ltc
+```
+
+That is the hostname this plan deliberately does not redirect. **micro-org#285 is
+the change that made the endpoint configured rather than guessed, and this is the
+first time it has paid for itself** — a bundle that moved would otherwise have
+taken every miner's socket with it.
+
+Verified live after the deploy, over HTTP/1.1:
+
+```
+HTTP/1.1 101 Switching Protocols
+Sec-Websocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=
+```
+
+> **The first probe of this said 404, and it was the probe that was wrong.**
+> `curl` negotiated HTTP/2 with the edge, and HTTP/2 has no `Upgrade:` header —
+> the mechanism is Extended CONNECT (RFC 8441). `--http1.1` is required, and
+> without it the check reports a working socket as broken. Recorded because it is
+> the same shape as every other defect in this document: a plausible failure
+> message about something that is fine.
+
+### `/pool/deployment.json` falls to the bundle, and the router rule is why
+
+It answers "is there a pool behind this deployment at all", it is served by the
+CONSOLE's nginx, and its design turns on NOT being under `/v1` — that prefix
+reaches the service whose absence it reports, so it would be answered by the very
+502 it exists to explain.
+
+The API router therefore names `/pool/v1`, `/pool/livez` and `/pool/readyz`
+**exactly** rather than widening to `/pool/`. That is the second time an
+exact-prefix rule has been load-bearing rather than tidy.
+
+### Two defects, and one of them would have been noticed by a person
+
+**`unlabelledSurfaceUrl` composed a leading dot.** Both `micro-pool-web` and
+`micro-hub-web` built `https://${envLabel(subdomain, '')}.${apex}`, which for a
+surface with no subdomain is `https://.<apex>` — not a hostname at all.
+
+In hub-web that is not a cosmetic link defect. Every read against it rejects, so
+`GET /v1/pool` never answers, no chain comes back, and **the browser miner's
+picker is left offering EMBER alone** — Litecoin simply gone. micro-hub-web's own
+suite caught it before the image published: 23 failures, the picker ones being
+the ones a person would have reported.
+
+That is the second wave micro-hub-web has caught for this migration. It is the
+repository that consumes the most surfaces, and it keeps earning its place.
+
+**A placement check that had quietly stopped checking.** `isRegisteredPlacement`
+compared the page origin to `hosts()[PRODUCT]`'s origin. For an apex-mounted
+surface the registry composes that URL as *the page's own apex* plus the mount —
+so the comparison is true on every origin in the world, and a preview deployment
+looks perfectly placed.
+
+What actually goes wrong on an unplaceable name is unchanged: the apex is derived
+by stripping a KNOWN first label, so every SIBLING resolves one level too deep.
+The question is asked of the apex now — placeable when it is a bare two-label
+name or when its first label is one the registry can split.
+
+**The four surfaces consolidated before the pool have the same weakened check and
+were not fixed in this wave.** A change to four repositories does not belong in a
+wave about a fifth, and leaving it implicit would have been worse than saying so.
+
+### What 3d cost
+
+The same six files, plus `deployment.tsx`'s two path constants, plus the test
+harness recording `path` with the mount stripped and `mountedPath` as sent — the
+pattern wave 3b established, and in hub-web derived from `SURFACES` rather than
+naming `/pool`, because eight more surfaces are due.
+
+---
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
