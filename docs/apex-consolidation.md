@@ -1635,6 +1635,94 @@ it. Third occurrence of that pattern in this plan.
 
 All eleven earlier mounts re-checked in the same sweep and still 200.
 
+## 6decies. Wave 3h — `explorer` → `/explorer`
+
+**Shipped 2026-08-20 in release 2026.8.92.**
+
+`explorer.<apex>` → `<apex>/explorer`. **Thirteen of fourteen product surfaces
+are now folders on the apex.** Only `foresight` remains, for §5's reason: its
+API is six UNVERSIONED prefixes at the root, so mounting it without moving them
+would put `/me` and `/markets` on the apex answered by a prediction market.
+
+### The design question it was parked on, and why it was not a redesign
+
+The registry row said this surface "has a CROSS-ESTATE VIEWING LAYER keyed on
+ORIGINS … a consolidated surface's reads are origin PLUS MOUNT, so every caller
+has to learn the difference between WHICH ESTATE and WHERE UNDER IT."
+
+That is true. It is also **exactly the composition wave 3c already made for
+agora**, and the separation it names is the thing to keep rather than the thing
+to fix:
+
+| question | answered by | shape |
+|---|---|---|
+| which estate am I reading? | `networkOrigin()` | an ORIGIN, by construction |
+| where under it does this surface live? | `basePath` | a path |
+
+`viewedApiOrigin()` still returns an origin and did not change. `api.ts`
+composes `BASE` onto it at the one call site that reads across estates.
+
+**Keeping them apart is load-bearing, and 3c proved it the hard way.** The first
+draft of that wave made agora's origin function return origin-plus-mount, which
+is TRUTHY — so the `if (crossEstate === '')` test above it stopped being
+consulted, and pressing Testnet went on reading mainnet while the amber band
+said otherwise. The generalisation: **a function that answers "which estate"
+must keep returning something falsy for "this one", or every caller's
+same-estate branch dies silently.**
+
+### Three defects the move surfaced
+
+**The network was derived from a per-surface label.** `src/lib/network.ts` read
+`explorer-testnet.<apex>`'s first label. Both estates now serve this bundle at
+one path and differ only in the apex, so it reads the bare environment label
+first. The sharp part is second-order: `KNOWN_SUBS` **correctly forgot**
+`explorer` when the registry row lost its subdomain, and that made the retired
+two-label form `explorer.testnet.<apex>` fall through to `mainnet` — the
+dangerous direction, because it shows a reader the network holding real money.
+The retired label is now named explicitly rather than looked up in a set that
+has every right to forget it.
+
+**The cross-network escape hatch vanished on mainnet.**
+`siblingExplorerOrigin` returned null for any hostname with two labels or fewer
+— a correct guard while the bundle always had a first label of its own to
+inspect, and wrong the moment a bare apex became its address. The link that
+says "open this on the testnet explorer" simply stopped rendering.
+
+**`resolveApiBase` returned the empty string for a same-origin page** — decision
+4's exact failure once a relative `/v1` resolves at the apex root. It returns
+the mount now, with one exception: a LOCAL host. The registry composes a dev URL
+as `http://localhost:4008` PLUS the basePath, and micro-indexer binds that port
+directly with nothing in front of it to strip the prefix back off.
+
+### And a fourth gravestone
+
+This repository's "no hard-coded CloudsForge hostname" rule greps `src`
+including comments. Its point is that a literal hostname must not be a second,
+unversioned copy of the registry — and a hostname in PROSE is not a copy of
+anything: `network.ts` cannot explain "the apex differs between the estates"
+without naming the two apexes.
+
+That is the **fourth time in this plan** a scanner has graded its own
+explanation — after the `try_files $uri /index.html` rule, the `location =
+/robots.txt` absence assertion, and the same absence assertion again in
+devportal. Comments are stripped now, as they already were for the other three.
+**The rule to carry forward: any check that scans configuration or source for
+the ABSENCE of something must strip comments first, because the comment
+explaining the absence names the thing.**
+
+### The audit
+
+`micro-indexer`: **0 redirects, 0 cookie Paths, 1 rooted-path hit** — a route
+registration in `server.ts`. The cleanest of the ten, and for a structural
+reason: a read-only projection of chain state composes no addresses at all.
+
+The API router sits outside the `CF_WEB_RETIRED` gate, and the consequence of
+getting that wrong is worse here than anywhere else in the estate. The whole
+purpose of an explorer is telling a reader which chain and which network an
+address belongs to; a gated API answers testnet's own reads with a 301 to
+mainnet, which `fetch` follows silently and cross-origin — mainnet data under a
+testnet heading, with nothing on the page saying so.
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
