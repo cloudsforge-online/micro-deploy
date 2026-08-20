@@ -496,6 +496,23 @@ http:
         prefixes:
           - "/explorer"
 
+    # ── THE ONLY WAY TRAEFIK REFUSES A REQUEST WITHOUT A BACKEND ───────────────
+    #
+    # Traefik 3 has no "return 403" middleware. `ipAllowList` is the primitive
+    # that refuses, and `127.0.0.1/32` refuses EVERYTHING that arrives here:
+    # public traffic reaches this gateway through cloudflared as a pod-to-pod
+    # hop, so the client address Traefik sees is cloudflared's POD IP and never
+    # loopback. Nothing legitimate is lost — Prometheus scrapes services directly
+    # on the cluster network (`BEACON_TARGETS` and prometheus.yml both name
+    # `http://<service>:4000`), never through this gateway.
+    #
+    # Named for what it does rather than for who uses it, because the next
+    # endpoint that must exist internally and not publicly should reuse it.
+    cf-deny-public:
+      ipAllowList:
+        sourceRange:
+          - "127.0.0.1/32"
+
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
     # `rpc.<apex>` and `p2p.<apex>` are the only two hostnames in this estate that
@@ -1874,6 +1891,35 @@ http:
       rule: 'Host(`nimbus{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
+      service: cf-svc-identity
+    # ── `nimbus` IS A CATCH-ALL ONTO A SERVICE, SO /metrics RODE ALONG ─────────
+    #
+    # The router above has no path constraint — deliberately, because this
+    # hostname IS micro-identity's public face and enumerating its paths would be
+    # a second copy of its route table. The cost is that EVERY path reaches the
+    # service, including the ones meant for the cluster.
+    #
+    # MEASURED 2026-08-20 against production:
+    #
+    #   GET https://nimbus.<apex>/metrics  →  200, 298 lines
+    #
+    # Prometheus output from the IDENTITY service, on the public internet. Found
+    # while narrowing the same exposure on `foresight`, whose `PathPrefix(`/me`)`
+    # was claiming `/metrics` by raw-string accident. Both were serving it; the
+    # causes are different and so are the fixes.
+    #
+    # foresight needed no deny — its catch-all lands on the BUNDLE, whose nginx
+    # 404s an address it does not own. This one lands on the service, so the
+    # refusal has to be explicit.
+    #
+    # `/livez` and `/readyz` are deliberately NOT denied. They answer a bare
+    # up/down with no internals, the external uptime prober reads them from
+    # outside, and `micro-beacon` and the status page both depend on that.
+    cf-deny-nimbus-metrics:
+      rule: 'Host(`nimbus{{ env "CF_WEB_SUFFIX" }}`) && Path(`/metrics`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-deny-public]
       service: cf-svc-identity
 
     # ────────────────────────────────── pay and vault — the two money hosts ──
