@@ -110,6 +110,7 @@ BUNDLE_REPOS = {
     # a third spelling of one thing, and the reason this is a table rather than
     # a derivation.
     "developers": "devportal-web",
+    "explorer": "explorer-web",
 }
 
 

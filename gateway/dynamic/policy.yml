@@ -160,7 +160,8 @@ http:
           #
           # The page runs on the apex now, so the apex's own entry covers both. Same browser, same
           # two requests, one origin earlier in this list.
-          - https://explorer{{ env "CF_WEB_SUFFIX" }}
+          # `explorer` needs no line here since wave 3h: it runs at `<apex>/explorer`, so the
+          # ORIGIN of every request it makes is the apex — already granted above.
           - https://network{{ env "CF_WEB_SUFFIX" }}
           # `developers` needs no line here since wave 3g: the console runs at
           # `<apex>/developers`, so the ORIGIN of every request it makes is the apex —
@@ -413,7 +414,6 @@ http:
           # `worlds` needs no line here either: a reader who chooses Testnet reads the sibling
           # estate from `<apex>/worlds`, and the ORIGIN of that read is the apex — already granted
           # by the apex's own cross-environment entry above.
-          - https://explorer{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://network{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://admin{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://status{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
