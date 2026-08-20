@@ -166,9 +166,20 @@ http:
           - https://admin{{ env "CF_WEB_SUFFIX" }}
           - https://status{{ env "CF_WEB_SUFFIX" }}
           - https://foresight{{ env "CF_WEB_SUFFIX" }}
-          - https://emberkin{{ env "CF_WEB_SUFFIX" }}
-          - https://aetherholm{{ env "CF_WEB_SUFFIX" }}
-          - https://tessera{{ env "CF_WEB_SUFFIX" }}
+          # ── THE THREE TITLES HAD LINES HERE AND DO NOT NEED THEM — WAVE 3f ──
+          #
+          # Each game runs at `<apex>/worlds/<title>` now, so the ORIGIN of every
+          # request it makes is the apex — already granted by the apex's own entry
+          # at the top of this list. A grant for `emberkin.<apex>` is a grant for a
+          # hostname that loads no page in either environment: the tombstone router
+          # 301s it, and a redirect is followed to the apex before any request in
+          # need of a grant is made.
+          #
+          # Same argument `worlds`, `pool` and `agora` are absent for, and the same
+          # one `surface-routes.py` check 5 makes: an entry written from a
+          # repository name rather than from the registry grants an origin nothing
+          # needs. Three fewer credentialed origins is a smaller surface, not just
+          # a tidier file.
           # ── the two operator consoles ──────────────────────────────────────
           #
           # `lantern.` and `beacon.` were API-only hostnames until micro-lantern-web
@@ -406,9 +417,10 @@ http:
           - https://admin{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://status{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://foresight{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          - https://emberkin{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          - https://aetherholm{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          - https://tessera{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # The three titles need no line here either, for `worlds`'s reason above:
+          # a player who chooses Testnet reads the sibling estate from
+          # `<sibling>/worlds/<title>`, and the ORIGIN of that read is the sibling
+          # APEX — already granted by the apex's own cross-environment entry.
           - https://lantern{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://beacon{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           # `pool` had a line here and does not need one: its console reads the sibling estate at

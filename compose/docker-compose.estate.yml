@@ -1077,6 +1077,21 @@ services:
       # rather than beside the two lines it is about, and it is the same shape as
       # the trap estate-web.yml's header records for Go template actions inside
       # YAML comments.
+      # ── WAVE 3f REMOVED THREE ENTRIES, AND A COMMENT CANNOT GO INSIDE THE LIST ──
+      #
+      # `emberkin.`, `aetherholm.` and `tessera.` were granted here and no longer
+      # need to be: each title runs at `<apex>/worlds/<title>` now, so the ORIGIN
+      # of a hand-off or a telemetry write from any of them is the APEX — the
+      # first entry below. Those hostnames load no page in either environment;
+      # the tombstone routers 301 them, and a browser follows that before making
+      # the request a grant would have covered.
+      #
+      # Same removal `journal`, `market`, `create`, `trade`, `agora`, `pool` and
+      # `worlds` already had. The note lives HERE and not among the entries
+      # because the value below is a YAML FOLDED SCALAR: a `#` line inside it is
+      # not a comment, it is one more origin — which is exactly what the first
+      # attempt did, and `surface-routes.py` reported four prose fragments as
+      # ungranted origins rather than letting them through.
       IDENTITY_HANDOFF_ORIGINS: >-
         https://${CF_SITE_HOST:-cloudsforge.localtest.me},
         https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
@@ -1086,9 +1101,6 @@ services:
         https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
@@ -4831,6 +4843,21 @@ services:
       # blind spot precisely over the pages an operator opens when something is
       # already wrong, which is the worst possible place for one.
       # ══════════════════════════════════════════════════════════════════════════
+      # ── WAVE 3f REMOVED THREE ENTRIES, AND A COMMENT CANNOT GO INSIDE THE LIST ──
+      #
+      # `emberkin.`, `aetherholm.` and `tessera.` were granted here and no longer
+      # need to be: each title runs at `<apex>/worlds/<title>` now, so the ORIGIN
+      # of a hand-off or a telemetry write from any of them is the APEX — the
+      # first entry below. Those hostnames load no page in either environment;
+      # the tombstone routers 301 them, and a browser follows that before making
+      # the request a grant would have covered.
+      #
+      # Same removal `journal`, `market`, `create`, `trade`, `agora`, `pool` and
+      # `worlds` already had. The note lives HERE and not among the entries
+      # because the value below is a YAML FOLDED SCALAR: a `#` line inside it is
+      # not a comment, it is one more origin — which is exactly what the first
+      # attempt did, and `surface-routes.py` reported four prose fragments as
+      # ungranted origins rather than letting them through.
       LANTERN_RUM_ORIGINS: >-
         https://${CF_SITE_HOST:-cloudsforge.localtest.me},
         https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
@@ -4840,9 +4867,6 @@ services:
         https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate

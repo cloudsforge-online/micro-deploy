@@ -2501,9 +2501,9 @@ for rec in \
   "devportal-web 4135 /apps" \
   "status-web 4136 /history" \
   "foresight-web 4138 /rules" \
-  "emberkin-web 4137 /party" \
-  "aetherholm-web 4139 /cities" \
-  "tessera-web 4140 /wards"; do
+  "emberkin-web 4137 /party /worlds/emberkin" \
+  "aetherholm-web 4139 /cities /worlds/aetherholm" \
+  "tessera-web 4140 /wards /worlds/tessera"; do
   set -- $rec
   # ── THE LEADING DIGIT IS $PB HERE TOO, AND WAS NOT ────────────────────────
   #

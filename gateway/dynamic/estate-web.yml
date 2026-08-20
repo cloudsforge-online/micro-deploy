@@ -271,6 +271,37 @@ http:
         replacement: 'https://${1}/worlds/${2}'
         permanent: true
 
+    # ── WAVE 3f's THREE, AND WHY THEY LAND TWO SEGMENTS DEEP ──────────────────
+    #
+    # A Forge Worlds TITLE is not a product beside the catalogue, it is a thing
+    # INSIDE it — every one of the three is `inSwitcher: false` with `worlds` as
+    # its switcher entry, and has been since long before this move. So the
+    # replacement is `/worlds/<title>/` and not `/<title>/`: the address now says
+    # what the registry always said.
+    #
+    # The API routers on these three hostnames sit ABOVE these tombstones
+    # (700 against 500), for `cf-worlds-to-apex`'s reason and one stronger: an
+    # emberkin save is a PUT, and a 301 in front of a PUT is re-issued by most
+    # clients as a GET. A third party still calling `emberkin.<apex>/v1` keeps
+    # being answered rather than redirected.
+    cf-emberkin-to-apex:
+      redirectRegex:
+        regex: '^https?://emberkin\.(.+?)/(.*)'
+        replacement: 'https://${1}/worlds/emberkin/${2}'
+        permanent: true
+
+    cf-aetherholm-to-apex:
+      redirectRegex:
+        regex: '^https?://aetherholm\.(.+?)/(.*)'
+        replacement: 'https://${1}/worlds/aetherholm/${2}'
+        permanent: true
+
+    cf-tessera-to-apex:
+      redirectRegex:
+        regex: '^https?://tessera\.(.+?)/(.*)'
+        replacement: 'https://${1}/worlds/tessera/${2}'
+        permanent: true
+
     # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
     #
     # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
@@ -366,6 +397,51 @@ http:
       stripPrefix:
         prefixes:
           - "/pool"
+
+    # ── WAVE 3f's THREE, AND THE FIRST TWO-SEGMENT PREFIXES IN THIS FILE ──────
+    #
+    # Decision 4 again. The audit that cannot be automated — `stripPrefix` is
+    # invisible to the service, so a `Location:`, a cookie `Path` or a rooted URL
+    # in a JSON body would go on answering 200 while handing the browser an
+    # address at the apex root — was RE-RUN for each of the three on 2026-08-20
+    # rather than assumed from the five above:
+    #
+    #   micro-emberkin     0 redirects, 0 cookie Paths, 10 rooted-path hits
+    #   micro-aetherholm   0 redirects, 0 cookie Paths, 28 rooted-path hits
+    #   micro-tessera      0 redirects, 0 cookie Paths, 38 rooted-path hits
+    #
+    # All 76 READ rather than counted. Every hit in a `server.ts` is a route
+    # REGISTRATION, the same literal shape as `market`'s `define(…)`; the routes
+    # a service SERVES do not move when the gateway strips a prefix in front of
+    # it. The seven that are NOT in a `server.ts` are the ones worth naming, and
+    # all seven are OUTBOUND calls to a DIFFERENT service:
+    #
+    #   emberkin/src/worldsclient.ts    GET  /v1/titles      → micro-worlds
+    #   emberkin/src/testsupport.ts     (x2) the fake of that same call
+    #   tessera/src/marketclient.ts     POST /v1/listings    → micro-market
+    #   tessera/src/communityclient.ts  POST /v1/communities → micro-community
+    #   tessera/src/studioclient.ts     POST /v1/brand-kits  → micro-studio
+    #
+    # A path on somebody else's base URL, which this middleware does not touch.
+    #
+    # TWO SEGMENTS, and that is the whole difference from the five above. Traefik
+    # strips the literal prefix, so `/worlds/emberkin/v1/saves` reaches the
+    # service as `/v1/saves` — exactly what it served on its own hostname, and
+    # exactly what its route table still registers.
+    cf-emberkin-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/worlds/emberkin"
+
+    cf-aetherholm-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/worlds/aetherholm"
+
+    cf-tessera-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/worlds/tessera"
 
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
@@ -1418,23 +1494,100 @@ http:
     # Written now rather than when the containers landed, because that is the drift this section
     # was created to prevent and it recurred inside one night: the compose file gained a service
     # and this file was not opened. `scripts/gateway-check.py --surfaces` now fails on it.
+    # ══════════════════════════════════════════════════════════════════════════
+    # WAVE 3f — THE THREE TITLES BECOME FOLDERS UNDER THE CATALOGUE
+    #
+    # `emberkin.<apex>` → `<apex>/worlds/emberkin`, and the same for the other
+    # two. A title is a thing INSIDE Forge Worlds rather than a product beside
+    # it, and the address finally says so.
+    #
+    # ── PRIORITY 650, WHICH IS A BAND THAT DID NOT EXIST BEFORE TONIGHT ───────
+    #
+    # This is the first NESTED mount in the estate, and nesting breaks the band
+    # table this file has used since wave 3a. `cf-web-worlds` above is
+    #
+    #     Host(<apex>) && (Path(`/worlds`) || PathPrefix(`/worlds/`))   @ 600
+    #
+    # and `/worlds/emberkin/dex` MATCHES `PathPrefix(`/worlds/`)`. Both rules
+    # are true for every address of every title. Traefik breaks the tie on
+    # priority alone — it does NOT prefer the longer rule — so at equal priority
+    # the catalogue would win and serve worlds-web's index.html for the whole of
+    # Emberkin. The player would get a working page at the right URL showing the
+    # wrong game, which is the failure mode hardest to notice from a screenshot.
+    #
+    # So: bundles on their own host 500, retirement redirects 550, APIs on their
+    # own host 600, bundles mounted on the apex 600, NESTED BUNDLES 650, APIs
+    # mounted under a bundle 700. The invariant is stated as a rule rather than
+    # as three numbers: A ROUTER WHOSE PATH IS STRICTLY DEEPER THAN ANOTHER'S
+    # MUST OUTRANK IT. `scripts/check-router-prefix-ordering.py` enforces it,
+    # and `surfaces.test.ts` in micro-ui pins the depth relationship it needs.
+    #
+    # ── `Path(x) || PathPrefix(x/)` AND NOT A BARE PREFIX ─────────────────────
+    #
+    # Traefik 3's PathPrefix is a RAW STRING PREFIX, so `PathPrefix(`/worlds/em`)`
+    # would claim `/worlds/emberkinsomething`. The two-clause form is exact.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
+    cf-web-emberkin-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/worlds/emberkin`) || PathPrefix(`/worlds/emberkin/`))'
+      priority: 650
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-emberkin
+{{ end }}
+
+    # Outside the `CF_WEB_RETIRED` gate — that gate is TESTNET, and an API inside
+    # it answers testnet's own reads with a 301 to mainnet, which `fetch` follows
+    # silently and cross-origin. micro-deploy#174; enforced by
+    # `check-api-remount.py`'s gate-depth tracking.
+    #
+    # 700, above the bundle's 650 for the reason every other `cf-api-*` router
+    # gives: both rules match `/worlds/emberkin/v1/saves`, and the bundle winning
+    # means every API call is answered with index.html — a 200 carrying HTML
+    # where JSON was expected, failing in the client as a parse error that names
+    # the wrong file.
+    cf-api-emberkin-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/worlds/emberkin/v1`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-emberkin-strip-mount]
+      service: cf-svc-emberkin
+
     cf-web-emberkin:
       rule: 'Host(`emberkin{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-emberkin-to-apex]
       service: cf-web-emberkin
+    # LEFT UN-REDIRECTED, at 600 above the tombstone. A save is a PUT and a 301
+    # in front of a PUT is re-issued by most clients as a GET — so a third party
+    # still calling this hostname is answered rather than bounced.
     cf-api-emberkin:
       rule: 'Host(`emberkin{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
       service: cf-svc-emberkin
 
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
+    cf-web-aetherholm-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/worlds/aetherholm`) || PathPrefix(`/worlds/aetherholm/`))'
+      priority: 650
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-aetherholm
+{{ end }}
+
+    cf-api-aetherholm-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (PathPrefix(`/worlds/aetherholm/v1`) || Path(`/worlds/aetherholm/readyz`))'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-aetherholm-strip-mount]
+      service: cf-svc-aetherholm
+
     cf-web-aetherholm:
       rule: 'Host(`aetherholm{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-aetherholm-to-apex]
       service: cf-web-aetherholm
     cf-api-aetherholm:
       rule: 'Host(`aetherholm{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
@@ -1450,6 +1603,10 @@ http:
     # This is the only health endpoint published anywhere in this file, and it is published because
     # a BUNDLE consumes it. It is the same shape as the status page above: a frontend asking its
     # own origin for something only its backend can answer.
+    # ON THE APEX THIS IS `cf-api-aetherholm-apex`'s second clause, not a router
+    # of its own — `Path(`/worlds/aetherholm/readyz`)`, written there so the
+    # mount and the strip stay in one place. This one keeps the old hostname
+    # answering for anything still pointed at it.
     cf-api-aetherholm-readyz:
       rule: 'Host(`aetherholm{{ env "CF_WEB_SUFFIX" }}`) && Path(`/readyz`)'
       priority: 600
@@ -1481,11 +1638,40 @@ http:
     # PORT 4022, not 4000. tessera is the one service in this estate that does not bind 4000, and
     # the number is argued rather than picked — 23-tessera.md §10.1, and the block beside its
     # container in docker-compose.estate.yml.
+    # ── AND THE ART, WHICH IS THE ONE THING NO OTHER TITLE HAS ────────────────
+    #
+    # tessera-web asks its own origin for `/world-assets/…`, several hundred
+    # requests per ward, deliberately same-origin so none of them costs a CORS
+    # preflight. On the apex `/world-assets/` is MICRO-SITE's address, so every
+    # sprite in the game would 404 with the client naming each missing file — it
+    # substitutes nothing by design, so the world would render as holes.
+    #
+    # `assetBase()` therefore composes `/worlds/tessera/world-assets`, and it is
+    # inside `PathPrefix(`/worlds/tessera/`)` below — one rule covers the bundle,
+    # the art and the API, which is the point of a mount. The container's nginx
+    # `alias`es the mounted path back onto the volume, so the PVC and the
+    # pre-flight job that counts PNGs at `/world-assets` are both untouched.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
+    cf-web-tessera-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/worlds/tessera`) || PathPrefix(`/worlds/tessera/`))'
+      priority: 650
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-tessera
+{{ end }}
+
+    cf-api-tessera-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/worlds/tessera/v1`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-tessera-strip-mount]
+      service: cf-svc-tessera
+
     cf-web-tessera:
       rule: 'Host(`tessera{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-tessera-to-apex]
       service: cf-web-tessera
     cf-api-tessera:
       rule: 'Host(`tessera{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
