@@ -194,9 +194,36 @@ fi
 
 # ── APPLY ────────────────────────────────────────────────────────────────────
 say ""
+# ── SERVER-SIDE, BECAUSE THIS CONFIGMAP OUTGREW A kubectl LIMIT ──────────────
+#
+# `kubectl apply` writes the ENTIRE object into a
+# `kubectl.kubernetes.io/last-applied-configuration` ANNOTATION so the next
+# apply can diff against it. Annotations are capped at 256 KiB across all of
+# them, and this ConfigMap is the whole of `gateway/dynamic/` — five files that
+# have grown with every wave of the apex consolidation. Wave 3f crossed the
+# line:
+#
+#   The ConfigMap "gateway-dynamic" is invalid: metadata.annotations:
+#   Too long: may not be more than 262144 bytes
+#
+# The failure is EXACTLY the shape that is worst to hit here. `k8s-deploy.sh`
+# had already rolled 51 deployments, so the estate was running new images
+# behind the OLD routing table — every surface up, and the release's whole
+# point unapplied. Nothing was down, and nothing said so either.
+#
+# `--server-side` stores the diff base in `metadata.managedFields` instead,
+# which has no such cap: the apiserver tracks ownership per field rather than
+# keeping a serialised copy of the object inside the object. `--force-conflicts`
+# because the resource already carries fields owned by the client-side manager
+# from every previous deploy, and this script is their sole author.
+#
+# Nothing else about the apply changes — same ConfigMap, same keys, same
+# content hash printed above, and Traefik's file provider reloads on the same
+# mount it always did.
 kubectl create configmap gateway-dynamic -n "$NAMESPACE" \
   $(for f in $FILES; do printf ' --from-file=%s=%s' "$(basename "$f")" "$f"; done) \
-  --dry-run=client -o yaml | kubectl apply -n "$NAMESPACE" -f - >/dev/null
+  --dry-run=client -o yaml \
+  | kubectl apply --server-side --force-conflicts -n "$NAMESPACE" -f - >/dev/null
 say "configmap/gateway-dynamic applied"
 
 # `kubectl create secret --from-file` reads the file bytes verbatim, so the
