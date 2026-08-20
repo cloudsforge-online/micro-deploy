@@ -1092,12 +1092,12 @@ services:
       # not a comment, it is one more origin — which is exactly what the first
       # attempt did, and `surface-routes.py` reported four prose fragments as
       # ungranted origins rather than letting them through.
+      # Wave 3g removed `developers.` for the same reason as the three above it.
       IDENTITY_HANDOFF_ORIGINS: >-
         https://${CF_SITE_HOST:-cloudsforge.localtest.me},
         https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://developers${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
@@ -4858,12 +4858,12 @@ services:
       # not a comment, it is one more origin — which is exactly what the first
       # attempt did, and `surface-routes.py` reported four prose fragments as
       # ungranted origins rather than letting them through.
+      # Wave 3g removed `developers.` for the same reason as the three above it.
       LANTERN_RUM_ORIGINS: >-
         https://${CF_SITE_HOST:-cloudsforge.localtest.me},
         https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://developers${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},

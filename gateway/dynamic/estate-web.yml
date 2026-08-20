@@ -302,6 +302,17 @@ http:
         replacement: 'https://${1}/worlds/tessera/${2}'
         permanent: true
 
+    # Wave 3g's. `cf-api-developers` at 600 is above this tombstone, so a third party calling
+    # `developers.<apex>/v1` is ANSWERED rather than bounced — and here that matters more than
+    # anywhere else in this file: `micro-devplatform` mints and revokes API credentials, so the
+    # requests on this hostname are POSTs and DELETEs, and a client that follows a 301 re-issues
+    # most of them as a GET. A revoke that silently became a read is a credential still live.
+    cf-developers-to-apex:
+      redirectRegex:
+        regex: '^https?://developers\.(.+?)/(.*)'
+        replacement: 'https://${1}/developers/${2}'
+        permanent: true
+
     # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
     #
     # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
@@ -442,6 +453,26 @@ http:
       stripPrefix:
         prefixes:
           - "/worlds/tessera"
+
+    # Wave 3g's, and the un-automatable Decision 4 audit re-run for it on 2026-08-20 rather than
+    # assumed from the eight above:
+    #
+    #   micro-devplatform   0 redirects, 0 cookie Paths, 41 rooted-path hits
+    #
+    # All 41 READ rather than counted, and every one is in `server.ts` — route REGISTRATIONS, the
+    # same literal shape as `market`'s `define(…)`. NOTHING outside `server.ts` names a rooted
+    # path at all, which makes this the cleanest of the nine: there is no outbound client in this
+    # service composing a path against somebody else's base URL, so there is not even the class of
+    # hit that had to be argued away for emberkin and tessera.
+    #
+    # The property worth naming is the one that would break it: micro-devplatform emits NO
+    # `Location:` header anywhere. Every write answers the created or updated object rather than
+    # redirecting to it, which is exactly what makes a mount invisible to a service — and exactly
+    # what a future endpoint could quietly undo.
+    cf-developers-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/developers"
 
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
@@ -1107,12 +1138,56 @@ http:
       service: cf-svc-indexer
 
     # ────────────────────────────────────── developers (micro-devportal-web) ──
+    # ── WAVE 3g — `developers.<apex>` BECOMES `<apex>/developers` ─────────────
+    #
+    # The console was PARKED for two waves, and the reason is worth keeping: the
+    # plan had it in wave 2 and called it "documentation". It is not — it is the
+    # developer platform CONSOLE, and `cf-api-devplatform` serves 35 `/v1`
+    # handlers behind it. Checking that claim against this router table is what
+    # produced the corrected "count APIs by the router's UPSTREAM" test, and
+    # what put `foresight` last.
+    #
+    # `Path(`/developers`) || PathPrefix(`/developers/`)` and NOT a bare
+    # `PathPrefix(`/developers`)`: Traefik 3's PathPrefix is a RAW STRING PREFIX,
+    # so the bare form would also claim `/developers-staging`.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
+    cf-web-developers-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/developers`) || PathPrefix(`/developers/`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-developers
+{{ end }}
+
+    # Outside the `CF_WEB_RETIRED` gate — that gate is TESTNET, and an API inside
+    # it answers testnet's own reads with a 301 to mainnet, which `fetch` follows
+    # silently and cross-origin. micro-deploy#174; enforced by
+    # `check-api-remount.py`'s gate-depth tracking.
+    #
+    # 700 over the bundle's 600, for the reason every `cf-api-*` router in this
+    # file gives: both rules match `/developers/v1/projects`, and the bundle
+    # winning means every API call is answered with index.html — a 200 carrying
+    # HTML where JSON was expected. On a console whose every screen mints or
+    # revokes a credential, that failure is a page that looks signed-in and can
+    # do nothing.
+    cf-api-developers-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/developers/v1`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-developers-strip-mount]
+      service: cf-svc-devplatform
+
     cf-web-developers:
       rule: 'Host(`developers{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-developers-to-apex]
       service: cf-web-developers
+    # LEFT UN-REDIRECTED at 600, above the tombstone. This is the hostname where
+    # not redirecting the API matters most in the whole estate: these calls mint
+    # and revoke API credentials, so they are POSTs and DELETEs, and a client
+    # that follows a 301 re-issues most of them as a GET. A revoke that quietly
+    # became a read leaves a credential live.
     cf-api-developers:
       rule: 'Host(`developers{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600

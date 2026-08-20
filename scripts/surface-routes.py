@@ -406,6 +406,13 @@ CONSOLIDATED_HOSTS = {
     "emberkin": ("emberkin", "cf-emberkin-to-apex"),
     "aetherholm": ("aetherholm", "cf-aetherholm-to-apex"),
     "tessera": ("tessera", "cf-tessera-to-apex"),
+    # Wave 3g, and the same bundle-only split as every wave since 3a — with the
+    # sharpest reason in the table for keeping the API un-redirected.
+    # `cf-api-developers` answers `developers.<apex>/v1` above the tombstone
+    # because those calls MINT AND REVOKE API CREDENTIALS: they are POSTs and
+    # DELETEs, and a client that follows a 301 re-issues most of them as a GET.
+    # A revoke that quietly became a read leaves a credential live.
+    "developers": ("developers", "cf-developers-to-apex"),
 }
 
 

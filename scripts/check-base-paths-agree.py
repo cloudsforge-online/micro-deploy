@@ -106,6 +106,10 @@ BUNDLE_REPOS = {
     "emberkin": "emberkin-web",
     "aetherholm": "aetherholm-web",
     "tessera": "tessera-web",
+    # Wave 3g. The repo is `devportal-web` and the surface key is `developers` —
+    # a third spelling of one thing, and the reason this is a table rather than
+    # a derivation.
+    "developers": "devportal-web",
 }
 
 

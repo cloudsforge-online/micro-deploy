@@ -162,7 +162,9 @@ http:
           # two requests, one origin earlier in this list.
           - https://explorer{{ env "CF_WEB_SUFFIX" }}
           - https://network{{ env "CF_WEB_SUFFIX" }}
-          - https://developers{{ env "CF_WEB_SUFFIX" }}
+          # `developers` needs no line here since wave 3g: the console runs at
+          # `<apex>/developers`, so the ORIGIN of every request it makes is the apex —
+          # already granted above. The hostname loads no page in either environment.
           - https://admin{{ env "CF_WEB_SUFFIX" }}
           - https://status{{ env "CF_WEB_SUFFIX" }}
           - https://foresight{{ env "CF_WEB_SUFFIX" }}
@@ -413,7 +415,6 @@ http:
           # by the apex's own cross-environment entry above.
           - https://explorer{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://network{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          - https://developers{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://admin{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://status{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://foresight{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
