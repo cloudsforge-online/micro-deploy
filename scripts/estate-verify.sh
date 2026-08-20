@@ -2498,7 +2498,7 @@ for rec in \
   "explorer-web 4132 /chains" \
   "network-site 4133 /faucet" \
   "market-web 4134 /listings /market" \
-  "devportal-web 4135 /apps" \
+  "devportal-web 4135 /apps /developers" \
   "status-web 4136 /history" \
   "foresight-web 4138 /rules" \
   "emberkin-web 4137 /party /worlds/emberkin" \
@@ -2827,7 +2827,6 @@ for rec in \
   ". worlds-web /worlds" \
   "explorer explorer-web" \
   "network network-site" \
-  "developers devportal-web" \
   "admin admin-web" \
   "status status-web" \
   "foresight foresight-web" \
@@ -2839,6 +2838,7 @@ for rec in \
   ". pool-web /pool" \
   ". exchange-web /exchange" \
   ". journal-web /journal" \
+  ". devportal-web /developers" \
   ". agora-web /agora"; do
   set -- $rec
   sub=$1; repo=$2; path=${3:-/}
