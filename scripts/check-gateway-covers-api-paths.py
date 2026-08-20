@@ -155,6 +155,18 @@ NOT_CHECKED = {
         "why": "versioned like the rest, plus ONE exact `/readyz` — an exact `Path`, "
                "not a prefix, so it exposes that single route and cannot grow",
     },
+    "nimbus": {
+        "terms": ["Path(/metrics)"],
+        "why": "NOT a shared host at all — this hostname IS micro-identity's public face and "
+               "the catch-all is the API, so there is no bundle for an unmatched path to be "
+               "swallowed by and nothing this check protects against can happen here. It "
+               "appears in the shared-host scan only because of `cf-deny-nimbus-metrics`, "
+               "which is a REFUSAL rather than a route: an exact `Path(/metrics)` carrying "
+               "`cf-deny-public`, added 2026-08-20 after production was found serving 298 "
+               "lines of identity's Prometheus output to the internet. An exact Path cannot "
+               "grow, and the day a real API router is added here this entry stops being true "
+               "and should be replaced by a CHECKED table",
+    },
     "status": {
         "terms": ["Path(/api/status/public)"],
         "why": "the status page reads ONE beacon route and the rule is an exact `Path`. "
