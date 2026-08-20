@@ -418,6 +418,10 @@ CONSOLIDATED_HOSTS = {
     # index — those are GETs, so a 301 would degrade gracefully, but there is no reason to spend
     # a round trip on every read.
     "explorer": ("explorer", "cf-explorer-to-apex"),
+    # Wave 3i — the LAST one. Same bundle-only split: the two API routers on the old hostname sit
+    # above the tombstone, because staking a position is a POST and a client that follows a 301
+    # re-issues most POSTs as a GET.
+    "foresight": ("foresight", "cf-foresight-to-apex"),
 }
 
 

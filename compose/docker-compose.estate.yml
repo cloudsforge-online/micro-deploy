@@ -1099,7 +1099,6 @@ services:
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
@@ -4864,7 +4863,6 @@ services:
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://foresight${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate

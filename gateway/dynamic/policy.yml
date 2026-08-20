@@ -168,7 +168,8 @@ http:
           # already granted above. The hostname loads no page in either environment.
           - https://admin{{ env "CF_WEB_SUFFIX" }}
           - https://status{{ env "CF_WEB_SUFFIX" }}
-          - https://foresight{{ env "CF_WEB_SUFFIX" }}
+          # `foresight` needs no line here since wave 3i — the last surface to move. It runs
+          # at `<apex>/foresight`, so the ORIGIN of every request it makes is the apex.
           # ── THE THREE TITLES HAD LINES HERE AND DO NOT NEED THEM — WAVE 3f ──
           #
           # Each game runs at `<apex>/worlds/<title>` now, so the ORIGIN of every
@@ -417,7 +418,6 @@ http:
           - https://network{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://admin{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://status{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          - https://foresight{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           # The three titles need no line here either, for `worlds`'s reason above:
           # a player who chooses Testnet reads the sibling estate from
           # `<sibling>/worlds/<title>`, and the ORIGIN of that read is the sibling
