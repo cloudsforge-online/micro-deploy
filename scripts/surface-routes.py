@@ -379,6 +379,13 @@ CONSOLIDATED_HOSTS = {
     # health probe that followed a 301 into the BUNDLE would be handed an HTML
     # page with a 200 and would report the service up.
     "agora": ("agora", "cf-agora-to-apex"),
+    # Wave 3d, same shape as agora — and the hostname where NOT redirecting the
+    # API matters most: `pool.<apex>/v1/pool/stratum/<chain>` is a WebSocket a
+    # browser miner holds open for hours, and a 301 in front of an upgrade
+    # request does not degrade gracefully, it fails the handshake. The address
+    # is published by the service from POOL_WEBSOCKET_PUBLIC_ORIGIN, so it does
+    # not follow the bundle and is not stripped.
+    "pool": ("pool", "cf-pool-to-apex"),
 }
 
 

@@ -1090,7 +1090,6 @@ services:
         https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         http://localhost:5172
@@ -4846,7 +4845,6 @@ services:
         https://emberkin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://aetherholm${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://tessera${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://pool${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       INSTANCE_ID: lantern-estate
