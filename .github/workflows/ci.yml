@@ -355,6 +355,29 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-api-remount.py
 
+      # ── AND ITS PICTURES MOVED WITH IT, WHICH IS THE HALF THAT SHIPPED BROKEN ──
+      #
+      # The three checks above cover the ROUTES. Nothing covered the ASSETS, and
+      # on 2026-08-21 the gap was reported from the outside: "the images in forge
+      # worlds are broken". A sweep of all fourteen mounts found root-relative
+      # asset references 404ing on five surfaces — every picture on `/worlds`,
+      # `/worlds/emberkin` and `/worlds/aetherholm`, and the whole emberkin dex,
+      # which fetches its five content JSONs the same way.
+      #
+      # It is the same silence as `no base change` above, one layer down. vite's
+      # `base` rewrites `src=` in index.html and the URLs it emits for imported
+      # assets; it does NOT rewrite a string literal inside a module. So
+      # `<img src="/mark-256.png">` written in a .tsx file goes on asking the
+      # APEX after the bundle moves, and the only symptom is a picture that does
+      # not draw — no failing build, no failing test, nothing a status page or
+      # any of the three checks above can see.
+      #
+      # Checks the USE and never the declaration, so a generated catalogue can go
+      # on spelling the path nginx serves the file from.
+      - name: A mounted bundle composes every asset URL it hands a browser
+        working-directory: deploy
+        run: python3 scripts/check-mounted-assets-compose.py
+
       # ── AND THE GATEWAY FILES CAN BE RENDERED AT ALL ─────────────────────────
       #
       # These are Go TEMPLATES that are also YAML, and the two disagree about
