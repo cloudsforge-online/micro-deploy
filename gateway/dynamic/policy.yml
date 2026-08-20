@@ -213,7 +213,18 @@ http:
           # docker-compose.estate.yml is a second, independent allowlist that identity checks
           # against the browser's own `Origin` header, and `pool` is deliberately absent from it.
           # Whoever mounts the bar here must add it there too.
-          - https://pool{{ env "CF_WEB_SUFFIX" }}
+          #
+          # ── AND THE LINE IS GONE, BECAUSE THE CONSOLE IS `<apex>/pool` NOW (wave 3d) ────────
+          #
+          # Every word above still holds and none of it was the reason to delete this. The reason
+          # is that `https://pool<CF_WEB_SUFFIX>` is not an origin any page runs on any more: the
+          # console is a FOLDER on the apex, so the origin is the apex, and the apex's own entry
+          # covers it — as it covers the six other bundles consolidated before it.
+          #
+          # The argument for keeping an entry for a surface that does not sign in today is
+          # unchanged and is now discharged by that one line instead of by this one. Whoever
+          # mounts the bar here still has `IDENTITY_HANDOFF_ORIGINS` to add — and there too, the
+          # origin to add is the apex, which is already present.
           # ── THE EXCHANGE HAS NO LINE HERE ANY MORE, AND THE GRANT IT NEEDED IS REAL ─
           #
           # It had one, and unlike every other origin in this block it was LOAD-BEARING rather
@@ -392,7 +403,9 @@ http:
           - https://tessera{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://lantern{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://beacon{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
-          - https://pool{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `pool` had a line here and does not need one: its console reads the sibling estate at
+          # `<sibling>/pool` now, so the ORIGIN of that read is the sibling apex — already granted
+          # by the apex's own cross-environment entry above. Same read, same browser, one entry.
           # `exchange` STILL views in place and no longer needs a line of its own, for the same
           # reason it lost the one in the same-environment list above: it is `<apex>/exchange`
           # now, so the origin its cross-environment reads come FROM is the apex, and the apex
