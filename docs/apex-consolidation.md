@@ -1066,6 +1066,110 @@ touch it either.**
 
 ---
 
+## 6quinquies. Wave 3c — `agora` → `/agora`
+
+One surface, and it took a wave of its own for a reason the four before it did
+not have: **micro-agora answers `/livez` and `/readyz` at its own root**, beside
+`/v1`.
+
+On a hostname that was three prefixes on one name with nothing to collide with.
+Mounted, all three have to be named in BOTH API rules — the old host's and the
+apex's — or the health endpoints fall through to the BUNDLE router, which answers
+them with an HTML page and a 200.
+
+> A monitor reading that as healthy is the failure this wave exists to avoid, and
+> it is the failure that looks most like success: green probe, dead service.
+
+```
+cf-api-agora       agora.<apex>  /v1 | /livez | /readyz                     600
+cf-api-agora-apex  <apex>        /agora/v1 | /agora/livez | /agora/readyz   700, stripped
+```
+
+Verified live on 2026-08-20 at release 2026.8.87: `agora.<apex>/livez`,
+`/readyz` and `/v1/timeline/latest` all answer 200 `application/json` with no
+`Location`, while `agora.<apex>/` answers 301 to `<apex>/agora/`. The same three
+answer 200 JSON under the mount.
+
+### The first surface whose robots.txt had to go somewhere
+
+A folder has no robots.txt. That document is read from the ORIGIN ROOT and
+nowhere else, so `<apex>/agora/robots.txt` is a file no crawler will ever
+request — and a `location = /robots.txt` left in `agora-web` would have been dead
+configuration that READS like a policy, which is the most expensive kind.
+
+The four surfaces before agora had nothing to carry: their unbounded route
+families are absent from their sitemaps rather than forbidden, which is a weaker
+and more honest statement about a page somebody has linked to. Agora has six real
+`Disallow:` lines, five of them the reader's own pages and one the search box.
+
+**Copying them into `micro-site` would have been a copy.** Two repositories
+stating the same six addresses, nothing comparing them, in the one file whose
+entire premise is that the rule exists in exactly one place.
+
+So the registry gained a field. `noIndexPaths` on the surface row holds ROUTER
+paths; micro-site derives `Disallow: <basePath><path>` and a test walks the field
+and fails if any declared path is missing. **The eight surfaces still to move
+will not need `site/nginx.conf` edited by hand** — they declare, once, in the
+registry.
+
+`/agora/moderation` is private and deliberately NOT declared. A `Disallow:` is a
+PUBLIC statement that an address exists; nothing links to the moderation queue,
+its own `<meta name="robots">` says `noindex, nofollow`, and the apex robots.txt
+is the first file anyone curious about this estate opens. That judgement is per
+path, which is why the field is a list rather than a flag derived from `private`.
+
+### `apiBase()` had to learn that origin and mount are different questions
+
+`agora-web` resolved its API base to `''` — relative — which was right while the
+bundle and the service shared `agora.<apex>`. Mounted, the same relative
+`/v1/posts` from `/agora/circles` resolves at the APEX ROOT, and micro-site
+answers its SPA shell with a 200 and an HTML body.
+
+The first fix made `resolveApiBase` return the mount, and **that broke the
+network switcher**: `apiBase()` was `resolveApiBase(...) || viewedApiOrigin()`,
+so a truthy production value meant the sibling-estate origin stopped being
+consulted. Pressing Testnet would have gone on reading mainnet while the amber
+band said otherwise — on a surface whose whole premise is that a post lands in
+the square the reader believes they are in.
+
+micro-ui's registry says the same thing on `explorer`'s row, which is parked for
+a harder version of it: *a consolidated surface's reads are origin PLUS MOUNT, so
+every caller has to learn the difference between which estate and where under
+it.* Agora is the easy version — nothing there keys AUTH on the origin — and the
+three questions are now separated in code.
+
+### Two verifiers had stopped telling the truth
+
+Not caused by this wave; found by it.
+
+- **`estate-verify.sh` reported three healthy frontends as dead.** It probes each
+  container's `/`, and a mounted bundle 404s that correctly. `mint-web`,
+  `trade-web` and `market-web` had been red since 3a.
+- **And it demanded back two permissions the estate gave up on purpose** — the
+  RUM and hand-off grants for `exchange.<apex>`, deleted with its wave-2 move.
+  That is the worst direction for a check to fail in: the remedy it asks for
+  undoes the work.
+- **The shared `web-ci.yml` had the same blind spot**, and it is the workflow the
+  eight remaining surfaces call. It gained a `base-path` input, plus two probes
+  that assert a mounted image serves NOTHING at `/` or `/robots.txt` — an image
+  built for `/agora` but copied to the document root would shadow the apex.
+
+A verifier that cries wolf is worse than one that says nothing, because the next
+real failure lands in a list the reader has learned to skim.
+
+### The guard written in 3b caught the author of 3c
+
+`check-base-paths-agree.py` gained "a moved surface's old hostname must not be
+named as an origin in `estate-verify.sh`" during the wave-3b cleanup. Hours
+later the same author moved agora, removed its routers, moved its robots rules —
+and left `https://agora$WEB_SUFFIX` in both verifier loops.
+
+The check said so before a single deploy. That is the entire argument for
+writing these down rather than remembering them, stated by an example rather
+than by assertion.
+
+---
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
