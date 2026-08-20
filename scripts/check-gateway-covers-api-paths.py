@@ -309,8 +309,30 @@ def covers(routed, segment, routes):
     A `PathPrefix` on the segment covers every route under it. An exact `Path` covers
     only itself, so it counts only when it names a defined route with no parameters —
     which is how `status` reaches one beacon route without opening the rest.
+
+    ── AND THE SEGMENT-BOUNDARY PAIR, WHICH IS THE SAFE SPELLING OF A PREFIX ──────
+
+    `PathPrefix(/me)` covers `/me/stake-balances`. It ALSO covers `/metrics`, because
+    Traefik's PathPrefix is a raw string prefix and `/metrics` begins with `/me` — and
+    on 2026-08-20 it was doing exactly that in production: `foresight.<apex>/metrics`
+    answered 200 with 229 lines of Prometheus output, including service-token health
+    gauges, on a hostname where every other service in this estate keeps `/metrics`
+    internal.
+
+    The fix is the same pair the mounted bundles use — `Path(/x) || PathPrefix(/x/)` —
+    and this function has to recognise it, or narrowing a dangerous prefix would fail
+    the very check that exists to keep routes covered. So a segment counts as covered
+    when EITHER the bare prefix is routed, or the boundary form is: the two mean the
+    same thing for every path under the segment, and differ only for the sibling paths
+    that merely start with the same letters.
+
+    The bare form is still accepted, deliberately. It is correct wherever no other real
+    path shares the prefix, and this check is about coverage rather than about which
+    spelling to prefer — `check-router-prefix-ordering.py` owns that question.
     """
     if term("PathPrefix", segment) in routed:
+        return True
+    if term("PathPrefix", f"{segment}/") in routed:
         return True
     return any(term("Path", r) in routed for r in routes)
 
