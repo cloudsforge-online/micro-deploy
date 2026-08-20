@@ -313,6 +313,16 @@ http:
         replacement: 'https://${1}/developers/${2}'
         permanent: true
 
+    # Wave 3h's. `cf-api-explorer` at 600 is above this tombstone, so a third party reading the
+    # chain index on the old hostname is answered rather than bounced — the indexer's routes are
+    # GETs, so a 301 would degrade gracefully, but there is no reason to spend a round trip on
+    # every read a block explorer's API serves.
+    cf-explorer-to-apex:
+      redirectRegex:
+        regex: '^https?://explorer\.(.+?)/(.*)'
+        replacement: 'https://${1}/explorer/${2}'
+        permanent: true
+
     # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
     #
     # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
@@ -473,6 +483,18 @@ http:
       stripPrefix:
         prefixes:
           - "/developers"
+
+    # Wave 3h's, and the audit re-run for it on 2026-08-20 rather than assumed from the nine above:
+    #
+    #   micro-indexer   0 redirects, 0 cookie Paths, 1 rooted-path hit
+    #
+    # One hit, read: a route registration in `server.ts`. This is the cleanest result of the ten —
+    # the indexer is a read-only projection of chain state, so it composes no addresses at all and
+    # there is nothing here for a mount to be invisible to.
+    cf-explorer-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/explorer"
 
     # ── THE TWO CHAIN THROTTLES, AND WHY THEY ARE KEYED ON A HEADER ────────────
     #
@@ -1122,11 +1144,51 @@ http:
     # YAML comment is still an action to the file provider, which renders this file BEFORE
     # anything parses the YAML and has no idea what a comment is. An unclosed one takes every file
     # in this directory down with it.
+    # ── WAVE 3h — `explorer.<apex>` BECOMES `<apex>/explorer` ─────────────────
+    #
+    # The LAST surface parked on a design question rather than on mechanics, and
+    # the question had an answer the plan already knew. Its registry row said:
+    # "a consolidated surface's reads are origin PLUS MOUNT, so every caller has
+    # to learn the difference between WHICH ESTATE and WHERE UNDER IT."
+    #
+    # That is true and it is not a redesign — it is the composition wave 3c made
+    # for `agora`. `viewedApiOrigin()` still answers WHICH ESTATE and returns an
+    # ORIGIN; `explorer-web/src/lib/api.ts` composes `BASE` onto it at the one
+    # call site that reads across estates. Keeping the two apart is the point:
+    # the first draft of 3c made the origin function return origin-plus-mount,
+    # which is TRUTHY, so the "am I reading the other estate?" test stopped being
+    # consulted and the switcher silently went on reading mainnet.
+    #
+    # `Path(`/explorer`) || PathPrefix(`/explorer/`)` and not a bare prefix:
+    # Traefik 3's PathPrefix is a RAW STRING PREFIX and would claim
+    # `/explorer-staging`.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
+    cf-web-explorer-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/explorer`) || PathPrefix(`/explorer/`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-explorer
+{{ end }}
+
+    # Outside the `CF_WEB_RETIRED` gate — that gate is TESTNET, and an API inside
+    # it answers testnet's own reads with a 301 to mainnet, which `fetch` follows
+    # silently and cross-origin. That failure is sharper on THIS surface than on
+    # any other: the whole point of the explorer is telling a reader which chain
+    # and which network an address belongs to, and a silent cross-estate redirect
+    # would show mainnet data under a testnet heading.
+    cf-api-explorer-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/explorer/v1`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-explorer-strip-mount]
+      service: cf-svc-indexer
+
     cf-web-explorer:
       rule: 'Host(`explorer{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-explorer-to-apex]
       service: cf-web-explorer
     # Priority 600 beats `cf-web-explorer`'s 500 on the same host, which is how every
     # surface-plus-API pair in this file separates a bundle from its service. No `cf-web-headers`:

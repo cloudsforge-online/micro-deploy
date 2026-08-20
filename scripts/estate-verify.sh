@@ -2495,7 +2495,7 @@ for rec in \
   "mint-web 4129 /launch /create" \
   "trade-web 4130 /bots /trade" \
   "worlds-web 4131 /player /worlds" \
-  "explorer-web 4132 /chains" \
+  "explorer-web 4132 /chains /explorer" \
   "network-site 4133 /faucet" \
   "market-web 4134 /listings /market" \
   "devportal-web 4135 /apps /developers" \
@@ -2825,7 +2825,6 @@ for rec in \
   ". mint-web /create" \
   ". trade-web /trade" \
   ". worlds-web /worlds" \
-  "explorer explorer-web" \
   "network network-site" \
   "admin admin-web" \
   "status status-web" \
@@ -2838,6 +2837,7 @@ for rec in \
   ". pool-web /pool" \
   ". exchange-web /exchange" \
   ". journal-web /journal" \
+  ". explorer-web /explorer" \
   ". devportal-web /developers" \
   ". agora-web /agora"; do
   set -- $rec
