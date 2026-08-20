@@ -1330,6 +1330,194 @@ assert the result starts with the mount.
 
 ---
 
+## 6octies. Wave 3f — the three Forge Worlds titles nest under `/worlds`
+
+**Shipped 2026-08-20 in release 2026.8.90. Verified live on both networks.**
+
+`emberkin.<apex>` → `<apex>/worlds/emberkin`, and the same for `aetherholm` and
+`tessera`. These are the estate's first NESTED mounts: a folder inside another
+surface's folder rather than beside it.
+
+The registry always said as much. All three rows have carried
+`inSwitcher: false` with `worlds` as the switcher entry since the titles were
+added — a title is a thing you play INSIDE Forge Worlds, not a product that
+competes with it in the product menu. The URL was the last place still claiming
+otherwise.
+
+Eleven of fourteen product surfaces are now folders on the apex. `explorer`,
+`developers` and `foresight` remain, for the reasons §9 gives.
+
+### The priority band nesting needed, and why the rule is not the numbers
+
+`cf-web-worlds` is
+
+```
+Host(`<apex>`) && (Path(`/worlds`) || PathPrefix(`/worlds/`))    priority 600
+```
+
+and `/worlds/emberkin/dex` **matches that prefix**. Both rules are true for
+every address of every title, and **Traefik breaks the tie on priority alone —
+it does not prefer the longer or more specific rule.** At equal priority the
+catalogue wins, and Forge Worlds' shell would be served for the whole of
+Emberkin: a working page, at the right URL, showing the wrong game. That is the
+failure mode hardest to spot in a screenshot and hardest to distinguish from a
+routing success in a status check.
+
+So the band table gains a row:
+
+| what | priority |
+|---|---|
+| a bundle on its own hostname | 500 |
+| a retirement redirect | 550 |
+| an API on its own hostname | 600 |
+| a bundle mounted on the apex | 600 |
+| **a NESTED bundle** | **650** |
+| an API mounted under a bundle | 700 |
+
+The numbers are an implementation. **The invariant is: a router whose path is
+strictly deeper than another's must outrank it.** `scripts/check-router-prefix-
+ordering.py` enforces exactly that, and `surfaces.test.ts` in micro-ui pins the
+depth relationship the rule depends on — a title's `basePath` must be strictly
+under the catalogue's, so there is something for the rule to compare.
+
+### The same fact, got wrong in the other direction
+
+`check-api-remount.py` matched a router to a surface with a plain
+`prefix.startswith(basePath)`. `/worlds/emberkin/v1` starts with `/worlds/`, so
+every title router was attributed to **worlds as well as to the title**, and
+all three failed twice:
+
+```
+FAIL router 'cf-api-emberkin-apex' serves 'worlds's API under '/worlds' and its
+     stripPrefix 'cf-emberkin-strip-mount' removes ['/worlds/emberkin'] …
+FAIL 'worlds' is exempt from the remount … and 'cf-api-emberkin-apex' remounts
+     it under '/worlds' anyway
+```
+
+Six failures, every one describing a surface that has nothing to do with the
+router named. A prefix is now attributed **once, to the longest mounted
+basePath it sits under** — the same fact the gateway resolves with the band.
+
+### Tessera's art had to move, and the storage did not
+
+tessera-web asks its own origin for `/world-assets/…`, several hundred requests
+per ward, deliberately same-origin so that none of them costs a CORS preflight.
+On the apex that address is **micro-site's**, and the client substitutes nothing
+for a missing sprite by design — the world would have rendered as holes while
+every healthcheck stayed green.
+
+`assetBase()` therefore composes `<BASE>/world-assets`, and nginx **`alias`es**
+the mounted path back onto the volume. The PVC still mounts at
+`/usr/share/nginx/html/world-assets` and the pre-flight job that refuses a
+half-populated set still counts PNGs at `/world-assets`. Both are about where
+the bytes are; neither had a reason to change because the address in front of
+them did.
+
+### What the work found rather than caused
+
+**The enumerated nginx route block named `/index.html` at the html root.** All
+three repos. `root` is `html` and the bundle is one level down, so every deep
+link into a title — `/worlds/emberkin/party` and its siblings — would have
+404'd in production. The suites caught it; review had not.
+
+**The static `og:image` had been wrong on seven already-shipped surfaces.**
+vite rewrites `src` and `href` against `base` and **does not touch `content`**,
+so `content="/og-1200x630.png"` survived every build unchanged — and on the
+apex that address is micro-site's. Every link shared to Forge Market, Exchange,
+Create, Trade, Agora, Pool or Worlds since it moved has been rendering the
+COMPANY's card instead of the product's. It never 404s, which is why nothing
+caught it: micro-site serves that file, so the preview looked fine and showed
+the wrong picture. `mountAsset()` composes the runtime head correctly; this is
+the copy a preview fetcher reads, and those generally do not execute JavaScript.
+
+Fixed in all ten mounted repos. The disk assertions take the mount back off
+before checking `public/` — the folder is made by the Dockerfile's `COPY`, not
+by the repository tree.
+
+### The gateway ConfigMap outgrew a kubectl limit
+
+`k8s-gateway.sh` used `kubectl apply`, which writes the entire object into a
+`last-applied-configuration` **annotation**; annotations are capped at 256 KiB
+across all of them. `gateway/dynamic/` has grown with every wave and 3f crossed
+the line:
+
+```
+The ConfigMap "gateway-dynamic" is invalid: metadata.annotations:
+Too long: may not be more than 262144 bytes
+```
+
+The shape of that failure is the dangerous part. `k8s-deploy.sh` had already
+rolled 51 deployments, so the estate was running the new images **behind the old
+routing table** — every surface up, the release's whole point unapplied, and
+nothing saying so. Now `--server-side --force-conflicts`, which keeps the diff
+base in `managedFields` and has no such cap.
+
+### Test harnesses had to learn the mount, in three specific places
+
+The title repos carry a journeys harness that serves `dist` **through the real
+`nginx.conf`**, parsing its locations and implementing nginx's matching order.
+That harness needed the mount in three places, and each is a different fact:
+
+1. **The static server maps a public address onto `dist`** — and the mount comes
+   **off**, because vite does not put its output under `base`. The directory the
+   harness holds IS the mount; the Dockerfile is what creates the folder.
+2. **`page.goto` and `fetchStatus` take ROUTER paths and compose public ones.**
+   Scenarios keep saying `/party`, which is what they reason about.
+3. **The fetch stub strips the mount the way the gateway's `stripPrefix` does**,
+   so a scenario's routes and its `wire[0].path` assertions stay claims about
+   what the SERVICE was asked. `wire[].url` keeps the whole address for the one
+   test that wants to prove the mount is on the wire.
+
+`honest404` also had to learn it: `error_page 404 <BASE>/index.html` is what
+serves a 404 as the shell, and the harness greps for that literal.
+
+### CI
+
+All three repos probed their container at unmounted addresses. After the move
+those 404 **correctly**, so the readiness loop would have spun for twenty
+seconds and reported a healthy image as a dead one.
+
+Two assertions added per repo, both of which must 404: **`/` and
+`/robots.txt` at the container root.** This image belongs at its mount and
+nowhere else, and a folder has no robots.txt of its own — micro-site owns that
+address.
+
+And a third recurrence of a trap this estate has now written three times:
+aetherholm's asset probe extracted `/assets/[^"]+\.js` from the shell. That
+pattern **still matches after the mount — on the substring** — and yields an
+address the container 404s, so the Cache-Control loop underneath it would have
+read the 404's `no-store` and passed, reporting an immutable one-year cache that
+nothing had checked. The pattern now names the whole path and fails loudly if
+the shell references none.
+
+### And the verifier was calling six correct redirects a failure
+
+Six rows of `estate-verify.sh`'s provenance table still named a subdomain after
+their surface had moved — `worlds`, `pool` and `agora` since waves 3c–3e, plus
+the three titles. Each answered 301, which is what a tombstone is FOR, and the
+check reported all six as failures. Six red lines describing six correct
+redirects teaches an operator to discount the output, which is worse than not
+checking at all. They now ask `.` plus the registry's `basePath`; the 301s stay
+owned by the section below, which asserts the `Location` too.
+
+### Verified live
+
+| address | result |
+|---|---|
+| `<apex>/worlds/{emberkin,aetherholm,tessera}` | 200, each serving **its own** bundle |
+| `<apex>/worlds` | 200, still the catalogue |
+| `<title>.<apex>/` | 301 → `<apex>/worlds/<title>/` |
+| `<title>.<apex>/v1/…` | 200 — **not** redirected; a save is a PUT |
+| `<apex>/worlds/{emberkin,tessera}/v1/…` | 200 through `stripPrefix` |
+| `<apex>/worlds/aetherholm/readyz` | 200 |
+| `<apex>/worlds/tessera/world-assets/SET.json` | 200 |
+| `…/world-assets/nope.png` | 404 — no shell fallback |
+| testnet `<apex>/worlds/<title>` | 302 to mainnet (`CF_WEB_RETIRED`) |
+| testnet `…/worlds/<title>/v1/…` | 200 — outside the gate, as the rule requires |
+
+Each mount also serves its own repository's exact `HEAD` revision in
+`cf-release`, checked for all six consolidated surfaces.
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
