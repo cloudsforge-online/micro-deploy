@@ -1518,6 +1518,123 @@ owned by the section below, which asserts the `Location` too.
 Each mount also serves its own repository's exact `HEAD` revision in
 `cf-release`, checked for all six consolidated surfaces.
 
+## 6nonies. Wave 3g — `developers` → `/developers`
+
+**Shipped 2026-08-20 in release 2026.8.91. Verified live on both networks.**
+
+`developers.<apex>` → `<apex>/developers`. **Twelve of fourteen product surfaces
+are now folders on the apex**; `explorer` and `foresight` remain.
+
+### Why it was parked for two waves, and what the delay bought
+
+§5 records the correction already: the plan had this in wave 2 and called it
+"documentation". It is the developer platform CONSOLE, and `cf-api-developers`
+serves 35 `/v1` handlers behind it — so it needed decision 4, and wave 2 was
+for surfaces that need none. Checking that claim against the router table is
+what produced the better test (count APIs by the ROUTER'S UPSTREAM, not by
+whether the rule says `/v1`) and what put `foresight` last.
+
+The delay bought a second fact no `/v1` count would have shown. **This bundle
+enumerates two route blocks in nginx**, because its routes split into addresses
+that exist in their own right and prefixes that only ever have something after
+them:
+
+```
+location ~ ^<BASE>/(organisations|apps)(/|$)   BARE_PATHS
+location ~ ^<BASE>/projects/                   PREFIX_ONLY_PATHS
+```
+
+`/projects` has no screen. Serving it the shell would answer 200 for an address
+this app does not own, with React rendering "there is nothing here" underneath
+that success. Both blocks had to be mounted — a mount applied to one and not
+the other serves half the console and 404s the rest, which is the shape of
+failure that survives a smoke test.
+
+### `isRegisteredPlacement` had stopped checking anything
+
+The sharpest finding of the wave, and it was not in the diff — it was in what
+the diff made true.
+
+The function compared ORIGINS. That was a **complete** test while the console
+had a hostname to itself: only one surface answered on `developers.<apex>`, so
+matching the origin matched the surface. On the apex a dozen surfaces share
+that origin, so it returned `true` for every address in the estate.
+
+It did not begin reporting a false placement. **It lost the ability to report
+one** — which is how a security control fails when nobody is watching it. The
+warning exists because every screen behind this app's session gate mints or
+revokes a credential, and an app that resolved its API to the wrong host would
+send a bearer token somewhere unintended.
+
+It now compares the mount as well, on a **segment boundary** so
+`/developers-staging` cannot pass for `/developers` — the same trap Traefik's
+`PathPrefix` has and this estate has hit before.
+
+The generalisation is worth stating, because it applies to every surface this
+plan has moved and to both still to come: **an identity check keyed on origin
+is weakened by consolidation, silently, at the moment the surface moves.** The
+origin stops being a name for the surface and becomes a name for the estate.
+
+### And two more of the recurring pair
+
+**The slashed front door was framable.** `location = /developers/` shipped
+`X-Frame-Options: SAMEORIGIN` while `location = /developers` beside it said
+`DENY` — one of the two addresses a link in the wild will use, framable, on a
+console that displays API keys. The front door being *two* locations is a fact
+this plan has now produced a defect from twice.
+
+**The og:image, for the eighth time.** Root-relative `content` survives vite's
+`base` rewrite untouched and resolves to micro-site's card.
+
+### The API is deliberately not redirected, and here it matters most
+
+`cf-api-developers` keeps answering `developers.<apex>/v1` at 600, above the
+tombstone. Every wave since 3a has made this split; this is the hostname where
+the reason is strongest. **These calls mint and revoke API credentials**, so
+they are POSTs and DELETEs, and a client that follows a 301 re-issues most of
+them as a GET. A revoke that quietly became a read leaves a credential live.
+
+### The audit, and the cleanest result of the nine
+
+Re-run rather than assumed: `micro-devplatform` has **0 redirects, 0 cookie
+Paths, 41 rooted-path hits**. All 41 read; all 41 are route registrations in
+`server.ts`; and **nothing outside `server.ts` names a rooted path at all** — so
+there is not even the class of hit that had to be argued away for emberkin and
+tessera (outbound calls on another service's base URL).
+
+It emits no `Location:` header anywhere. Every write answers the created object
+rather than redirecting to it, which is the property that makes a mount
+invisible to a service — and the property a future endpoint could quietly undo.
+
+### robots.txt is deleted, and its absence is asserted
+
+A crawler reads robots.txt at the ORIGIN ROOT and nowhere else, so a folder has
+none; micro-site's copy decides whether this surface is indexed. One served here
+would be a second document at an address another container already owns, and
+which won would be decided by router priority rather than by anyone's intent.
+
+The absence assertion reads **directives**, not the raw file: the comment
+recording the removal names the directive it removed, and a raw grep finds its
+own gravestone. Same shape as the `try_files $uri /index.html` rule, which went
+red against a config that documents the forbidden directive in order to forbid
+it. Third occurrence of that pattern in this plan.
+
+### Verified live
+
+| address | result |
+|---|---|
+| `<apex>/developers`, `<apex>/developers/` | 200 — both front doors |
+| `<apex>/developers/apps`, `/organisations` | 200 — the BARE block |
+| `<apex>/developers/projects/<id>/keys` | 200 — the PREFIX-ONLY block |
+| `<apex>/developers/sitemap.xml` | 200 |
+| `<apex>/developers/v1/scopes` | 200 through `stripPrefix` |
+| `developers.<apex>/` | 301 → `<apex>/developers/` |
+| `developers.<apex>/v1/scopes` | **200 — not redirected** |
+| testnet `<apex>/developers` | 302 to mainnet (`CF_WEB_RETIRED`) |
+| testnet `…/developers/v1/scopes` | 200 — outside the gate, as the rule requires |
+
+All eleven earlier mounts re-checked in the same sweep and still 200.
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
