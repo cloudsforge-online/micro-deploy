@@ -1926,7 +1926,7 @@ spec:
         - name: IDENTITY_DELETION_GRACE_DAYS
           value: '0'
         - name: IDENTITY_HANDOFF_ORIGINS
-          value: https://cloudsforge.online, https://hub.cloudsforge.online, https://network.cloudsforge.online, https://admin.cloudsforge.online, https://status.cloudsforge.online, https://foresight.cloudsforge.online, https://lantern.cloudsforge.online, https://beacon.cloudsforge.online, http://localhost:5172
+          value: https://cloudsforge.online, https://hub.cloudsforge.online, https://network.cloudsforge.online, https://admin.cloudsforge.online, https://status.cloudsforge.online, https://lantern.cloudsforge.online, https://beacon.cloudsforge.online, http://localhost:5172
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_NETWORK
@@ -2207,7 +2207,7 @@ spec:
         - name: LANTERN_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern
         - name: LANTERN_RUM_ORIGINS
-          value: https://cloudsforge.online, https://hub.cloudsforge.online, https://network.cloudsforge.online, https://admin.cloudsforge.online, https://status.cloudsforge.online, https://foresight.cloudsforge.online, https://lantern.cloudsforge.online, https://beacon.cloudsforge.online
+          value: https://cloudsforge.online, https://hub.cloudsforge.online, https://network.cloudsforge.online, https://admin.cloudsforge.online, https://status.cloudsforge.online, https://lantern.cloudsforge.online, https://beacon.cloudsforge.online
         - name: LOG_LEVEL
           value: info
         - name: NODE_ENV

@@ -111,6 +111,7 @@ BUNDLE_REPOS = {
     # a derivation.
     "developers": "devportal-web",
     "explorer": "explorer-web",
+    "foresight": "foresight-web",
 }
 
 

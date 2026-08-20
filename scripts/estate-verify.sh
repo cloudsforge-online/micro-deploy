@@ -2500,7 +2500,7 @@ for rec in \
   "market-web 4134 /listings /market" \
   "devportal-web 4135 /apps /developers" \
   "status-web 4136 /history" \
-  "foresight-web 4138 /rules" \
+  "foresight-web 4138 /rules /foresight" \
   "emberkin-web 4137 /party /worlds/emberkin" \
   "aetherholm-web 4139 /cities /worlds/aetherholm" \
   "tessera-web 4140 /wards /worlds/tessera"; do
@@ -2828,7 +2828,6 @@ for rec in \
   "network network-site" \
   "admin admin-web" \
   "status status-web" \
-  "foresight foresight-web" \
   ". emberkin-web /worlds/emberkin" \
   ". aetherholm-web /worlds/aetherholm" \
   ". tessera-web /worlds/tessera" \
@@ -2837,6 +2836,7 @@ for rec in \
   ". pool-web /pool" \
   ". exchange-web /exchange" \
   ". journal-web /journal" \
+  ". foresight-web /foresight" \
   ". explorer-web /explorer" \
   ". devportal-web /developers" \
   ". agora-web /agora"; do

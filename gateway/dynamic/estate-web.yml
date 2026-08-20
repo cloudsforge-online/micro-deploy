@@ -323,6 +323,16 @@ http:
         replacement: 'https://${1}/explorer/${2}'
         permanent: true
 
+    # Wave 3i's — the LAST tombstone of the apex consolidation. `cf-api-foresight-resources`
+    # and `cf-api-foresight-markets` sit at 600 and 700, above this, so a third party calling
+    # the old hostname's API is answered rather than bounced. That matters here: staking a
+    # position is a POST, and a client following a 301 re-issues most POSTs as a GET.
+    cf-foresight-to-apex:
+      redirectRegex:
+        regex: '^https?://foresight\.(.+?)/(.*)'
+        replacement: 'https://${1}/foresight/${2}'
+        permanent: true
+
     # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
     #
     # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
@@ -495,6 +505,21 @@ http:
       stripPrefix:
         prefixes:
           - "/explorer"
+
+    # Wave 3i's, and the last. The audit re-run on 2026-08-20:
+    #
+    #   micro-foresight   0 redirects, 0 cookie Paths, all rooted paths are registrations
+    #
+    # This is the mount the plan worried about most, and the worry was the wrong shape. §5 feared
+    # that mounting the bundle would leave six UNVERSIONED prefixes at the apex root — `/me` and
+    # `/markets` on `cloudsforge.online`, answered by a prediction market. They do not stay
+    # there: they move under the mount with everything else, and this middleware hands the
+    # service back exactly the paths it already serves. The only real difference from the other
+    # thirteen is that the API rule enumerates six prefixes instead of naming one `/v1`.
+    cf-foresight-strip-mount:
+      stripPrefix:
+        prefixes:
+          - "/foresight"
 
     # ── THE ONLY WAY TRAEFIK REFUSES A REQUEST WITHOUT A BACKEND ───────────────
     #
@@ -1594,11 +1619,71 @@ http:
     # working — a visible failure in the surface that changed, not a silent one somewhere else.
     # The alternative was asking micro-foresight-web to move its client routes or micro-foresight
     # to version its API, and neither repository is mine tonight.
+    # ══════════════════════════════════════════════════════════════════════════
+    # WAVE 3i — `foresight.<apex>` BECOMES `<apex>/foresight`. THE LAST ONE.
+    #
+    # Fourteen of fourteen product surfaces are folders on the apex.
+    #
+    # ── THE API IS SIX UNVERSIONED PREFIXES, AND THEY MOVE WITH THE BUNDLE ────
+    #
+    # micro-foresight serves `/ideas`, `/categories`, `/image-config`,
+    # `/stake-assets`, `/me/…` and `/markets` AT THE ROOT — no `/v1` anywhere.
+    # A `/v1`-shaped test called this "no API", the correction produced the
+    # better test (count by the router's UPSTREAM), and this surface went last.
+    #
+    # The mounted rule enumerates the same six one level down, and
+    # `cf-foresight-strip-mount` takes `/foresight` off before the service sees
+    # anything — so micro-foresight is unchanged and never learns it moved.
+    #
+    # ── AND `markets` IS BOTH A PAGE AND A RESOURCE ───────────────────────────
+    #
+    # `foresight-web` routes `/markets` and micro-foresight serves `/markets`.
+    # The estate resolved that on the old hostname by matching
+    # `Accept: application/json` — a browser navigating sends `text/html`, a
+    # `fetch` sends JSON — and the mounted routers carry it across unchanged.
+    # It is the ONE place in this file where a header, not a path, decides which
+    # of two services answers, and it is why the markets router sits above the
+    # resources router rather than beside it.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
+    cf-web-foresight-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/foresight`) || PathPrefix(`/foresight/`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-foresight
+{{ end }}
+
+    # Outside the `CF_WEB_RETIRED` gate — that gate is TESTNET, and an API inside
+    # it answers testnet's own reads with a 301 to mainnet, which `fetch` follows
+    # silently and cross-origin. micro-deploy#174.
+    #
+    # `PathPrefix(`/foresight/me/`)` on a SEGMENT BOUNDARY, not `/foresight/me`:
+    # the bare form also claims `/foresight/metrics`, which is exactly how this
+    # estate was found serving 229 lines of Prometheus output to the internet on
+    # the old hostname earlier today.
+    cf-api-foresight-resources-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (PathPrefix(`/foresight/ideas`) || PathPrefix(`/foresight/categories`) || PathPrefix(`/foresight/image-config`) || PathPrefix(`/foresight/stake-assets`) || PathPrefix(`/foresight/me/`))'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-foresight-strip-mount]
+      service: cf-svc-foresight
+
+    # 750, above the resources router as well as the bundle: this rule and
+    # `cf-web-foresight-apex` both match `/foresight/markets`, and the `Accept`
+    # header is the only thing separating the page from the JSON. A tie here
+    # would serve the shell to a `fetch` — 200, HTML where JSON was expected.
+    cf-api-foresight-markets-apex:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/foresight/markets`) && HeaderRegexp(`Accept`, `application/json`)'
+      priority: 750
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-foresight-strip-mount]
+      service: cf-svc-foresight
+
     cf-web-foresight:
       rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-foresight-to-apex]
       service: cf-web-foresight
     # ── `PathPrefix(`/me`)` ALSO CLAIMED `/metrics`, AND IT WAS SERVING THEM ─────
     #
