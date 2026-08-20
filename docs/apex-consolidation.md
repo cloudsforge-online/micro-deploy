@@ -1853,6 +1853,51 @@ wrong. `/me` and `/metrics`; `/worlds` and `/worldsomething`; `/developers` and
 `check-gateway-covers-api-paths.py` now understands it so that narrowing a
 dangerous prefix cannot fail the check that keeps routes covered.
 
+### Wave 3i's cross-repo fallout, and the sweep rule sharpened
+
+`micro-admin-web` folds the Foresight operator screens and calls that service
+cross-origin. Its SOURCE was already right — it composes the whole registry URL
+rather than taking `.origin`, which is why the pre-wave sweep cleared it — but
+**`pnpm dev` was not**: the registry composes `http://localhost:4021/foresight`
+and micro-foresight binds that port directly, so every read from those screens
+would have 404'd locally while production was fine.
+
+Two of its assertions changed SHAPE rather than value, and the shape is the
+point:
+
+* one compared `url.origin` to the foresight base. With that base now
+  `<apex>/foresight`, an origin comparison **also passes for the thirteen other
+  surfaces on the apex** — the opposite of what the test exists to rule out;
+* the other named `foresight.<apex>` as the public origin the console refuses to
+  be served from. The origin to refuse is now the **apex**, which is a stronger
+  claim than the old one, not a weaker one.
+
+**The sweep rule, in its final form.** Before mounting a surface, grep the
+frontends for `.origin` and `originOf`-shaped helpers and read each hit against
+`servesOwnBundle`. Include:
+
+1. the surface's own repository — wave 3i's real defect was `foresightBase()`
+   calling `.origin`, and the sweep had covered only the consumers;
+2. every consumer's DEV path, not just production — a registry dev URL carries
+   the mount and the service binds the port directly;
+3. every consumer's TESTS, which key on addresses even when the source is right.
+
+Three of the last four waves had cross-repo fallout, and every instance was one
+of those three. Two releases (2026.8.92 and 2026.8.94) were **discarded rather
+than deployed** because a manifest that records a digest for 51 of 52 images is
+not deployable — that discipline is cheap and worth keeping.
+
+### Verified live, 2026-08-21
+
+All fourteen mounts answer 200 on the apex, and all fourteen retired hostnames
+answer 301. Every surface's API still answers on its old hostname above the
+tombstone, for the reason each wave records: a 301 answers a GET well and
+mangles a POST.
+
+Forge Foresight's `Accept` split was confirmed against production:
+`/foresight/markets` returns `text/html` to a browser and
+`application/json; charset=utf-8` — with real market data — to a `fetch`.
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
