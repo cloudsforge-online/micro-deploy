@@ -1583,8 +1583,39 @@ http:
       entryPoints: [websecure, tunnel]
       middlewares: [cf-web-headers]
       service: cf-web-foresight
+    # ── `PathPrefix(`/me`)` ALSO CLAIMED `/metrics`, AND IT WAS SERVING THEM ─────
+    #
+    # Traefik's PathPrefix is a RAW STRING PREFIX. `/metrics` begins with `/me`,
+    # so this rule matched it and routed it to `cf-svc-foresight` — which serves
+    # Prometheus metrics there. MEASURED 2026-08-20 against production:
+    #
+    #   GET https://foresight.<apex>/metrics  →  200, 229 lines
+    #
+    # including `foresight_service_token_usable`, `foresight_service_token_static`
+    # and per-route request counts and latency histograms. Every other service in
+    # this estate keeps `/metrics` off the public internet — the aetherholm block
+    # above says so in as many words, "`/livez` and `/metrics` stay unrouted,
+    # because liveness is for the orchestrator and `/metrics` is for Prometheus on
+    # the compose network" — and `agora.<apex>/metrics` answers 301 rather than
+    # 200, which is the control that proves this was not the intended shape.
+    #
+    # micro-foresight serves exactly ONE route under this prefix,
+    # `/me/stake-balances`, so `PathPrefix(`/me/`)` loses nothing.
+    #
+    # And NOT `Path(`/me`)` beside it, which the first draft added defensively:
+    # `check-gateway-covers-api-paths.py` rejects routing an exact path the
+    # service does not define, and it is right to. A bare `/me` reaching the
+    # service is a 404 from the service; reaching the bundle is the app's own
+    # not-found screen under an honest 404 status, which is the better answer for
+    # an address nobody serves. The day micro-foresight defines `/me`, that check
+    # will demand this clause back.
+    #
+    # This is the SAME trap the mounted routers guard against with
+    # `Path(`/x`) || PathPrefix(`/x/`)`, applied one level down. Anywhere a rule
+    # names a prefix that is a prefix OF ANOTHER REAL PATH, the bare form is
+    # wrong: `/me` and `/metrics` here, `/worlds` and `/worldsomething` there.
     cf-api-foresight-resources:
-      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`) || PathPrefix(`/image-config`) || PathPrefix(`/stake-assets`) || PathPrefix(`/me`))'
+      rule: 'Host(`foresight{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/ideas`) || PathPrefix(`/categories`) || PathPrefix(`/image-config`) || PathPrefix(`/stake-assets`) || PathPrefix(`/me/`))'
       priority: 600
       entryPoints: [websecure, tunnel]
       service: cf-svc-foresight
