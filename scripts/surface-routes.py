@@ -392,6 +392,20 @@ CONSOLIDATED_HOSTS = {
     # `cf-api-worlds-host` still answers on the old hostname above the tombstone,
     # for third parties this estate's own bundle never joined.
     "worlds": ("worlds", "cf-worlds-to-apex"),
+    # Wave 3f — the first NESTED mounts in this table, and the only three whose
+    # replacement is two segments deep: a title is a thing INSIDE Forge Worlds
+    # rather than a product beside it, so `emberkin.<apex>` becomes
+    # `<apex>/worlds/emberkin` and not `<apex>/emberkin`.
+    #
+    # The same bundle-only split as every wave since 3a — `cf-api-emberkin` and
+    # its two siblings keep answering `/v1` on the old hostnames above the
+    # tombstones. The reason is sharper here than anywhere else in this table: an
+    # emberkin save is a PUT and an aetherholm order is a POST, and a client that
+    # follows a 301 re-issues most of them as a GET. A third party still pointed
+    # at these names gets an answer rather than a silently-mangled write.
+    "emberkin": ("emberkin", "cf-emberkin-to-apex"),
+    "aetherholm": ("aetherholm", "cf-aetherholm-to-apex"),
+    "tessera": ("tessera", "cf-tessera-to-apex"),
 }
 
 

@@ -210,15 +210,41 @@ def main():
     routers, strips = gateway()
     mounted = {s["key"]: s["basePath"] for s in surfaces}
 
+    # ── A ROUTER BELONGS TO THE LONGEST MOUNT IT IS UNDER, NOT TO EVERY MOUNT ──
+    #
+    # Wave 3f nested the three Forge Worlds titles at `/worlds/emberkin` and its
+    # two siblings, and `/worlds/emberkin/v1` starts with `/worlds/` — so a plain
+    # `startswith` attributed all three title routers to WORLDS as well as to the
+    # title. Every one of them then failed twice over, and both messages were
+    # wrong in the same way: they described the title's own strip as the wrong
+    # strip for a surface that has nothing to do with it.
+    #
+    # This is the same fact the gateway resolves with a priority band and micro-ui
+    # pins in `surfaces.test.ts`: a nested mount is STRICTLY DEEPER than its
+    # parent, and depth is what decides ownership. So a prefix is attributed once,
+    # to the longest mounted basePath it sits under, and a router counts as a
+    # surface's API only if at least one of its prefixes is attributed to it.
+    def owner_of(prefix):
+        """The key whose mount most specifically contains `prefix`, or None."""
+        best = None
+        for k, b in mounted.items():
+            if prefix == b or prefix.startswith(b + "/"):
+                if best is None or len(b) > len(mounted[best]):
+                    best = k
+        return best
+
+    def api_routers_for(key, base):
+        return [r for r in routers
+                if (r["service"] or "").startswith("cf-svc-")
+                and any(owner_of(p) == key for p in PREFIX_RE.findall(r["rule"]))]
+
     for key, base in sorted(mounted.items()):
         # An API router for this surface is one that serves a `cf-svc-*` upstream
         # and constrains itself to a path under the mount. Read by UPSTREAM, which
         # is the discriminator `surface-routes.py` uses and the one that catches
         # `foresight` — whose API is six unversioned prefixes and says `/v1`
         # nowhere.
-        api = [r for r in routers
-               if (r["service"] or "").startswith("cf-svc-")
-               and any(p == base or p.startswith(base + "/") for p in PREFIX_RE.findall(r["rule"]))]
+        api = api_routers_for(key, base)
         if not api and key in CALLS_ANOTHER_SURFACES_API:
             # ── A THIRD CASE, AND IT IS NOT "NO API" ──────────────────────────
             #
@@ -313,9 +339,13 @@ def main():
             bad(f"CALLS_ANOTHER_SURFACES_API names '{key}', which is not a path-mounted surface. "
                 f"Either it moved back to a subdomain or the key is stale")
             continue
-        remounted = [r for r in routers
-                     if (r["service"] or "").startswith("cf-svc-")
-                     and any(p == base or p.startswith(base + "/") for p in PREFIX_RE.findall(r["rule"]))]
+        # Longest-mount attribution here too. Without it `worlds`'s exemption reads
+        # the three NESTED title routers — `/worlds/emberkin/v1` and its siblings —
+        # as remounts of ITSELF, and reports the exemption violated by routers that
+        # belong to emberkin, aetherholm and tessera. The exemption is about what
+        # `worlds-web` calls, and it calls `api.<apex>`; a title's API router says
+        # nothing about that either way.
+        remounted = api_routers_for(key, base)
         for r in remounted:
             bad(f"'{key}' is exempt from the remount because its bundle calls another surface's "
                 f"API, and '{r['name']}' remounts it under '{base}' anyway. Either the bundle "
@@ -327,11 +357,9 @@ def main():
     if fails:
         print(f"\n{len(fails)} remounted API problem(s).")
         return 1
-    remounted = sum(
-        1 for k, b in mounted.items()
-        if any((r["service"] or "").startswith("cf-svc-")
-               and any(p.startswith(b) for p in PREFIX_RE.findall(r["rule"])) for r in routers)
-    )
+    # Attributed the same way as everything above, so the count agrees with what was
+    # actually checked rather than counting a nested title's router twice.
+    remounted = sum(1 for k, b in mounted.items() if api_routers_for(k, b))
     print(f"ok — {len(mounted)} path-mounted surface(s), {remounted} with an API remounted under "
           f"the mount and stripped before the service sees it.")
     return 0

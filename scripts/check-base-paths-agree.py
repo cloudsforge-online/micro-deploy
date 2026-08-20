@@ -100,6 +100,12 @@ BUNDLE_REPOS = {
     "agora": "agora-web",
     "pool": "pool-web",
     "worlds": "worlds-web",
+    # Wave 3f — nested, and the repo name does NOT contain the mount. A title
+    # lives in `<title>-web` and is served from `/worlds/<title>`, so this table
+    # cannot be derived from either name; that is why it is a table.
+    "emberkin": "emberkin-web",
+    "aetherholm": "aetherholm-web",
+    "tessera": "tessera-web",
 }
 
 
