@@ -1723,6 +1723,44 @@ address belongs to; a gated API answers testnet's own reads with a 301 to
 mainnet, which `fetch` follows silently and cross-origin — mainnet data under a
 testnet heading, with nothing on the page saying so.
 
+### The cross-repo fallout, and the rule it gives the last wave
+
+The registry is shared, so moving a surface changes what **every other bundle
+composes**. Release 2026.8.92 was cut and two of 52 images failed to build:
+`micro-network-site` and `micro-journal-web`. The manifest was discarded rather
+than re-pinned — a half-pinned release records a digest for 50 and cannot for
+two — and 2026.8.93 was cut after the fixes.
+
+`journal-web` was a stale test expectation. **`network-site` was a real break**,
+and it is the most instructive defect of the whole plan:
+
+Its `resolveApiBase` called `originOf`, which strips the registry `basePath`.
+That is **right** for `faucet` — whose basePath is a route inside network-site's
+own bundle, and whose API sits at the origin root — and **wrong** for a mounted
+surface, where the gateway routes `/explorer/v1` and strips the prefix. It
+composed `<apex>/v1/chains/…`, which micro-site answers with its SPA shell:
+**200, an HTML body where JSON was expected**, every figure on the chain status
+table dead while the network tab looked perfectly healthy.
+
+`servesOwnBundle` is the discriminator now — the same one `surfaceMeta` uses for
+exactly this pair of cases — so it is the general rule rather than a patch, and
+it will be right for `foresight` without anyone editing that file.
+
+Its sibling-estate composition had **all three parts** wrong:
+
+* the two-label apex hit a `parts.length < 3` guard and returned the MAINNET
+  base, so this page's testnet column quietly read mainnet;
+* on the testnet estate `envLabel('', …)` composed `https://.cloudsforge.online`
+  — the same leading-dot shape that took Litecoin off hub-web's miner in wave 3d;
+* and `url.origin` dropped the mount.
+
+**THE RULE FOR THE LAST WAVE.** A surface's consumers compose its address from
+the registry, and the ones that call `.origin` on it are exactly the ones a
+mount breaks — silently, with a 200. Before cutting the release, grep the
+frontends for `.origin` and for `originOf`-shaped helpers and read each hit
+against `servesOwnBundle`. That is minutes of work; finding it from a build
+failure cost a discarded release.
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
