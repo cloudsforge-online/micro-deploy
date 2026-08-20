@@ -1761,6 +1761,98 @@ frontends for `.origin` and for `originOf`-shaped helpers and read each hit
 against `servesOwnBundle`. That is minutes of work; finding it from a build
 failure cost a discarded release.
 
+## 6undecies. Wave 3i — `foresight` → `/foresight`. The last one.
+
+**Shipped 2026-08-20 in release 2026.8.94.**
+
+**The apex consolidation is complete. Fourteen of fourteen product surfaces are
+folders on `cloudsforge.online`:**
+
+```
+/journal  /exchange  /market  /create  /trade  /agora  /pool  /worlds
+/worlds/emberkin  /worlds/aetherholm  /worlds/tessera
+/developers  /explorer  /foresight
+```
+
+Seven groups keep their own hostnames on purpose and §1 argues each: `hub`
+(origin isolation for the money session), `admin`, `status`, the
+`nimbus`/`api`/`rpc`/`p2p` API hosts, the `lantern`/`beacon`/`vault`/`pay`/
+`studio` group, and `www`/`testnet`.
+
+### Why it went last, and why the recorded fear was the wrong shape
+
+§5 put this surface last because micro-foresight's public routes are **six
+unversioned prefixes at the root** — `/ideas`, `/categories`, `/image-config`,
+`/stake-assets`, `/me`, `/markets` — and warned that mounting the bundle would
+leave them at the apex root, "putting `/me` and `/markets` on the apex, answered
+by a prediction-market service".
+
+**That was never going to happen.** They move under the mount with everything
+else, and `cf-foresight-strip-mount` hands the service back exactly the paths it
+already serves. The only real difference from the other thirteen is that the API
+rule enumerates six prefixes instead of naming one `/v1`.
+
+The fear was worth recording anyway: it is what made this surface go last, and
+going last is what made every earlier wave's pattern available to it.
+
+### `markets` is a page AND a resource, and a header separates them
+
+`foresight-web` routes `/markets`; micro-foresight serves `/markets`. The estate
+had already solved this on the old hostname:
+
+```
+Host(foresight.<apex>) && PathPrefix(`/markets`) && HeaderRegexp(`Accept`, `application/json`)
+```
+
+A browser navigating sends `Accept: text/html…`; a `fetch` sends
+`application/json`. The mounted routers carry it across unchanged at **priority
+750** — above the resources router as well as the bundle, because a tie would
+serve the shell to a `fetch`: 200, HTML where JSON was expected.
+
+**This is the one place in `estate-web.yml` where a HEADER, not a path, decides
+which of two services answers.** Worth knowing before anyone "simplifies" the
+priority bands.
+
+### The defect this document's own rule caught
+
+`foresightBase()` called `.origin` on the registry URL — right while the surface
+had a hostname to itself, wrong the moment the value became
+`https://<apex>/foresight`. Every read would have composed `<apex>/markets`,
+which micro-site answers with its SPA shell.
+
+That is exactly the rule recorded after wave 3h's fallout. The sweep was run
+across OTHER repositories before this wave began and **missed the surface's
+own** — the easiest one to assume is fine. Add that to the rule: the sweep
+includes the moving surface, not just its consumers.
+
+### Two live exposures found while planning it
+
+Both fixed and verified before the wave, and neither needed a release — the
+gateway reads `gateway/dynamic/` from the checkout, so `k8s-gateway.sh` shipped
+them within minutes.
+
+| host | what was public | cause | fix |
+|---|---|---|---|
+| `foresight.<apex>/metrics` | 229 lines of Prometheus output | `PathPrefix(/me)` is a RAW STRING PREFIX and `/metrics` begins with `/me` | segment boundary: `PathPrefix(/me/)` |
+| `nimbus.<apex>/metrics` | 298 lines — the IDENTITY service's | the router is a deliberate catch-all onto the service, so every path reaches it | explicit `cf-deny-public` (`ipAllowList: 127.0.0.1/32`) → 403 |
+
+The two causes are different and so are the fixes. foresight's catch-all lands
+on a BUNDLE, whose nginx 404s an address it does not own, so narrowing the
+prefix was enough. nimbus's lands on the service, so the refusal had to be
+explicit — and Traefik 3 has no "return 403" middleware, so `ipAllowList`
+restricted to loopback is the primitive: public traffic arrives through
+cloudflared as a pod-to-pod hop, so the client address is never loopback.
+
+`/livez` and `/readyz` stay open deliberately — they answer a bare up/down with
+no internals, and the external uptime prober reads them.
+
+**The generalisation, which is the fourth time this plan has hit it:** wherever
+a rule names a prefix that is a prefix OF ANOTHER REAL PATH, the bare form is
+wrong. `/me` and `/metrics`; `/worlds` and `/worldsomething`; `/developers` and
+`/developers-staging`. `Path(x) || PathPrefix(x/)` is the safe spelling, and
+`check-gateway-covers-api-paths.py` now understands it so that narrowing a
+dangerous prefix cannot fail the check that keeps routes covered.
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
