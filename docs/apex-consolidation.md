@@ -1260,6 +1260,76 @@ naming `/pool`, because eight more surfaces are due.
 
 ---
 
+## 6septies. Wave 3e — `worlds` → `/worlds`, and a router that was NOT added
+
+Three routers, not four. Every wave since 3a has added a `cf-api-<surface>-apex`
+that republishes the service under the mount and strips the prefix back off. This
+one does not, and the absence is the whole content of the wave.
+
+**Forge Worlds never called its own hostname.** `worlds-web`'s `API_SURFACE` is
+`api` — micro-worlds' routes are served on `api.<apex>`, which the registry says
+in two rows and `worlds-web/src/lib/hosts.ts` argues at length. Its requests are
+absolute and cross-origin and always were, so the failure decision 4 exists for —
+a mounted bundle's relative `/v1` resolving at the apex root — cannot happen here.
+
+Adding a `/worlds/v1` router "for symmetry" would publish a second address for a
+service nobody reaches that way.
+
+### The check said otherwise, and had to learn the difference
+
+`check-api-remount.py` reported worlds as an orphaned service, with a message
+whose premise is false for this one surface: *"Its bundle issues RELATIVE
+requests."* It had two cases — an API under the mount, or no API at all — and
+needed a third.
+
+`CALLS_ANOTHER_SURFACES_API` is **named rather than inferred**, and that is the
+interesting decision. The deciding fact lives in a frontend repository the script
+cannot count on having: CI checks out `deploy` and `ui`, and a deploy host clones
+no frontend at all. An exemption that silently skipped when the repo was absent
+would be worse than one written down with its argument beside it.
+
+Checked in both directions and negative-tested — adding a remount for an exempt
+surface fails, and adding a remounted surface to the table fails. So a surface
+that starts calling its own API cannot keep the exemption, and the exemption
+cannot be used to wave a real remount through.
+
+### Two consumers noticed, which is what a registry is for
+
+`worlds` leaving the registry's subdomain set has an effect nothing in
+micro-worlds-web could see: `cloudsforgeHosts()` strips a KNOWN first label to
+find the apex, and `worlds.` stopped being one.
+
+`micro-emberkin-web` and `micro-aetherholm-web` each had a fixture that opened
+its page on `worlds.example.com` — the surface a player arrives FROM — to assert
+that this surface still resolves to its own hostname rather than to something
+under the referrer's. On that hostname the whole name now becomes the apex, and
+each resolved to `<title>.worlds.example.com`: one label too deep, no DNS record,
+on a page that renders perfectly.
+
+Both builds went red before their images published. The scenario was right and
+stayed; only the address the referrer is served from moved.
+
+### `/art/` moved with the bundle
+
+The title covers are served by this container, so they are `/worlds/art/…` now.
+Verified in the image: the mounted path answers 200 and the unmounted one 404,
+which is the mount discipline holding on a path that is neither a route nor a
+hashed asset.
+
+### The `grep -oE '/assets/…'` shape, a third time
+
+micro-trade-web, micro-pool-web, and now micro-worlds-web. Same line, same
+failure: `-o` restarts at successive offsets so a leading `/` is not an anchor,
+the probe asks for the unmounted path, `location /` correctly 404s it, and the
+404's `no-store` is reported as the asset's Cache-Control.
+
+Three repositories is no longer a coincidence. **Any surface still to move should
+expect this line in its CI and fix it before the first red build**, and the fix is
+always the same: match the ATTRIBUTE, take what is inside the quotes whole, and
+assert the result starts with the mount.
+
+---
+
 ## 7. What CI must learn
 
 The estate's rule is that a drift like this is closed by a check rather than by
