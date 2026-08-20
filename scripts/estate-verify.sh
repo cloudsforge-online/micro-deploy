@@ -2794,28 +2794,52 @@ fi
 # meta names the repository, so this loop is exactly the check that catches it —
 # it compares the shell that came back against `journal-web`'s revision, and the
 # site's shell carries `site`'s.
+#
+# ── EVERY CONSOLIDATED SURFACE IS PROBED AT ITS MOUNT, NOT AT THE NAME IT LEFT ──
+#
+# Six rows here still named a subdomain after their surface had moved to a
+# folder — `worlds`, `pool` and `agora` since waves 3c–3e, and the three Forge
+# Worlds titles since 3f. Each answered 301, which is exactly what a retirement
+# tombstone is FOR, and this check called all six a failure:
+#
+#   FAIL https://pool.cloudsforge.online/ answered 301 and did not serve
+#        pool-web's shell
+#
+# Six red lines describing six correct redirects. That is worse than a missing
+# check: an operator reading this output learns to discount it, and the day one
+# of these really does serve the wrong shell the line will look the same.
+#
+# `gw` does not follow redirects, deliberately — following one would prove only
+# that the destination works and would say nothing about the hostname asked
+# for. So the fix is to ASK THE RIGHT ADDRESS: `.` plus the registry's
+# `basePath`, the same form `market`, `create`, `trade`, `exchange` and
+# `journal` have used since their own waves.
+#
+# The 301s themselves are not going unchecked — the section immediately below,
+# "the hostnames a surface left, and where they send a reader", is the one that
+# owns them, and it asserts both the status and the Location.
 for rec in \
   "hub hub-web" \
   ". site" \
   ". market-web /market" \
   ". mint-web /create" \
   ". trade-web /trade" \
-  "worlds worlds-web" \
+  ". worlds-web /worlds" \
   "explorer explorer-web" \
   "network network-site" \
   "developers devportal-web" \
   "admin admin-web" \
   "status status-web" \
   "foresight foresight-web" \
-  "emberkin emberkin-web" \
-  "aetherholm aetherholm-web" \
-  "tessera tessera-web" \
+  ". emberkin-web /worlds/emberkin" \
+  ". aetherholm-web /worlds/aetherholm" \
+  ". tessera-web /worlds/tessera" \
   "lantern lantern-web" \
   "beacon beacon-web" \
-  "pool pool-web" \
+  ". pool-web /pool" \
   ". exchange-web /exchange" \
   ". journal-web /journal" \
-  "agora agora-web"; do
+  ". agora-web /agora"; do
   set -- $rec
   sub=$1; repo=$2; path=${3:-/}
   # `site` has an EMPTY subdomain in the registry, so it is the one surface whose
