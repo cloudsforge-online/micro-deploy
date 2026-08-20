@@ -189,6 +189,22 @@ def gateway():
     return routers, strips
 
 
+# ── SURFACES WHOSE BUNDLE CALLS SOMEBODY ELSE'S API ──────────────────────────
+#
+# Decision 4 remounts a surface's API under its mount because a MOUNTED BUNDLE'S
+# RELATIVE REQUEST resolves at the apex root. A bundle that makes no relative
+# request has nothing to remount, and forcing one on it would publish a second
+# address for a service nobody reaches that way.
+#
+# `worlds` is the only member and the registry says why in two rows rather than
+# one: `worlds` is the product and `api` is "the public, versioned surface" that
+# micro-worlds' routes are actually served on. `worlds-web/src/lib/hosts.ts`
+# argues the same at length and its header is worth reading before adding to this
+# table — the bar for membership is that the bundle's API base is ANOTHER
+# surface's host, not merely that a remount looks inconvenient.
+CALLS_ANOTHER_SURFACES_API = {"worlds"}
+
+
 def main():
     surfaces = [s for s in registry_surfaces() if s["basePath"] and s["ownBundle"]]
     routers, strips = gateway()
@@ -203,6 +219,25 @@ def main():
         api = [r for r in routers
                if (r["service"] or "").startswith("cf-svc-")
                and any(p == base or p.startswith(base + "/") for p in PREFIX_RE.findall(r["rule"]))]
+        if not api and key in CALLS_ANOTHER_SURFACES_API:
+            # ── A THIRD CASE, AND IT IS NOT "NO API" ──────────────────────────
+            #
+            # `worlds` HAS a service and HAS a router for it on the old hostname,
+            # and still needs no remount — because its bundle never called that
+            # router. `worlds-web`'s `API_SURFACE` is `api`, not `worlds`, so its
+            # reads are absolute to `api.<apex>` and were cross-origin long before
+            # the mount. The failure decision 4 exists for — a relative `/v1`
+            # resolving at the apex root — cannot happen on a bundle that issues
+            # no relative `/v1`.
+            #
+            # Named rather than inferred, because the fact lives in a file this
+            # script cannot count on having: CI checks out `deploy` and `ui`, and
+            # a deploy host clones no frontend at all. An exemption that silently
+            # skipped when the repo was absent would be worse than one written
+            # down with its argument. Checked in both directions below, so a
+            # surface that starts calling its own API cannot keep the exemption.
+            continue
+
         if not api:
             # Not every path-mounted surface has an API — `journal` and `exchange`
             # have none, which is why they were waves 1 and 2. Silence is correct
@@ -267,6 +302,25 @@ def main():
                         f"stripPrefix '{m}' removes {strips[m]}, which does not include '{base}'. "
                         f"The service receives a path with the mount still on it"
                     )
+
+    # THE OTHER DIRECTION. A name in the table that IS remounted has either started
+    # calling its own API — in which case the exemption is now a lie and the entry
+    # belongs deleted — or somebody added the router anyway, which is the second
+    # address this exemption exists to prevent.
+    for key in sorted(CALLS_ANOTHER_SURFACES_API):
+        base = mounted.get(key)
+        if base is None:
+            bad(f"CALLS_ANOTHER_SURFACES_API names '{key}', which is not a path-mounted surface. "
+                f"Either it moved back to a subdomain or the key is stale")
+            continue
+        remounted = [r for r in routers
+                     if (r["service"] or "").startswith("cf-svc-")
+                     and any(p == base or p.startswith(base + "/") for p in PREFIX_RE.findall(r["rule"]))]
+        for r in remounted:
+            bad(f"'{key}' is exempt from the remount because its bundle calls another surface's "
+                f"API, and '{r['name']}' remounts it under '{base}' anyway. Either the bundle "
+                f"changed — delete the exemption — or this router publishes a second address for "
+                f"a service nobody reaches that way")
 
     for f in fails:
         print(f"FAIL {f}")

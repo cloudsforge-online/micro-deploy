@@ -261,6 +261,16 @@ http:
         replacement: 'https://${1}/pool/${2}'
         permanent: true
 
+    # Wave 3e's. `cf-api-worlds-host` at 600 is above this tombstone, so a third
+    # party calling `worlds.<apex>/v1` never sees the redirect — even though THIS
+    # ESTATE'S OWN BUNDLE never called it. worlds-web talks to `api.<apex>`, which
+    # is what its registry row and `lib/hosts.ts` both say at length.
+    cf-worlds-to-apex:
+      redirectRegex:
+        regex: '^https?://worlds\.(.+?)/(.*)'
+        replacement: 'https://${1}/worlds/${2}'
+        permanent: true
+
     # ── THE MOUNT THE SERVICE MUST NEVER SEE ──────────────────────────────────
     #
     # Decision 4 in `docs/apex-consolidation.md`, and the first time the estate
@@ -874,11 +884,45 @@ http:
       service: cf-svc-trade
 
     # ──────────────────────────────────────────────────────────────── worlds ──
+    # ── WAVE 3e — `worlds.<apex>` BECOMES `<apex>/worlds` ─────────────────────
+    #
+    # THREE ROUTERS, NOT FOUR, AND THE MISSING ONE IS THE POINT. Every wave since
+    # 3a has added a `cf-api-<surface>-apex` that remounts the service under the
+    # mount and strips the prefix back off. This one does not, because there is
+    # nothing to remount: `worlds-web`'s API base is the `api` SURFACE, not this
+    # one. Its requests are absolute to `api.<apex>` and always were — see the
+    # header of `worlds-web/src/lib/hosts.ts`, which argues at length that
+    # `PRODUCT` and `API_SURFACE` are deliberately different keys.
+    #
+    # So a mounted bundle's relative `/v1` — the failure decision 4 exists for —
+    # is not a thing that happens here. Adding a `/worlds/v1` router "for
+    # symmetry" would publish a second address for a service nobody reaches that
+    # way, and `check-api-remount.py` would then demand a stripPrefix for it.
+    #
+    # `Path(`/worlds`) || PathPrefix(`/worlds/`)` and not a bare
+    # `PathPrefix(`/worlds`)`: Traefik 3's PathPrefix is a RAW STRING PREFIX, so
+    # the bare form would also claim `/worldsomething`.
+    #
+    # ── AND THE THREE TITLES WILL NEST INSIDE THIS RULE'S PREFIX ──────────────
+    #
+    # `<apex>/worlds/emberkin` MATCHES `PathPrefix(`/worlds/`)`. When those move,
+    # each title's bundle router has to outrank this one or the catalogue answers
+    # for the game — a 200 carrying the wrong application. That is the whole
+    # reason they are a separate wave rather than four rows in this one.
+{{ if ne (env "CF_WEB_RETIRED") "true" }}
     cf-web-worlds:
+      rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (Path(`/worlds`) || PathPrefix(`/worlds/`))'
+      priority: 600
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-web-headers]
+      service: cf-web-worlds
+{{ end }}
+
+    cf-web-worlds-sub:
       rule: 'Host(`worlds{{ env "CF_WEB_SUFFIX" }}`)'
       priority: 500
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-web-headers]
+      middlewares: [cf-worlds-to-apex]
       service: cf-web-worlds
     cf-api-worlds-host:
       rule: 'Host(`worlds{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'

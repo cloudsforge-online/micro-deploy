@@ -153,7 +153,13 @@ http:
           # page on the apex. Both same-origin. Same for `trade`. Recorded because the natural
           # worry about decision 4 is that moving an API across a mount introduces a cross-origin
           # read, and it does not.
-          - https://worlds{{ env "CF_WEB_SUFFIX" }}
+          # `worlds` LEFT THIS LIST IN WAVE 3e, and it is the one deletion here that is NOT about
+          # a surface's own API. worlds-web never read its own hostname: `API_SURFACE` is `api`, so
+          # every read it makes was ALWAYS cross-origin and always needed a grant. What this line
+          # granted was that read plus the account bar's hand-off, from `worlds.<apex>`.
+          #
+          # The page runs on the apex now, so the apex's own entry covers both. Same browser, same
+          # two requests, one origin earlier in this list.
           - https://explorer{{ env "CF_WEB_SUFFIX" }}
           - https://network{{ env "CF_WEB_SUFFIX" }}
           - https://developers{{ env "CF_WEB_SUFFIX" }}
@@ -391,7 +397,9 @@ http:
           # this point. A reader who chooses Testnet on the mainnet page goes on reading the
           # testnet estate's tokens and order books from a mainnet origin, which is the grant
           # these entries were for and which the apex's entry covers unchanged.
-          - https://worlds{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
+          # `worlds` needs no line here either: a reader who chooses Testnet reads the sibling
+          # estate from `<apex>/worlds`, and the ORIGIN of that read is the apex — already granted
+          # by the apex's own cross-environment entry above.
           - https://explorer{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://network{{ env "CF_VIEW_ORIGIN_SUFFIX" }}
           - https://developers{{ env "CF_VIEW_ORIGIN_SUFFIX" }}

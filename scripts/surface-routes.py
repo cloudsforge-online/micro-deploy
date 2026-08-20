@@ -386,6 +386,12 @@ CONSOLIDATED_HOSTS = {
     # is published by the service from POOL_WEBSOCKET_PUBLIC_ORIGIN, so it does
     # not follow the bundle and is not stripped.
     "pool": ("pool", "cf-pool-to-apex"),
+    # Wave 3e, and the first consolidated surface with NO API remount: worlds-web
+    # calls the `api` surface, not its own hostname, so there is no relative `/v1`
+    # for a mount to break and nothing for a stripPrefix to undo.
+    # `cf-api-worlds-host` still answers on the old hostname above the tombstone,
+    # for third parties this estate's own bundle never joined.
+    "worlds": ("worlds", "cf-worlds-to-apex"),
 }
 
 

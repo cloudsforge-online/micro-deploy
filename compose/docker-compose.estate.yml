@@ -1080,7 +1080,6 @@ services:
       IDENTITY_HANDOFF_ORIGINS: >-
         https://${CF_SITE_HOST:-cloudsforge.localtest.me},
         https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://developers${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
@@ -4835,7 +4834,6 @@ services:
       LANTERN_RUM_ORIGINS: >-
         https://${CF_SITE_HOST:-cloudsforge.localtest.me},
         https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://worlds${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://explorer${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://developers${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
