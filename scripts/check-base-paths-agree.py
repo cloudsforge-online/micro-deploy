@@ -99,6 +99,7 @@ BUNDLE_REPOS = {
     "trade": "trade-web",
     "agora": "agora-web",
     "pool": "pool-web",
+    "worlds": "worlds-web",
 }
 
 

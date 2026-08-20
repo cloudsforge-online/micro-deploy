@@ -2494,7 +2494,7 @@ for rec in \
   "admin-web 4128 /approvals" \
   "mint-web 4129 /launch /create" \
   "trade-web 4130 /bots /trade" \
-  "worlds-web 4131 /player" \
+  "worlds-web 4131 /player /worlds" \
   "explorer-web 4132 /chains" \
   "network-site 4133 /faucet" \
   "market-web 4134 /listings /market" \
