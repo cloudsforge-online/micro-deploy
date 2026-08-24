@@ -225,6 +225,33 @@ def is_retired_surface(name, service):
 # `postgres` is not rendered. CloudNativePG owns the database now and
 # k8s/database/ carries the Cluster, the 30 Database objects and the `postgres`
 # Service alias that keeps all 57 DSNs spelling `@postgres:5432`.
+# ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
+#
+# `docs/network-consolidation.md` §6. A name lands here when its cutover is done:
+# its testnet database has been adopted into the mainnet cluster as
+# `<db>_testnet`, and its testnet router points at the mainnet namespace.
+#
+# Two things follow from membership, and they are opposite sides of one change:
+#
+#   * The MAINNET deployment gains `<PREFIX>_DATABASE_URL_TESTNET`, derived from
+#     its own `<PREFIX>_DATABASE_URL` by suffixing the database name. Derived
+#     rather than written into compose because the two strings differ in exactly
+#     one token, and thirty hand-written copies are thirty chances to point a
+#     service at the wrong estate's rows — the failure this whole plan exists to
+#     make impossible.
+#
+#   * The TESTNET render drops the service entirely. No Deployment, no Service,
+#     no migrate Job. Leaving it rendered would hand a pod a DSN for a database
+#     that is no longer authoritative, and a second migrator for a schema the
+#     mainnet pod now owns.
+#
+# An explicit list rather than a flag, so that adding a name is a reviewable diff
+# that says which service crossed and when.
+CONSOLIDATED_SERVICES: set[str] = set()
+# Empty deliberately. The mechanism ships before its first use so that the diff which
+# actually moves a service is one line naming that service, reviewed on its own, rather
+# than a mechanism and a cutover landing together and failing as one thing.
+
 EXCLUDED_SERVICES = {"postgres"}
 
 # The Secret each compose `env_file:` becomes. Compose interpolates the network
@@ -493,6 +520,11 @@ def main():
     retired_surfaces: list[str] = []
 
     for name in sorted(services):
+        # A consolidated service exists once, in the mainnet namespace, and the
+        # testnet router reaches it by FQDN. Rendering it here too would run a
+        # second migrator against a schema the mainnet pod owns.
+        if args.network == "testnet" and name.removesuffix("-migrate") in CONSOLIDATED_SERVICES:
+            continue
         if name in EXCLUDED_SERVICES:
             continue
         service = services[name]
@@ -585,6 +617,22 @@ def main():
                 if variable not in injected_secrets:
                     injected_secrets.append(variable)
             plain_env.append({"name": key, "value": text})
+
+        # ── THE SECOND ESTATE'S HANDLE ───────────────────────────────────────
+        #
+        # Same host, same role, same options — only `datname` differs, which is
+        # the isolation §2.2 chose. Built by splitting the DSN rather than by
+        # string-replacing the database name, because `agora` also appears in
+        # the hostname of some services and a replace would rewrite both.
+        if args.network == "mainnet" and name in CONSOLIDATED_SERVICES:
+            for entry in list(plain_env):
+                if not entry["name"].endswith("_DATABASE_URL"):
+                    continue
+                head, _, tail = entry["value"].rpartition("/")
+                dbname, sep, query = tail.partition("?")
+                plain_env.append(
+                    {"name": entry["name"] + "_TESTNET", "value": f"{head}/{dbname}_testnet{sep}{query}"}
+                )
 
         # The injected entries come FIRST. Kubernetes expands `$(NAME)` only
         # against variables defined earlier in this same list; emitted after,
