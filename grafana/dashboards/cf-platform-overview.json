@@ -16,7 +16,30 @@
   },
   "timepicker": {},
   "templating": {
-    "list": []
+    "list": [
+      {
+        "name": "network",
+        "label": "Network",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "cf-prometheus"
+        },
+        "query": {
+          "query": "label_values(http_requests_total, network)",
+          "refId": "cf-network"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "text": "mainnet",
+          "value": "mainnet",
+          "selected": true
+        }
+      }
+    ]
   },
   "annotations": {
     "list": [
@@ -88,7 +111,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_requests_total[5m]))",
+          "expr": "sum(rate(http_requests_total{network=\"$network\"}[5m]))",
           "legendFormat": "req/s",
           "range": true,
           "instant": false,
@@ -155,7 +178,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_requests_total{status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1e-9)",
+          "expr": "sum(rate(http_requests_total{network=\"$network\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total[5m])), 1e-9)",
           "legendFormat": "error ratio",
           "range": true,
           "instant": false,
@@ -230,7 +253,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "cf:http_latency_ms:p50",
+          "expr": "cf:http_latency_ms:p50{network=\"$network\"}",
           "legendFormat": "p50",
           "range": true,
           "instant": false,
@@ -305,7 +328,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "cf:http_latency_ms:p95",
+          "expr": "cf:http_latency_ms:p95{network=\"$network\"}",
           "legendFormat": "p95",
           "range": true,
           "instant": false,
@@ -380,7 +403,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "cf:http_latency_ms:p99",
+          "expr": "cf:http_latency_ms:p99{network=\"$network\"}",
           "legendFormat": "p99",
           "range": true,
           "instant": false,
@@ -1244,7 +1267,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sort_desc(cf:slo_burn_rate:1h)",
+          "expr": "sort_desc(cf:slo_burn_rate:1h{network=\"$network\"})",
           "legendFormat": "{{service}}",
           "range": false,
           "instant": true,

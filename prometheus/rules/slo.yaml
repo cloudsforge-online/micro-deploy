@@ -21,21 +21,38 @@
 # nothing, silently — so the library wins here and the document is what needs
 # amending. Flagged in README §Divergences.
 
+# ── `network` IS THE FIRST LABEL EVERY RULE BELOW GROUPS BY ────────────────────────────────────────
+#
+# It was deliberately absent until 2026-08-25, and the reason is worth keeping: adding it while no
+# service emitted the label produces series carrying `network=""`, which is a DIFFERENT series
+# identity from the one every dashboard and alert is built on. Expand/contract applies to recording
+# rules exactly as it does to schemas, so the order was fixed — services emit the label first, rules
+# group by it second, dashboards re-point third.
+#
+# That precondition is now met: the consolidated services emit `network` on the standard specs, and
+# Prometheus carries mainnet and testnet series for the same service and route.
+#
+# What it prevents, once one pod serves both estates: a testnet error spike burning the MAINNET
+# error budget, a testnet latency regression moving the mainnet p95, and a burn-rate page that names
+# a service and a tier with no way to say which estate is broken. Summed, the two are one number and
+# nothing in the estate would say which half moved.
+#
+
 groups:
   # ---------------------------------------------------------------- RED ----
   - name: cf.red
     interval: 30s
     rules:
       - record: cf:http_requests:rate5m
-        expr: sum by (service, route, status) (rate(http_requests_total[5m]))
+        expr: sum by (network, service, route, status) (rate(http_requests_total[5m]))
 
       - record: cf:http_requests:rate5m:total
-        expr: sum by (service) (rate(http_requests_total[5m]))
+        expr: sum by (network, service) (rate(http_requests_total[5m]))
 
       # 5xx only. A 4xx is a client being wrong, and putting it in the error
       # ratio means a scanner probing /wp-admin burns the availability budget.
       - record: cf:http_errors:rate5m
-        expr: sum by (service) (rate(http_requests_total{status=~"5.."}[5m]))
+        expr: sum by (network, service) (rate(http_requests_total{status=~"5.."}[5m]))
 
       - record: cf:http_errors:ratio5m
         expr: |
@@ -45,11 +62,11 @@ groups:
 
       # Latency quantiles, in milliseconds because that is the histogram's unit.
       - record: cf:http_latency_ms:p50
-        expr: histogram_quantile(0.50, sum by (service, le) (rate(http_request_duration_ms_bucket[5m])))
+        expr: histogram_quantile(0.50, sum by (network, service, le) (rate(http_request_duration_ms_bucket[5m])))
       - record: cf:http_latency_ms:p95
-        expr: histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_ms_bucket[5m])))
+        expr: histogram_quantile(0.95, sum by (network, service, le) (rate(http_request_duration_ms_bucket[5m])))
       - record: cf:http_latency_ms:p99
-        expr: histogram_quantile(0.99, sum by (service, le) (rate(http_request_duration_ms_bucket[5m])))
+        expr: histogram_quantile(0.99, sum by (network, service, le) (rate(http_request_duration_ms_bucket[5m])))
 
   # ------------------------------------------------------- availability SLI --
   - name: cf.slo.availability
@@ -69,25 +86,25 @@ groups:
       - record: cf:slo_availability:ratio_rate5m
         expr: |
           1 - (
-            sum by (service, tier) (rate(http_requests_total{status=~"5.."}[5m]))
+            sum by (network, service, tier) (rate(http_requests_total{status=~"5.."}[5m]))
               /
-            clamp_min(sum by (service, tier) (rate(http_requests_total[5m])), 1e-9)
+            clamp_min(sum by (network, service, tier) (rate(http_requests_total[5m])), 1e-9)
           )
 
       - record: cf:slo_availability:ratio_rate1h
         expr: |
           1 - (
-            sum by (service, tier) (rate(http_requests_total{status=~"5.."}[1h]))
+            sum by (network, service, tier) (rate(http_requests_total{status=~"5.."}[1h]))
               /
-            clamp_min(sum by (service, tier) (rate(http_requests_total[1h])), 1e-9)
+            clamp_min(sum by (network, service, tier) (rate(http_requests_total[1h])), 1e-9)
           )
 
       - record: cf:slo_availability:ratio_rate6h
         expr: |
           1 - (
-            sum by (service, tier) (rate(http_requests_total{status=~"5.."}[6h]))
+            sum by (network, service, tier) (rate(http_requests_total{status=~"5.."}[6h]))
               /
-            clamp_min(sum by (service, tier) (rate(http_requests_total[6h])), 1e-9)
+            clamp_min(sum by (network, service, tier) (rate(http_requests_total[6h])), 1e-9)
           )
 
   # ------------------------------------------------------------ burn rate ---

@@ -291,6 +291,30 @@ def row(title, y):
             "gridPos": {"h": 1, "w": 24, "x": 0, "y": y}, "panels": []}
 
 
+NETWORK_VAR = {
+    # ── ONE ESTATE AT A TIME, DEFAULTING TO THE ONE THAT MATTERS ──────────────────────────────────
+    #
+    # The SLO recording rules group by `network` as of 2026-08-25, so every series below exists twice
+    # for a service that serves both estates. Without a selector the panels SUM them: the headline
+    # error ratio blends a testnet spike into mainnet's number, the p95 moves for a testnet
+    # regression, and the burn-rate bars show two identical service names.
+    #
+    # A dropdown rather than a second dashboard, and rather than a `network` legend on every panel:
+    # during an incident the question is "is mainnet healthy", and the answer should not require
+    # reading which half of a stacked bar belongs to which estate. `mainnet` is the default because
+    # that is the estate with users on it.
+    "name": "network",
+    "label": "Network",
+    "type": "query",
+    "datasource": PROM,
+    "query": {"query": "label_values(http_requests_total, network)", "refId": "cf-network"},
+    "refresh": 2,
+    "includeAll": False,
+    "multi": False,
+    "sort": 1,
+    "current": {"text": "mainnet", "value": "mainnet", "selected": True},
+}
+
 def dashboard(uid, title, description, panels, templating=None, refresh="30s"):
     return {
         "uid": uid,
@@ -355,13 +379,13 @@ def platform_overview():
     p.append(row("Global RED", y)); y += 1
 
     p.append(stat(
-        "Requests/sec", [target("sum(rate(http_requests_total[5m]))", "req/s")],
+        "Requests/sec", [target('sum(rate(http_requests_total{network="$network"}[5m]))', "req/s")],
         "reqps", {"h": 4, "w": 4, "x": 0, "y": y}, decimals=1,
         description="Rate. Zero here with services up means nothing is reaching them — "
                     "check the gateway before the services."))
     p.append(stat(
         "Error ratio (5xx)",
-        [target("sum(rate(http_requests_total{status=~\"5..\"}[5m])) / "
+        [target('sum(rate(http_requests_total{network="$network",status=~"5.."}[5m])) / '
                 "clamp_min(sum(rate(http_requests_total[5m])), 1e-9)", "error ratio")],
         "percentunit", {"h": 4, "w": 4, "x": 4, "y": y}, decimals=2,
         # Three states, not four. 1% is a ticket, 5% is the gateway page.
@@ -372,7 +396,7 @@ def platform_overview():
                     "scanner probing /wp-admin burns the availability budget."))
     for i, (q, x) in enumerate((("p50", 8), ("p95", 12), ("p99", 16))):
         p.append(stat(
-            f"Latency {q}", [target(f"cf:http_latency_ms:{q}", q)],
+            f"Latency {q}", [target(f'cf:http_latency_ms:{q}{{network="$network"}}', q)],
             "ms", {"h": 4, "w": 4, "x": x, "y": y}, decimals=0,
             steps=[{"color": STATUS["good"], "value": None},
                    {"color": STATUS["warn"], "value": 250},
@@ -431,7 +455,7 @@ def platform_overview():
 
     p.append(bargauge(
         "Error-budget burn rate (1h)",
-        [target("sort_desc(cf:slo_burn_rate:1h)", "{{service}}", instant=True)],
+        [target('sort_desc(cf:slo_burn_rate:1h{network="$network"})', "{{service}}", instant=True)],
         "none", {"h": 8, "w": 12, "x": 12, "y": y}, maxv=20,
         steps=[{"color": STATUS["good"], "value": None},
                {"color": STATUS["warn"], "value": 6},
@@ -476,7 +500,7 @@ def platform_overview():
         "cf-platform-overview", "CloudsForge · Platform overview",
         "Owner: on-call. Question: is anything wrong right now? Every panel below "
         "changes a decision; a panel that cannot is removed at review.",
-        p, refresh="30s")
+        p, templating=[NETWORK_VAR], refresh="30s")
 
 
 # ===========================================================================
@@ -495,19 +519,19 @@ def service_detail():
         "multi": False,
         "sort": 1,
         "current": {},
-    }]
+    }, NETWORK_VAR]
 
     p.append(row("RED — $service", y)); y += 1
     p.append(timeseries(
         "Request rate by route",
-        [target('sum by (route) (rate(http_requests_total{service="$service"}[5m]))', "{{route}}")],
+        [target('sum by (route) (rate(http_requests_total{service="$service",network="$network"}[5m]))', "{{route}}")],
         "reqps", {"h": 7, "w": 8, "x": 0, "y": y}, fixed=CAT[0], decimals=1,
         description="Route cardinality is unbounded, so this is the one place a fixed "
                     "eight-slot assignment cannot apply. One hue, and the route you want "
                     "is found by hovering — not by hunting a colour that means nothing."))
     p.append(timeseries(
         "Errors by status",
-        [target('sum by (status) (rate(http_requests_total{service="$service",status=~"[45].."}[5m]))',
+        [target('sum by (status) (rate(http_requests_total{service="$service",network="$network",status=~"[45].."}[5m]))',
                 "{{status}}")],
         "reqps", {"h": 7, "w": 8, "x": 8, "y": y}, decimals=2,
         overrides=_series_overrides(["500", "502", "503", "504", "400", "401", "403", "404"]),
@@ -517,7 +541,7 @@ def service_detail():
     p.append(timeseries(
         "Latency quantiles",
         [target(f'histogram_quantile({q}, sum by (le) '
-                f'(rate(http_request_duration_ms_bucket{{service="$service"}}[5m])))', label,
+                f'(rate(http_request_duration_ms_bucket{{service="$service",network="$network"}}[5m])))', label,
                 ref=ref)
          for q, label, ref in ((0.50, "p50", "A"), (0.95, "p95", "B"), (0.99, "p99", "C"))],
         "ms", {"h": 7, "w": 8, "x": 16, "y": y}, overrides=_quantile_overrides(),

@@ -34,6 +34,28 @@
         "multi": false,
         "sort": 1,
         "current": {}
+      },
+      {
+        "name": "network",
+        "label": "Network",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "cf-prometheus"
+        },
+        "query": {
+          "query": "label_values(http_requests_total, network)",
+          "refId": "cf-network"
+        },
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1,
+        "current": {
+          "text": "mainnet",
+          "value": "mainnet",
+          "selected": true
+        }
       }
     ]
   },
@@ -107,7 +129,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (route) (rate(http_requests_total{service=\"$service\"}[5m]))",
+          "expr": "sum by (route) (rate(http_requests_total{service=\"$service\",network=\"$network\"}[5m]))",
           "legendFormat": "{{route}}",
           "range": true,
           "instant": false,
@@ -186,7 +208,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum by (status) (rate(http_requests_total{service=\"$service\",status=~\"[45]..\"}[5m]))",
+          "expr": "sum by (status) (rate(http_requests_total{service=\"$service\",network=\"$network\",status=~\"[45]..\"}[5m]))",
           "legendFormat": "{{status}}",
           "range": true,
           "instant": false,
@@ -385,7 +407,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_ms_bucket{service=\"$service\"}[5m])))",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_ms_bucket{service=\"$service\",network=\"$network\"}[5m])))",
           "legendFormat": "p50",
           "range": true,
           "instant": false,
@@ -399,7 +421,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_ms_bucket{service=\"$service\"}[5m])))",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_ms_bucket{service=\"$service\",network=\"$network\"}[5m])))",
           "legendFormat": "p95",
           "range": true,
           "instant": false,
@@ -413,7 +435,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_ms_bucket{service=\"$service\"}[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_ms_bucket{service=\"$service\",network=\"$network\"}[5m])))",
           "legendFormat": "p99",
           "range": true,
           "instant": false,
