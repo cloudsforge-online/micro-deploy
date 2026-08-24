@@ -3,7 +3,7 @@
 Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
 pattern this generalises.
 
-## Status — waves 0, 1 and 2 complete
+## Status — every service in the plan is done; the cutover is what remains
 
 | item | state |
 |---|---|
@@ -14,6 +14,10 @@ pattern this generalises.
 | Prometheus/alert reshape to per-series `network` | **investigated; deliberately deferred to wave 2.** The four SLO rules aggregate `network` away and would blend the two networks the moment one pod serves both — but fixing them before any service emits the label orphans every dashboard for no gain. §2.3 records the finding and the fixed ordering. |
 | **wave 1** — retire the duplicate testnet bundles | **live** (micro-deploy#213). Testnet 51 → 31 rendered deployments; running pods 56 → 36. The twenty were measured unrouted (live router set read from the gateway's own metrics, not the configmap), unprobed by beacon, and serving zero requests. `site` kept — it is the one web bundle behind a live testnet router. They sit at zero replicas rather than deleted, which is the rollback. |
 | **wave 2** — the six low-risk class B services | **merged** — agora, policy, analytics, pricing, community, devplatform. All behaviour-preserving: with one DSN configured `networkSql` holds one network and each is today's service. Not deployed; they ship with the next release. |
+| **wave 4** — the two class B′ singletons | **merged** — identity, notify. Both keep ONE database, as the class says. identity's `net`-claim fallback moves from `IDENTITY_NETWORK` to the request (§5.5); notify gains `deliveries.network` and keeps one pipeline and one SMTP allowance. |
+| **wave 6** — the money core | **merged/open** — ledger, wallet. Both moved last, as the plan requires, and only after every caller already forwarded the header. wallet is the one with no bare `sql` at all: four domain bundles, and rebuilding some but not others is worse than rebuilding none (§5.6). |
+| **wave 5** — the five class C workers | **merged** — beacon, indexer, custody, settlement, pool. Two surprises, both recorded: beacon is really class B′ (§5.3) and **indexer needed no code change at all** (§5.4). settlement is the real bulkhead — one queue and one runner per estate, because its jobs broadcast transactions. |
+| **wave 3** — the fifteen product class B services | **merged** — activity, studio, lantern, emberkin, worlds, nda, tessera, market, mint, billing, hub-api, admin-api, aetherholm, foresight, trade. Same shape and the same behaviour-preserving property. Not deployed; they ship with the next release. Four of them needed more than the recipe, and §5.2 records what and why. |
 | waves 3–6 | not started |
 
 Everything shipped so far is behaviour-preserving: every runtime parameter is
@@ -419,6 +423,169 @@ the reader pointed at the other network would make every policy DECISION read
 one estate while its writes went to the other — a divergence that presents as a
 policy bug rather than a routing one. Look for a second closure whenever a dep
 object holds more than data.
+
+### 5.2 The four services wave 3 could not do mechanically, and what they taught
+
+The recipe in §5.1 covered eleven of the fifteen. These four did not fit, and
+each one names a different shape of hidden state. Read this before starting a
+service whose deps look unusual.
+
+**studio — the handle lives INSIDE a store.** `ServerDeps` never held a bare
+`sql`: it holds `kits: BrandKitStore`, built once as
+`postgresBrandKitStore(sql, SERVICE)`. Swapping a pool reference per request
+would have left that closure bound to whichever network booted first, so every
+request would read mainnet while the code above it read as network-aware. The
+fix is to keep the FACTORY in deps and call it again per request — the same
+shape as policy's snapshot reader, and the general rule is: *whatever captured
+the handle is the thing that has to be rebuilt, not the field that names it.*
+
+**mint and foresight — the network is not only which database, it is which
+CHAIN.** `MINT_NETWORK` and `FORESIGHT_NETWORK` were the process's answer to
+"which chain do I deploy to, and with which custody key". Getting that wrong is
+not a mis-filed row: a testnet order served by a mainnet-configured pod deploys
+a REAL contract, spends REAL gas, and records success. So `forRequest` moves
+`deps.network` alongside the handle, and the deploy/resolve workers are built
+one per network rather than once from env.
+
+foresight adds a second edge: `resolutionLeaseKey(chain, network)` is the key
+that stops two replicas posting the same resolution. One queue shared across
+estates would make a mainnet resolution job and a testnet one collide on that
+key, and `onConflict: 'earliest'` silently drops the second — a testnet market
+that never resolves, with no error anywhere.
+
+**hub-api and admin-api — no database, or not only a database.** hub-api holds
+no store at all: its isolation is (a) the `CF-Network` it forwards to every
+peer and (b) the CACHE KEY. Tile keys were per-user and some were global, so
+one pod serving both estates would serve a mainnet portfolio to a testnet
+viewer. The network is prefixed at the single site where the cache is read AND
+written, never in the dozen `key:` literals the routes declare — there are a
+dozen today and a thirteenth every few weeks, and one that forgot would be a
+silent cross-estate leak.
+
+admin-api is the sharper version of the same point: its own database holds
+approvals and an audit trail, but what it DOES lives in the peers — it reverses
+ledger entries, grants identity roles, delists listings. Narrowing only the
+handle would leave an operator viewing testnet, approving a reversal recorded
+against the testnet audit row, and having it carried out on MAINNET.
+
+For both, the estate travels as a client-wide `CF-Network` header on one client
+set per network rather than a per-call argument: these peer interfaces are
+domain methods (`trialBalance()`, `reverseEntry(request)`) with nowhere to put
+one, and threading an options bag through twenty of them leaves nineteen right
+and one wrong. The `HttpClient`s themselves stay shared where a circuit breaker
+is involved — a wallet that is down is down for both estates, and two breakers
+over one process each see half the evidence and trip late.
+
+**And the general lesson.** Six of the fifteen run a JOB PLANE in the same
+process as the request plane. `deps.queue.enqueue` is a WRITE, so a queue that
+is not per-network means a testnet request enqueues work that a runner holding
+the mainnet handle then claims, applies to mainnet rows, and completes — with a
+job row afterwards saying it went exactly as intended. One queue per database
+and one runner per queue, and `jobs_pending`/`jobs_overdue` carry the network
+label, because summed across two queues the gauge reads healthy while one
+estate's backlog grows without limit.
+
+### 5.3 beacon is class B′, not class C — a correction to §5's table
+
+The class table above lists beacon under class C, "chain-facing workers, dual
+contexts, bulkheaded". Doing it proved that wrong, and the correction is worth
+recording because the reasoning generalises to any observability service.
+
+**beacon keeps ONE database with a `network` column.** Two reasons:
+
+1. Its rows are OBSERVATIONS, not an estate's user data. The isolation argument
+   that justifies two pools everywhere else — a wrong handle is a query that
+   succeeds against the other estate's rows and says nothing — does not apply,
+   because nobody's money or identity is in `checks`. What is needed is
+   attribution, and attribution is a column.
+
+2. The public status page and the release gate want BOTH estates in one query.
+   Two pools would make that a join across databases, which postgres cannot do,
+   so the merged view would have to be assembled in application code from two
+   round trips — more moving parts than the column, for no safety gained.
+
+The one thing that genuinely had to be separated is **hysteresis**. `probe_state`
+is keyed on `probes.name` and holds the consecutive-failure count that turns a
+blip into an incident; two estates sharing a state row count each other's
+failures and open an incident against the wrong one. That is why a CHECK
+requires a testnet probe's name to end `-testnet`, and why the estate is DERIVED
+from the name rather than read from the request body — one source cannot
+disagree with itself.
+
+**And a note on back-fills, because beacon's and notify's differ on purpose.**
+`probes.network` defaults to `'mainnet'` NOT NULL; `deliveries.network` is
+nullable and left empty. notify's history was written by a pod whose estate is
+*inferable* from the deployment, and inferable is not recorded — stamping it
+would turn an inference into an assertion. beacon's rows were written by a
+mainnet prober watching URLs that ARE mainnet's: the estate is a property of
+which database the migration runs against, not a guess from context. When in
+doubt, prefer the null.
+
+### 5.4 indexer needs NO code change, and that is a finding rather than an oversight
+
+Checked before touching it, and the answer was already yes. indexer was built
+multi-network from the start:
+
+- `INDEXER_CHAINS` takes `<chain>:<network>` pairs, and the per-scope RPC URL
+  and start height are named `INDEXER_RPC_<CHAIN>_<NETWORK>` — one process
+  already follows `ember:mainnet` and `ember:testnet` side by side if both are
+  listed, and `env.ts` REFUSES an RPC variable whose scope is not in the list.
+- Every chain table carries `chain` and `network`, both inside the primary key,
+  under a stated invariant at the top of `migrations.ts`: *"no query may span
+  networks"*. A foreign key cannot reference the other network's row because the
+  reference itself carries the network.
+- Every metric already has `['chain', 'network']` among its labels.
+- Every read route names the network in its PATH —
+  `/chains/:chain/:network/status`, `/addresses/:chain/:network/:address/...` —
+  so a caller has always had to say which estate it is asking about.
+
+There is no process-wide `INDEXER_NETWORK` anywhere in the service.
+
+**So the consolidation of indexer is a CONFIG change, not a code change:** point
+one deployment's `INDEXER_CHAINS` at both scopes, give it both RPC URLs, and
+delete the second deployment. That is deliberately left to the deploy step
+rather than done here, because it is the same one-line-rollback cutover §6
+describes for everything else.
+
+Worth recording plainly, because "we looked and it was already right" is a
+result that otherwise evaporates — the next person to read the class-C list
+would spend the same afternoon proving it again.
+
+### 5.5 identity's `net` fallback, and why the process could no longer answer
+
+`net` names the estate a service token is FOR, and under a shared identity that
+is not always the estate identity runs in. The credential ROW has carried it
+since micro-org#459 stage 2; what wave 4 changed is the FALLBACK for credentials
+minted before that.
+
+It was `IDENTITY_NETWORK`, and it was correct while the pod served one estate —
+its own network and the caller's were the same thing. One pod serving both makes
+`IDENTITY_NETWORK` name whichever estate the deployment happens to be labelled
+with, so a testnet service presenting a pre-#459 credential would be handed
+`net=mainnet`: a token that FAILS at its own estate and PASSES at the other one.
+Backwards twice, and precisely the crossing the claim exists to refuse.
+
+The order is now **row → request → `IDENTITY_NETWORK`**. The row still wins, so
+a caller cannot widen its own token by arriving through the other gateway, and
+with nothing stamped the answer is unchanged — which is why this needed no
+flag-day.
+
+### 5.6 wallet: when a service has NO bare `sql` at all
+
+wallet's deps hold four domain bundles — `deposits`, `withdrawals`, `money`,
+`portfolio` — and every one closes over a pool reference. There is no single
+field to swap.
+
+Rebuilding some and not others is WORSE than rebuilding none, and that is worth
+stating because a partial `forRequest` looks like progress. A deposit credited
+in one estate and a balance read from the other means the two DISAGREE: the user
+sees a deposit confirmed and a balance that never moved, and both services
+insist they did their job. One wrong estate is a bug; two half-right ones is a
+support case nobody can close.
+
+`forRequest` rebuilds all four against the same handle, and the test pins the
+COUNT so that a fifth bundle added later is a visible omission rather than a
+silent one.
 
 ## 6. The cutover mechanism, and why rollback is one line
 
