@@ -475,31 +475,6 @@ def main():
     # here as it does under compose.
     config.setdefault("CF_EMBER_NETWORK", args.network)
 
-    # ── EVERY SINGLE-NETWORK POD DECLARES WHICH NETWORK IT IS ────────────────
-    #
-    # `CF_NETWORK_SINGLE` was documented as a `pnpm dev` convenience and "never
-    # in production". That was wrong, and it broke both estates on the first
-    # deploy of the consolidation. Two reasons it is required here:
-    #
-    #  1. A pod has to key its OWN database handle. `networkSql({ mainnet: sql })`
-    #     hardcoded on a testnet deployment means the testnet pod holds its DSN
-    #     under the name `mainnet`, so every request the gateway stamps
-    #     `CF-Network: testnet` is REFUSED by the pod's own data — which is
-    #     exactly what five testnet services did, in a crash loop.
-    #
-    #  2. SERVICE-TO-SERVICE CALLS DO NOT PASS THROUGH THE GATEWAY. An outbox
-    #     relay POSTing `/v1/events` to admin-api:4014 goes container to
-    #     container; nothing stamps a header on it, and nothing can — the
-    #     gateway is not in that path. Without a declared network those requests
-    #     answer 500 `network_unknown`, which is what took mainnet's admin-api
-    #     out. The gateway stamping "every request" was only ever true of
-    #     requests that arrive through the gateway.
-    #
-    # So: a pod serving ONE estate says so, and the header is what OVERRIDES it
-    # when a pod serves both. `requestNetwork` still prefers the header, so this
-    # cannot mask a mis-stamped external request — it only answers the internal
-    # callers that never had one.
-    config.setdefault("CF_NETWORK_SINGLE", args.network)
     profiles = set(filter(None, config.get("COMPOSE_PROFILES", "").split(","))) or DEFAULT_PROFILES[args.network]
 
     # ── IMAGES, BY DIGEST WHERE THE MANIFEST HAS ONE ─────────────────────────
@@ -722,6 +697,33 @@ def main():
                     }
                 )
                 volumes.append({"name": trust["volume"], "configMap": {"name": trust["configMap"]}})
+
+        # ── EVERY SINGLE-NETWORK POD DECLARES WHICH NETWORK IT IS ────────────────
+        #
+        # `CF_NETWORK_SINGLE` was documented as a `pnpm dev` convenience and "never
+        # in production". That was wrong, and it broke both estates on the first
+        # deploy of the consolidation. Two reasons it is required here:
+        #
+        #  1. A pod has to key its OWN database handle. `networkSql({ mainnet: sql })`
+        #     hardcoded on a testnet deployment means the testnet pod holds its DSN
+        #     under the name `mainnet`, so every request the gateway stamps
+        #     `CF-Network: testnet` is REFUSED by the pod's own data — which is
+        #     exactly what five testnet services did, in a crash loop.
+        #
+        #  2. SERVICE-TO-SERVICE CALLS DO NOT PASS THROUGH THE GATEWAY. An outbox
+        #     relay POSTing `/v1/events` to admin-api:4014 goes container to
+        #     container; nothing stamps a header on it, and nothing can — the
+        #     gateway is not in that path. Without a declared network those requests
+        #     answer 500 `network_unknown`, which is what took mainnet's admin-api
+        #     out. The gateway stamping "every request" was only ever true of
+        #     requests that arrive through the gateway.
+        #
+        # So: a pod serving ONE estate says so, and the header is what OVERRIDES it
+        # when a pod serves both. `requestNetwork` still prefers the header, so this
+        # cannot mask a mis-stamped external request — it only answers the internal
+        # callers that never had one.
+        if not any(e["name"] == "CF_NETWORK_SINGLE" for e in env):
+            env.append({"name": "CF_NETWORK_SINGLE", "value": args.network})
 
         container = {
             "name": name,

@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.97  (2026.8.97.yaml)
+# Release:   2026.8.98  (2026.8.98.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.97.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.98.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -37,7 +37,7 @@ spec:
     spec:
       containers:
       - name: activity
-        image: ghcr.io/cloudsforge-online/micro-activity@sha256:b54b7390370450875f6843822b4d2b0fea13d3ea21c77ee71ce0df23ce1c18ed
+        image: ghcr.io/cloudsforge-online/micro-activity@sha256:9ee33f998e324e099b49ce73a154db5ff04d74c6f023a575ffbdd075789ac935
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -68,6 +68,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -123,7 +125,7 @@ spec:
     spec:
       containers:
       - name: admin-api
-        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:65770532385d1ebc747b57c0af78dc1f8d9df22e0fb644ed02e0821f3fe463e5
+        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:a138f13df2e8948a9008cb5830852c5e687526d2b22f4e97a10496e8ed3bf21b
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -172,6 +174,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -227,11 +231,13 @@ spec:
     spec:
       containers:
       - name: admin-web
-        image: ghcr.io/cloudsforge-online/micro-admin-web@sha256:aa9a205dfe0c0aa32786ff9e141c49a3f84475c329392d28635ef73add794855
+        image: ghcr.io/cloudsforge-online/micro-admin-web@sha256:10e38793de250f65fb4382c96026d77f0cc68b9872dcacc5f3228f28b53a8027
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -283,7 +289,7 @@ spec:
     spec:
       containers:
       - name: aetherholm
-        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:abc4219041fdbecaa888f8f61de9c2a90111dd8286d17de718dc25d1662d2b86
+        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:ed2a682e55f7c1b40f168355dd1c9c4775297872e805c3ea70a1b3c23eb82c8a
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -314,6 +320,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -369,11 +377,13 @@ spec:
     spec:
       containers:
       - name: aetherholm-web
-        image: ghcr.io/cloudsforge-online/micro-aetherholm-web@sha256:e2ede367c187f5ce67c48bb82a957641d20a4c0ef482630fe218f757e8a7dddc
+        image: ghcr.io/cloudsforge-online/micro-aetherholm-web@sha256:543af13f591b45b88a24aac0913df8c24299ac2e883e564fe9f581f7d5cb550d
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -425,7 +435,7 @@ spec:
     spec:
       containers:
       - name: agora
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:c448429c5119580a886b8fdb8af48fe9b235d425ba4ba973070ff3af0df49b43
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:90fd2febba3a4d30bf67369f29f91db9696806c790f73cece76521ba7dc03066
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -468,6 +478,8 @@ spec:
           value: https://studio.cloudsforge.online
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -523,11 +535,13 @@ spec:
     spec:
       containers:
       - name: agora-web
-        image: ghcr.io/cloudsforge-online/micro-agora-web@sha256:a5c5d222faf96ec459cd769e7057bb4a375bc15d7a64022c053056ba5cb39ae4
+        image: ghcr.io/cloudsforge-online/micro-agora-web@sha256:d6d47a7b9a41be8f42fa746409f50bb18631e4789aa05a7d5071cbb94e9141ea
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -579,7 +593,7 @@ spec:
     spec:
       containers:
       - name: analytics
-        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:bb9b5fb75704f21c9b9559c89fbbb80bd5aea713887b08987bc034d7a7291bb4
+        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:7e94e22bf27b535e7c466a5ef0fcc4f7ec01330cbe2f16b6447c5e3a10120ff9
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -616,6 +630,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -674,7 +690,7 @@ spec:
     spec:
       containers:
       - name: beacon
-        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:c2dfef526d3c001031a19931a1763602296eafd2a0520044cbe73370610552f8
+        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:f755642ccc4709dd13b179180ae3bd09d4b53fd79f8fbad3bb15d1fb57dd2b99
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -731,6 +747,8 @@ spec:
           value: /etc/ssl/estate/trust.crt
         - name: PORT
           value: '4000'
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -782,11 +800,13 @@ spec:
     spec:
       containers:
       - name: beacon-web
-        image: ghcr.io/cloudsforge-online/micro-beacon-web@sha256:4a3a10a0cf2f697000b50f298792ec850985b8851638b54cb0fcf51ef7bd5bc8
+        image: ghcr.io/cloudsforge-online/micro-beacon-web@sha256:e3e7d5669ac6d1723ac64ebfe886acc6dd29d0eaed392e1ad10b412e7bad929d
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -838,7 +858,7 @@ spec:
     spec:
       containers:
       - name: billing
-        image: ghcr.io/cloudsforge-online/micro-billing@sha256:a15bf3da650ac78cfec8094d2ed4e4492798804089f24bfb0db3c2f8acc7497c
+        image: ghcr.io/cloudsforge-online/micro-billing@sha256:f384c6bf8110b6f992375ca447351bcde259fd5033884d3a105dde847dc5e56d
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -879,6 +899,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -934,7 +956,7 @@ spec:
     spec:
       containers:
       - name: community
-        image: ghcr.io/cloudsforge-online/micro-community@sha256:c3fc31fb9903064ee0dfce387c164253798b3154425dd96b88d057b157e4872d
+        image: ghcr.io/cloudsforge-online/micro-community@sha256:c6bedcd9532f10b460f149677511e5258c8b846a3d1343cb8f8c2c0827111449
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -975,6 +997,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1030,7 +1054,7 @@ spec:
     spec:
       containers:
       - name: custody
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:eb863210f2a99dd7d11678ce3a32e3dcb854dd7720bbabf879766e79851cd74e
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:9992fc261319d204b6ac66b02118c4a27da7c0183184746971f69e4477bd7069
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1063,6 +1087,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-custody
@@ -1127,7 +1153,7 @@ spec:
     spec:
       containers:
       - name: devplatform
-        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:b84d9e9a8d7fa471ca95f706b04173bf113d44a3d79ca116204b2897f50fa933
+        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:868c56218297c1798da4e05e53409fc06e59f943c97c011af252c56ff63ba51a
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1158,6 +1184,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1213,11 +1241,13 @@ spec:
     spec:
       containers:
       - name: devportal-web
-        image: ghcr.io/cloudsforge-online/micro-devportal-web@sha256:715aa9b5741c07926e6dc1dc1eefb9ab06592c49e259627b68516ed844981984
+        image: ghcr.io/cloudsforge-online/micro-devportal-web@sha256:a056fc677861a5041faf4d4695d90da22bfa89a6a761154fec3be355c5b98fdc
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1269,7 +1299,7 @@ spec:
     spec:
       containers:
       - name: emberkin
-        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:d74e5a326a362baef36eef9739d7c0ae1644df8f52ffe200d5db1b6784aafa64
+        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:7b830a5e1bb7a4ca7585c9bc5cf6853fe8692eacabba20269edf64163250dc46
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1318,6 +1348,8 @@ spec:
           value: http://worlds:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1373,11 +1405,13 @@ spec:
     spec:
       containers:
       - name: emberkin-web
-        image: ghcr.io/cloudsforge-online/micro-emberkin-web@sha256:0109808a87f015325ec525ce9c03a4de4e6d0e636894f937d3467274e57074d6
+        image: ghcr.io/cloudsforge-online/micro-emberkin-web@sha256:2579789ef51d4fc6b5854feccb20a4d32d2e8363d9f44b2f02568b9d748dbb92
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1429,11 +1463,13 @@ spec:
     spec:
       containers:
       - name: exchange-web
-        image: ghcr.io/cloudsforge-online/micro-exchange-web@sha256:332db0f58f39c1c8960cfee4136ee9b18b00fba3c62567182c38d00a15cfc0bc
+        image: ghcr.io/cloudsforge-online/micro-exchange-web@sha256:d6e7a3632cd6b479ff72cd7e6e018922012325c6ef2aba44b5dcd17061dd6df2
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1485,11 +1521,13 @@ spec:
     spec:
       containers:
       - name: explorer-web
-        image: ghcr.io/cloudsforge-online/micro-explorer-web@sha256:6ebed3a917c28172b0bc28afddbf356f5865b91c803ff9bdbae8cfa69874d1b7
+        image: ghcr.io/cloudsforge-online/micro-explorer-web@sha256:2ea504fe510327737514513fc43584247f26d74a7fcef7758a7fa3b900b7915b
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1541,7 +1579,7 @@ spec:
     spec:
       containers:
       - name: foresight
-        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:62a1dbb64597fcacbae7423d10ee769170c6c69b576cc21f41c0fb07102ed88e
+        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:e02d56d147bd622dd3a7bea8a38ad442d763c96296701046da30f68cd7072566
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1620,6 +1658,8 @@ spec:
           value: https://studio.cloudsforge.online
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: env-chain
@@ -1678,11 +1718,13 @@ spec:
     spec:
       containers:
       - name: foresight-web
-        image: ghcr.io/cloudsforge-online/micro-foresight-web@sha256:6ea2e1fa92e6423cb9219f8eaee886e5462587f4f047a0248321beff91b4ee2a
+        image: ghcr.io/cloudsforge-online/micro-foresight-web@sha256:39962d3e96a835747bb0634eb601e378f5c3845d071db20a51d48bb9a5a853a2
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1734,7 +1776,7 @@ spec:
     spec:
       containers:
       - name: hub-api
-        image: ghcr.io/cloudsforge-online/micro-hub-api@sha256:8a32c74d2edae87d475b3bcdabca4f152dd46afd75d1856290492f34dcd9d404
+        image: ghcr.io/cloudsforge-online/micro-hub-api@sha256:d0b8fcf1e332f6f5a148dcafa9adfca4ee6eae74596465093b9607f78d0425f7
         imagePullPolicy: IfNotPresent
         env:
         - name: HUB_API_IDENTITY_CREDENTIAL
@@ -1779,6 +1821,8 @@ spec:
           value: http://wallet:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1830,13 +1874,15 @@ spec:
     spec:
       containers:
       - name: hub-web
-        image: ghcr.io/cloudsforge-online/micro-hub-web@sha256:df366b3075a6596552e22f6973360975ed7d08b35a8f404bdbbbe1279d23df13
+        image: ghcr.io/cloudsforge-online/micro-hub-web@sha256:78a3aa562e5906aac66fe9ee23af5176f2d00c4ba8f3b88bc89f5f2cd0135d75
         imagePullPolicy: IfNotPresent
         env:
         - name: POOL_API_PRESENCE
           value: present
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1888,7 +1934,7 @@ spec:
     spec:
       containers:
       - name: identity
-        image: ghcr.io/cloudsforge-online/micro-identity@sha256:de8a973653d3723206450b87eaea25f8625f047c3438ee90989f8fbc449fe7fc
+        image: ghcr.io/cloudsforge-online/micro-identity@sha256:57673897ccc5cf4307b950173f42606c5ce8622c59803fc1d43009c8629449d4
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1965,6 +2011,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2023,7 +2071,7 @@ spec:
     spec:
       containers:
       - name: indexer
-        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:3f781b3e5ae4ea1222a3a15583fdfaeed2b0e138e1bad8d06b1fd51599f37791
+        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:7a9127105a02461a5b2b046cf13293bf247d1dbd3651442995a8f5267b53058d
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2060,6 +2108,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: env-chain
@@ -2121,11 +2171,13 @@ spec:
     spec:
       containers:
       - name: journal-web
-        image: ghcr.io/cloudsforge-online/micro-journal-web@sha256:7f96db5a289f10d34a302e6dd5e19dd4d618903ca69a35f3018bba82779767c8
+        image: ghcr.io/cloudsforge-online/micro-journal-web@sha256:da4193c291e5bb06439f82cafb4d13c6114dfbf1b9d4bbc16dc3969f9154db82
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -2177,7 +2229,7 @@ spec:
     spec:
       containers:
       - name: lantern
-        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:fc147919ed7e5ddb8a44be1ac30558722230ac4e17133aa759a72a54bcf9d069
+        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:4b2b024ac728f4a5b9958cdc3c5f48d9578cf2ef22ce9657718b1e1b25d6fa59
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2216,6 +2268,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -2267,11 +2321,13 @@ spec:
     spec:
       containers:
       - name: lantern-web
-        image: ghcr.io/cloudsforge-online/micro-lantern-web@sha256:d844b14df5f1544d61ca90bce6b35ff1a6457e0d1c854ab47316706fe4cd20a4
+        image: ghcr.io/cloudsforge-online/micro-lantern-web@sha256:b8328c8d324a62eb2e89c31f4de8c068949aa770923f93315b00ee067b59dd32
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -2323,7 +2379,7 @@ spec:
     spec:
       containers:
       - name: ledger
-        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:fd7451ae0869c28dd9d615b42a2d18fa48551ea91c02f79a6e3c1c73226f5cf3
+        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:bd618e3b3fe2cdd74f5f9caab16696ab3b0372c751cbb3124173f0fb175d81d8
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2368,6 +2424,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2423,7 +2481,7 @@ spec:
     spec:
       containers:
       - name: market
-        image: ghcr.io/cloudsforge-online/micro-market@sha256:be01e9dc0b2155b411331f82c222d81a434d3e6fff3895c50ac400cdbcf0c0df
+        image: ghcr.io/cloudsforge-online/micro-market@sha256:cdfe2a6d4b550f77bc3cd99e371925b99a30d61e45d13d934b8d9c79f33f2ecf
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2468,6 +2526,8 @@ spec:
           value: https://studio.cloudsforge.online
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2523,11 +2583,13 @@ spec:
     spec:
       containers:
       - name: market-web
-        image: ghcr.io/cloudsforge-online/micro-market-web@sha256:097cde054fe0d2b8edb9a1e167bc3fde70f658b885516d7eb2a96856d16d5e7d
+        image: ghcr.io/cloudsforge-online/micro-market-web@sha256:4415f756440a0570c12445c8aab9b8c6f8358608e89f7a8c17b3afc9d6b12fd1
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -2579,7 +2641,7 @@ spec:
     spec:
       containers:
       - name: mint
-        image: ghcr.io/cloudsforge-online/micro-mint@sha256:8a509d1df11c2778387bd9e838de917af87e4598b41863ddea0069dbc55f18b6
+        image: ghcr.io/cloudsforge-online/micro-mint@sha256:aca8542b6c659ae8bf4190ad4eef8141d867cda28e07c66f3c5890f2de290b13
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2636,6 +2698,8 @@ spec:
           value: http://pricing:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2691,11 +2755,13 @@ spec:
     spec:
       containers:
       - name: mint-web
-        image: ghcr.io/cloudsforge-online/micro-mint-web@sha256:ce221691fbf352d4428340ed3ad5561e4a190cc311f04af4167c9d0c9300e264
+        image: ghcr.io/cloudsforge-online/micro-mint-web@sha256:2662c02f7d4e4df4d518eef5e09814be898c963cdb325958d0e79ef9c75d04f5
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -2747,7 +2813,7 @@ spec:
     spec:
       containers:
       - name: nda
-        image: ghcr.io/cloudsforge-online/micro-nda@sha256:ebf61da05240c2b97555730ddcc92d6a6cd2c38e22291fde3ac7f74f6710f2a9
+        image: ghcr.io/cloudsforge-online/micro-nda@sha256:8f5b134dc97cfa2b6e3521a2d5001b4041eb11e8cb981c241977a2725fe46c70
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2788,6 +2854,8 @@ spec:
           value: http://worlds:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2843,11 +2911,13 @@ spec:
     spec:
       containers:
       - name: network-site
-        image: ghcr.io/cloudsforge-online/micro-network-site@sha256:1f60a8867b56014cb1b796c3975c850beea45a87d2fb75189d7b3355f5589022
+        image: ghcr.io/cloudsforge-online/micro-network-site@sha256:e75de01e6d604d6500e7789cd35853ee14e33a7df07601cae5edd61d83a413d7
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -2899,7 +2969,7 @@ spec:
     spec:
       containers:
       - name: notify
-        image: ghcr.io/cloudsforge-online/micro-notify@sha256:82846b3b8f14dbe51283dda8b2ce4d1ea08422e29a1bb2c8f40317224f24f3b9
+        image: ghcr.io/cloudsforge-online/micro-notify@sha256:07edc329e5d89ce2d22e4a81f0f3425d2969b99bcb84ffe6207937ea092f3357
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2980,6 +3050,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3035,7 +3107,7 @@ spec:
     spec:
       containers:
       - name: policy
-        image: ghcr.io/cloudsforge-online/micro-policy@sha256:04689f0d15c53c7d3746d6f5cc0a97932c021945dbde51ab2d5ba40bc5cb7f3c
+        image: ghcr.io/cloudsforge-online/micro-policy@sha256:4a160c2c74bf7cb7eb5d2aeb9731d086079338af86c609e4acd352f4eeda0d83
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3066,6 +3138,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3121,7 +3195,7 @@ spec:
     spec:
       containers:
       - name: pool
-        image: ghcr.io/cloudsforge-online/micro-pool@sha256:4218274d1fb243681ef69ba13a47df2d487df3dd397caad8fefcac0457d6a7f7
+        image: ghcr.io/cloudsforge-online/micro-pool@sha256:4dd6c21872ac694302f30b0295fe76676730d44ad488552e025cbefff1eb31ca
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3206,6 +3280,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -3259,13 +3335,15 @@ spec:
     spec:
       containers:
       - name: pool-web
-        image: ghcr.io/cloudsforge-online/micro-pool-web@sha256:d75281f1b54972ce51b9c3a0f6d4d61fef545c5ad7b46ef1f3fd44fe2b6b74f0
+        image: ghcr.io/cloudsforge-online/micro-pool-web@sha256:226486dc8e50fa6242c1cd51ebf0324fa491e0683bc2f08a882facd6e5c2f8ba
         imagePullPolicy: IfNotPresent
         env:
         - name: POOL_API_PRESENCE
           value: present
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -3317,7 +3395,7 @@ spec:
     spec:
       containers:
       - name: pricing
-        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:4333c55d4d5e2fb15f5dfd03c91985ff30409774d27edc923ad3f2a1932ef536
+        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:f5dfe7a82588ebf112902ed39bfbdd6ed73bfc007b771e599032f5a8a40897ea
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3350,6 +3428,8 @@ spec:
           value: '1'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3405,7 +3485,7 @@ spec:
     spec:
       containers:
       - name: settlement
-        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:676ff7a0807eba1678e57dd3016ce598b9f6e743f964f07c12c6329f28a62730
+        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:a5a7fbf553fb61a9080d18451e6a1af01b1fe92833310595a74673d6363df3cd
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3456,6 +3536,8 @@ spec:
           value: mainnet
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3511,11 +3593,13 @@ spec:
     spec:
       containers:
       - name: site
-        image: ghcr.io/cloudsforge-online/micro-site@sha256:23f4dc9080dbcdface7aa2a63373223ae47d60671e8b8ab2f2bda6cdd155647b
+        image: ghcr.io/cloudsforge-online/micro-site@sha256:316942076091dc45ddc3e38d7482a3a33f79f67107bd7a81385c11be5ad5f0d3
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -3567,11 +3651,13 @@ spec:
     spec:
       containers:
       - name: status-web
-        image: ghcr.io/cloudsforge-online/micro-status-web@sha256:d05479d691968805e390f13d2a7cbab030a058aa0ca8908ddef75a89ff2dff2b
+        image: ghcr.io/cloudsforge-online/micro-status-web@sha256:556e339e50f4e00ee629b339a7de84b9540da6ab5850607cfe6ab482660abda4
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -3623,7 +3709,7 @@ spec:
     spec:
       containers:
       - name: studio
-        image: ghcr.io/cloudsforge-online/micro-studio@sha256:d010b41bf8313718df078748de9efcaec2f25b11856c89f3c93584200eddaa34
+        image: ghcr.io/cloudsforge-online/micro-studio@sha256:2153d07d06f802f9a85557ac743187979ca6814d677ea4c85ef88a99280b3d41
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3656,6 +3742,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3720,7 +3808,7 @@ spec:
     spec:
       containers:
       - name: tessera
-        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:b32da10be649bd5008d81732096084a21260c2053c1e6a4a1891619be15a70c5
+        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:cdff2068d95e589a99e255f10a6fda8c1a5676fcd4c50124e397a0c70e8fd470
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3763,6 +3851,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3818,11 +3908,13 @@ spec:
     spec:
       containers:
       - name: tessera-web
-        image: ghcr.io/cloudsforge-online/micro-tessera-web@sha256:0a25d2ddfd8e6ba8d9d6deb807216097d5387f8cc041ce2251c9e22695428c47
+        image: ghcr.io/cloudsforge-online/micro-tessera-web@sha256:904e2f03a14592df8e3b1231cf0edba5a53636f8690cbf4d56c3f3d11a1f6764
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: world-assets
           mountPath: /usr/share/nginx/html/world-assets
@@ -3880,7 +3972,7 @@ spec:
     spec:
       containers:
       - name: trade
-        image: ghcr.io/cloudsforge-online/micro-trade@sha256:df5ec54d29a0f4d774a8493a2bedc5f8ece25049d9f826dfc3eac17e4f6f13ea
+        image: ghcr.io/cloudsforge-online/micro-trade@sha256:3fd6f064eaa92d50079378beab16585b2dcc2e9259f25934d27cba1b6ee65290
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3923,6 +4015,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/trade?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -3978,11 +4072,13 @@ spec:
     spec:
       containers:
       - name: trade-web
-        image: ghcr.io/cloudsforge-online/micro-trade-web@sha256:4115e467743dd42e7ef70a35b363728f24440e59eaeec640d56936b6eb8a0786
+        image: ghcr.io/cloudsforge-online/micro-trade-web@sha256:486d20cdf0edc6b196d835a783588418fc0e666d393fa5efa420a1dfdb1883b4
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -4034,7 +4130,7 @@ spec:
     spec:
       containers:
       - name: wallet
-        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:61d2bffbc444559e48da8ce70edec18140a062f6104fd87a53bb5363daee0c8c
+        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:d702bcdf7c80c12a4526b83fe929e8b2dc39d85dc3ec1d899bc172afce1ec5ae
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -4087,6 +4183,8 @@ spec:
           value: mainnet
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -4142,7 +4240,7 @@ spec:
     spec:
       containers:
       - name: worlds
-        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:5909b48e38f5ce13f6390f5c49082deea239fe930763adbfe5360d9b179db08b
+        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:1fcf446e899f59213a206bcd90aa02b21b13f0833b701d79f3648f8015385598
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -4183,6 +4281,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -4238,11 +4338,13 @@ spec:
     spec:
       containers:
       - name: worlds-web
-        image: ghcr.io/cloudsforge-online/micro-worlds-web@sha256:a3b357fb6237564d149684a7ec5ff80690ea1b5b6c95542e1ce400289543e055
+        image: ghcr.io/cloudsforge-online/micro-worlds-web@sha256:64a4344afac7c78c174fb05d8d9edaea4db7ccf96ea57bd5024861c2aa181673
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: mainnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
