@@ -3,7 +3,7 @@
 Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
 pattern this generalises.
 
-## Status — wave 0 in progress
+## Status — waves 0 and 1 complete
 
 | item | state |
 |---|---|
@@ -12,7 +12,8 @@ pattern this generalises.
 | `sslmode=require` on all 60 DSNs (§2.2.1) | **live on both networks** (micro-deploy#210). Verified before the change (`show ssl` = on, TCP probe from the ledger pod) and after: `ssl=true, TLSv1.3` on both. 53 mainnet + 55 testnet deployments available, 15/15 apex surfaces serving. |
 | backend-agnostic DB bootstrap job (§2.2.1) | **merged, and run on both networks** (micro-deploy#212). Emits zero `CREATE DATABASE` — all thirty already exist — reasserts ownership, leaves 31 databases each. `cloudsforge` granted `CREATEDB`, which it lacked. |
 | Prometheus/alert reshape to per-series `network` | **investigated; deliberately deferred to wave 2.** The four SLO rules aggregate `network` away and would blend the two networks the moment one pod serves both — but fixing them before any service emits the label orphans every dashboard for no gain. §2.3 records the finding and the fixed ordering. |
-| waves 1–6 | not started |
+| **wave 1** — retire the duplicate testnet bundles | **live** (micro-deploy#213). Testnet 51 → 31 rendered deployments; running pods 56 → 36. The twenty were measured unrouted (live router set read from the gateway's own metrics, not the configmap), unprobed by beacon, and serving zero requests. `site` kept — it is the one web bundle behind a live testnet router. They sit at zero replicas rather than deleted, which is the rollback. |
+| waves 2–6 | not started |
 
 Everything shipped so far is behaviour-preserving: every runtime parameter is
 optional with a default that reproduces today, and the header is ignored by
