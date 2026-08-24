@@ -3,7 +3,7 @@
 Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
 pattern this generalises.
 
-## Status — waves 0 and 1 complete
+## Status — waves 0, 1 and 2 complete
 
 | item | state |
 |---|---|
@@ -13,7 +13,8 @@ pattern this generalises.
 | backend-agnostic DB bootstrap job (§2.2.1) | **merged, and run on both networks** (micro-deploy#212). Emits zero `CREATE DATABASE` — all thirty already exist — reasserts ownership, leaves 31 databases each. `cloudsforge` granted `CREATEDB`, which it lacked. |
 | Prometheus/alert reshape to per-series `network` | **investigated; deliberately deferred to wave 2.** The four SLO rules aggregate `network` away and would blend the two networks the moment one pod serves both — but fixing them before any service emits the label orphans every dashboard for no gain. §2.3 records the finding and the fixed ordering. |
 | **wave 1** — retire the duplicate testnet bundles | **live** (micro-deploy#213). Testnet 51 → 31 rendered deployments; running pods 56 → 36. The twenty were measured unrouted (live router set read from the gateway's own metrics, not the configmap), unprobed by beacon, and serving zero requests. `site` kept — it is the one web bundle behind a live testnet router. They sit at zero replicas rather than deleted, which is the rollback. |
-| waves 2–6 | not started. **Wave 2 was attempted on agora and stopped deliberately — see §5.1, which revises the estimate.** |
+| **wave 2** — the six low-risk class B services | **merged** — agora, policy, analytics, pricing, community, devplatform. All behaviour-preserving: with one DSN configured `networkSql` holds one network and each is today's service. Not deployed; they ship with the next release. |
+| waves 3–6 | not started |
 
 Everything shipped so far is behaviour-preserving: every runtime parameter is
 optional with a default that reproduces today, and the header is ignored by
@@ -391,6 +392,33 @@ handle does not compile.
 Steps 3 and 4 are found by the compiler rather than by reading, which is what
 makes this safe to repeat: turning `ServerDeps.sql` into a type with no query
 methods produces an exhaustive worklist.
+
+**Confirmed across six services.** After agora, the recipe was applied to
+policy, analytics, pricing, community and devplatform. Each ended at between one
+and six compiler errors, all in composition, and each is behaviour-preserving.
+Four more things worth knowing, each of which cost a CI round:
+
+* **`.env.example` and the `optional()` idiom.** `env.test.ts` requires every
+  variable `env.ts` reads to be declared, and extracts the read set by matching
+  `source, 'NAME'`. The bare `source['NAME'] ?? ''` form therefore reads as
+  UNDECLARED even though it plainly reads the variable. Use the service's own
+  `optional(source, 'NAME', '')`.
+* **The lockfile.** Adding `@cloudsforge/http` to a service that lacked it
+  (policy, analytics) is `ERR_PNPM_OUTDATED_LOCKFILE` under `--frozen-lockfile`
+  unless `pnpm-lock.yaml` is committed with it.
+* **Helpers that take only `deps`.** Most services have two or three
+  (`resolveVoice`, `authoriseProjectAs`, `roleInOrg`). They take the handle as a
+  first parameter instead, so it reads as a property of the request.
+* **Standalone functions with their OWN `{ sql }` record** — analytics's
+  `scrapeRefresh` — must be left alone. They run off the scrape path, which has
+  no request and therefore no network. A blanket rename breaks them.
+
+And one variation worth naming: **policy's `decide` dep carries a snapshot
+READER that also closes over the handle.** Rebuilding the object while leaving
+the reader pointed at the other network would make every policy DECISION read
+one estate while its writes went to the other — a divergence that presents as a
+policy bug rather than a routing one. Look for a second closure whenever a dep
+object holds more than data.
 
 ## 6. The cutover mechanism, and why rollback is one line
 
