@@ -2,11 +2,11 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.97  (2026.8.97.yaml)
+# Release:   2026.8.98  (2026.8.98.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.97.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.98.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -15,7 +15,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: activity-migrate-2026-8-97
+  name: activity-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: activity-migrate
@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
       - name: activity-migrate
-        image: ghcr.io/cloudsforge-online/micro-activity@sha256:b54b7390370450875f6843822b4d2b0fea13d3ea21c77ee71ce0df23ce1c18ed
+        image: ghcr.io/cloudsforge-online/micro-activity@sha256:9ee33f998e324e099b49ce73a154db5ff04d74c6f023a575ffbdd075789ac935
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -69,6 +69,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -87,7 +89,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: admin-api-migrate-2026-8-97
+  name: admin-api-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: admin-api-migrate
@@ -105,7 +107,7 @@ spec:
     spec:
       containers:
       - name: admin-api-migrate
-        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:65770532385d1ebc747b57c0af78dc1f8d9df22e0fb644ed02e0821f3fe463e5
+        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:a138f13df2e8948a9008cb5830852c5e687526d2b22f4e97a10496e8ed3bf21b
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -159,6 +161,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -177,7 +181,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: aetherholm-migrate-2026-8-97
+  name: aetherholm-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: aetherholm-migrate
@@ -195,7 +199,7 @@ spec:
     spec:
       containers:
       - name: aetherholm-migrate
-        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:abc4219041fdbecaa888f8f61de9c2a90111dd8286d17de718dc25d1662d2b86
+        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:ed2a682e55f7c1b40f168355dd1c9c4775297872e805c3ea70a1b3c23eb82c8a
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -231,6 +235,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -249,7 +255,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: agora-migrate-2026-8-97
+  name: agora-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: agora-migrate
@@ -267,7 +273,7 @@ spec:
     spec:
       containers:
       - name: agora-migrate
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:c448429c5119580a886b8fdb8af48fe9b235d425ba4ba973070ff3af0df49b43
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:90fd2febba3a4d30bf67369f29f91db9696806c790f73cece76521ba7dc03066
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -309,6 +315,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -327,7 +335,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: analytics-migrate-2026-8-97
+  name: analytics-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: analytics-migrate
@@ -345,7 +353,7 @@ spec:
     spec:
       containers:
       - name: analytics-migrate
-        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:bb9b5fb75704f21c9b9559c89fbbb80bd5aea713887b08987bc034d7a7291bb4
+        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:7e94e22bf27b535e7c466a5ef0fcc4f7ec01330cbe2f16b6447c5e3a10120ff9
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -387,6 +395,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -408,7 +418,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: beacon-migrate-2026-8-97
+  name: beacon-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: beacon-migrate
@@ -426,7 +436,7 @@ spec:
     spec:
       containers:
       - name: beacon-migrate
-        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:c2dfef526d3c001031a19931a1763602296eafd2a0520044cbe73370610552f8
+        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:f755642ccc4709dd13b179180ae3bd09d4b53fd79f8fbad3bb15d1fb57dd2b99
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -468,6 +478,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -482,7 +494,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: billing-migrate-2026-8-97
+  name: billing-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: billing-migrate
@@ -500,7 +512,7 @@ spec:
     spec:
       containers:
       - name: billing-migrate
-        image: ghcr.io/cloudsforge-online/micro-billing@sha256:a15bf3da650ac78cfec8094d2ed4e4492798804089f24bfb0db3c2f8acc7497c
+        image: ghcr.io/cloudsforge-online/micro-billing@sha256:f384c6bf8110b6f992375ca447351bcde259fd5033884d3a105dde847dc5e56d
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -540,6 +552,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -558,7 +572,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: community-migrate-2026-8-97
+  name: community-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: community-migrate
@@ -576,7 +590,7 @@ spec:
     spec:
       containers:
       - name: community-migrate
-        image: ghcr.io/cloudsforge-online/micro-community@sha256:c3fc31fb9903064ee0dfce387c164253798b3154425dd96b88d057b157e4872d
+        image: ghcr.io/cloudsforge-online/micro-community@sha256:c6bedcd9532f10b460f149677511e5258c8b846a3d1343cb8f8c2c0827111449
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -622,6 +636,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -640,7 +656,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-keys-init-2026-8-97
+  name: custody-keys-init-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: custody-keys-init
@@ -667,6 +683,8 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         volumeMounts:
         - name: custody-keys
           mountPath: /vault
@@ -690,7 +708,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-migrate-2026-8-97
+  name: custody-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: custody-migrate
@@ -708,7 +726,7 @@ spec:
     spec:
       containers:
       - name: custody-migrate
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:eb863210f2a99dd7d11678ce3a32e3dcb854dd7720bbabf879766e79851cd74e
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:9992fc261319d204b6ac66b02118c4a27da7c0183184746971f69e4477bd7069
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -746,6 +764,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-custody
@@ -767,7 +787,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: devplatform-migrate-2026-8-97
+  name: devplatform-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: devplatform-migrate
@@ -785,7 +805,7 @@ spec:
     spec:
       containers:
       - name: devplatform-migrate
-        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:b84d9e9a8d7fa471ca95f706b04173bf113d44a3d79ca116204b2897f50fa933
+        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:868c56218297c1798da4e05e53409fc06e59f943c97c011af252c56ff63ba51a
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -821,6 +841,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -839,7 +861,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: emberkin-migrate-2026-8-97
+  name: emberkin-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: emberkin-migrate
@@ -857,7 +879,7 @@ spec:
     spec:
       containers:
       - name: emberkin-migrate
-        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:d74e5a326a362baef36eef9739d7c0ae1644df8f52ffe200d5db1b6784aafa64
+        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:7b830a5e1bb7a4ca7585c9bc5cf6853fe8692eacabba20269edf64163250dc46
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -911,6 +933,8 @@ spec:
           value: http://worlds:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -929,7 +953,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: faucet-migrate-2026-8-97
+  name: faucet-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: faucet-migrate
@@ -947,7 +971,7 @@ spec:
     spec:
       containers:
       - name: faucet-migrate
-        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:4ef333b008058ae00d8fe030b25c244798e14111dae6d88019b1f2348d58f4c4
+        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:65c0dbb6aef9899dd1771286c10afca29df3158b462cea1a8a5f5352bea306dd
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1019,6 +1043,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1033,7 +1059,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: foresight-migrate-2026-8-97
+  name: foresight-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: foresight-migrate
@@ -1051,7 +1077,7 @@ spec:
     spec:
       containers:
       - name: foresight-migrate
-        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:62a1dbb64597fcacbae7423d10ee769170c6c69b576cc21f41c0fb07102ed88e
+        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:e02d56d147bd622dd3a7bea8a38ad442d763c96296701046da30f68cd7072566
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1123,6 +1149,8 @@ spec:
           value: http://pricing:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1141,7 +1169,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: identity-migrate-2026-8-97
+  name: identity-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: identity-migrate
@@ -1159,7 +1187,7 @@ spec:
     spec:
       containers:
       - name: identity-migrate
-        image: ghcr.io/cloudsforge-online/micro-identity@sha256:de8a973653d3723206450b87eaea25f8625f047c3438ee90989f8fbc449fe7fc
+        image: ghcr.io/cloudsforge-online/micro-identity@sha256:57673897ccc5cf4307b950173f42606c5ce8622c59803fc1d43009c8629449d4
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1197,6 +1225,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1218,7 +1248,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: indexer-migrate-2026-8-97
+  name: indexer-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: indexer-migrate
@@ -1236,7 +1266,7 @@ spec:
     spec:
       containers:
       - name: indexer-migrate
-        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:3f781b3e5ae4ea1222a3a15583fdfaeed2b0e138e1bad8d06b1fd51599f37791
+        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:7a9127105a02461a5b2b046cf13293bf247d1dbd3651442995a8f5267b53058d
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1272,6 +1302,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1290,7 +1322,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: lantern-migrate-2026-8-97
+  name: lantern-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: lantern-migrate
@@ -1308,7 +1340,7 @@ spec:
     spec:
       containers:
       - name: lantern-migrate
-        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:fc147919ed7e5ddb8a44be1ac30558722230ac4e17133aa759a72a54bcf9d069
+        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:4b2b024ac728f4a5b9958cdc3c5f48d9578cf2ef22ce9657718b1e1b25d6fa59
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1350,6 +1382,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -1364,7 +1398,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ledger-migrate-2026-8-97
+  name: ledger-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: ledger-migrate
@@ -1382,7 +1416,7 @@ spec:
     spec:
       containers:
       - name: ledger-migrate
-        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:fd7451ae0869c28dd9d615b42a2d18fa48551ea91c02f79a6e3c1c73226f5cf3
+        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:bd618e3b3fe2cdd74f5f9caab16696ab3b0372c751cbb3124173f0fb175d81d8
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1418,6 +1452,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1436,7 +1472,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: market-migrate-2026-8-97
+  name: market-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: market-migrate
@@ -1454,7 +1490,7 @@ spec:
     spec:
       containers:
       - name: market-migrate
-        image: ghcr.io/cloudsforge-online/micro-market@sha256:be01e9dc0b2155b411331f82c222d81a434d3e6fff3895c50ac400cdbcf0c0df
+        image: ghcr.io/cloudsforge-online/micro-market@sha256:cdfe2a6d4b550f77bc3cd99e371925b99a30d61e45d13d934b8d9c79f33f2ecf
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1504,6 +1540,8 @@ spec:
           value: https://studio-testnet.cloudsforge.online
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1522,7 +1560,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: mint-migrate-2026-8-97
+  name: mint-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: mint-migrate
@@ -1540,7 +1578,7 @@ spec:
     spec:
       containers:
       - name: mint-migrate
-        image: ghcr.io/cloudsforge-online/micro-mint@sha256:8a509d1df11c2778387bd9e838de917af87e4598b41863ddea0069dbc55f18b6
+        image: ghcr.io/cloudsforge-online/micro-mint@sha256:aca8542b6c659ae8bf4190ad4eef8141d867cda28e07c66f3c5890f2de290b13
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1584,6 +1622,8 @@ spec:
           value: http://pricing:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1602,7 +1642,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: nda-migrate-2026-8-97
+  name: nda-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: nda-migrate
@@ -1620,7 +1660,7 @@ spec:
     spec:
       containers:
       - name: nda-migrate
-        image: ghcr.io/cloudsforge-online/micro-nda@sha256:ebf61da05240c2b97555730ddcc92d6a6cd2c38e22291fde3ac7f74f6710f2a9
+        image: ghcr.io/cloudsforge-online/micro-nda@sha256:8f5b134dc97cfa2b6e3521a2d5001b4041eb11e8cb981c241977a2725fe46c70
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1660,6 +1700,8 @@ spec:
           value: http://worlds:4000
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1678,7 +1720,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: notify-migrate-2026-8-97
+  name: notify-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: notify-migrate
@@ -1696,7 +1738,7 @@ spec:
     spec:
       containers:
       - name: notify-migrate
-        image: ghcr.io/cloudsforge-online/micro-notify@sha256:82846b3b8f14dbe51283dda8b2ce4d1ea08422e29a1bb2c8f40317224f24f3b9
+        image: ghcr.io/cloudsforge-online/micro-notify@sha256:07edc329e5d89ce2d22e4a81f0f3425d2969b99bcb84ffe6207937ea092f3357
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1734,6 +1776,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1752,7 +1796,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: policy-migrate-2026-8-97
+  name: policy-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: policy-migrate
@@ -1770,7 +1814,7 @@ spec:
     spec:
       containers:
       - name: policy-migrate
-        image: ghcr.io/cloudsforge-online/micro-policy@sha256:04689f0d15c53c7d3746d6f5cc0a97932c021945dbde51ab2d5ba40bc5cb7f3c
+        image: ghcr.io/cloudsforge-online/micro-policy@sha256:4a160c2c74bf7cb7eb5d2aeb9731d086079338af86c609e4acd352f4eeda0d83
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1806,6 +1850,8 @@ spec:
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1824,7 +1870,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pricing-migrate-2026-8-97
+  name: pricing-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: pricing-migrate
@@ -1842,7 +1888,7 @@ spec:
     spec:
       containers:
       - name: pricing-migrate
-        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:4333c55d4d5e2fb15f5dfd03c91985ff30409774d27edc923ad3f2a1932ef536
+        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:f5dfe7a82588ebf112902ed39bfbdd6ed73bfc007b771e599032f5a8a40897ea
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1878,6 +1924,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1896,7 +1944,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: settlement-migrate-2026-8-97
+  name: settlement-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: settlement-migrate
@@ -1914,7 +1962,7 @@ spec:
     spec:
       containers:
       - name: settlement-migrate
-        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:676ff7a0807eba1678e57dd3016ce598b9f6e743f964f07c12c6329f28a62730
+        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:a5a7fbf553fb61a9080d18451e6a1af01b1fe92833310595a74673d6363df3cd
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1970,6 +2018,8 @@ spec:
           value: testnet
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -1988,7 +2038,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-assets-init-2026-8-97
+  name: studio-assets-init-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: studio-assets-init
@@ -2015,6 +2065,8 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         volumeMounts:
         - name: studio-assets
           mountPath: /assets
@@ -2038,7 +2090,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-migrate-2026-8-97
+  name: studio-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: studio-migrate
@@ -2056,7 +2108,7 @@ spec:
     spec:
       containers:
       - name: studio-migrate
-        image: ghcr.io/cloudsforge-online/micro-studio@sha256:d010b41bf8313718df078748de9efcaec2f25b11856c89f3c93584200eddaa34
+        image: ghcr.io/cloudsforge-online/micro-studio@sha256:2153d07d06f802f9a85557ac743187979ca6814d677ea4c85ef88a99280b3d41
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2092,6 +2144,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2110,7 +2164,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-assets-check-2026-8-97
+  name: tessera-assets-check-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: tessera-assets-check
@@ -2137,6 +2191,8 @@ spec:
         env:
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         volumeMounts:
         - name: world-assets
           mountPath: /world-assets
@@ -2157,7 +2213,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-migrate-2026-8-97
+  name: tessera-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: tessera-migrate
@@ -2175,7 +2231,7 @@ spec:
     spec:
       containers:
       - name: tessera-migrate
-        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:b32da10be649bd5008d81732096084a21260c2053c1e6a4a1891619be15a70c5
+        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:cdff2068d95e589a99e255f10a6fda8c1a5676fcd4c50124e397a0c70e8fd470
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2211,6 +2267,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2229,7 +2287,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: trade-migrate-2026-8-97
+  name: trade-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: trade-migrate
@@ -2247,7 +2305,7 @@ spec:
     spec:
       containers:
       - name: trade-migrate
-        image: ghcr.io/cloudsforge-online/micro-trade@sha256:df5ec54d29a0f4d774a8493a2bedc5f8ece25049d9f826dfc3eac17e4f6f13ea
+        image: ghcr.io/cloudsforge-online/micro-trade@sha256:3fd6f064eaa92d50079378beab16585b2dcc2e9259f25934d27cba1b6ee65290
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2295,6 +2353,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/trade?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2313,7 +2373,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: wallet-migrate-2026-8-97
+  name: wallet-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: wallet-migrate
@@ -2331,7 +2391,7 @@ spec:
     spec:
       containers:
       - name: wallet-migrate
-        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:61d2bffbc444559e48da8ce70edec18140a062f6104fd87a53bb5363daee0c8c
+        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:d702bcdf7c80c12a4526b83fe929e8b2dc39d85dc3ec1d899bc172afce1ec5ae
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2383,6 +2443,8 @@ spec:
           value: testnet
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
@@ -2401,7 +2463,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: worlds-migrate-2026-8-97
+  name: worlds-migrate-2026-8-98
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: worlds-migrate
@@ -2419,7 +2481,7 @@ spec:
     spec:
       containers:
       - name: worlds-migrate
-        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:5909b48e38f5ce13f6390f5c49082deea239fe930763adbfe5360d9b179db08b
+        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:1fcf446e899f59213a206bcd90aa02b21b13f0833b701d79f3648f8015385598
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -2459,6 +2521,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
+        - name: CF_NETWORK_SINGLE
+          value: testnet
         envFrom:
         - secretRef:
             name: secret-outbox
