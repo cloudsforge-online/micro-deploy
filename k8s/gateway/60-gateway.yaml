@@ -105,13 +105,13 @@ spec:
             - --entrypoints.web.address=:80
             - --entrypoints.websecure.address=:443
             - --entrypoints.websecure.http.tls=true
-            - --entrypoints.websecure.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+            - --entrypoints.websecure.http.middlewares=cf-network@file,cf-request-id@file,cf-security-headers@file,cf-cors@file
             - --entrypoints.tunnel.address=:81
             # IDENTICAL to websecure's chain, and it has to stay that way: the
             # tunnel is how all public traffic actually arrives, so a chain that
             # drifts here loses request-id, security headers and CORS for real
             # users while :443 — which only a debugger uses — stays green.
-            - --entrypoints.tunnel.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+            - --entrypoints.tunnel.http.middlewares=cf-network@file,cf-request-id@file,cf-security-headers@file,cf-cors@file
             - --metrics.prometheus=true
             - --metrics.prometheus.entrypoint=metrics
             - --metrics.prometheus.addrouterslabels=true

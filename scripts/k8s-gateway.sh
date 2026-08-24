@@ -114,7 +114,13 @@ openssl x509 -in "$CERT_DIR/estate.crt" -noout -subject -enddate 2>/dev/null | s
 # `Host(``)` is a valid rule that matches no request ever sent, Traefik logs
 # nothing, and the surface is simply dead behind a 404 from the catch-all. So
 # the names are checked here, by name, before the pod that would hide it starts.
-NEED="CF_API_HOST CF_WEB_SUFFIX CF_SITE_HOST CF_RPC_UPSTREAM CF_EXPLORER_INDEX_UPSTREAM CF_VERIFY_UPSTREAM"
+# CF_EMBER_NETWORK is required because `cf-network` interpolates it into the
+# `CF-Network` header on EVERY request, from the entrypoint chain. Unset, the
+# template renders an empty value, every request arrives at every service with
+# `CF-Network: ` — and `requestNetwork()` refuses each one. That is the correct
+# failure and a total outage, so it is worth catching before the pod starts
+# rather than in the first request after it.
+NEED="CF_API_HOST CF_WEB_SUFFIX CF_SITE_HOST CF_RPC_UPSTREAM CF_EXPLORER_INDEX_UPSTREAM CF_VERIFY_UPSTREAM CF_EMBER_NETWORK"
 if kubectl get secret env-traefik -n "$NAMESPACE" >/dev/null 2>&1; then
   # KEYS ONLY. The values are hostnames and upstream URLs and one of them is
   # interpolated from a `secret_vars` entry, so none of them is printed here.

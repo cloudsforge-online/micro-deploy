@@ -195,7 +195,7 @@ services:
       # The /internal refusal is NOT in this chain: it is a router at priority
       # 100000 in gateway/dynamic/policy.yml, because a middleware cannot refuse
       # a request and a route can. Nothing a service labels can outrank it.
-      - --entrypoints.websecure.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+      - --entrypoints.websecure.http.middlewares=cf-network@file,cf-request-id@file,cf-security-headers@file,cf-cors@file
 
       # ── THE PLAINTEXT LOOPBACK ENTRYPOINT, AND IT HAS EXACTLY ONE CALLER ─────
       #
@@ -264,7 +264,7 @@ services:
       # gateway/dynamic/policy.yml, and `tunnel` is named in its `entryPoints`
       # beside `web` and `websecure`. Verified on the plaintext path — `/internal`
       # and `//Internal` both answer 502 there, exactly as they do on 443.
-      - --entrypoints.tunnel.http.middlewares=cf-request-id@file,cf-security-headers@file,cf-cors@file
+      - --entrypoints.tunnel.http.middlewares=cf-network@file,cf-request-id@file,cf-security-headers@file,cf-cors@file
 
       # --- observability -----------------------------------------------------
       - --metrics.prometheus=true
