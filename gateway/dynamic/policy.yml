@@ -507,6 +507,44 @@ http:
         accessControlMaxAge: 600
         addVaryHeader: true
 
+    # ------------------------------------------------ which network this is ---
+    #
+    # ── THE GATEWAY IS THE ONLY THING THAT MAY CREATE THIS HEADER ─────────────
+    #
+    # The estate ran as two of everything, and every service learned its network
+    # once, at boot, from env. Consolidating onto one set of pods
+    # (`docs/network-consolidation.md`) makes that constant a lie: one process
+    # serves both. So the network travels WITH the request, and this middleware
+    # is where it is put on — from `CF_NETWORK`, which is a fact about which
+    # gateway this is, and therefore about which hostnames reached it.
+    #
+    # ON THE ENTRYPOINT, NOT ON EACH ROUTER, and that is the whole reason it is
+    # trustworthy. Attached per router it would be forty-odd places to remember,
+    # and the one that got forgotten would not fail — it would deliver a request
+    # with no network to a service holding two database handles. The entrypoint
+    # chain cannot be forgotten by adding a router.
+    #
+    # `customRequestHeaders` OVERWRITES rather than appends, which is exactly
+    # what is wanted: a client that sends its own `CF-Network` is claiming to
+    # decide which network's data it reaches, and the gateway's answer — derived
+    # from the hostname it matched — must win. This is a trust boundary, not a
+    # merge.
+    #
+    # The receiving side is `requestNetwork()` in `@cloudsforge/http`, which
+    # REFUSES a request that arrives without it rather than assuming mainnet.
+    #
+    # `CF_EMBER_NETWORK` RATHER THAN A NEW `CF_NETWORK`, and the reason is drift.
+    # Both gateway env files already carry it, already holding exactly `mainnet`
+    # and `testnet` — it is what `k8s-render.py` keys the whole per-network
+    # render on. A second variable meaning the same thing is a second thing to
+    # keep in step, and the failure when they disagree is silent: the render
+    # would build a testnet estate whose gateway stamps every request `mainnet`.
+    # `scripts/check-gateway-env-guard.py` pins that this name is required.
+    cf-network:
+      headers:
+        customRequestHeaders:
+          CF-Network: '{{ env "CF_EMBER_NETWORK" }}'
+
     # --------------------------------------------------- correlation id ------
     # `x-request-id` is retained alongside W3C traceparent, not replaced by it.
     # Generated here when absent, echoed on every response, shown on every
