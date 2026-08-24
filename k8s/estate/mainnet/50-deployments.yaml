@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.96  (2026.8.96.yaml)
+# Release:   2026.8.97  (2026.8.97.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.96.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.97.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -37,7 +37,7 @@ spec:
     spec:
       containers:
       - name: activity
-        image: ghcr.io/cloudsforge-online/micro-activity@sha256:ca675343fc5e3e975a9fdfbe449477ac3483f061890cc2dcbfbb9d2750e2ef1d
+        image: ghcr.io/cloudsforge-online/micro-activity@sha256:b54b7390370450875f6843822b4d2b0fea13d3ea21c77ee71ce0df23ce1c18ed
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -123,7 +123,7 @@ spec:
     spec:
       containers:
       - name: admin-api
-        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:21944db7cbaa20040d89b7f5f35b74e4fac36d28ccb6ad4b615072a9dc4438d4
+        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:65770532385d1ebc747b57c0af78dc1f8d9df22e0fb644ed02e0821f3fe463e5
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -227,7 +227,7 @@ spec:
     spec:
       containers:
       - name: admin-web
-        image: ghcr.io/cloudsforge-online/micro-admin-web@sha256:da4344db6064eaf3f88dee2a3707e0a29d22ccda7011e6bd47ff92f7284400d5
+        image: ghcr.io/cloudsforge-online/micro-admin-web@sha256:aa9a205dfe0c0aa32786ff9e141c49a3f84475c329392d28635ef73add794855
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -283,7 +283,7 @@ spec:
     spec:
       containers:
       - name: aetherholm
-        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:fedb71c6ed81e92c3ec33cd6c5c4aa8a3344c4ddf9643ff283d9eda2418c13e3
+        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:abc4219041fdbecaa888f8f61de9c2a90111dd8286d17de718dc25d1662d2b86
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -369,7 +369,7 @@ spec:
     spec:
       containers:
       - name: aetherholm-web
-        image: ghcr.io/cloudsforge-online/micro-aetherholm-web@sha256:dd2f2e299c2cba70d31bf52cca2b7a5e64b48e56dbc8dba903c743c15ab249fb
+        image: ghcr.io/cloudsforge-online/micro-aetherholm-web@sha256:e2ede367c187f5ce67c48bb82a957641d20a4c0ef482630fe218f757e8a7dddc
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -425,7 +425,7 @@ spec:
     spec:
       containers:
       - name: agora
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:41d5535e14e6c0d4ae87944eaed8cfa2518b14a2c9425cf5c70fc448e7c9e048
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:c448429c5119580a886b8fdb8af48fe9b235d425ba4ba973070ff3af0df49b43
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -523,7 +523,7 @@ spec:
     spec:
       containers:
       - name: agora-web
-        image: ghcr.io/cloudsforge-online/micro-agora-web@sha256:25143c011fc6a5fc98909f861d0dae11358eead2d6d9f775e9479d79fee13bad
+        image: ghcr.io/cloudsforge-online/micro-agora-web@sha256:a5c5d222faf96ec459cd769e7057bb4a375bc15d7a64022c053056ba5cb39ae4
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -579,7 +579,7 @@ spec:
     spec:
       containers:
       - name: analytics
-        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:b39d342be872a2503b9d616f1c807a716e0fb4cd4fcee070d0fdc9f5542e842e
+        image: ghcr.io/cloudsforge-online/micro-analytics@sha256:bb9b5fb75704f21c9b9559c89fbbb80bd5aea713887b08987bc034d7a7291bb4
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -674,7 +674,7 @@ spec:
     spec:
       containers:
       - name: beacon
-        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:cd495398b3cbb296db07c282611087fa07382b84e3f6e07141689200563f244b
+        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:c2dfef526d3c001031a19931a1763602296eafd2a0520044cbe73370610552f8
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -782,7 +782,7 @@ spec:
     spec:
       containers:
       - name: beacon-web
-        image: ghcr.io/cloudsforge-online/micro-beacon-web@sha256:2d8d5f02aa481c45476171b6b840591811aca75b1e9eac0ace611a56a0991b3e
+        image: ghcr.io/cloudsforge-online/micro-beacon-web@sha256:4a3a10a0cf2f697000b50f298792ec850985b8851638b54cb0fcf51ef7bd5bc8
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -838,7 +838,7 @@ spec:
     spec:
       containers:
       - name: billing
-        image: ghcr.io/cloudsforge-online/micro-billing@sha256:09ca0a3a0454466739bc31f2c44acda201369f0d0317baf82f774648845b8f15
+        image: ghcr.io/cloudsforge-online/micro-billing@sha256:a15bf3da650ac78cfec8094d2ed4e4492798804089f24bfb0db3c2f8acc7497c
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -934,7 +934,7 @@ spec:
     spec:
       containers:
       - name: community
-        image: ghcr.io/cloudsforge-online/micro-community@sha256:49604627f1cd39010037cd573fe02bd7511f93edebdc4179cb0d73ea462b88db
+        image: ghcr.io/cloudsforge-online/micro-community@sha256:c3fc31fb9903064ee0dfce387c164253798b3154425dd96b88d057b157e4872d
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1030,7 +1030,7 @@ spec:
     spec:
       containers:
       - name: custody
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:e1bd6431f0117981b4c283d6055320896781d15dd07b291abbe34ee3a0194b3e
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:eb863210f2a99dd7d11678ce3a32e3dcb854dd7720bbabf879766e79851cd74e
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1127,7 +1127,7 @@ spec:
     spec:
       containers:
       - name: devplatform
-        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:18e0b7e57cb3089af3c32b70402f57a44330b02edc350ea33380952f03c82b3e
+        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:b84d9e9a8d7fa471ca95f706b04173bf113d44a3d79ca116204b2897f50fa933
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1213,7 +1213,7 @@ spec:
     spec:
       containers:
       - name: devportal-web
-        image: ghcr.io/cloudsforge-online/micro-devportal-web@sha256:a23f3ed111cafe936c843b4ab02a13ecaf87e2736cf81a599a867af7f5ea7fe7
+        image: ghcr.io/cloudsforge-online/micro-devportal-web@sha256:715aa9b5741c07926e6dc1dc1eefb9ab06592c49e259627b68516ed844981984
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -1269,7 +1269,7 @@ spec:
     spec:
       containers:
       - name: emberkin
-        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:b1ec6a4531f9d0fe635a4efb6c9b3d31336cc08873b05740be3607458233d7a4
+        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:d74e5a326a362baef36eef9739d7c0ae1644df8f52ffe200d5db1b6784aafa64
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1373,7 +1373,7 @@ spec:
     spec:
       containers:
       - name: emberkin-web
-        image: ghcr.io/cloudsforge-online/micro-emberkin-web@sha256:2582879b0633bd1bbda842be0ee8230118a86aa40ab7e1a04fd7cc6cdd7a6538
+        image: ghcr.io/cloudsforge-online/micro-emberkin-web@sha256:0109808a87f015325ec525ce9c03a4de4e6d0e636894f937d3467274e57074d6
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -1429,7 +1429,7 @@ spec:
     spec:
       containers:
       - name: exchange-web
-        image: ghcr.io/cloudsforge-online/micro-exchange-web@sha256:6c5601e45865748b48c6f018eaa30850aa97412ea9f931d4d54b0f307b68e923
+        image: ghcr.io/cloudsforge-online/micro-exchange-web@sha256:332db0f58f39c1c8960cfee4136ee9b18b00fba3c62567182c38d00a15cfc0bc
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -1485,7 +1485,7 @@ spec:
     spec:
       containers:
       - name: explorer-web
-        image: ghcr.io/cloudsforge-online/micro-explorer-web@sha256:8991f817ac7c1fd6f5ea3afaf8cbec48148832d55f2d06af07b7872b5c29e684
+        image: ghcr.io/cloudsforge-online/micro-explorer-web@sha256:6ebed3a917c28172b0bc28afddbf356f5865b91c803ff9bdbae8cfa69874d1b7
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -1541,7 +1541,7 @@ spec:
     spec:
       containers:
       - name: foresight
-        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:b3a9e72ec41721362cadd84f299016d0d9a107d500989786d9f31a7e7989fe59
+        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:62a1dbb64597fcacbae7423d10ee769170c6c69b576cc21f41c0fb07102ed88e
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1678,7 +1678,7 @@ spec:
     spec:
       containers:
       - name: foresight-web
-        image: ghcr.io/cloudsforge-online/micro-foresight-web@sha256:4ab09c5a79ea318fc4c69e5d65f7958f88475cf3f0282ec5977075debc1a594b
+        image: ghcr.io/cloudsforge-online/micro-foresight-web@sha256:6ea2e1fa92e6423cb9219f8eaee886e5462587f4f047a0248321beff91b4ee2a
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -1734,7 +1734,7 @@ spec:
     spec:
       containers:
       - name: hub-api
-        image: ghcr.io/cloudsforge-online/micro-hub-api@sha256:f6c5249a4ff3b38c51269a867a67dc168f4a10e96d0f02ec017bdceda0347042
+        image: ghcr.io/cloudsforge-online/micro-hub-api@sha256:8a32c74d2edae87d475b3bcdabca4f152dd46afd75d1856290492f34dcd9d404
         imagePullPolicy: IfNotPresent
         env:
         - name: HUB_API_IDENTITY_CREDENTIAL
@@ -1830,7 +1830,7 @@ spec:
     spec:
       containers:
       - name: hub-web
-        image: ghcr.io/cloudsforge-online/micro-hub-web@sha256:7c6ef605212e93278c1f29dd28e7bb972bf2c7b3340939c3a1cad381a958315a
+        image: ghcr.io/cloudsforge-online/micro-hub-web@sha256:df366b3075a6596552e22f6973360975ed7d08b35a8f404bdbbbe1279d23df13
         imagePullPolicy: IfNotPresent
         env:
         - name: POOL_API_PRESENCE
@@ -1888,7 +1888,7 @@ spec:
     spec:
       containers:
       - name: identity
-        image: ghcr.io/cloudsforge-online/micro-identity@sha256:243c83b2b834ccc96a6d043183b7903ea949660e34393f5920bcaebf0d33f3d1
+        image: ghcr.io/cloudsforge-online/micro-identity@sha256:de8a973653d3723206450b87eaea25f8625f047c3438ee90989f8fbc449fe7fc
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2023,7 +2023,7 @@ spec:
     spec:
       containers:
       - name: indexer
-        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:b2c95cf431f331a5092830e164791ccbdae1ad8367e4f24d2aa4ea7a7b9848ed
+        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:3f781b3e5ae4ea1222a3a15583fdfaeed2b0e138e1bad8d06b1fd51599f37791
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2121,7 +2121,7 @@ spec:
     spec:
       containers:
       - name: journal-web
-        image: ghcr.io/cloudsforge-online/micro-journal-web@sha256:93ed654ff1ccf7a1c22ad25ed1ca71d9b3943bb669f748d96f9720b5045c5b33
+        image: ghcr.io/cloudsforge-online/micro-journal-web@sha256:7f96db5a289f10d34a302e6dd5e19dd4d618903ca69a35f3018bba82779767c8
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -2177,7 +2177,7 @@ spec:
     spec:
       containers:
       - name: lantern
-        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:b3cb1405fb0dd757dbe0aa837bd846a89b0ed1795f24429a280d74352d0f9673
+        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:fc147919ed7e5ddb8a44be1ac30558722230ac4e17133aa759a72a54bcf9d069
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2267,7 +2267,7 @@ spec:
     spec:
       containers:
       - name: lantern-web
-        image: ghcr.io/cloudsforge-online/micro-lantern-web@sha256:f290d4455ece3e44a8844be4de8eb1dcbcd74fe712ca4efe3d2e4edb94118961
+        image: ghcr.io/cloudsforge-online/micro-lantern-web@sha256:d844b14df5f1544d61ca90bce6b35ff1a6457e0d1c854ab47316706fe4cd20a4
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -2323,7 +2323,7 @@ spec:
     spec:
       containers:
       - name: ledger
-        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:73027687c147cd08600ca12737a0c619d0a36c80cb7a629129eb42f269748668
+        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:fd7451ae0869c28dd9d615b42a2d18fa48551ea91c02f79a6e3c1c73226f5cf3
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2423,7 +2423,7 @@ spec:
     spec:
       containers:
       - name: market
-        image: ghcr.io/cloudsforge-online/micro-market@sha256:7fba9d255a0296098b779a1221cb32127bd299523988d43421423cf0dd650ced
+        image: ghcr.io/cloudsforge-online/micro-market@sha256:be01e9dc0b2155b411331f82c222d81a434d3e6fff3895c50ac400cdbcf0c0df
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2523,7 +2523,7 @@ spec:
     spec:
       containers:
       - name: market-web
-        image: ghcr.io/cloudsforge-online/micro-market-web@sha256:b28ff15abb089db8cc7d278782c3737c7a79320aa529846fc06652a8885b0ade
+        image: ghcr.io/cloudsforge-online/micro-market-web@sha256:097cde054fe0d2b8edb9a1e167bc3fde70f658b885516d7eb2a96856d16d5e7d
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -2579,7 +2579,7 @@ spec:
     spec:
       containers:
       - name: mint
-        image: ghcr.io/cloudsforge-online/micro-mint@sha256:5e5f9990fc89665e0572cb8d0a025114002379a40f5bfd3d2b9b267bcfd11c55
+        image: ghcr.io/cloudsforge-online/micro-mint@sha256:8a509d1df11c2778387bd9e838de917af87e4598b41863ddea0069dbc55f18b6
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2691,7 +2691,7 @@ spec:
     spec:
       containers:
       - name: mint-web
-        image: ghcr.io/cloudsforge-online/micro-mint-web@sha256:72cc1e3a00a0dd2ac85c7c73123b1920ad3bd9c55ee4a55c2e431af086d9a1d7
+        image: ghcr.io/cloudsforge-online/micro-mint-web@sha256:ce221691fbf352d4428340ed3ad5561e4a190cc311f04af4167c9d0c9300e264
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -2747,7 +2747,7 @@ spec:
     spec:
       containers:
       - name: nda
-        image: ghcr.io/cloudsforge-online/micro-nda@sha256:7dae9ded751d05a51d365b0e15938dc66be104c31bc2bc415bddae5903158d46
+        image: ghcr.io/cloudsforge-online/micro-nda@sha256:ebf61da05240c2b97555730ddcc92d6a6cd2c38e22291fde3ac7f74f6710f2a9
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2843,7 +2843,7 @@ spec:
     spec:
       containers:
       - name: network-site
-        image: ghcr.io/cloudsforge-online/micro-network-site@sha256:a7414c6b0a4210eb8a41d4811085c0bb59a8a2b7c30f77f6468ccd9cf23b367a
+        image: ghcr.io/cloudsforge-online/micro-network-site@sha256:1f60a8867b56014cb1b796c3975c850beea45a87d2fb75189d7b3355f5589022
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -2899,7 +2899,7 @@ spec:
     spec:
       containers:
       - name: notify
-        image: ghcr.io/cloudsforge-online/micro-notify@sha256:9626a511ee6f9ba60b5ed7b8838d6871931df7db82fba0b2b4fac2c4fe6783fb
+        image: ghcr.io/cloudsforge-online/micro-notify@sha256:82846b3b8f14dbe51283dda8b2ce4d1ea08422e29a1bb2c8f40317224f24f3b9
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3035,7 +3035,7 @@ spec:
     spec:
       containers:
       - name: policy
-        image: ghcr.io/cloudsforge-online/micro-policy@sha256:88f629e5cc4cf108a068d5633bc1a25c2e815972fde2009ada99b182bf8a3a3f
+        image: ghcr.io/cloudsforge-online/micro-policy@sha256:04689f0d15c53c7d3746d6f5cc0a97932c021945dbde51ab2d5ba40bc5cb7f3c
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3121,7 +3121,7 @@ spec:
     spec:
       containers:
       - name: pool
-        image: ghcr.io/cloudsforge-online/micro-pool@sha256:89e7ec2badd88c27cc9b55187101e3758ceec2c925d06896e2aebb25eebb39e6
+        image: ghcr.io/cloudsforge-online/micro-pool@sha256:4218274d1fb243681ef69ba13a47df2d487df3dd397caad8fefcac0457d6a7f7
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3259,7 +3259,7 @@ spec:
     spec:
       containers:
       - name: pool-web
-        image: ghcr.io/cloudsforge-online/micro-pool-web@sha256:2bd050d3f3fb507e787c1fd8a942f99e37b4d32416f59ec275b254e73a0ea616
+        image: ghcr.io/cloudsforge-online/micro-pool-web@sha256:d75281f1b54972ce51b9c3a0f6d4d61fef545c5ad7b46ef1f3fd44fe2b6b74f0
         imagePullPolicy: IfNotPresent
         env:
         - name: POOL_API_PRESENCE
@@ -3317,7 +3317,7 @@ spec:
     spec:
       containers:
       - name: pricing
-        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:d7b90afdeb69cd35befb82405a6670176b2b69fa00f05a2254387056fd03e589
+        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:4333c55d4d5e2fb15f5dfd03c91985ff30409774d27edc923ad3f2a1932ef536
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3405,7 +3405,7 @@ spec:
     spec:
       containers:
       - name: settlement
-        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:4b52ac1a7f5ecd523f45a6367257330c69007dd125355f1c33173b69a0b5002c
+        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:676ff7a0807eba1678e57dd3016ce598b9f6e743f964f07c12c6329f28a62730
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3511,7 +3511,7 @@ spec:
     spec:
       containers:
       - name: site
-        image: ghcr.io/cloudsforge-online/micro-site@sha256:3b1cd4426b3102b5e4cdcbd8553f29c717d1a2284c931555717f0c6ba373c201
+        image: ghcr.io/cloudsforge-online/micro-site@sha256:23f4dc9080dbcdface7aa2a63373223ae47d60671e8b8ab2f2bda6cdd155647b
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -3567,7 +3567,7 @@ spec:
     spec:
       containers:
       - name: status-web
-        image: ghcr.io/cloudsforge-online/micro-status-web@sha256:a2e504df1f1a6bc22bb12dc2fa6b583dbf901b11860545fd20a4d1ccc850913e
+        image: ghcr.io/cloudsforge-online/micro-status-web@sha256:d05479d691968805e390f13d2a7cbab030a058aa0ca8908ddef75a89ff2dff2b
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -3623,7 +3623,7 @@ spec:
     spec:
       containers:
       - name: studio
-        image: ghcr.io/cloudsforge-online/micro-studio@sha256:8d7fa7cf256cb9a780c652a4420e868ca838013ba73be34b6e7e6b03698597cb
+        image: ghcr.io/cloudsforge-online/micro-studio@sha256:d010b41bf8313718df078748de9efcaec2f25b11856c89f3c93584200eddaa34
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3720,7 +3720,7 @@ spec:
     spec:
       containers:
       - name: tessera
-        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:f8583e7c2d56c7f5051cb115f073328e7c8e87c9b0439290f82e1d3c21a37ac8
+        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:b32da10be649bd5008d81732096084a21260c2053c1e6a4a1891619be15a70c5
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3818,7 +3818,7 @@ spec:
     spec:
       containers:
       - name: tessera-web
-        image: ghcr.io/cloudsforge-online/micro-tessera-web@sha256:f6041a58746a02e5b00e39b198d601f5fcae18d7f17ac46f68fe164b66694a7b
+        image: ghcr.io/cloudsforge-online/micro-tessera-web@sha256:0a25d2ddfd8e6ba8d9d6deb807216097d5387f8cc041ce2251c9e22695428c47
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -3880,7 +3880,7 @@ spec:
     spec:
       containers:
       - name: trade
-        image: ghcr.io/cloudsforge-online/micro-trade@sha256:aafc942efabca5c59fc94dc7b428a6f77eda9aa0fb79906c6c33ddb320e6d0f2
+        image: ghcr.io/cloudsforge-online/micro-trade@sha256:df5ec54d29a0f4d774a8493a2bedc5f8ece25049d9f826dfc3eac17e4f6f13ea
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -3978,7 +3978,7 @@ spec:
     spec:
       containers:
       - name: trade-web
-        image: ghcr.io/cloudsforge-online/micro-trade-web@sha256:a9d9670a64687e72b0ddb30eb2bed53f9ca28a982f064002194d6141b772acfc
+        image: ghcr.io/cloudsforge-online/micro-trade-web@sha256:4115e467743dd42e7ef70a35b363728f24440e59eaeec640d56936b6eb8a0786
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -4034,7 +4034,7 @@ spec:
     spec:
       containers:
       - name: wallet
-        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:989a7bf0d66591e797dbb1413a9a5113b9f895166e7c0882341f7763c3998095
+        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:61d2bffbc444559e48da8ce70edec18140a062f6104fd87a53bb5363daee0c8c
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -4142,7 +4142,7 @@ spec:
     spec:
       containers:
       - name: worlds
-        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:812a556b188caaec3141b6bf6664cc7bc9f88d1c0f44cf8cb3cfc282ea46031f
+        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:5909b48e38f5ce13f6390f5c49082deea239fe930763adbfe5360d9b179db08b
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -4238,7 +4238,7 @@ spec:
     spec:
       containers:
       - name: worlds-web
-        image: ghcr.io/cloudsforge-online/micro-worlds-web@sha256:b3317d2dd2dce17586dedf365f3bfb647ea066438fb2e9560b96134ecfa44815
+        image: ghcr.io/cloudsforge-online/micro-worlds-web@sha256:a3b357fb6237564d149684a7ec5ff80690ea1b5b6c95542e1ce400289543e055
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
