@@ -191,6 +191,37 @@ NETWORKS = {
 # mainnet-only because there is nothing to mine on a regtest chain.
 DEFAULT_PROFILES = {"mainnet": {"pool"}, "testnet": {"ember-testnet"}}
 
+# ── THE TESTNET WEB BUNDLES THAT NOTHING ROUTES TO ──────────────────────────
+#
+# Wave 1 of `docs/network-consolidation.md`. Every one of these was measured on
+# 2026-08-21 against the running testnet gateway: behind no live router, named by
+# no beacon target, and with an nginx log containing worker-startup notices and
+# not one request.
+#
+# AN EXPLICIT LIST, NOT `name.endswith("-web")`, and the reason is `site`. The
+# testnet gateway's live web routers are `cf-web-site`, `cf-web-nimbus`,
+# `cf-web-pay`, `cf-web-studio` and `cf-web-vault`; the last four point at APIs
+# (identity, wallet, studio, custody), and the first at this bundle. A pattern
+# would have taken `site` with the rest and turned a consolidation into an
+# outage. `network-site` is a different service and is in the list.
+RETIRED_TESTNET_SURFACES = frozenset({
+    "admin-web", "aetherholm-web", "agora-web", "beacon-web", "devportal-web",
+    "emberkin-web", "exchange-web", "explorer-web", "foresight-web", "hub-web",
+    "journal-web", "lantern-web", "market-web", "mint-web", "network-site",
+    "pool-web", "status-web", "tessera-web", "trade-web", "worlds-web",
+})
+
+
+def is_retired_surface(name, service):
+    """True when this service is a web bundle the retirement gate has orphaned.
+
+    Membership is by NAME so that a service added later is rendered by default —
+    the safe direction. A new surface that should also be retired has to be named
+    here, which is a decision somebody makes rather than a pattern that swallows
+    it silently.
+    """
+    return name in RETIRED_TESTNET_SURFACES
+
 # `postgres` is not rendered. CloudNativePG owns the database now and
 # k8s/database/ carries the Cluster, the 30 Database objects and the `postgres`
 # Service alias that keeps all 57 DSNs spelling `@postgres:5432`.
@@ -458,6 +489,7 @@ def main():
     resolver = Resolver(config, secret_vars)
     pvcs, jobs, svcs, deployments = [], [], [], []
     unresolved = []
+    retired_surfaces: list[str] = []
 
     for name in sorted(services):
         if name in EXCLUDED_SERVICES:
@@ -466,6 +498,31 @@ def main():
 
         service_profiles = set(service.get("profiles") or [])
         if service_profiles and not (service_profiles & profiles):
+            continue
+
+        # ── A RETIRED SURFACE IS NOT DEPLOYED, IT IS ABSENT ──────────────────
+        #
+        # Wave 1 of the network consolidation (`docs/network-consolidation.md`).
+        # The combined view (micro-org#459) made ONE bundle serve both networks:
+        # the reader switches network in place and the bundle re-points its reads
+        # at the other estate. `CF_WEB_RETIRED=true` on testnet has since gated
+        # every testnet web ROUTER off, so on 2026-08-21 these twenty pods were
+        # measured to be behind no live router, probed by no beacon target, and
+        # serving zero requests — twenty nginx containers rendering byte-identical
+        # bundles that nothing could reach.
+        #
+        # Scaling them to zero by hand does not survive the next deploy, which is
+        # why the decision belongs here rather than in a kubectl command: the
+        # renderer is the thing that decides what exists.
+        #
+        # `site` IS STILL RENDERED, and that exception is measured too — the
+        # testnet gateway's live router set is exactly `cf-web-site`,
+        # `cf-web-nimbus`, `cf-web-pay`, `cf-web-studio`, `cf-web-vault`, and of
+        # those only the first has a web bundle behind it; the other four point at
+        # APIs (identity, wallet, studio, custody). Dropping `site` would be an
+        # outage, so it is named rather than pattern-matched.
+        if config.get("CF_WEB_RETIRED") == "true" and is_retired_surface(name, service):
+            retired_surfaces.append(name)
             continue
 
         # ── WHICH IMAGE ──────────────────────────────────────────────────────
