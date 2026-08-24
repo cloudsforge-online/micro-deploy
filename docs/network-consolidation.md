@@ -758,6 +758,81 @@ next wave waits.
 - Hearth-devkit and conformance tooling — dev-only, follows whenever
   convenient.
 
+### 5.9 The literal `mainnet` has three hiding places, and a render variable that reaches nothing
+
+The same defect has now been fixed three times, in three structures, across two
+deploys. Each fix was correct and in place when the next one fired.
+
+| Deploy | Structure | Symptom |
+|---|---|---|
+| 2026.8.97 | `networkSql({ mainnet: sql })` | 5 testnet pods refuse their own data |
+| 2026.8.98 | `[{ network: 'mainnet' as const, queue }]` | 3 testnet pods **exit** on first request |
+| 2026.8.98 | `for (const [network] of [['mainnet', sql]])` | testnet logs its schema checks as mainnet |
+
+The shape is always the same: one image, one codebase, two deployments, and a
+line that names an estate the pod might not be.
+
+**The render was setting `CF_NETWORK_SINGLE` where nothing could read it.**
+`config` in `k8s-render.py` is the compose *interpolation* environment — it
+resolves `${VAR}` in compose files. No compose file references
+`${CF_NETWORK_SINGLE}`, so the variable resolved nothing and reached no
+container. Every testnet pod read it as absent and fell back to `mainnet`,
+which meant the whole 2026.8.97 code fix could not have worked no matter how
+correct it was. It is injected at the container-env site now, beside
+`NODE_EXTRA_CA_CERTS`.
+
+Worth stating plainly: for one deploy the fix and the defect were both present,
+and the deploy still failed the same way. Nothing about the code was wrong.
+
+#### The second fault was strictly worse than the first
+
+`planeFor` throws a bare `Error`, and `forRequest(deps, …)` was evaluated on the
+`void handle(…)` line — one line below the try §5.7 added, and still
+synchronous. An uncaught throw in an HTTP request listener is an unhandled
+exception, and node exits on those.
+
+So the failure mode was not the 500 §5.7 built, nor even the hang §5.7 removed.
+The pod **died**, and its replacement died on the next request:
+
+```
+ready → first request → exit → restart → ready → request → exit
+```
+
+That made it a remote crash reachable by anyone who can set a header. A
+*mainnet* pod handed `CF-Network: testnet` would have gone down identically, and
+mainnet pods sit behind a public gateway. Only the absence of such a request
+kept mainnet up while testnet crash-looped.
+
+`forRequest` is resolved inside the try in every service now. The rule is: **no
+per-request dependency is resolved outside it**, because "which resolutions can
+throw" is not a property worth tracking per service.
+
+#### Why six waves of green tests never caught any of it
+
+Every service has tests asserting that an unheld network is REFUSED, and they
+passed on the broken code every time — because it *was* refused, correctly, for
+data the pod was holding under the wrong name.
+
+Nothing asserted **which networks a pod holds**. That is the assertion, and it
+now lives in `src/ownnetwork.test.ts` in each consolidated service: no
+per-network map names an estate directly, `ownNetwork` is declared from
+`CF_NETWORK_SINGLE` above every use, and `forRequest` is inside the try. It is
+per-repository rather than an estate sweep so it fails on the pull request that
+introduces the defect rather than on the release that ships it.
+
+#### The verification gate, restated
+
+§5.8 said a wave's gate must include one real request on the path the wave
+changes. That was right and still insufficient — 2026.8.98 was verified as
+"51/51 and 31/31 available" and three pods were already dying, because
+**readiness is not a request**. These pods boot, pass `/readyz`, report ready,
+and die on the first real traffic.
+
+So: for each network, one real request through the gateway, one internal
+service-to-service request with no header, and one request stamped for the
+*other* network — that last one must answer 500 and the pod must still be
+running afterwards.
+
 ---
 
 *Prior art this plan leans on: [`apex-consolidation.md`](apex-consolidation.md)
