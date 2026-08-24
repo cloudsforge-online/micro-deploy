@@ -51,24 +51,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: admin-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: admin-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: admin-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: aetherholm
   namespace: cf-testnet
   labels:
@@ -87,24 +69,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: aetherholm-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: aetherholm-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: aetherholm-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: agora
   namespace: cf-testnet
   labels:
@@ -119,24 +83,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: agora-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: agora-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: agora-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -173,24 +119,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: beacon-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: beacon-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: beacon-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -267,24 +195,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: devportal-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: devportal-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: devportal-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: emberkin
   namespace: cf-testnet
   labels:
@@ -299,60 +209,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: emberkin-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: emberkin-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: emberkin-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: exchange-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: exchange-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: exchange-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: explorer-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: explorer-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: explorer-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -393,24 +249,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: foresight-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: foresight-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: foresight-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: hub-api
   namespace: cf-testnet
   labels:
@@ -425,24 +263,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: hub-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: hub-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: hub-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -483,24 +303,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: journal-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: journal-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: journal-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: lantern
   namespace: cf-testnet
   labels:
@@ -515,24 +317,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: lantern-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: lantern-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: lantern-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -573,24 +357,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: market-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: market-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: market-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: mint
   namespace: cf-testnet
   labels:
@@ -609,24 +375,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mint-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: mint-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: mint-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: nda
   namespace: cf-testnet
   labels:
@@ -641,24 +389,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: network-site
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: network-site
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: network-site
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -695,24 +425,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: pool-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: pool-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: pool-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -771,24 +483,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: status-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: status-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: status-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: studio
   namespace: cf-testnet
   labels:
@@ -825,24 +519,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: tessera-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: tessera-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: tessera-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: trade
   namespace: cf-testnet
   labels:
@@ -857,24 +533,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: trade-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: trade-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: trade-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -911,21 +569,3 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: worlds-web
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: worlds-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: worlds-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
