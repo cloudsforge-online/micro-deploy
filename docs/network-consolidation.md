@@ -626,6 +626,45 @@ only at the point it is raised is proved halfway. The question a test has to ask
 is not "does this refuse?" but "does the refusal arrive?" — and those had
 different answers here for the length of six waves.
 
+### 5.8 The gateway does not stamp every request — only the ones that reach it
+
+§2.1 says the gateway stamps `CF-Network` on every request. That sentence is the
+foundation of the whole design and it is **not true**, in a way that only a
+deploy could show.
+
+It is true of requests arriving through the gateway. It is false of every
+service-to-service call, and the estate is full of them: an outbox relay POSTing
+`/v1/events` to `admin-api:4014` goes container to container. Nothing stamps a
+header on it, and nothing can — the gateway is not in that path and adding it
+would route internal traffic through the edge.
+
+So `requestNetwork` refused them, and mainnet's admin-api answered 500 on every
+internal event delivery until it was rolled back.
+
+**The companion defect, found in the same ten minutes.** The composition roots
+registered their one DSN under a hardcoded `mainnet`. Same image, same code,
+different env — so the testnet pod held its testnet DSN under the name `mainnet`
+and refused every request the gateway had correctly stamped `testnet`. Five
+testnet services crash-looped. The refusal was right; the registration was wrong.
+
+**Both are the same missing fact:** a pod serving one estate has to KNOW which
+estate it is. `CF_NETWORK_SINGLE` is that declaration, and it is now set by the
+render for every deployment — not the `pnpm dev` convenience this document
+called it, and not "never in production", which was wrong twice over.
+
+The header still wins when present, so declaring the network cannot mask a
+mis-stamped external request. It only answers the internal callers that never
+had one.
+
+**What this says about the plan.** Waves 2 through 6 were each verified by unit
+tests, typechecks and CI, and all of it passed. What no test could see is that a
+premise stated in §2 was false — and a premise is exactly the thing tests
+inherit rather than check. The estate was rolled back in eleven minutes and
+nothing was lost, which is what §6's one-line rollback is for; but the lesson is
+that the verification gate for a wave has to include one real request on the
+path the wave changes, and this one only ever exercised the path through the
+gateway.
+
 ## 6. The cutover mechanism, and why rollback is one line
 
 Both namespaces stay alive throughout. The unit of change is one service:
