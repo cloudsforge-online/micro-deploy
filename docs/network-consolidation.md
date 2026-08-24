@@ -587,6 +587,45 @@ support case nobody can close.
 COUNT so that a fifth bundle added later is a visible omission rather than a
 silent one.
 
+### 5.7 The refusal has to be LOUD, and for a while it was silent
+
+The property everything above rests on is that `networkSql.for()` REFUSES a
+network this deployment cannot serve, rather than substituting the handle it
+does have. Every service was written that way and every test asserted it.
+
+It still hung the connection.
+
+The resolution sat on a bare line above the dispatch:
+
+```ts
+const sql = deps.sql.for(network) as unknown as Db
+void handle(matched, { …, sql }, forRequest(deps, sql))
+```
+
+Both expressions are evaluated BEFORE `handle` returns a promise, so the throw
+escaped the `void` expression — past a `.catch` that had not been attached yet —
+and the request listener returned having sent nothing. The socket then stayed
+open until the client gave up.
+
+**A refusal nobody receives is worse than no refusal.** The caller cannot retry,
+cannot report it, and cannot tell it apart from a slow query. Every unit test
+passed throughout, because they assert that `for()` throws — which it does. What
+nothing asserted was that the throw reaches the caller.
+
+It surfaced by accident: a micro-trade fixture missing one dep made every request
+in that suite hang, and CI ran for fifty minutes on a suite that finishes in
+three seconds before anybody asked why.
+
+Fixed in all twenty-one services by resolving inside a `try` that answers 500
+`network_unavailable` before any route runs, so a refusal cannot leave a
+half-finished write. `network.test.ts` now pins that an unservable network
+ANSWERS, not merely that it throws.
+
+**The general lesson, which is not about this estate.** A safety property proved
+only at the point it is raised is proved halfway. The question a test has to ask
+is not "does this refuse?" but "does the refusal arrive?" — and those had
+different answers here for the length of six waves.
+
 ## 6. The cutover mechanism, and why rollback is one line
 
 Both namespaces stay alive throughout. The unit of change is one service:
