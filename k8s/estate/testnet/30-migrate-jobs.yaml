@@ -48,7 +48,7 @@ spec:
               key: CF_POSTGRES_PASSWORD
               optional: false
         - name: ACTIVITY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
           value: testnet
         - name: CLOUDSFORGE_TAG
@@ -126,7 +126,7 @@ spec:
               key: ADMIN_API_IDENTITY_CREDENTIAL
               optional: false
         - name: ADMIN_API_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/admin_api
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/admin_api?sslmode=require
         - name: ADMIN_API_ESTATE_ENVIRONMENT
           value: testnet
         - name: AUTH_EXPECTED_NETWORK
@@ -210,7 +210,7 @@ spec:
               key: CF_POSTGRES_PASSWORD
               optional: false
         - name: AETHERHOLM_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
           value: testnet
         - name: CLOUDSFORGE_TAG
@@ -288,7 +288,7 @@ spec:
               key: AGORA_IDENTITY_CREDENTIAL
               optional: false
         - name: AGORA_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/agora
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/agora?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
           value: testnet
         - name: CLOUDSFORGE_TAG
@@ -366,7 +366,7 @@ spec:
               key: ANALYTICS_TOKEN
               optional: false
         - name: ANALYTICS_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/analytics
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/analytics?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
           value: testnet
         - name: CLOUDSFORGE_TAG
@@ -449,7 +449,7 @@ spec:
         - name: AUTH_EXPECTED_NETWORK
           value: testnet
         - name: BEACON_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/beacon
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/beacon?sslmode=require
         - name: CLOUDSFORGE_TAG
           value: estate
         - name: IDENTITY_ISSUER
@@ -517,7 +517,7 @@ spec:
         - name: AUTH_EXPECTED_NETWORK
           value: testnet
         - name: BILLING_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/billing
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/billing?sslmode=require
         - name: BILLING_LEDGER_URL
           value: http://ledger:4000
         - name: BILLING_PRICING_URL
@@ -601,7 +601,7 @@ spec:
         - name: CLOUDSFORGE_TAG
           value: estate
         - name: COMMUNITY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/community
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/community?sslmode=require
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_JWKS_URL
@@ -727,7 +727,7 @@ spec:
         - name: CLOUDSFORGE_TAG
           value: estate
         - name: CUSTODY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/custody
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/custody?sslmode=require
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_JWKS_URL
@@ -804,7 +804,7 @@ spec:
         - name: CLOUDSFORGE_TAG
           value: estate
         - name: DEVPLATFORM_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform?sslmode=require
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_JWKS_URL
@@ -890,7 +890,7 @@ spec:
         - name: CLOUDSFORGE_TAG
           value: estate
         - name: EMBERKIN_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/emberkin
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/emberkin?sslmode=require
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_JWKS_URL
@@ -1002,7 +1002,7 @@ spec:
         - name: FAUCET_CUSTODY_USER_ID
           value: faucet-estate
         - name: FAUCET_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/faucet
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/faucet?sslmode=require
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_JWKS_URL
@@ -1092,7 +1092,7 @@ spec:
         - name: FORESIGHT_CUSTODIAL_ADDRESS
           value: ''
         - name: FORESIGHT_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/foresight
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/foresight?sslmode=require
         - name: FORESIGHT_HOUSE_ADDRESS
           value: ''
         - name: FORESIGHT_ORACLE_ORDER_ID
@@ -1178,7 +1178,7 @@ spec:
         - name: CLOUDSFORGE_TAG
           value: estate
         - name: IDENTITY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/identity
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/identity?sslmode=require
         - name: IDENTITY_DELETION_GRACE_DAYS
           value: '0'
         - name: IDENTITY_ISSUER
@@ -1261,7 +1261,7 @@ spec:
         - name: IDENTITY_URL
           value: https://nimbus.cloudsforge.online
         - name: INDEXER_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/indexer
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/indexer?sslmode=require
         - name: INSTANCE_ID
           value: indexer-migrate
         - name: LOG_LEVEL
@@ -1341,7 +1341,7 @@ spec:
         - name: INSTANCE_ID
           value: lantern-migrate
         - name: LANTERN_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern?sslmode=require
         - name: LOG_LEVEL
           value: info
         - name: NODE_ENV
@@ -1409,7 +1409,7 @@ spec:
         - name: INSTANCE_ID
           value: ledger-migrate
         - name: LEDGER_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/ledger
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/ledger?sslmode=require
         - name: LOG_LEVEL
           value: info
         - name: NODE_ENV
@@ -1493,7 +1493,7 @@ spec:
         - name: LOG_LEVEL
           value: info
         - name: MARKET_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/market
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/market?sslmode=require
         - name: NODE_ENV
           value: production
         - name: POLICY_URL
@@ -1575,7 +1575,7 @@ spec:
         - name: LOG_LEVEL
           value: info
         - name: MINT_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint?sslmode=require
         - name: NODE_ENV
           value: production
         - name: PORT
@@ -1651,7 +1651,7 @@ spec:
         - name: LOG_LEVEL
           value: info
         - name: NDA_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda?sslmode=require
         - name: NODE_ENV
           value: production
         - name: PORT
@@ -1727,7 +1727,7 @@ spec:
         - name: NODE_ENV
           value: production
         - name: NOTIFY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify?sslmode=require
         - name: NOTIFY_PUBLIC_URL
           value: https://hub-testnet.cloudsforge.online
         - name: PORT
@@ -1801,7 +1801,7 @@ spec:
         - name: NODE_ENV
           value: production
         - name: POLICY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy?sslmode=require
         - name: PORT
           value: '4000'
         - name: NODE_EXTRA_CA_CERTS
@@ -1875,7 +1875,7 @@ spec:
         - name: PORT
           value: '4000'
         - name: PRICING_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         envFrom:
@@ -1965,7 +1965,7 @@ spec:
         - name: PORT
           value: '4000'
         - name: SETTLEMENT_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/settlement
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/settlement?sslmode=require
         - name: SETTLEMENT_NETWORK
           value: testnet
         - name: NODE_EXTRA_CA_CERTS
@@ -2089,7 +2089,7 @@ spec:
         - name: PORT
           value: '4000'
         - name: STUDIO_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         envFrom:
@@ -2208,7 +2208,7 @@ spec:
         - name: PORT
           value: '4022'
         - name: TESSERA_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         envFrom:
@@ -2292,7 +2292,7 @@ spec:
         - name: PRICING_URL
           value: http://pricing:4000
         - name: TRADE_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/trade
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/trade?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         envFrom:
@@ -2376,7 +2376,7 @@ spec:
         - name: WALLET_CHALLENGE_URI
           value: http://localhost:4103
         - name: WALLET_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/wallet
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/wallet?sslmode=require
         - name: WALLET_FEE_QUOTES
           value: '{"EMBER":"21000000000000","LTC":"10000","BTC":"3000"}'
         - name: WALLET_NETWORK
@@ -2456,7 +2456,7 @@ spec:
         - name: PORT
           value: '4000'
         - name: WORLDS_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         envFrom:
