@@ -3,7 +3,14 @@
 Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
 pattern this generalises.
 
-## Status — every service in the plan is done; the cutover is what remains
+## Status — every service is network-CAPABLE and live; the cutover has not started
+
+All 30 services now run code that can serve either estate, deployed to both
+networks at 2026.8.99 and verified on all three request paths (§7). What has
+NOT happened is §6: each pod still holds exactly one DSN and serves exactly one
+estate. The remaining work is the per-service cutover — import the testnet
+database, give the pod its second pool, repoint one router — then the gateway
+merge and the namespace deletion.
 
 | item | state |
 |---|---|
@@ -11,14 +18,13 @@ pattern this generalises.
 | gateway stamps `CF-Network` (§2.1) | **live on both networks** (micro-deploy#209). Middleware loaded, entrypoint args on the pod, Traefik clean. End-to-end proof waits for the first service that reads it. |
 | `sslmode=require` on all 60 DSNs (§2.2.1) | **live on both networks** (micro-deploy#210). Verified before the change (`show ssl` = on, TCP probe from the ledger pod) and after: `ssl=true, TLSv1.3` on both. 53 mainnet + 55 testnet deployments available, 15/15 apex surfaces serving. |
 | backend-agnostic DB bootstrap job (§2.2.1) | **merged, and run on both networks** (micro-deploy#212). Emits zero `CREATE DATABASE` — all thirty already exist — reasserts ownership, leaves 31 databases each. `cloudsforge` granted `CREATEDB`, which it lacked. |
-| Prometheus/alert reshape to per-series `network` | **investigated; deliberately deferred to wave 2.** The four SLO rules aggregate `network` away and would blend the two networks the moment one pod serves both — but fixing them before any service emits the label orphans every dashboard for no gain. §2.3 records the finding and the fixed ordering. |
+| Prometheus/alert reshape to per-series `network` | **live** (micro-deploy#225). Twelve `by ()` clauses in `slo.yaml` gained `network`; three consuming alerts name the estate in their summary; both dashboards gained a `$network` selector defaulting to `mainnet`. The precondition was measured before the change rather than assumed — 116 mainnet and 20 testnet `http_requests_total` series live. Alert SEVERITY deliberately unchanged; see §9. |
 | **wave 1** — retire the duplicate testnet bundles | **live** (micro-deploy#213). Testnet 51 → 31 rendered deployments; running pods 56 → 36. The twenty were measured unrouted (live router set read from the gateway's own metrics, not the configmap), unprobed by beacon, and serving zero requests. `site` kept — it is the one web bundle behind a live testnet router. They sit at zero replicas rather than deleted, which is the rollback. |
-| **wave 2** — the six low-risk class B services | **merged** — agora, policy, analytics, pricing, community, devplatform. All behaviour-preserving: with one DSN configured `networkSql` holds one network and each is today's service. Not deployed; they ship with the next release. |
+| **wave 2** — the six low-risk class B services | **merged** — agora, policy, analytics, pricing, community, devplatform. All behaviour-preserving: with one DSN configured `networkSql` holds one network and each is today's service. **Live on both networks at 2026.8.99.** |
 | **wave 4** — the two class B′ singletons | **merged** — identity, notify. Both keep ONE database, as the class says. identity's `net`-claim fallback moves from `IDENTITY_NETWORK` to the request (§5.5); notify gains `deliveries.network` and keeps one pipeline and one SMTP allowance. |
-| **wave 6** — the money core | **merged/open** — ledger, wallet. Both moved last, as the plan requires, and only after every caller already forwarded the header. wallet is the one with no bare `sql` at all: four domain bundles, and rebuilding some but not others is worse than rebuilding none (§5.6). |
+| **wave 6** — the money core | **merged; live at 2026.8.99** — ledger, wallet. Both moved last, as the plan requires, and only after every caller already forwarded the header. wallet is the one with no bare `sql` at all: four domain bundles, and rebuilding some but not others is worse than rebuilding none (§5.6). |
 | **wave 5** — the five class C workers | **merged** — beacon, indexer, custody, settlement, pool. Two surprises, both recorded: beacon is really class B′ (§5.3) and **indexer needed no code change at all** (§5.4). settlement is the real bulkhead — one queue and one runner per estate, because its jobs broadcast transactions. |
-| **wave 3** — the fifteen product class B services | **merged** — activity, studio, lantern, emberkin, worlds, nda, tessera, market, mint, billing, hub-api, admin-api, aetherholm, foresight, trade. Same shape and the same behaviour-preserving property. Not deployed; they ship with the next release. Four of them needed more than the recipe, and §5.2 records what and why. |
-| waves 3–6 | not started |
+| **wave 3** — the fifteen product class B services | **merged** — activity, studio, lantern, emberkin, worlds, nda, tessera, market, mint, billing, hub-api, admin-api, aetherholm, foresight, trade. Same shape and the same behaviour-preserving property. **Live on both networks at 2026.8.99.** Four of them needed more than the recipe, and §5.2 records what and why; three more crash-looped on a second literal `mainnet` and §5.9 records that. |
 
 Everything shipped so far is behaviour-preserving: every runtime parameter is
 optional with a default that reproduces today, and the header is ignored by
@@ -826,6 +832,25 @@ next wave waits.
   the last change, not the first.
 
 ## 9. Explicitly deferred
+
+### Should a testnet fault page somebody at night?
+
+Raised by the wave-2 telemetry gate (micro-deploy#225) and deliberately NOT
+decided there. The SLO rules now group by `network`, so `SLOErrorBudgetBurnFast`,
+`SLOErrorBudgetBurnSlow` and `GatewayErrorRatioHigh` fire per estate — and their
+severity is unchanged, which means a testnet burn pages at the same tier a
+mainnet one does.
+
+That is the honest translation of today's behaviour: before the change, a
+testnet fault was blended into the mainnet number and could page just the same,
+only anonymously. Naming the estate does not make it noisier; it makes what was
+already happening legible.
+
+Whether it *should* page is a policy question — testnet has no users
+([[estate-has-no-real-users]] applies), so the argument for routing it to
+`severity: ticket` is strong. It is left open rather than folded into a
+telemetry change, because changing what wakes somebody up should be a decision
+somebody made rather than a side effect.
 
 - Testnet stratum (pool listeners stay mainnet-only).
 - Any schema-level merge (`network` columns, shared tables) — the database-
