@@ -48,39 +48,60 @@ import subprocess
 import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-GENERATOR = ROOT / "scripts" / "k8s-render-databases.py"
 SQL = ROOT / "compose" / "estate" / "initdb.sql"
-TARGETS = {
-    "mainnet": ROOT / "k8s" / "database" / "21-databases-mainnet.yaml",
-    "testnet": ROOT / "k8s" / "database" / "21-databases-testnet.yaml",
+
+# TWO GENERATORS, ONE SOURCE, AND BOTH ARE CHECKED.
+#
+# `k8s-render-databases.py` emits CloudNativePG `Database` CRDs; `k8s-render-bootstrap.py`
+# emits the portable psql Job that does the same work against any PostgreSQL, which is what
+# lets the estate move to an Azure Flexible Server by repointing one Service
+# (`docs/network-consolidation.md` §2.2.1).
+#
+# Checking only one of them would be worse than checking neither: the two would drift, each
+# would look right on its own, and the failure would be a managed server missing exactly the
+# databases somebody added after the split — discovered when every service reports
+# `database "x" does not exist` at once.
+GENERATORS = {
+    ROOT / "scripts" / "k8s-render-databases.py": {
+        "mainnet": ROOT / "k8s" / "database" / "21-databases-mainnet.yaml",
+        "testnet": ROOT / "k8s" / "database" / "21-databases-testnet.yaml",
+    },
+    ROOT / "scripts" / "k8s-render-bootstrap.py": {
+        "mainnet": ROOT / "k8s" / "database" / "22-bootstrap-mainnet.yaml",
+        "testnet": ROOT / "k8s" / "database" / "22-bootstrap-testnet.yaml",
+    },
 }
 
 failures = []
 
-for missing in [p for p in (GENERATOR, SQL, *TARGETS.values()) if not p.exists()]:
+expected = [SQL, *GENERATORS.keys(), *(t for m in GENERATORS.values() for t in m.values())]
+for missing in [p for p in expected if not p.exists()]:
     failures.append(f"{missing.relative_to(ROOT)} does not exist")
 
 if not failures:
-    for network, target in TARGETS.items():
-        result = subprocess.run(
-            [sys.executable, str(GENERATOR), "--network", network, "--sql", str(SQL)],
-            capture_output=True,
-            text=True,
-        )
-        if result.returncode != 0:
-            # The generator fails closed on an unparseable CREATE DATABASE, a
-            # duplicate, or a name that cannot become a Kubernetes object. Its
-            # message says which; pass it through rather than paraphrasing.
-            failures.append(f"the generator refused to run for {network}:\n{result.stdout}{result.stderr}")
-            continue
-        if result.stdout != target.read_text():
-            failures.append(
-                f"{target.relative_to(ROOT)} is not what the generator produces from "
-                f"{SQL.relative_to(ROOT)}.\n"
-                f"       Regenerate it:\n"
-                f"         ./scripts/k8s-render-databases.py --network {network} "
-                f"--out k8s/database/21-databases-{network}.yaml"
+    for generator, targets in GENERATORS.items():
+        for network, target in targets.items():
+            result = subprocess.run(
+                [sys.executable, str(generator), "--network", network, "--sql", str(SQL)],
+                capture_output=True,
+                text=True,
             )
+            if result.returncode != 0:
+                # The generator fails closed on an unparseable CREATE DATABASE, a
+                # duplicate, or a name that cannot become a Kubernetes object. Its
+                # message says which; pass it through rather than paraphrasing.
+                failures.append(
+                    f"{generator.name} refused to run for {network}:\n{result.stdout}{result.stderr}"
+                )
+                continue
+            if result.stdout != target.read_text():
+                failures.append(
+                    f"{target.relative_to(ROOT)} is not what {generator.name} produces from "
+                    f"{SQL.relative_to(ROOT)}.\n"
+                    f"       Regenerate it:\n"
+                    f"         ./scripts/{generator.name} --network {network} "
+                    f"--out {target.relative_to(ROOT)}"
+                )
 
 if failures:
     print("FAIL: check-k8s-databases-match-initdb")
@@ -88,4 +109,4 @@ if failures:
         print(f"  - {failure}")
     sys.exit(1)
 
-print(f"ok: both k8s/database/21-databases-*.yaml match {SQL.relative_to(ROOT)}")
+print(f"ok: all four generated database artefacts match {SQL.relative_to(ROOT)}")
