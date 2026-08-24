@@ -13,7 +13,7 @@ pattern this generalises.
 | backend-agnostic DB bootstrap job (§2.2.1) | **merged, and run on both networks** (micro-deploy#212). Emits zero `CREATE DATABASE` — all thirty already exist — reasserts ownership, leaves 31 databases each. `cloudsforge` granted `CREATEDB`, which it lacked. |
 | Prometheus/alert reshape to per-series `network` | **investigated; deliberately deferred to wave 2.** The four SLO rules aggregate `network` away and would blend the two networks the moment one pod serves both — but fixing them before any service emits the label orphans every dashboard for no gain. §2.3 records the finding and the fixed ordering. |
 | **wave 1** — retire the duplicate testnet bundles | **live** (micro-deploy#213). Testnet 51 → 31 rendered deployments; running pods 56 → 36. The twenty were measured unrouted (live router set read from the gateway's own metrics, not the configmap), unprobed by beacon, and serving zero requests. `site` kept — it is the one web bundle behind a live testnet router. They sit at zero replicas rather than deleted, which is the rollback. |
-| waves 2–6 | not started |
+| waves 2–6 | not started. **Wave 2 was attempted on agora and stopped deliberately — see §5.1, which revises the estimate.** |
 
 Everything shipped so far is behaviour-preserving: every runtime parameter is
 optional with a default that reproduces today, and the header is ignored by
@@ -316,6 +316,44 @@ Per-service unknowns get settled *in that service's wave*, not now — the
 table above is a plan, and the rule from the apex consolidation stands: the
 sweep that verifies a wave includes the service's own repo, every consumer's
 dev path, and every consumer's tests.
+
+### 5.1 A class B service is a REFACTOR, not a mechanical pass
+
+Attempted on `agora` 2026-08-21 and stopped on purpose, with the work reverted.
+The first two thirds went exactly as this plan assumed:
+
+* `RequestContext` grows `network` (from `requestNetwork`, which refuses an
+  unstamped request) and `sql` — the handle resolved ONCE at the edge, so the
+  twenty-five `deps.sql` call sites become `ctx.sql` and `ServerDeps.sql`
+  becomes a `NetworkSql` with no query methods, making the wrong thing
+  unspellable rather than merely discouraged;
+* `ServerDeps.singleNetwork` from `CF_NETWORK_SINGLE` for `pnpm dev`;
+* two pools at the composition root, `AGORA_DATABASE_URL_TESTNET` unset meaning
+  single-network;
+* `network` on every http metric, including the refusal path.
+
+That reached **five type errors**, all in composition. Then the real one:
+
+**agora builds five DOMAIN DEP OBJECTS at boot — `posts`, `circles`,
+`whispers`, `notifications`, `moderation` — and each closes over a database
+handle. Thirty-two route sites read them.** A per-request network cannot flow
+through an object constructed once at startup, so those five must either be
+rebuilt per request or changed to take the handle as a parameter. That is a
+restructuring of how the service composes its domain layer, not a rename.
+
+**What this means for the plan.** Waves 2–5 were scoped as "teach the service
+to read a header". For any service that composes domain deps at boot — which is
+the estate's house style, so assume most of the twenty-three class B services —
+each is an architectural change with its own review, its own tests and its own
+risk of a subtle cross-network read. The wave sizes in §6 stand as an ORDER;
+they do not stand as an estimate of effort, and nothing about wave 1's
+"twenty pods deleted, no code changed" generalises to them.
+
+**The recommended shape for the first one**, whenever it is picked up: land the
+domain-dep restructuring as its own PR with no network behaviour at all — make
+the five objects take `sql` as a parameter, prove the suite green, ship it —
+and only then add the network on top. Two reviewable changes instead of one
+that mixes a refactor with a data-isolation boundary.
 
 ## 6. The cutover mechanism, and why rollback is one line
 
