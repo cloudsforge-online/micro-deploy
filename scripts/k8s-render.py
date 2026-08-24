@@ -247,10 +247,13 @@ def is_retired_surface(name, service):
 #
 # An explicit list rather than a flag, so that adding a name is a reviewable diff
 # that says which service crossed and when.
-CONSOLIDATED_SERVICES: set[str] = set()
-# Empty deliberately. The mechanism ships before its first use so that the diff which
-# actually moves a service is one line naming that service, reviewed on its own, rather
-# than a mechanism and a cutover landing together and failing as one thing.
+CONSOLIDATED_SERVICES: set[str] = {
+    # agora, 2026-08-25. The pilot: wave 2's lowest-risk service, and the one the
+    # plan used to prove each earlier step. Its testnet database is adopted, its
+    # testnet Service is a CNAME into this namespace, and its testnet Deployment
+    # sits at zero replicas — which is the rollback, and why it is not deleted.
+    "agora",
+}
 
 EXCLUDED_SERVICES = {"postgres"}
 
@@ -520,10 +523,48 @@ def main():
     retired_surfaces: list[str] = []
 
     for name in sorted(services):
-        # A consolidated service exists once, in the mainnet namespace, and the
-        # testnet router reaches it by FQDN. Rendering it here too would run a
-        # second migrator against a schema the mainnet pod owns.
+        # ── A CONSOLIDATED SERVICE, SEEN FROM THE TESTNET NAMESPACE ──────────
+        #
+        # No Deployment and no migrate Job here: the service exists once, in
+        # `cloudsforge-estate`, and running a second migrator against a schema
+        # that pod now owns is the fastest way to corrupt it.
+        #
+        # The NAME still has to resolve, though, and that is the whole reason
+        # this is an ExternalName rather than a deletion. Two kinds of caller
+        # reach `http://agora:4000` inside `cf-testnet`:
+        #
+        #   * the testnet gateway, whose backends are namespace-local by design;
+        #   * every other testnet service making a service-to-service call.
+        #
+        # An ExternalName is a DNS CNAME, so BOTH keep working with no edit to
+        # the gateway file and no edit to any caller. It also means the testnet
+        # gateway's `CF-Network: testnet` header — stamped on its own entrypoint
+        # chain — rides along unchanged, which is what lets one pod answer for
+        # both estates without either gateway lying about which is asking.
         if args.network == "testnet" and name.removesuffix("-migrate") in CONSOLIDATED_SERVICES:
+            if not name.endswith("-migrate"):
+                svcs.append(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "Service",
+                        "metadata": {
+                            "name": name,
+                            "namespace": namespace,
+                            "labels": {"app.kubernetes.io/name": name, "app.kubernetes.io/part-of": "cloudsforge"},
+                            "annotations": {
+                                "online.cloudsforge.why": (
+                                    "Consolidated: one pod in cloudsforge-estate serves both estates. "
+                                    "A CNAME rather than a deletion so the gateway's namespace-local "
+                                    "backend and every service-to-service call keep resolving unchanged."
+                                )
+                            },
+                        },
+                        "spec": {
+                            "type": "ExternalName",
+                            "externalName": f"{name}.{NETWORKS['mainnet']}.svc.cluster.local",
+                        },
+                    }
+                )
             continue
         if name in EXCLUDED_SERVICES:
             continue
