@@ -1,7 +1,22 @@
 # Network consolidation — one set of pods for both networks
 
-**Status: PLAN. Nothing below is implemented.** Written 2026-08-21, after the
-frontend combined view (micro-org#459) proved the pattern this generalises.
+Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
+pattern this generalises.
+
+## Status — wave 0 in progress
+
+| item | state |
+|---|---|
+| `runtime` http / auth / db / telemetry (§4) | **merged** (micro-runtime#7). Not live: services still run images built before it, and nothing consumes it until wave 2. |
+| gateway stamps `CF-Network` (§2.1) | **live on both networks** (micro-deploy#209). Middleware loaded, entrypoint args on the pod, Traefik clean. End-to-end proof waits for the first service that reads it. |
+| `sslmode=require` on all 60 DSNs (§2.2.1) | **live on both networks** (micro-deploy#210). Verified before the change (`show ssl` = on, TCP probe from the ledger pod) and after: `ssl=true, TLSv1.3` on both. 53 mainnet + 55 testnet deployments available, 15/15 apex surfaces serving. |
+| backend-agnostic DB bootstrap job (§2.2.1) | not started |
+| Prometheus/alert reshape to per-series `network` | not started |
+| waves 1–6 | not started |
+
+Everything shipped so far is behaviour-preserving: every runtime parameter is
+optional with a default that reproduces today, and the header is ignored by
+services that have not been taught it.
 
 The estate today runs twice: `cloudsforge-estate` (mainnet) and `cf-testnet`
 are two namespaces with the same 51 Deployments, the same 30 databases in two
