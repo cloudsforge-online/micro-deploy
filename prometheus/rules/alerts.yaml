@@ -332,7 +332,7 @@ groups:
           team: "{{ $labels.service }}"
           sev: "2"
         annotations:
-          summary: "{{ $labels.service }} is burning its error budget at {{ $value | printf \"%.1f\" }}x"
+          summary: "{{ $labels.service }} on {{ $labels.network }} is burning its error budget at {{ $value | printf \"%.1f\" }}x"
           description: >-
             At this rate a Tier-1 28-day budget is gone inside two days. Tier 1
             is 99.95% — twenty-one minutes for the month.
@@ -347,7 +347,7 @@ groups:
           service: gateway
           sev: "1"
         annotations:
-          summary: "Gateway is returning {{ $value | humanizePercentage }} 5xx"
+          summary: "Gateway is returning {{ $value | humanizePercentage }} 5xx on {{ $labels.network }}"
           description: >-
             Every product is behind this. Check the deploy annotation first; if a
             release landed in the window, roll back to the previous manifest
@@ -1349,7 +1349,7 @@ groups:
           team: "{{ $labels.service }}"
           sev: "3"
         annotations:
-          summary: "{{ $labels.service }} is burning budget at {{ $value | printf \"%.1f\" }}x over 6h"
+          summary: "{{ $labels.service }} on {{ $labels.network }} is burning budget at {{ $value | printf \"%.1f\" }}x over 6h"
           description: >-
             Not a page. At 50% consumed this becomes a ticket named in the weekly
             review; at 75% reliability work outranks features; at 100% the
