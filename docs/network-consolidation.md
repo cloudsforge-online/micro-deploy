@@ -774,6 +774,51 @@ data rollback is "stop pointing at the import" — with the one caveat that
 writes made to the import after cutover are lost to the old copy, which is
 why the freeze in step 4 precedes the verify, not follows it.
 
+### 6.1 What the first real cutover changed about §6 (agora, 2026-08-25)
+
+Three of §6's four steps survived contact. The third did not.
+
+**"Repoint one router" is wrong for half the estate.** Of wave 2's six services,
+only agora, devplatform and pricing have a public router at all. community,
+analytics and policy are reached ONLY service-to-service, by Service name inside
+`cf-testnet` — so a plan step phrased entirely in terms of gateway backends had
+nothing to say about them, and the first draft of the mechanism (drop the
+service from the testnet render) would have taken their callers down with no
+gateway edit able to bring them back.
+
+What replaces it: the testnet render emits an **`ExternalName` Service** — a DNS
+CNAME to `<svc>.cloudsforge-estate.svc.cluster.local`. Both kinds of caller keep
+working with no edit anywhere, the gateway file is untouched, and the
+`CF-Network: testnet` header the testnet gateway stamps on its own entrypoint
+chain rides along unchanged. `ClusterIP` → `ExternalName` was checked against the
+live API server before it was relied on; it is accepted as an update.
+
+**The migrate Job is a separate compose service, and its exit code lies.** The
+render matched `name in CONSOLIDATED_SERVICES`, so `agora` got the second DSN and
+`agora-migrate` did not. The migrator loops over every configured DSN, found one,
+logged `"network":"primary"`, and exited 0 — a green deploy that had silently
+stopped maintaining half the schema. Nothing was wrong that day, because the
+adopted database had been migrated by the testnet pod before the freeze; the
+next release is where it would have refused testnet with the estate otherwise up.
+
+Found by reading the migrator's LOG rather than its exit code. Both said the run
+succeeded. Only one said what it had run against — and "what did it actually
+touch" is the question a migration's exit code cannot answer.
+
+**The freeze goes before the copy, not after.** §6 orders it import → repoint →
+verify → freeze, and accepts that writes between import and repoint are lost.
+`k8s-db-adopt-testnet.sh --adopt` inverts it and REFUSES unless the testnet
+deployment is already at zero replicas. The estate has no real users, so the
+seconds of testnet downtime cost nothing, and losing writes to a copy that is
+about to become authoritative costs correctness. Measured: 1 second to copy
+agora, 28 tables.
+
+**What the verification actually proved.** Not "it returned 200" — the gate is
+that one pod serves DIFFERENT data per estate. After a real database-reading
+request with each header, `pg_stat_activity` on the mainnet cluster showed the
+single agora pod holding open connections to `agora` AND `agora_testnet`. The
+separation is visible at the connection, not inferred from a status code.
+
 ### The waves
 
 | wave | contents | why this order |
