@@ -317,6 +317,25 @@ table above is a plan, and the rule from the apex consolidation stands: the
 sweep that verifies a wave includes the service's own repo, every consumer's
 dev path, and every consumer's tests.
 
+### 5.0 Two things every class B service needs, learned from the first one
+
+**`/livez`, `/readyz` and `/metrics` must be exempt from the network
+requirement.** Kubelet probes the first two and Prometheus scrapes the third;
+none arrives through the gateway, so none carries `CF-Network`. agora's first CI
+build failed exactly here — every probe answered 500 `network_unknown`, the
+container never became ready, and the image test reported "never answered
+/livez". Every service has these three, so every service will fail this way
+once, and the symptom looks like a boot error rather than a routing rule.
+
+Write the exemption as a literal set of three paths, not a prefix and not an
+opt-in flag: it is a hole in a data-isolation boundary, and widening it should
+take a deliberate edit. All three answer without touching the database, which is
+what makes them safe to exempt at all.
+
+**The domain deps are rebuilt, not restructured.** See §5.1 — the estimate below
+was written before the first service was actually done, and the work turned out
+to be smaller than it looked.
+
 ### 5.1 A class B service is a REFACTOR, not a mechanical pass
 
 Attempted on `agora` 2026-08-21 and stopped on purpose, with the work reverted.
@@ -341,19 +360,37 @@ through an object constructed once at startup, so those five must either be
 rebuilt per request or changed to take the handle as a parameter. That is a
 restructuring of how the service composes its domain layer, not a rename.
 
-**What this means for the plan.** Waves 2–5 were scoped as "teach the service
-to read a header". For any service that composes domain deps at boot — which is
-the estate's house style, so assume most of the twenty-three class B services —
-each is an architectural change with its own review, its own tests and its own
-risk of a subtle cross-network read. The wave sizes in §6 stand as an ORDER;
-they do not stand as an estimate of effort, and nothing about wave 1's
-"twenty pods deleted, no code changed" generalises to them.
+**RESOLVED — the estimate above was wrong, and agora is done.** Those five
+objects are PLAIN IMMUTABLE RECORDS, so they do not need restructuring at all:
+one helper rebuilds them per request with the resolved handle, and all
+thirty-two route sites are correct without being touched.
 
-**The recommended shape for the first one**, whenever it is picked up: land the
-domain-dep restructuring as its own PR with no network behaviour at all — make
-the five objects take `sql` as a parameter, prove the suite green, ship it —
-and only then add the network on top. Two reviewable changes instead of one
-that mixes a refactor with a data-isolation boundary.
+```ts
+function forRequest(deps: ServerDeps, sql: Db): ServerDeps {
+  return { ...deps, posts: { ...deps.posts, sql }, circles: { ...deps.circles, sql }, … }
+}
+```
+
+Five shallow copies of small records, once per request, on a path about to do
+IO. The whole service came to roughly 250 lines of diff including tests
+(micro-agora#1), and the type system does the enforcement: `ServerDeps.sql` is a
+`NetworkSql` with no query methods, so a route reaching for the process-wide
+handle does not compile.
+
+**So waves 2–5 are a repeatable pass after all**, and the recipe is:
+
+1. `RequestContext` gains `network` and `sql`, resolved once at the edge;
+2. `ServerDeps.sql` becomes `NetworkSql`, `singleNetwork` added for `pnpm dev`;
+3. `deps.sql` → `ctx.sql` everywhere the compiler points;
+4. `forRequest` for whatever dep objects the service builds at boot;
+5. `network` on the http metrics, including the refusal path;
+6. exempt the three operational routes (§5.0) — this is the one that fails CI
+   if forgotten;
+7. a `network.test.ts` pinning both refusals.
+
+Steps 3 and 4 are found by the compiler rather than by reading, which is what
+makes this safe to repeat: turning `ServerDeps.sql` into a type with no query
+methods produces an exhaustive worklist.
 
 ## 6. The cutover mechanism, and why rollback is one line
 
