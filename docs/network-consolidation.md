@@ -10,8 +10,8 @@ pattern this generalises.
 | `runtime` http / auth / db / telemetry (§4) | **merged** (micro-runtime#7). Not live: services still run images built before it, and nothing consumes it until wave 2. |
 | gateway stamps `CF-Network` (§2.1) | **live on both networks** (micro-deploy#209). Middleware loaded, entrypoint args on the pod, Traefik clean. End-to-end proof waits for the first service that reads it. |
 | `sslmode=require` on all 60 DSNs (§2.2.1) | **live on both networks** (micro-deploy#210). Verified before the change (`show ssl` = on, TCP probe from the ledger pod) and after: `ssl=true, TLSv1.3` on both. 53 mainnet + 55 testnet deployments available, 15/15 apex surfaces serving. |
-| backend-agnostic DB bootstrap job (§2.2.1) | not started |
-| Prometheus/alert reshape to per-series `network` | not started |
+| backend-agnostic DB bootstrap job (§2.2.1) | **merged, and run on both networks** (micro-deploy#212). Emits zero `CREATE DATABASE` — all thirty already exist — reasserts ownership, leaves 31 databases each. `cloudsforge` granted `CREATEDB`, which it lacked. |
+| Prometheus/alert reshape to per-series `network` | **investigated; deliberately deferred to wave 2.** The four SLO rules aggregate `network` away and would blend the two networks the moment one pod serves both — but fixing them before any service emits the label orphans every dashboard for no gain. §2.3 records the finding and the fixed ordering. |
 | waves 1–6 | not started |
 
 Everything shipped so far is behaviour-preserving: every runtime parameter is
@@ -181,6 +181,39 @@ metric it emits). This is a prerequisite, not a nicety — after the merge, one
 target serves both networks and the scrape job can no longer tell them apart.
 The #398 incident (testnet scraped under mainnet labels) is the failure mode
 this prevents from returning in a worse form.
+
+### The SLO rules aggregate `network` away, and that BLOCKS wave 2
+
+Measured 2026-08-21. Prometheus scrapes **mainnet only** today (the one
+exception is `backup-runner-testnet`, labelled `estate: testnet`), so nothing
+has ever needed to separate the two — and `prometheus/rules/slo.yaml`
+accordingly aggregates without `network`:
+
+```
+sum by (service, route, status) (rate(http_requests_total[5m]))
+sum by (service)               (rate(http_requests_total{status=~"5.."}[5m]))
+histogram_quantile(0.95, sum by (service, le) (rate(http_request_duration_ms_bucket[5m])))
+sum by (service, tier)         (rate(http_requests_total{status=~"5.."}[5m]))     # the burn rate
+```
+
+The moment one pod serves both networks, every one of those SUMS MAINNET AND
+TESTNET INTO ONE NUMBER. A testnet error spike burns the mainnet error budget,
+a testnet latency regression moves the mainnet p95, and the alert that fires
+names a service and a tier with no way to say which network is broken. It is
+#398 again, in the direction that pages somebody at night for the wrong estate.
+
+**Why this is not fixed in wave 0.** Adding `network` to those `by ()` clauses
+while no service emits the label produces series with `network=""` — a
+DIFFERENT series identity from today's, which orphans every dashboard panel and
+every alert built on them, in exchange for no new information. Expand/contract
+applies to recording rules exactly as it does to schemas.
+
+**So it is a wave 2 gate, and the order is fixed:** the first service to be
+merged ships emitting `network` (it already can — `@cloudsforge/telemetry`
+carries it on the standard specs), *then* the four rules above gain `network` in
+their `by ()`, *then* the dashboards that read them are re-pointed. A merged
+service deployed before that sequence is a service whose SLO silently blends two
+networks, and nothing in the estate would say so.
 
 ## 3. What merges, what stays, what disappears
 
