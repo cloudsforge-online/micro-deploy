@@ -665,7 +665,13 @@ def main():
         # the isolation §2.2 chose. Built by splitting the DSN rather than by
         # string-replacing the database name, because `agora` also appears in
         # the hostname of some services and a replace would rewrite both.
-        if args.network == "mainnet" and name in CONSOLIDATED_SERVICES:
+        # `name.removesuffix("-migrate")` and not `name`, because the MIGRATOR needs the
+        # second handle more than the server does. Matched on `name` alone it got one DSN,
+        # logged `network: primary` and exited 0 — and the adopted database would have
+        # stood still through every future release until a boot-time schema assertion
+        # refused testnet with the rest of the estate up. Caught on agora's cutover, by
+        # reading the migrator's log rather than its exit code.
+        if args.network == "mainnet" and name.removesuffix("-migrate") in CONSOLIDATED_SERVICES:
             for entry in list(plain_env):
                 if not entry["name"].endswith("_DATABASE_URL"):
                     continue
