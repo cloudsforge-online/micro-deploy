@@ -66,6 +66,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: ACTIVITY_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -172,6 +174,8 @@ spec:
           value: http://notify:4000
         - name: PORT
           value: '4000'
+        - name: ADMIN_API_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/admin_api_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -318,6 +322,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: AETHERHOLM_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -901,6 +907,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: BILLING_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/billing_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -1354,6 +1362,8 @@ spec:
           value: '4000'
         - name: WORLDS_URL
           value: http://worlds:4000
+        - name: EMBERKIN_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/emberkin_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -1664,6 +1674,8 @@ spec:
           value: http://pricing:4000
         - name: STUDIO_PUBLIC_URL
           value: https://studio.cloudsforge.online
+        - name: FORESIGHT_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/foresight_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -2274,6 +2286,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: LANTERN_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -2532,6 +2546,8 @@ spec:
           value: '4000'
         - name: STUDIO_PUBLIC_URL
           value: https://studio.cloudsforge.online
+        - name: MARKET_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/market_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -2704,6 +2720,8 @@ spec:
           value: '4000'
         - name: PRICING_URL
           value: http://pricing:4000
+        - name: MINT_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -2860,6 +2878,8 @@ spec:
           value: '4000'
         - name: WORLDS_URL
           value: http://worlds:4000
+        - name: NDA_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -3752,6 +3772,8 @@ spec:
           value: /var/lib/studio/assets
         - name: STUDIO_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio?sslmode=require
+        - name: STUDIO_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -3861,6 +3883,8 @@ spec:
           value: http://studio:4000
         - name: TESSERA_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera?sslmode=require
+        - name: TESSERA_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -4025,6 +4049,8 @@ spec:
           value: http://pricing:4000
         - name: TRADE_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/trade?sslmode=require
+        - name: TRADE_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/trade_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -4291,6 +4317,8 @@ spec:
           value: '4000'
         - name: WORLDS_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds?sslmode=require
+        - name: WORLDS_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
