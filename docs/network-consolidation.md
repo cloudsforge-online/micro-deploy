@@ -3,14 +3,35 @@
 Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
 pattern this generalises.
 
-## Status — every service is network-CAPABLE and live; the cutover has not started
+## Status — 28 of 30 across; custody and settlement are blocked on a keyring
 
-All 30 services now run code that can serve either estate, deployed to both
-networks at 2026.8.99 and verified on all three request paths (§7). What has
-NOT happened is §6: each pod still holds exactly one DSN and serves exactly one
-estate. The remaining work is the per-service cutover — import the testnet
-database, give the pod its second pool, repoint one router — then the gateway
-merge and the namespace deletion.
+The cutover is done except for two services, and the two are blocked on the same
+thing.
+
+**Across and verified (28).** agora, community, analytics, policy, pricing,
+devplatform, activity, studio, lantern, emberkin, worlds, nda, tessera, market,
+mint, billing, hub-api, admin-api, aetherholm, foresight, trade, ledger, wallet,
+identity, notify, beacon, indexer — each one pod, both estates, answering
+`CF-Network: testnet` and `mainnet`. Twenty-two carry two database handles and
+their migrators run against both; six keep one database with a `network` column
+(§5.3, §5.4, §5.5).
+
+**Blocked (2).** custody, and settlement behind it. The two custody databases
+derive at different keyring versions — mainnet v4, testnet v2 — so the merged
+pod would be handed 31 addresses it cannot sign for, and the per-user
+`next_index` counters cannot be reconciled without knowing whether they advanced
+over the same key material. micro-org#508. settlement's treasuries and sweep
+sources name custody addresses, so it waits on the same answer.
+
+**Paired on purpose (6).** The testnet gateway, `site` (the one web bundle
+behind a live testnet router, kept by wave 1), `faucet` (a faucet has no mainnet
+meaning), `hearth-explorer-api` and `hearth-verify` (chain-adjacent, and the
+chains stay paired by definition), and `backup-runner`.
+
+`cf-testnet` went from 51 Deployments to 4 running. It cannot be deleted while
+custody's 31 v2 keys live in its database — which is also why nothing was
+merged: the source is untouched and the deployment is scaled to zero, not
+removed.
 
 | item | state |
 |---|---|
