@@ -69,7 +69,6 @@ same choice, for the same reason, as `reclaimPolicy: Retain` on the StorageClass
 holding it.
 """
 import argparse
-import importlib
 import pathlib
 import re
 import sys
@@ -163,35 +162,29 @@ duplicates = sorted({name for name in statements if statements.count(name) > 1})
 if duplicates:
     sys.exit(f"FAIL: {sql_path} creates these more than once: {', '.join(duplicates)}")
 
-# ── THE ADOPTED TESTNET DATABASES ────────────────────────────────────────────
+# ── THE ADOPTED TESTNET DATABASES BELONG TO THE MAINNET CLUSTER ONLY ─────────
 #
 # `docs/network-consolidation.md` §6. A consolidated service serves both estates
-# from one pod and holds a SECOND database, `<db>_testnet`, in the mainnet
-# cluster. Those were created by `scripts/k8s-db-adopt-testnet.sh` with a plain
-# `CREATE DATABASE`, which is how the cutover had to work — but it left them
-# outside CloudNativePG entirely.
+# from one pod and holds a SECOND database, `<db>_testnet`, alongside the first.
+# `scripts/k8s-db-adopt-testnet.sh` created those with a plain `CREATE DATABASE`,
+# which is how the cutover had to work — and left them outside CloudNativePG
+# entirely. `kubectl get database` reported 30 of 30 healthy while twenty-two
+# databases the estate depends on were declared by nothing.
 #
-# That is the exact rot this file's own header warns about, one level up. Before
-# this, `kubectl get database` reported 30 of 30 healthy while TWENTY-TWO
-# databases the estate depends on were declared by nothing: a cluster rebuilt
-# from these manifests would have come up without them, and twenty-two services
-# would have refused every testnet request on an estate that looked fine.
+# THEY ARE NOW DECLARED IN `initdb.sql`, which is the one place a database is
+# named. This file used to derive them a second time, from the consolidation
+# sets — and once initdb.sql grew the lines, that second derivation produced
+# every name TWICE. The k8s-name collision check below caught it, which is the
+# only reason it is not still here.
 #
-# The list is imported from `k8s-render.py` rather than restated here. Two lists
-# of which services are consolidated would drift, and drift between two lists
-# that are each individually correct is the defect this whole plan kept
-# producing.
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-_render = importlib.import_module("k8s_render_shim")
-adopted: list[str] = []
-if args.network == "mainnet":
-    declared = set(statements)
-    for svc in sorted(_render.CONSOLIDATED_SERVICES - _render.SINGLE_DATABASE_SERVICES):
-        db = svc.replace("-", "_")
-        if db in declared:
-            adopted.append(f"{db}_testnet")
+# What is left is the one thing the source of truth cannot say by itself: a
+# `<db>_testnet` is a database in the MAINNET cluster. The testnet cluster holds
+# that estate's databases under their plain names, so rendering these there
+# would create twenty-two empty databases nothing will ever open.
+if args.network == "testnet":
+    statements = [name for name in statements if not name.endswith("_testnet")]
 
-names = sorted(statements + adopted)
+names = sorted(statements)
 
 # ── THE POSTGRES NAME AND THE KUBERNETES NAME ────────────────────────────────
 #

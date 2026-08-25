@@ -109,6 +109,20 @@ def main() -> int:
         return fail(f"no SQL at {sql_path}. Refusing to emit a bootstrap from nothing.")
 
     names = databases(sql_path.read_text(encoding="utf8"))
+
+    # ── `<db>_testnet` IS A MAINNET-CLUSTER DATABASE ─────────────────────────
+    #
+    # Same rule as k8s-render-databases.py, and it has to be repeated because
+    # both files read initdb.sql directly and neither can infer this from it.
+    # The consolidation gave each two-database service a second database
+    # ALONGSIDE its first, in the mainnet cluster
+    # (`docs/network-consolidation.md` §6). The testnet cluster holds that
+    # estate's databases under their plain names, so bootstrapping these there
+    # would create twenty-two databases nothing will ever open — and, worse,
+    # would make `21-databases-testnet.yaml` and this file disagree about what
+    # the testnet cluster contains.
+    if args.network == "testnet":
+        names = [name for name in names if not name.endswith("_testnet")]
     if not names:
         return fail(f"{sql_path} yielded no CREATE DATABASE lines. A bootstrap that creates nothing would report success and leave the estate with no databases.")
 
