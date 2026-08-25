@@ -819,6 +819,73 @@ request with each header, `pg_stat_activity` on the mainnet cluster showed the
 single agora pod holding open connections to `agora` AND `agora_testnet`. The
 separation is visible at the connection, not inferred from a status code.
 
+### 6.2 The last four need a decision, not a step (2026-08-25)
+
+Twenty-four services are across. Four are not, and the reason is the same for
+all of them: **each database's migration defaulted its own pre-existing rows to
+`mainnet`, and in the testnet cluster that default is wrong.** It is the same
+defect class as §5.9's literal — a value that was locally correct and globally
+false — except that here it is in money records rather than in a key.
+
+The plan assumed these four keep one database and therefore need no data step.
+That was right about the schema and wrong about the rows: BOTH databases are
+populated, with records that exist in only one of them.
+
+| service | rows only in the testnet database | of which need a decision |
+|---|---|---|
+| custody | 31 keys, 0 overlapping mainnet's 293 | **1** |
+| indexer | 7 watched addresses, 39,053 blocks | blocks: re-derivable |
+| settlement | 1 confirmed tx, 1 treasury, 1 sweep source | **2** |
+| beacon | 29 probes | **29** |
+
+#### custody: two deployer keys for one binding
+
+Thirty of the thirty-one insert cleanly — zero address collisions, and
+`custody_keys_binding_uniq` is satisfied. One is not:
+
+    ember | testnet | deployer | foresight-estate | foresight-estate-oracle-1
+
+    cloudsforge-estate   0x2c71eb5753E7D08929d2ec14b303A5F5B3B0b9cA   2026-08-04
+    cf-testnet           0xc4FBE19A6f9932a6b5025d17a8092B7C75381d5b   2026-08-05
+
+Two custody instances each minted a testnet deployer for the same foresight
+oracle, a day apart. Whichever is not chosen keeps whatever gas was funded to
+it, unreachable. Going forward the merged pod will answer with the
+`cloudsforge-estate` one, because that is the database it reads — so the
+question is whether the other address holds anything, and that is a chain query
+plus a decision about which is canonical.
+
+#### settlement: two rows carrying the wrong estate
+
+    outbound_transactions   mainnet | ember | planned     2026-08-05
+    sweep_sources           mainnet | ember
+
+Both sit in the TESTNET database and both say `mainnet`. The planned
+transaction never executed, so it is harmless either way. The sweep source is
+not: copied as-is it adds a mainnet EMBER sweep source, and a sweep source is
+the thing that decides which addresses get drained into a treasury. Relabelling
+it `testnet` is probably right and "probably" is not the standard for a row that
+moves coin.
+
+#### beacon: the probes are data, and they are named wrong
+
+All 29 say `network=mainnet` while describing testnet targets, and §5.3 requires
+the testnet copy of a probe to be NAMED `<service>-testnet` — the CHECK enforces
+it, and the reason is hysteresis: two estates sharing one `probe_state` row
+count each other's failures and open an incident against the wrong one.
+
+`seedRecurring` seeds JOBS, not probes, so nothing re-creates them at boot. They
+are either renamed and relabelled on the way in, or the merged beacon watches
+nothing on testnet until someone re-registers 29 targets by hand.
+
+#### What is NOT blocked
+
+The mechanism is proven; only these rows need judgement. Each of the four can
+cross the moment its rows are dispositioned, using exactly the path the other
+twenty-four used — the render already knows how, `SINGLE_DATABASE_SERVICES`
+already covers the no-second-handle case, and the freeze/adopt script already
+refuses to copy from a database that is still being written to.
+
 ### The waves
 
 | wave | contents | why this order |
