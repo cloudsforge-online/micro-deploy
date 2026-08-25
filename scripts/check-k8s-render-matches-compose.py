@@ -259,3 +259,44 @@ print(
     f"    {COMPOSE.relative_to(ROOT)}, and every env_file Secret the renderer references is\n"
     "    one scripts/k8s-secrets.py builds"
 )
+
+# ── 3. initdb.sql DECLARES THE ADOPTED TESTNET DATABASES ─────────────────────
+#
+# `docs/network-consolidation.md` §6 step 2 adopted a `<db>_testnet` into the
+# mainnet server for each service that kept two databases. initdb.sql is what a
+# fresh estate is built from, so a name missing there is a database that exists
+# on every running estate and on no new one.
+#
+# That failure does not look like a failure. The estate boots, every migrator
+# passes, mainnet serves — and the first request carrying `CF-Network: testnet`
+# gets a 500 from `networkSql.for()`, which is correct and arrives only when
+# someone asks.
+if not failures:
+    import re as _re
+
+    initdb = (ROOT / "compose" / "estate" / "initdb.sql").read_text()
+    sys.path.insert(0, str(ROOT / "scripts"))
+    shim = __import__("k8s_render_shim")
+
+    declared = set(_re.findall(r"^\s*CREATE DATABASE\s+([a-z_]+)", initdb, _re.M))
+    want = {
+        f"{svc.replace('-', '_')}_testnet"
+        for svc in (shim.CONSOLIDATED_SERVICES - shim.SINGLE_DATABASE_SERVICES)
+        if svc.replace("-", "_") in declared
+    }
+    have = {d for d in declared if d.endswith("_testnet")}
+
+    for name in sorted(want - have):
+        failures.append(
+            f"compose/estate/initdb.sql does not declare `{name}`, but the service it belongs to\n"
+            "       is consolidated and keeps two databases. A fresh estate would come up serving\n"
+            "       mainnet and answering 500 to the first `CF-Network: testnet` request."
+        )
+    for name in sorted(have - want):
+        failures.append(
+            f"compose/estate/initdb.sql declares `{name}`, which no consolidated two-database\n"
+            "       service asks for. Either the service moved to a single database with a\n"
+            "       `network` column — drop the line — or the sets in scripts/k8s-render.py are\n"
+            "       wrong."
+        )
+

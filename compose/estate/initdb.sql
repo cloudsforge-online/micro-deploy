@@ -161,3 +161,45 @@ CREATE DATABASE pool;
 -- on the estates already running this database was created by hand once,
 -- deliberately, and that is recorded rather than assumed.
 CREATE DATABASE agora;
+
+-- -- the second estate, adopted here by the network consolidation --------------
+--
+-- `docs/network-consolidation.md` §6 step 2. One pod per service now serves BOTH
+-- networks, and §2.2 keeps the two apart by DATABASE NAME inside this one
+-- server: `agora` and `agora_testnet`, same server, same `cloudsforge` role,
+-- different `datname`.
+--
+-- Without these an estate comes up able to serve mainnet and unable to serve
+-- testnet, and the way that presents is not a boot failure. It is a 500 on the
+-- first request carrying `CF-Network: testnet`, because `networkSql.for()`
+-- throws for a network it holds no handle to — correctly, and only once someone
+-- asks.
+--
+-- ONLY THE SERVICES THAT KEEP TWO DATABASES ARE HERE. identity, notify, beacon,
+-- indexer, custody and settlement deliberately keep ONE, with a `network`
+-- column (§5.3-§5.5); `site` has no database at all. The list is derived by the
+-- same rule `scripts/k8s-render-databases.py` uses — consolidated, not
+-- single-database, and already declared above — so the two cannot disagree by
+-- construction, and `check-k8s-render-matches-compose.py` fails if they do.
+CREATE DATABASE activity_testnet;
+CREATE DATABASE admin_api_testnet;
+CREATE DATABASE aetherholm_testnet;
+CREATE DATABASE agora_testnet;
+CREATE DATABASE analytics_testnet;
+CREATE DATABASE billing_testnet;
+CREATE DATABASE community_testnet;
+CREATE DATABASE devplatform_testnet;
+CREATE DATABASE emberkin_testnet;
+CREATE DATABASE foresight_testnet;
+CREATE DATABASE lantern_testnet;
+CREATE DATABASE ledger_testnet;
+CREATE DATABASE market_testnet;
+CREATE DATABASE mint_testnet;
+CREATE DATABASE nda_testnet;
+CREATE DATABASE policy_testnet;
+CREATE DATABASE pricing_testnet;
+CREATE DATABASE studio_testnet;
+CREATE DATABASE tessera_testnet;
+CREATE DATABASE trade_testnet;
+CREATE DATABASE wallet_testnet;
+CREATE DATABASE worlds_testnet;
