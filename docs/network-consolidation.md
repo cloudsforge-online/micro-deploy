@@ -903,6 +903,52 @@ micro-org#508 stays open for what is still true: the testnet keyring is two
 envelope versions behind and was never rotated with the estate's, though
 micro-org#339 recorded that rotation as done on both machines.
 
+#### custody: resolved, and no schema change is needed (micro-org#510)
+
+The six colliding seeds looked like a constraint that wanted relaxing. It is not.
+`migrations.ts` says so at the column a migration would have re-keyed:
+
+    -- Allocated monotonically and NEVER reused, across both networks and every
+    -- chain that shares this family's coin type. Reuse would mint a second row
+    -- at an address that already exists, and the primary key below would be the
+    -- only thing that noticed.
+    next_index  integer  not null default 0,
+
+**One seed per (user, family) spanning both networks IS the design.** The
+constraint's missing `network` is deliberate. Adding it would give each user two
+counters where the schema intends one, which is the thing that comment warns
+about. So the six collisions are two databases each independently creating the
+seed the schema expects one of — because they were separate databases.
+
+**Keep the estate's seed.** Its keys are `network=mainnet` and carry real value;
+the other side's are testnet. That is not a coin toss.
+
+**What abandoning the other costs is smaller than it sounds.** The 28 affected
+keys stay fully signable, because signing never consults the seed —
+`deps.keyring.decrypt(row.address, await deps.vault.read(row.address))` reads the
+blob's own version prefix. They become `flat_random` with a null path and null
+`seed_id`, which `custody_keys_scheme_ck` explicitly permits and which is TRUE of
+them afterwards: signable, no longer phrase-recoverable. Only phrase-recovery is
+lost, for 28 testnet keys.
+
+The option to refuse is repointing their `seed_id` at the surviving seed.
+`exports.ts` returns the SEED's phrase and states the `derivation_path`, so a
+user restoring that phrase at the stated path would get a different address than
+the row names — silent loss on restore.
+
+**The two remaining decisions have conservative answers.** For the three
+colliding bindings: import the testnet key under a distinguishing `order_id` so
+both survive and the incumbent keeps the natural-key lookup — preserve without
+choosing. For the `ember|testnet` treasury pin: leave it unset, so a merged
+testnet refuses every sweep loudly rather than pinning the wrong one of two.
+
+**This has now been analysed wrongly twice** — first as a keyring problem, then
+as a constraint to migrate. Both readings were confident and both were refuted by
+a comment in the file being changed. The procedure is fully specified now and
+carries no open decisions, but it copies key material and rewrites what the
+estate can sign for, so it wants a second pair of eyes rather than an unattended
+run. That is the only remaining reason it has not been executed.
+
 #### settlement is blocked BEHIND custody
 
 Its `treasuries` and `sweep_sources` name custody addresses. Merging settlement
