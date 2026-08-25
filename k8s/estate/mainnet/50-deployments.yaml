@@ -1685,6 +1685,9 @@ spec:
             name: env-chain
             optional: false
         - secretRef:
+            name: env-chain-testnet
+            optional: true
+        - secretRef:
             name: secret-outbox
             optional: false
         volumeMounts:
@@ -2134,6 +2137,9 @@ spec:
         - secretRef:
             name: env-chain
             optional: false
+        - secretRef:
+            name: env-chain-testnet
+            optional: true
         - secretRef:
             name: secret-chainrpc
             optional: true
