@@ -63,6 +63,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from typing import NamedTuple, Optional
 import tempfile
 
 try:
@@ -106,27 +107,51 @@ except ModuleNotFoundError:
 # and getting it wrong is silent: the gateway would proxy to
 # `host.docker.internal`, which does not resolve in a pod, and every chain-facing
 # route would answer 502 while the gateway itself stayed healthy.
+# ── ONE ROW OF THE TABLE ─────────────────────────────────────────────────────
+#
+# A NamedTuple rather than a bare tuple, and that is not style. This started as
+# a 3-tuple; giving the testnet gateway somewhere else to land added a fourth,
+# optional element, and two separate `for name, rel, kind in ...` sites then
+# raised ValueError — one of them only when run against a real cluster, because
+# nothing in CI executes main(). Named fields make an arity mismatch impossible
+# to write, and `target` defaults so every other row stays as short as it reads.
+#
+#   target: {"name": ..., "namespace": ...} — where the Secret is actually
+#   applied, when that differs from the row's name and the network's namespace.
+class EnvFileSecret(NamedTuple):
+    name: str
+    path: str
+    kind: str
+    target: Optional[dict] = None
+
+    def applied_name(self):
+        return (self.target or {}).get("name", self.name)
+
+    def applied_namespace(self, default):
+        return (self.target or {}).get("namespace", default)
+
+
 FILES = {
     "mainnet": [
-        ("estate-tokens", "compose/estate/tokens.env", "interp"),
-        ("secret-outbox", "compose/secrets/outbox.mainnet.env", "envfrom"),
-        ("secret-custody", "compose/secrets/custody.mainnet.env", "envfrom"),
-        ("secret-identity-key", "compose/secrets/identity-key.mainnet.env", "envfrom"),
-        ("secret-analytics-pepper", "compose/secrets/analytics-pepper.mainnet.env", "envfrom"),
-        ("secret-studio", "compose/secrets/studio.mainnet.env", "envfrom"),
-        ("secret-chainrpc", "compose/secrets/chainrpc.mainnet.env", "envfrom"),
-        ("env-chain", "compose/env/chain.mainnet.env", "envfrom"),
-        ("env-traefik", "compose/env/traefik.env", "envfrom"),
+        EnvFileSecret("estate-tokens", "compose/estate/tokens.env", "interp"),
+        EnvFileSecret("secret-outbox", "compose/secrets/outbox.mainnet.env", "envfrom"),
+        EnvFileSecret("secret-custody", "compose/secrets/custody.mainnet.env", "envfrom"),
+        EnvFileSecret("secret-identity-key", "compose/secrets/identity-key.mainnet.env", "envfrom"),
+        EnvFileSecret("secret-analytics-pepper", "compose/secrets/analytics-pepper.mainnet.env", "envfrom"),
+        EnvFileSecret("secret-studio", "compose/secrets/studio.mainnet.env", "envfrom"),
+        EnvFileSecret("secret-chainrpc", "compose/secrets/chainrpc.mainnet.env", "envfrom"),
+        EnvFileSecret("env-chain", "compose/env/chain.mainnet.env", "envfrom"),
+        EnvFileSecret("env-traefik", "compose/env/traefik.env", "envfrom"),
     ],
     "testnet": [
-        ("estate-tokens", "compose/estate/tokens.testnet.env", "interp"),
-        ("secret-outbox", "compose/secrets/outbox.testnet.env", "envfrom"),
-        ("secret-custody", "compose/secrets/custody.testnet.env", "envfrom"),
-        ("secret-identity-key", "compose/secrets/identity-key.testnet.env", "envfrom"),
-        ("secret-analytics-pepper", "compose/secrets/analytics-pepper.testnet.env", "envfrom"),
-        ("secret-studio", "compose/secrets/studio.testnet.env", "envfrom"),
-        ("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom"),
-        ("env-chain", "compose/env/chain.testnet.env", "envfrom"),
+        EnvFileSecret("estate-tokens", "compose/estate/tokens.testnet.env", "interp"),
+        EnvFileSecret("secret-outbox", "compose/secrets/outbox.testnet.env", "envfrom"),
+        EnvFileSecret("secret-custody", "compose/secrets/custody.testnet.env", "envfrom"),
+        EnvFileSecret("secret-identity-key", "compose/secrets/identity-key.testnet.env", "envfrom"),
+        EnvFileSecret("secret-analytics-pepper", "compose/secrets/analytics-pepper.testnet.env", "envfrom"),
+        EnvFileSecret("secret-studio", "compose/secrets/studio.testnet.env", "envfrom"),
+        EnvFileSecret("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom"),
+        EnvFileSecret("env-chain", "compose/env/chain.testnet.env", "envfrom"),
         # ── NOT `env-traefik`, AND NOT IN `cf-testnet` ───────────────────────
         #
         # The testnet gateway moved into `cloudsforge-estate` alongside the
@@ -141,8 +166,8 @@ FILES = {
         # entrypoint middleware stamps onto every request that passes through.
         # Were this to resolve to the mainnet Secret, every testnet hostname
         # would serve mainnet rows — silently, and with a 200.
-        ("env-traefik", "compose/env/traefik.testnet.env", "envfrom",
-         {"name": "env-traefik-testnet", "namespace": "cloudsforge-estate"}),
+        EnvFileSecret("env-traefik", "compose/env/traefik.testnet.env", "envfrom",
+                      {"name": "env-traefik-testnet", "namespace": "cloudsforge-estate"}),
     ],
 }
 
@@ -498,7 +523,7 @@ def main():
     print(f"network={args.network} namespace={namespace} mode={mode}")
     print()
 
-    missing = [rel for _, rel, _ in entries if not (root / rel).exists()]
+    missing = [e.path for e in entries if not (root / e.path).exists()]
     if missing:
         # Refuse the whole run. A partial secret set produces an estate that
         # starts and fails authentication in a subset of services, which is
@@ -515,12 +540,9 @@ def main():
     # says so.
     # A fourth element overrides where the Secret lands and what it is called.
     # Only the testnet gateway uses it; see the note in FILES.
-    parsed = [
-        (e[0], e[1], e[2], (e[3] if len(e) > 3 else {}), parse_env(root / e[1]))
-        for e in entries
-    ]
+    parsed = [(e, parse_env(root / e.path)) for e in entries]
     tokens_rel, tokens = next(
-        ((e[1], e[4]) for e in parsed if e[2] == "interp"), (None, None)
+        ((e.path, raw) for e, raw in parsed if e.kind == "interp"), (None, None)
     )
     if tokens is None:
         sys.exit("FAIL: this network has no `interp` file, so there is nothing to verify secret_vars against.")
@@ -557,7 +579,8 @@ def main():
 
     ok = True
     pg_password = None
-    for name, rel, kind, target, raw in parsed:
+    for entry, raw in parsed:
+        name, rel, kind = entry.name, entry.path, entry.kind
         path = root / rel
         # An `interp` file is stored VERBATIM. It is compose's substitution
         # source rather than a container's environment, and it is not mounted
@@ -585,9 +608,9 @@ def main():
             print(f"    quoting audit: {differ} of {len(raw)} value(s) differ from a naive parse")
         if PG_PASSWORD_VAR in data:
             pg_password = data[PG_PASSWORD_VAR]
-        where = target.get("namespace", namespace)
-        called = target.get("name", name)
-        if target:
+        where = entry.applied_namespace(namespace)
+        called = entry.applied_name()
+        if entry.target:
             print(f"    -> applied as {called} in {where} (not {name} in {namespace})")
         if not apply_secret(where, called, data, dry=not args.apply):
             ok = False

@@ -371,9 +371,9 @@ else:
             continue
         expected = "compose/" + pattern.replace("${CF_TRAEFIK_ENV:-traefik}", selector)
         built = {
-            e[0]: e[1]
+            e.name: e.path
             for e in k8s_secrets.FILES[network]
-            if e[0] == secret_refs[0] and e[2] == "envfrom"
+            if e.name == secret_refs[0] and e.kind == "envfrom"
         }
         if not built:
             fail(
@@ -405,15 +405,15 @@ else:
 # missing) or — if someone "fixed" it by pointing both at `env-traefik` — come
 # up stamping `CF-Network: mainnet` on every testnet hostname and answering 200
 # with mainnet rows. That second outcome is the one worth a check.
-TESTNET_GW = [e for e in k8s_secrets.FILES["testnet"] if e[0] == "env-traefik"]
+TESTNET_GW = [e for e in k8s_secrets.FILES["testnet"] if e.name == "env-traefik"]
 if len(TESTNET_GW) != 1:
     fail(
         "FILES['testnet'] no longer has exactly one `env-traefik` row, so which file the\n"
         "       testnet gateway's environment comes from is ambiguous."
     )
 else:
-    target = TESTNET_GW[0][3] if len(TESTNET_GW[0]) > 3 else {}
-    mainnet_names = {e[0] for e in k8s_secrets.FILES["mainnet"]}
+    target = TESTNET_GW[0].target or {}
+    mainnet_names = {e.name for e in k8s_secrets.FILES["mainnet"]}
     if target.get("namespace") != "cloudsforge-estate":
         fail(
             "the testnet gateway runs in `cloudsforge-estate` but FILES['testnet'] does not\n"
