@@ -749,7 +749,10 @@ tests:
               # rule sets no `tier`, so it survives; `team` and `service` do not,
               # because the rule's own labels win over the series'.
               tier: "1"
-              estate: testnet
+              # NO `estate`. The old `cf-indexer-testnet` target attached one;
+              # `cf-services` does not, and this rule sets none of its own — the
+              # estate is `network="testnet"` on the series, which is the whole
+              # point of the consolidation labelling.
               severity: ticket
               team: chain
               service: indexer
@@ -806,8 +809,13 @@ tests:
         alertname: TestnetChainSeriesMissing
         exp_alerts: []
 
-      # Gone for 19m. Now it is a ticket.
-      - eval_time: 30m
+      # ── WHY 35m AND NOT 30m ────────────────────────────────────────────
+      # The last sample is at 10m, and Prometheus does not call a series absent
+      # until it goes stale five minutes later — so `absent()` first becomes
+      # true at 15m, and `for: 15m` puts the earliest firing at 30m exactly.
+      # Asserting on that boundary tests the evaluation scheduler rather than
+      # the rule. 35m is clear of it.
+      - eval_time: 35m
         alertname: TestnetChainSeriesMissing
         exp_alerts:
           - exp_labels:
