@@ -3,69 +3,34 @@
 Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
 pattern this generalises.
 
-## Status — 28 of 30 across; custody and settlement are blocked on a keyring
+## Status — all 30 services across; the gateway merge is what remains
 
-The cutover is done except for two services, and the two are blocked on the same
-thing.
+Every service the plan names now serves both estates from one pod in
+`cloudsforge-estate`, with a CNAME in `cf-testnet` so callers and the testnet
+gateway resolve unchanged. `cf-testnet` is down from **51 running Deployments to
+five**, and none of the five is an application service.
 
-**Across and verified (28).** agora, community, analytics, policy, pricing,
+**Across and verified (30).** agora, community, analytics, policy, pricing,
 devplatform, activity, studio, lantern, emberkin, worlds, nda, tessera, market,
 mint, billing, hub-api, admin-api, aetherholm, foresight, trade, ledger, wallet,
-identity, notify, beacon, indexer — each one pod, both estates, answering
-`CF-Network: testnet` and `mainnet`. Twenty-two carry two database handles and
-their migrators run against both; six keep one database with a `network` column
-(§5.3, §5.4, §5.5).
+identity, notify, beacon, indexer, custody, settlement, site. Twenty-two hold two
+database handles and their migrators run against both; the rest keep one database
+with a `network` column (§5.3, §5.4, §5.5) or, for site, no database at all.
 
-**Blocked (2).** custody, and settlement behind it. The two custody databases
-derive at different keyring versions — mainnet v4, testnet v2 — so the merged
-pod would be handed 31 addresses it cannot sign for, and the per-user
-`next_index` counters cannot be reconciled without knowing whether they advanced
-over the same key material. micro-org#508. settlement's treasuries and sweep
-sources name custody addresses, so it waits on the same answer.
+**Still in `cf-testnet` (5), none of them pending:**
 
-**Paired on purpose (6).** The testnet gateway, `site` (the one web bundle
-behind a live testnet router, kept by wave 1), `faucet` (a faucet has no mainnet
-meaning), `hearth-explorer-api` and `hearth-verify` (chain-adjacent, and the
-chains stay paired by definition), and `backup-runner`.
-
-`cf-testnet` went from 51 Deployments to 4 running. It cannot be deleted while
-custody's 31 v2 keys live in its database — which is also why nothing was
-merged: the source is untouched and the deployment is scaled to zero, not
-removed.
-
-| item | state |
+| | why it stays |
 |---|---|
-| `runtime` http / auth / db / telemetry (§4) | **merged** (micro-runtime#7). Not live: services still run images built before it, and nothing consumes it until wave 2. |
-| gateway stamps `CF-Network` (§2.1) | **live on both networks** (micro-deploy#209). Middleware loaded, entrypoint args on the pod, Traefik clean. End-to-end proof waits for the first service that reads it. |
-| `sslmode=require` on all 60 DSNs (§2.2.1) | **live on both networks** (micro-deploy#210). Verified before the change (`show ssl` = on, TCP probe from the ledger pod) and after: `ssl=true, TLSv1.3` on both. 53 mainnet + 55 testnet deployments available, 15/15 apex surfaces serving. |
-| backend-agnostic DB bootstrap job (§2.2.1) | **merged, and run on both networks** (micro-deploy#212). Emits zero `CREATE DATABASE` — all thirty already exist — reasserts ownership, leaves 31 databases each. `cloudsforge` granted `CREATEDB`, which it lacked. |
-| Prometheus/alert reshape to per-series `network` | **live** (micro-deploy#225). Twelve `by ()` clauses in `slo.yaml` gained `network`; three consuming alerts name the estate in their summary; both dashboards gained a `$network` selector defaulting to `mainnet`. The precondition was measured before the change rather than assumed — 116 mainnet and 20 testnet `http_requests_total` series live. Alert SEVERITY deliberately unchanged; see §9. |
-| **wave 1** — retire the duplicate testnet bundles | **live** (micro-deploy#213). Testnet 51 → 31 rendered deployments; running pods 56 → 36. The twenty were measured unrouted (live router set read from the gateway's own metrics, not the configmap), unprobed by beacon, and serving zero requests. `site` kept — it is the one web bundle behind a live testnet router. They sit at zero replicas rather than deleted, which is the rollback. |
-| **wave 2** — the six low-risk class B services | **merged** — agora, policy, analytics, pricing, community, devplatform. All behaviour-preserving: with one DSN configured `networkSql` holds one network and each is today's service. **Live on both networks at 2026.8.99.** |
-| **wave 4** — the two class B′ singletons | **merged** — identity, notify. Both keep ONE database, as the class says. identity's `net`-claim fallback moves from `IDENTITY_NETWORK` to the request (§5.5); notify gains `deliveries.network` and keeps one pipeline and one SMTP allowance. |
-| **wave 6** — the money core | **merged; live at 2026.8.99** — ledger, wallet. Both moved last, as the plan requires, and only after every caller already forwarded the header. wallet is the one with no bare `sql` at all: four domain bundles, and rebuilding some but not others is worse than rebuilding none (§5.6). |
-| **wave 5** — the five class C workers | **merged** — beacon, indexer, custody, settlement, pool. Two surprises, both recorded: beacon is really class B′ (§5.3) and **indexer needed no code change at all** (§5.4). settlement is the real bulkhead — one queue and one runner per estate, because its jobs broadcast transactions. |
-| **wave 3** — the fifteen product class B services | **merged** — activity, studio, lantern, emberkin, worlds, nda, tessera, market, mint, billing, hub-api, admin-api, aetherholm, foresight, trade. Same shape and the same behaviour-preserving property. **Live on both networks at 2026.8.99.** Four of them needed more than the recipe, and §5.2 records what and why; three more crash-looped on a second literal `mainnet` and §5.9 records that. |
+| `gateway` | the testnet Traefik — the remaining phase, assessed in §6.3 |
+| `faucet` | testnet-only by nature; there is no mainnet faucet to merge into |
+| `hearth-explorer-api`, `hearth-verify` | exist only in testnet ON PURPOSE — mainnet's five `rpc.<apex>` devkit routes 502 deliberately, and moving these under their current names would make them serve testnet chain data on a mainnet hostname |
+| `backup-runner` | per-namespace by design |
 
-Everything shipped so far is behaviour-preserving: every runtime parameter is
-optional with a default that reproduces today, and the header is ignored by
-services that have not been taught it.
-
-The estate today runs twice: `cloudsforge-estate` (mainnet) and `cf-testnet`
-are two namespaces with the same 51 Deployments, the same 30 databases in two
-CloudNativePG clusters, two Traefik gateways and two cloudflared ingress
-routes. Every service is a single-network process — the network is baked in at
-boot through env, and nothing about a running pod can serve the other network.
-
-This plan merges everything except the blockchains themselves into **one set
-of pods that serves both networks**. The chains stay paired: the Hearth EMBER
-nodes (mainnet and testnet), the UTXO daemons on the chain host, the miners
-and the seeders are the networks — consolidating them would be a contradiction
-in terms. Everything above them is infrastructure, and infrastructure that
-exists twice to serve two names is the same waste the apex consolidation
-removed one layer up.
-
----
+**What remains:** the gateway merge, for which §6.3 recommends two Traefik
+Deployments in `cloudsforge-estate` rather than one merged Traefik, and then the
+namespace. Note the namespace still holds the testnet CNPG cluster and the six
+abandoned custody mnemonics (§6.2), so deleting it is a decision about those,
+not a formality.
 
 ## 1. What already points this way
 
