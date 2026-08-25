@@ -434,6 +434,37 @@ else:
             "       winner's `CF_EMBER_NETWORK`."
         )
 
+# ── 7c. THE FAUCET'S TESTNET GATE IS LOAD-BEARING NOW ────────────────────────
+#
+# `k8s-render.py` emits an ExternalName called `faucet` into `cloudsforge-estate`
+# so the testnet gateway, which now runs there, can reach the testnet faucet.
+# What keeps the MAINNET gateway — same namespace, same router file — from
+# reaching it too is that both the router and its upstream sit inside
+# `{{ if eq (env "CF_EMBER_NETWORK") "testnet" }}`.
+#
+# Remove either guard and mainnet starts serving an unauthenticated withdrawal
+# endpoint on a mainnet hostname. It would look like a fix: the 502 that
+# estate-web.yml documents as deliberate would turn into a 200.
+FAUCET_GATE = '{{ if eq (env "CF_EMBER_NETWORK") "testnet" }}'
+web = (ROOT / "gateway" / "dynamic" / "estate-web.yml").read_text()
+for what, needle in (("upstream", "    cf-svc-faucet:"), ("router", "      service: cf-svc-faucet")):
+    at = web.find(needle)
+    if at == -1:
+        fail(f"gateway/dynamic/estate-web.yml no longer has a faucet {what}; the ExternalName\n"
+             "       k8s-render.py emits into cloudsforge-estate for it should go too.")
+        continue
+    # The gate is the nearest preceding conditional; anything else between them
+    # would mean the block moved out from under it.
+    before = web[:at]
+    opened = before.rfind(FAUCET_GATE)
+    closed = before.rfind("{{ end }}")
+    if opened == -1 or closed > opened:
+        fail(f"the faucet {what} in gateway/dynamic/estate-web.yml is no longer inside\n"
+             f"       {FAUCET_GATE}. The mainnet gateway shares this file and shares the\n"
+             "       namespace with the ExternalName k8s-render.py creates for the testnet\n"
+             "       gateway — so it would resolve, and an unauthenticated faucet would answer\n"
+             "       on a mainnet hostname where a 502 is the documented, deliberate reply.")
+
 # ── 8. THE SAME LIVENESS QUESTION ────────────────────────────────────────────
 #
 # Compose's healthcheck and the readiness probe both have to be

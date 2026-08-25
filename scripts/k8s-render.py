@@ -256,6 +256,33 @@ SINGLE_DATABASE_SERVICES: set[str] = {
     "settlement",
 }
 
+# ── THE BRIDGE THAT RUNS THE OTHER WAY ───────────────────────────────────────
+#
+# Everything above moves testnet callers to `cloudsforge-estate`. This is the
+# one name that has to travel the other way.
+#
+# `docs/network-consolidation.md` §6.3 moved the testnet gateway into
+# `cloudsforge-estate`, and its router table — the same file the mainnet gateway
+# reads — names `http://faucet:4000` as a literal. The faucet itself did NOT
+# move: `faucet/src/env.ts` is `export const NETWORK = 'testnet' as const`, and
+# the estate-web.yml note above the router is explicit that a mainnet faucet is
+# not a thing that will ever exist.
+#
+# WHY THIS CANNOT LEAK INTO MAINNET, which is the question a CNAME named
+# `faucet` in the mainnet namespace obviously raises: the faucet router AND its
+# `cf-svc-faucet` upstream are both wrapped in
+# `{{ if eq (env "CF_EMBER_NETWORK") "testnet" }}`. The mainnet gateway emits
+# neither, so it has nothing that could resolve this name — the CNAME is
+# reachable only from the testnet gateway's own router table. That conditional
+# is load-bearing, and `check-k8s-gateway-matches-compose.py` asserts it stays.
+#
+# The port is declared even though an ExternalName ignores it. `k8s-gateway.sh`
+# proves every upstream has a Service on the port its router uses, by reading
+# `.spec.ports`; without it the faucet would be reported missing on every deploy
+# and the real signal would be trained away.
+TESTNET_ONLY_BRIDGED: dict[str, int] = {"faucet": 4000}
+
+
 # ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
 #
 # `docs/network-consolidation.md` §6. A name lands here when its cutover is done:
@@ -1204,6 +1231,39 @@ def main():
         f"# Contains NO secret values. Every credential is a secretKeyRef by name; see the\n"
         f"# script's docstring for the three shapes and why each is handled the way it is.\n"
     )
+
+    # ── the reverse CNAMEs; see TESTNET_ONLY_BRIDGED ─────────────────────────
+    if args.network == "mainnet":
+        for bridged, port in sorted(TESTNET_ONLY_BRIDGED.items()):
+            svcs.append(
+                {
+                    "apiVersion": "v1",
+                    "kind": "Service",
+                    "metadata": {
+                        "name": bridged,
+                        "labels": {
+                            "app.kubernetes.io/name": bridged,
+                            "app.kubernetes.io/part-of": "cloudsforge",
+                        },
+                        "annotations": {
+                            "online.cloudsforge.why": (
+                                "Testnet-only service, reached from here because the TESTNET "
+                                "gateway now runs in this namespace. The mainnet gateway emits "
+                                "no router and no upstream for it: both sit inside "
+                                "{{ if eq (env \"CF_EMBER_NETWORK\") \"testnet\" }}, so this "
+                                "name is resolvable only from the testnet router table."
+                            )
+                        },
+                    },
+                    "spec": {
+                        "type": "ExternalName",
+                        "externalName": f"{bridged}.{NETWORKS['testnet']}.svc.cluster.local",
+                        # Ignored by an ExternalName; present so k8s-gateway.sh's
+                        # upstream proof can see the port its router uses.
+                        "ports": [{"name": f"p{port}", "port": port, "targetPort": port}],
+                    },
+                }
+            )
 
     outputs = {
         "20-pvc.yaml": pvcs,
