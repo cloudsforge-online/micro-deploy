@@ -151,7 +151,26 @@ FILES = {
         EnvFileSecret("secret-analytics-pepper", "compose/secrets/analytics-pepper.testnet.env", "envfrom"),
         EnvFileSecret("secret-studio", "compose/secrets/studio.testnet.env", "envfrom"),
         EnvFileSecret("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom"),
-        EnvFileSecret("env-chain", "compose/env/chain.testnet.env", "envfrom"),
+        # ── THE TESTNET CHAIN RPCs, WHERE THE ONE INDEXER CAN REACH THEM ─────
+        #
+        # The indexer keeps ONE database with a `network` column
+        # (`docs/network-consolidation.md` §5.4), so one pod indexes both
+        # estates' chains — and it lives in `cloudsforge-estate`. This file's
+        # `_TESTNET` variables have to be there too, or the testnet chains are
+        # configured in a namespace with nothing left to read them. They were,
+        # from the cutover until 2026-08-25, and testnet EMBER and LTC went
+        # unindexed the whole time.
+        #
+        # `only` KEEPS JUST THE `_TESTNET`-SUFFIXED KEYS, and that is what makes
+        # mounting two chain secrets on one pod safe. The two files also share
+        # `INDEXER_CHAINS`, `FORESIGHT_NETWORK` and `FORESIGHT_MAINNET_ENABLED`;
+        # `envFrom` resolves duplicates by list order, so an unfiltered copy
+        # would silently replace the estate's chain list with testnet's two
+        # entries and stop mainnet indexing instead. Filtering by suffix makes
+        # the key sets disjoint by construction rather than by ordering.
+        EnvFileSecret("env-chain", "compose/env/chain.testnet.env", "envfrom",
+                      {"name": "env-chain-testnet", "namespace": "cloudsforge-estate",
+                       "only": r"_TESTNET$"}),
         # ── NOT `env-traefik`, AND NOT IN `cf-testnet` ───────────────────────
         #
         # The testnet gateway moved into `cloudsforge-estate` alongside the
@@ -610,6 +629,11 @@ def main():
             pg_password = data[PG_PASSWORD_VAR]
         where = entry.applied_namespace(namespace)
         called = entry.applied_name()
+        only = (entry.target or {}).get("only")
+        if only:
+            kept = {k: v for k, v in data.items() if re.search(only, k)}
+            print(f"    -> {len(kept)} of {len(data)} key(s) match /{only}/: {' '.join(sorted(kept))}")
+            data = kept
         if entry.target:
             print(f"    -> applied as {called} in {where} (not {name} in {namespace})")
         if not apply_secret(where, called, data, dry=not args.apply):

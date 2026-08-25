@@ -579,7 +579,7 @@ def probe_from_healthcheck(service, healthcheck):
     return probes, port
 
 
-def env_from(service, service_def):
+def env_from(service, service_def, network):
     """`env_file:` → `envFrom: secretRef:`, with the network stripped from the path."""
     refs = []
     for entry in service_def.get("env_file") or []:
@@ -602,6 +602,26 @@ def env_from(service, service_def):
                 f"      A service missing an env_file starts and fails authentication."
             )
         refs.append({"secretRef": {"name": ENV_FILE_SECRETS[stem], "optional": not required}})
+
+        # ── THE SECOND ESTATE'S CHAIN RPCs ───────────────────────────────────
+        #
+        # The indexer keeps ONE database with a `network` column
+        # (`docs/network-consolidation.md` §5.4), so one pod indexes BOTH
+        # estates' chains — and `INDEXER_CHAINS` in `chain.mainnet.env` now
+        # names both. Naming a chain without giving it an RPC is a boot failure,
+        # so the `_TESTNET` variables have to arrive on the same pod.
+        #
+        # Mainnet only: on a testnet render this pod IS the testnet estate and
+        # `chain.testnet.env` is already its primary.
+        #
+        # SAFE TO MOUNT SECOND because `k8s-secrets.py` filters that Secret to
+        # keys ending `_TESTNET`. The two chain files also share
+        # `INDEXER_CHAINS` and two `FORESIGHT_` names, and `envFrom` resolves a
+        # duplicate by list order — so an unfiltered copy here would replace the
+        # estate's chain list with testnet's two entries and stop mainnet
+        # indexing. The key sets are disjoint by construction instead.
+        if stem == "env/chain" and network == "mainnet":
+            refs.append({"secretRef": {"name": "env-chain-testnet", "optional": True}})
     return refs
 
 
@@ -967,7 +987,7 @@ def main():
             container["command"] = service["command"]
         if env:
             container["env"] = env
-        froms = env_from(name, service)
+        froms = env_from(name, service, args.network)
         if froms:
             container["envFrom"] = froms
         if volume_mounts:
