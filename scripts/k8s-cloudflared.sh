@@ -36,7 +36,7 @@
 # ── WHAT IT CHECKS BEFORE APPLYING ───────────────────────────────────────────
 #
 #   both gateways   The pod's two socat sidecars forward to
-#                   `gateway.cloudsforge-estate:81` and `gateway.cf-testnet:81`.
+#                   `gateway.cloudsforge-estate:81` and `gateway-testnet.cloudsforge-estate:81`.
 #                   A Service that does not exist, or does not carry port 81,
 #                   fails at cutover as a 502 on every public hostname at once.
 #                   Checked here, while nothing is at stake.
@@ -124,14 +124,25 @@ fi
 #
 # Checked before the Secret, because a missing gateway is the failure that would
 # survive every other check and only appear as a total public outage.
-for pair in "cloudsforge-estate:mainnet" "cf-testnet:testnet"; do
-  ns="${pair%%:*}"; net="${pair##*:}"
+# ── BOTH GATEWAYS ARE IN `cloudsforge-estate` NOW ────────────────────────────
+# `docs/network-consolidation.md` §6.3. The triple is namespace:network:service
+# rather than namespace:network, because the two no longer determine the third.
+for pair in "cloudsforge-estate:mainnet:gateway" "cloudsforge-estate:testnet:gateway-testnet"; do
+  ns="${pair%%:*}"; rest="${pair#*:}"; net="${rest%%:*}"; gw="${rest##*:}"
   kubectl get namespace "$ns" >/dev/null 2>&1 || fail "namespace $ns does not exist, so the $net forwarder would have nothing to reach"
-  port="$(kubectl get svc gateway -n "$ns" -o jsonpath='{.spec.ports[?(@.name=="tunnel")].port}' 2>/dev/null || true)"
-  [ "$port" = "81" ] || fail "service gateway in $ns has no 'tunnel' port 81 (got '${port:-<none>}'); run ./scripts/k8s-gateway.sh --network $net first"
-  eps="$(kubectl get endpoints gateway -n "$ns" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)"
-  [ -n "$eps" ] || fail "service gateway in $ns has no ready endpoints, so the $net forwarder would 502 the moment the tunnel moved"
-  say "gateway $ns: tunnel/81 with ready endpoints"
+  port="$(kubectl get svc "$gw" -n "$ns" -o jsonpath='{.spec.ports[?(@.name=="tunnel")].port}' 2>/dev/null || true)"
+  [ "$port" = "81" ] || fail "service $gw in $ns has no 'tunnel' port 81 (got '${port:-<none>}'); run ./scripts/k8s-gateway.sh --network $net first"
+  eps="$(kubectl get endpoints "$gw" -n "$ns" -o jsonpath='{.subsets[*].addresses[*].ip}' 2>/dev/null || true)"
+  [ -n "$eps" ] || fail "service $gw in $ns has no ready endpoints, so the $net forwarder would 502 the moment the tunnel moved"
+
+  # THE ONE CHECK THAT SURVIVES BOTH GATEWAYS SHARING A NAMESPACE. Two Services
+  # in one namespace can select the same pods, and a `gateway-testnet` whose
+  # selector still said `gateway` would pass every check above while forwarding
+  # testnet hostnames to the MAINNET Traefik — which would answer them, from
+  # mainnet rows, with a 200. Endpoints existing is not evidence they are the
+  # right ones; the two Services must not resolve to the same address.
+  eval "eps_$net=\"\$eps\""
+  say "$gw in $ns: tunnel/81 with ready endpoints"
 done
 
 # ── THE TWO LOOPBACK PORTS, RE-DERIVED FROM COMPOSE ──────────────────────────
@@ -149,9 +160,17 @@ for want in \
   "TCP-LISTEN:9081,bind=127.0.0.1,fork,reuseaddr" \
   "TCP:gateway.cloudsforge-estate.svc.cluster.local:81" \
   "TCP-LISTEN:9181,bind=127.0.0.1,fork,reuseaddr" \
-  "TCP:gateway.cf-testnet.svc.cluster.local:81" ; do
+  "TCP:gateway-testnet.cloudsforge-estate.svc.cluster.local:81" ; do
   grep -qF -- "- $want" "$MANIFEST" || fail "the manifest does not carry the forwarder argument '$want'"
 done
+
+[ "$eps_mainnet" != "$eps_testnet" ] || fail \
+  "service gateway and service gateway-testnet in cloudsforge-estate resolve to the SAME pod
+      address. They are two Deployments sharing one namespace, so a selector copied from one
+      to the other is silent: both forwarders reach the mainnet Traefik, and every testnet
+      hostname answers 200 with mainnet data. Check the selector on service/gateway-testnet.
+      (This guard re-uses the endpoint addresses collected above.)"
+
 say "forwarders: 127.0.0.1:9081 -> mainnet gateway, 127.0.0.1:9181 -> testnet gateway (both derived from compose)"
 
 # ── replicas: 1 IS AN INVARIANT OF THE FILE, NOT A DEFAULT ───────────────────

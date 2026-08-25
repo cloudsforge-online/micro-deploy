@@ -537,7 +537,7 @@ Do this in one sitting. Steps 3–6 are the window in which the estate is down.
    script reaches back over ssh:
    ```sh
    for ns in cloudsforge-estate cf-testnet; do
-     kubectl -n $ns scale $(kubectl -n $ns get deploy -o name | grep -v '/gateway$') --replicas=0
+     kubectl -n $ns scale $(kubectl -n $ns get deploy -o name | grep -vE '/gateway(-testnet)?$') --replicas=0
    done
    # wait until only gateway and postgres-1 remain in each namespace
    ./scripts/k8s-db-import.sh --network mainnet --cutover

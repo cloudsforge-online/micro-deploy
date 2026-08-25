@@ -81,6 +81,26 @@ envget() { sed -n "s/^$1=//p" "$ESTATE_ENV" | tail -1 | tr -d '\r'; }
 CF_PROJECT=$(envget CF_PROJECT)
 CF_PROJECT=${CF_PROJECT:-cloudsforge-estate}
 CF_NAMESPACE=${CF_NAMESPACE:-$CF_PROJECT}
+
+# ── THE GATEWAY IS NOT IN `CF_NAMESPACE` FOR TESTNET ─────────────────────────
+#
+# `CF_NAMESPACE` still means "where this network's own objects live", and for
+# testnet that is `cf-testnet`: the database, the Hearth devkit, the backup
+# runner and the thirty ExternalName CNAMEs the service-URL join reads. But the
+# gateway moved to `cloudsforge-estate` (`docs/network-consolidation.md` §6.3),
+# so it needs its own pair — a namespace AND a name, because the namespace alone
+# no longer picks one out.
+#
+# Getting this wrong is not a loud failure. The lookup returns empty, `GW_ADDR`
+# falls back to 127.0.0.1, and every one of the ~30 gateway assertions spends a
+# full connect timeout before failing — the "eight minutes, two hostnames in"
+# run that estate-verify.sh's own comment describes.
+CF_GATEWAY_NAMESPACE=${CF_GATEWAY_NAMESPACE:-cloudsforge-estate}
+case "$CF_PROJECT" in
+  cf-testnet) CF_GATEWAY_SERVICE=${CF_GATEWAY_SERVICE:-gateway-testnet} ;;
+  *)          CF_GATEWAY_SERVICE=${CF_GATEWAY_SERVICE:-gateway} ;;
+esac
+
 kubectl get namespace "$CF_NAMESPACE" >/dev/null 2>&1 || {
   echo "k8s-estate-verify: namespace '$CF_NAMESPACE' does not exist." >&2
   exit 2
@@ -223,6 +243,8 @@ unset cf_seed_pair cf_seed_dst cf_seed_val
 
 export CF_RUNTIME=k8s
 export CF_NAMESPACE
+export CF_GATEWAY_NAMESPACE
+export CF_GATEWAY_SERVICE
 export ESTATE_ENV
-echo "runtime: k8s  namespace: $CF_NAMESPACE  service URLs: $CF_VERIFY_SERVICE_URLS ClusterIPs  gateway: $(kubectl get svc -n "$CF_NAMESPACE" gateway -o jsonpath='{.spec.clusterIP}' 2>/dev/null)"
+echo "runtime: k8s  namespace: $CF_NAMESPACE  service URLs: $CF_VERIFY_SERVICE_URLS ClusterIPs  gateway: $CF_GATEWAY_SERVICE in $CF_GATEWAY_NAMESPACE at $(kubectl get svc -n "$CF_GATEWAY_NAMESPACE" "$CF_GATEWAY_SERVICE" -o jsonpath='{.spec.clusterIP}' 2>/dev/null)"
 exec ./scripts/estate-verify.sh "$@"

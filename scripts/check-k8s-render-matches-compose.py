@@ -227,7 +227,10 @@ if not failures:
 
     declared = set(render.ENV_FILE_SECRETS.values())
     for network, entries in secrets.FILES.items():
-        built = {name for name, _path, kind in entries if kind == "envfrom"}
+        # Indexed rather than unpacked: a row carries an optional fourth
+        # element naming where the Secret lands, and only the testnet gateway
+        # uses it. See FILES in k8s-secrets.py.
+        built = {e[0] for e in entries if e[2] == "envfrom"}
         for name in sorted(declared - built):
             failures.append(
                 f"the renderer emits `envFrom: secretRef: {name}` and k8s-secrets.py does not\n"

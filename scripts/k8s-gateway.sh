@@ -53,9 +53,29 @@ while [ $# -gt 0 ]; do
   esac
 done
 
+# ── BOTH GATEWAYS LIVE IN cloudsforge-estate ─────────────────────────────────
+#
+# `docs/network-consolidation.md` §6.3. The thirty application services now
+# serve both estates from one pod each, and a Traefik that must reach them has
+# to be able to say `http://worlds:4000` and get one — which, in Kubernetes,
+# means being in their namespace. The testnet gateway therefore moves here and
+# is renamed, rather than staying in `cf-testnet` behind thirty CNAMEs.
+#
+# WHAT MAKES THIS SAFE IS THE ENTRYPOINT MIDDLEWARE, NOT THIS SCRIPT. `cf-network`
+# is attached to the entrypoint (`--entrypoints.websecure.http.middlewares=`),
+# so every request through this gateway is stamped `CF-Network` from its own
+# `CF_EMBER_NETWORK` before any router is consulted. Two Deployments with two
+# env Secrets are therefore two networks, and no router can be added that
+# forgets to say which.
+#
+# THE DYNAMIC CONFIG AND THE CERTIFICATE ARE NOT COPIED — they are now literally
+# one object each, shared by both Deployments. That was already true in content:
+# measured 2026-08-25, `gateway-dynamic` and `gateway-certs` hashed identically
+# in the two namespaces. Everything that differs between the estates was already
+# in the env Secret, which is why this merge needs no edit to gateway/dynamic/.
 case "$NETWORK" in
-  mainnet) NAMESPACE="cloudsforge-estate" ;;
-  testnet) NAMESPACE="cf-testnet" ;;
+  mainnet) NAMESPACE="cloudsforge-estate"; GW_NAME="gateway";         GW_SECRET="env-traefik" ;;
+  testnet) NAMESPACE="cloudsforge-estate"; GW_NAME="gateway-testnet"; GW_SECRET="env-traefik-testnet" ;;
   *) echo "usage: $0 --network mainnet|testnet [--dry-run]" >&2; exit 2 ;;
 esac
 
@@ -69,7 +89,7 @@ EXPECTED_NODE=${EXPECTED_NODE:-cf-k8s}
 NODES="$(kubectl get nodes -o name 2>&1 | tr '\n' ' ' | sed 's/ *$//')"
 [ "$NODES" = "node/$EXPECTED_NODE" ] || fail "this is not the CloudsForge cluster (expected node/$EXPECTED_NODE, got ${NODES:-<unreachable>})"
 
-say "namespace: $NAMESPACE"
+say "namespace: $NAMESPACE   deployment: $GW_NAME   env: $GW_SECRET"
 kubectl get namespace "$NAMESPACE" >/dev/null 2>&1 || fail "namespace $NAMESPACE does not exist"
 
 # ── THE DYNAMIC FILES ────────────────────────────────────────────────────────
@@ -121,17 +141,17 @@ openssl x509 -in "$CERT_DIR/estate.crt" -noout -subject -enddate 2>/dev/null | s
 # failure and a total outage, so it is worth catching before the pod starts
 # rather than in the first request after it.
 NEED="CF_API_HOST CF_WEB_SUFFIX CF_SITE_HOST CF_RPC_UPSTREAM CF_EXPLORER_INDEX_UPSTREAM CF_VERIFY_UPSTREAM CF_EMBER_NETWORK"
-if kubectl get secret env-traefik -n "$NAMESPACE" >/dev/null 2>&1; then
+if kubectl get secret "$GW_SECRET" -n "$NAMESPACE" >/dev/null 2>&1; then
   # KEYS ONLY. The values are hostnames and upstream URLs and one of them is
   # interpolated from a `secret_vars` entry, so none of them is printed here.
-  HAVE="$(kubectl get secret env-traefik -n "$NAMESPACE" -o go-template='{{range $k, $v := .data}}{{$k}} {{end}}')"
+  HAVE="$(kubectl get secret "$GW_SECRET" -n "$NAMESPACE" -o go-template='{{range $k, $v := .data}}{{$k}} {{end}}')"
   missing=""
   for n in $NEED; do case " $HAVE " in *" $n "*) ;; *) missing="$missing $n" ;; esac; done
   say ""
-  say "secret/env-traefik: $(printf '%s' "$HAVE" | wc -w | tr -d ' ') key(s)"
-  [ -z "$missing" ] || fail "secret/env-traefik is missing:$missing — re-run ./scripts/k8s-secrets.py --network $NETWORK --apply"
+  say "secret/$GW_SECRET: $(printf '%s' "$HAVE" | wc -w | tr -d ' ') key(s)"
+  [ -z "$missing" ] || fail "secret/$GW_SECRET is missing:$missing — re-run ./scripts/k8s-secrets.py --network $NETWORK --apply"
 else
-  fail "secret/env-traefik does not exist. Run ./scripts/k8s-secrets.py --network $NETWORK --apply"
+  fail "secret/$GW_SECRET does not exist. Run ./scripts/k8s-secrets.py --network $NETWORK --apply"
 fi
 
 # ── EVERY UPSTREAM MUST RESOLVE, AND NOTHING ELSE CHECKS THIS ────────────────
@@ -241,19 +261,45 @@ kubectl create secret generic gateway-certs -n "$NAMESPACE" \
   --dry-run=client -o yaml | kubectl apply -n "$NAMESPACE" -f - >/dev/null
 say "secret/gateway-certs applied  (2 keys)"
 
+# ── THE RENAME IS BY FIELD, NEVER BY `sed s/gateway/` ────────────────────────
+#
+# A textual substitution would also rewrite `gateway-dynamic` and
+# `gateway-certs`, which are the two objects that must stay SHARED between the
+# two Deployments. The pod would then mount a ConfigMap that does not exist,
+# which Kubernetes reports as a pod stuck in ContainerCreating — but only after
+# the apply has already reported success. So only the fields that name the
+# workload are touched, and the volume sources are not among them.
 sed "s|cloudsforge.online/dynamic-hash: \"unset\"|cloudsforge.online/dynamic-hash: \"$HASH\"|" \
-  "$ROOT/k8s/gateway/60-gateway.yaml" | kubectl apply -n "$NAMESPACE" -f - >/dev/null
-say "deployment/gateway and service/gateway applied"
+  "$ROOT/k8s/gateway/60-gateway.yaml" \
+  | GW_NAME="$GW_NAME" GW_SECRET="$GW_SECRET" python3 -c '
+import os, sys, yaml
+name, secret = os.environ["GW_NAME"], os.environ["GW_SECRET"]
+docs = list(yaml.safe_load_all(sys.stdin))
+for d in docs:
+    d["metadata"]["name"] = name
+    d["metadata"].setdefault("labels", {})["app.kubernetes.io/name"] = name
+    if d["kind"] == "Deployment":
+        d["spec"]["selector"]["matchLabels"]["app.kubernetes.io/name"] = name
+        d["spec"]["template"]["metadata"]["labels"]["app.kubernetes.io/name"] = name
+        for c in d["spec"]["template"]["spec"]["containers"]:
+            for e in c.get("envFrom", []):
+                if "secretRef" in e and e["secretRef"]["name"] == "env-traefik":
+                    e["secretRef"]["name"] = secret
+    else:
+        d["spec"]["selector"]["app.kubernetes.io/name"] = name
+yaml.safe_dump_all(docs, sys.stdout)
+' | kubectl apply -n "$NAMESPACE" -f - >/dev/null
+say "deployment/$GW_NAME and service/$GW_NAME applied"
 
 say ""
-kubectl rollout status deployment/gateway -n "$NAMESPACE" --timeout=180s || {
+kubectl rollout status deployment/"$GW_NAME" -n "$NAMESPACE" --timeout=180s || {
   say ""
-  kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/name=gateway \
+  kubectl get pod -n "$NAMESPACE" -l app.kubernetes.io/name="$GW_NAME" \
     -o go-template='{{range .items}}{{$p := .metadata.name}}{{range .status.containerStatuses}}{{if .state.waiting}}  {{$p}}: {{.state.waiting.reason}} — {{.state.waiting.message}}{{"\n"}}{{end}}{{end}}{{end}}'
   fail "the gateway did not become ready"
 }
 
 say ""
-say "The gateway is serving inside $NAMESPACE at gateway:443 (TLS) and gateway:81 (tunnel)."
+say "The $NETWORK gateway is serving inside $NAMESPACE at $GW_NAME:443 (TLS) and $GW_NAME:81 (tunnel)."
 say "It publishes NO host port: public traffic arrives through cloudflared, which"
-say "reaches gateway:81 as a pod-to-pod hop."
+say "reaches $GW_NAME:81 as a pod-to-pod hop."

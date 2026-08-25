@@ -371,9 +371,9 @@ else:
             continue
         expected = "compose/" + pattern.replace("${CF_TRAEFIK_ENV:-traefik}", selector)
         built = {
-            name: path
-            for name, path, kind in k8s_secrets.FILES[network]
-            if name == secret_refs[0] and kind == "envfrom"
+            e[0]: e[1]
+            for e in k8s_secrets.FILES[network]
+            if e[0] == secret_refs[0] and e[2] == "envfrom"
         }
         if not built:
             fail(
@@ -388,6 +388,51 @@ else:
                 f"       secret/{secret_refs[0]} from `{built[secret_refs[0]]}`. One of the two\n"
                 "       gateways is configured for the other network's apex."
             )
+
+# ── 7b. THE TWO GATEWAYS SHARE A NAMESPACE, SO THEY CANNOT SHARE A SECRET ────
+#
+# `docs/network-consolidation.md` §6.3 moved the testnet Traefik into
+# `cloudsforge-estate` so it could reach the thirty consolidated services by
+# their short names. Both Deployments now read `envFrom: secretRef: env-traefik`
+# from the SAME manifest — the difference is made at apply time, by the fourth
+# element of the testnet row in FILES, which redirects the Secret to a different
+# name in that namespace.
+#
+# Drop that override and nothing here crashes. `k8s-secrets.py` would write
+# testnet's environment into `cf-testnet`, where no gateway is left to read it,
+# and `env-traefik` in `cloudsforge-estate` would remain the mainnet one. The
+# testnet gateway would then either fail to start (loudly, if the name is
+# missing) or — if someone "fixed" it by pointing both at `env-traefik` — come
+# up stamping `CF-Network: mainnet` on every testnet hostname and answering 200
+# with mainnet rows. That second outcome is the one worth a check.
+TESTNET_GW = [e for e in k8s_secrets.FILES["testnet"] if e[0] == "env-traefik"]
+if len(TESTNET_GW) != 1:
+    fail(
+        "FILES['testnet'] no longer has exactly one `env-traefik` row, so which file the\n"
+        "       testnet gateway's environment comes from is ambiguous."
+    )
+else:
+    target = TESTNET_GW[0][3] if len(TESTNET_GW[0]) > 3 else {}
+    mainnet_names = {e[0] for e in k8s_secrets.FILES["mainnet"]}
+    if target.get("namespace") != "cloudsforge-estate":
+        fail(
+            "the testnet gateway runs in `cloudsforge-estate` but FILES['testnet'] does not\n"
+            "       send its env Secret there. It would be written to a namespace holding no\n"
+            "       gateway, and scripts/k8s-gateway.sh --network testnet would refuse to deploy."
+        )
+    elif not target.get("name"):
+        fail(
+            "the testnet gateway's env Secret has no name override, so it would be applied as\n"
+            "       `env-traefik` into `cloudsforge-estate` — overwriting the MAINNET gateway's\n"
+            "       environment with testnet's apex and `CF_EMBER_NETWORK=testnet`."
+        )
+    elif target["name"] in mainnet_names:
+        fail(
+            f"the testnet gateway's env Secret is named `{target['name']}`, which is also a\n"
+            "       mainnet Secret name in the same namespace. One estate would overwrite the\n"
+            "       other's environment, and the loser would stamp every request with the\n"
+            "       winner's `CF_EMBER_NETWORK`."
+        )
 
 # ── 8. THE SAME LIVENESS QUESTION ────────────────────────────────────────────
 #

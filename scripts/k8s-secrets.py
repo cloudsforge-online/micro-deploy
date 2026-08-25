@@ -127,7 +127,22 @@ FILES = {
         ("secret-studio", "compose/secrets/studio.testnet.env", "envfrom"),
         ("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom"),
         ("env-chain", "compose/env/chain.testnet.env", "envfrom"),
-        ("env-traefik", "compose/env/traefik.testnet.env", "envfrom"),
+        # ── NOT `env-traefik`, AND NOT IN `cf-testnet` ───────────────────────
+        #
+        # The testnet gateway moved into `cloudsforge-estate` alongside the
+        # thirty consolidated services it proxies to
+        # (`docs/network-consolidation.md` §6.3), so its environment has to
+        # exist there too — and cannot be called `env-traefik`, because that
+        # name is taken in that namespace by the MAINNET gateway's environment.
+        #
+        # The two Secrets are the whole of the difference between the two
+        # gateways: same image, same ConfigMap, same certificate. Above all this
+        # one carries `CF_EMBER_NETWORK=testnet`, which the `cf-network`
+        # entrypoint middleware stamps onto every request that passes through.
+        # Were this to resolve to the mainnet Secret, every testnet hostname
+        # would serve mainnet rows — silently, and with a 200.
+        ("env-traefik", "compose/env/traefik.testnet.env", "envfrom",
+         {"name": "env-traefik-testnet", "namespace": "cloudsforge-estate"}),
     ],
 }
 
@@ -498,7 +513,12 @@ def main():
     # fail, and a half-applied Secret set is worse than none: the estate would
     # come up with a subset of its credentials current and no single command that
     # says so.
-    parsed = [(name, rel, kind, parse_env(root / rel)) for name, rel, kind in entries]
+    # A fourth element overrides where the Secret lands and what it is called.
+    # Only the testnet gateway uses it; see the note in FILES.
+    parsed = [
+        (e[0], e[1], e[2], (e[3] if len(e) > 3 else {}), parse_env(root / e[1]))
+        for e in entries
+    ]
     tokens_rel, tokens = next(((rel, data) for _, rel, kind, data in parsed if kind == "interp"), (None, None))
     if tokens is None:
         sys.exit("FAIL: this network has no `interp` file, so there is nothing to verify secret_vars against.")
@@ -535,7 +555,7 @@ def main():
 
     ok = True
     pg_password = None
-    for name, rel, kind, raw in parsed:
+    for name, rel, kind, target, raw in parsed:
         path = root / rel
         # An `interp` file is stored VERBATIM. It is compose's substitution
         # source rather than a container's environment, and it is not mounted
@@ -563,7 +583,11 @@ def main():
             print(f"    quoting audit: {differ} of {len(raw)} value(s) differ from a naive parse")
         if PG_PASSWORD_VAR in data:
             pg_password = data[PG_PASSWORD_VAR]
-        if not apply_secret(namespace, name, data, dry=not args.apply):
+        where = target.get("namespace", namespace)
+        called = target.get("name", name)
+        if target:
+            print(f"    -> applied as {called} in {where} (not {name} in {namespace})")
+        if not apply_secret(where, called, data, dry=not args.apply):
             ok = False
 
     print()
