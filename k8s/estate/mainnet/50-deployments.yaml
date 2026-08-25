@@ -2144,6 +2144,9 @@ spec:
             name: secret-chainrpc
             optional: true
         - secretRef:
+            name: secret-chainrpc-testnet
+            optional: true
+        - secretRef:
             name: secret-outbox
             optional: false
         volumeMounts:
