@@ -896,7 +896,29 @@ the thing that decides which addresses get drained into a treasury. Relabelling
 it `testnet` is probably right and "probably" is not the standard for a row that
 moves coin.
 
-#### beacon: the probes are data, and they are named wrong
+#### beacon: the probes measure the wrong estate entirely
+
+Worse than "named wrong", which is what this section said first. All 29 target
+`*-testnet.cloudsforge.online` hostnames that the apex consolidation retired,
+and which now 302 to the **mainnet** surface. The prober follows redirects, so
+it lands on mainnet and records a pass:
+
+    last 24h:  up x57,147   down x374
+
+Testnet's status page is green because mainnet is green. If testnet were
+entirely down, those probes would still pass. Filed as micro-org#509.
+
+Which settles whether to import them: no. Copying 29 probes into the merged
+beacon produces 29 rows labelled `network=testnet` that measure mainnet — a
+testnet status page that is a copy of mainnet's and says so nowhere. Strictly
+worse than importing nothing.
+
+The probe set has to be re-derived rather than repointed. Testnet is no longer a
+hostname; it is `CF-Network: testnet` against the apex, which means a probe that
+measures it must SEND that header — and beacon needs per-probe request headers
+to do that.
+
+#### beacon, and separately: the names would have been wrong too
 
 All 29 say `network=mainnet` while describing testnet targets, and §5.3 requires
 the testnet copy of a probe to be NAMED `<service>-testnet` — the CHECK enforces
