@@ -261,6 +261,25 @@ CONSOLIDATED_SERVICES: set[str] = {
     "policy",
     "pricing",
     "devplatform",
+
+    # Wave 3, 2026-08-25 — the fifteen product services. hub-api is here without a
+    # database of its own: its isolation was always peers and a cache key, never a
+    # pool, so it crosses with a CNAME and no adoption (§5.2).
+    "activity",
+    "studio",
+    "lantern",
+    "emberkin",
+    "worlds",
+    "nda",
+    "tessera",
+    "market",
+    "mint",
+    "billing",
+    "hub-api",
+    "admin-api",
+    "aetherholm",
+    "foresight",
+    "trade",
 }
 
 EXCLUDED_SERVICES = {"postgres"}
