@@ -396,6 +396,29 @@ EXCLUDED_SERVICES = {"postgres"}
 # name drops the network because the namespace already carries it. Kept in step
 # with the FILES table in scripts/k8s-secrets.py — one of these two lists moving
 # without the other is what `check-k8s-render-matches-compose.py` catches.
+# ── THE SECOND ESTATE'S HALF OF A SPLIT ENV FILE ─────────────────────────────
+#
+# `env_file` stem -> the Secret carrying the OTHER network's keys for it.
+#
+# A service that keeps ONE database with a `network` column
+# (`docs/network-consolidation.md` §5.4) runs one pod for both estates, so
+# anything the testnet half of these files configures has to arrive on that pod
+# too. Both entries exist for the indexer: `env/chain` carries
+# `INDEXER_RPC_EMBER_TESTNET` and the start heights, `secrets/chainrpc` carries
+# `INDEXER_RPC_LTC_TESTNET`.
+#
+# Each is FILTERED to keys ending `_TESTNET` by k8s-secrets.py, which is what
+# makes mounting two copies of one file's Secret on one pod safe: `envFrom`
+# resolves a duplicate key by list order, so an unfiltered second copy would
+# quietly replace the first's values rather than extend them.
+#
+# Mainnet only. On a testnet render the pod IS the testnet estate and these
+# files are already its primary.
+SECOND_ESTATE_ENV_FILES = {
+    "env/chain": "env-chain-testnet",
+    "secrets/chainrpc": "secret-chainrpc-testnet",
+}
+
 ENV_FILE_SECRETS = {
     "secrets/outbox": "secret-outbox",
     "secrets/identity-key": "secret-identity-key",
@@ -620,8 +643,8 @@ def env_from(service, service_def, network):
         # duplicate by list order — so an unfiltered copy here would replace the
         # estate's chain list with testnet's two entries and stop mainnet
         # indexing. The key sets are disjoint by construction instead.
-        if stem == "env/chain" and network == "mainnet":
-            refs.append({"secretRef": {"name": "env-chain-testnet", "optional": True}})
+        if network == "mainnet" and stem in SECOND_ESTATE_ENV_FILES:
+            refs.append({"secretRef": {"name": SECOND_ESTATE_ENV_FILES[stem], "optional": True}})
     return refs
 
 
