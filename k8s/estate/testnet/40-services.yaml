@@ -87,16 +87,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: analytics
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: analytics
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: analytics.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -141,16 +137,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: community
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: community
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: community.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -177,16 +169,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: devplatform
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: devplatform
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: devplatform.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -411,16 +399,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: policy
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: policy
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: policy.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -429,16 +413,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: pricing
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: pricing
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: pricing.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service

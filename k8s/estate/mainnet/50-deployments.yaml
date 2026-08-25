@@ -630,6 +630,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: ANALYTICS_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/analytics_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -997,6 +999,8 @@ spec:
           value: http://policy:4000
         - name: PORT
           value: '4000'
+        - name: COMMUNITY_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/community_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -1184,6 +1188,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: DEVPLATFORM_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -3138,6 +3144,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy?sslmode=require
         - name: PORT
           value: '4000'
+        - name: POLICY_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -3428,6 +3436,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing?sslmode=require
         - name: PRICING_MIN_SOURCES
           value: '1'
+        - name: PRICING_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
