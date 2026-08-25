@@ -150,20 +150,7 @@ FILES = {
         EnvFileSecret("secret-identity-key", "compose/secrets/identity-key.testnet.env", "envfrom"),
         EnvFileSecret("secret-analytics-pepper", "compose/secrets/analytics-pepper.testnet.env", "envfrom"),
         EnvFileSecret("secret-studio", "compose/secrets/studio.testnet.env", "envfrom"),
-        # The testnet chain RPC credentials, for the same reason and by the
-        # same rule as env-chain above: `INDEXER_CHAINS` names `ltc:testnet`,
-        # and the indexer refuses to start naming a chain it has no provider
-        # for — "a follower with no provider reports healthy and indexes
-        # nothing", in its own words. That credential is here and the one pod
-        # that needs it is in `cloudsforge-estate`.
-        #
-        # Nothing in `cf-testnet` mounts this Secret any more (checked against
-        # the live namespace, 2026-08-25: the four remaining Deployments are
-        # faucet, the two Hearth devkit services and backup-runner, and none of
-        # them reads a chain RPC), so this is a move rather than a copy.
-        EnvFileSecret("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom",
-                      {"name": "secret-chainrpc-testnet", "namespace": "cloudsforge-estate",
-                       "only": r"_TESTNET$"}),
+        EnvFileSecret("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom"),
         # ── THE TESTNET CHAIN RPCs, WHERE THE ONE INDEXER CAN REACH THEM ─────
         #
         # The indexer keeps ONE database with a `network` column

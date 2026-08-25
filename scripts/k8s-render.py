@@ -416,7 +416,11 @@ EXCLUDED_SERVICES = {"postgres"}
 # files are already its primary.
 SECOND_ESTATE_ENV_FILES = {
     "env/chain": "env-chain-testnet",
-    "secrets/chainrpc": "secret-chainrpc-testnet",
+    # `secrets/chainrpc` WAS here, for `INDEXER_RPC_LTC_TESTNET`. It came back
+    # out when `ltc:testnet` left `INDEXER_CHAINS`, because the indexer's env
+    # guard is symmetric: it refuses a chain named with no provider AND a
+    # provider set for a chain not named. Restoring LTC testnet means putting
+    # both back, together with a node that answers.
 }
 
 ENV_FILE_SECRETS = {
