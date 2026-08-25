@@ -838,7 +838,36 @@ populated, with records that exist in only one of them.
 | settlement | 1 confirmed tx, 1 treasury, 1 sweep source | **2** |
 | beacon | 29 probes | **29** |
 
-#### custody: two deployer keys for one binding
+#### custody: the two databases are on DIFFERENT KEYRING VERSIONS
+
+This supersedes what the rest of this section first said. The colliding deployer
+key below is real but it is not the blocker — this is:
+
+    cloudsforge-estate   custody_seeds.key_version = 4    custody_keys.key_version = 4
+    cf-testnet           custody_seeds.key_version = 2    custody_keys.key_version = 2
+
+micro-org#339 rotated the custody keyring V3→V4 **on both machines**. The testnet
+custody in Kubernetes is still deriving at **v2**, two versions behind, for all
+31 of its keys and all 8 of its seed records. Filed as micro-org#508, because it
+is a defect whether or not anything ever consolidates.
+
+For this plan it means the merge is not a copy under any reading. The merged
+custody runs v4; importing 31 v2-derived key records hands it addresses it
+cannot derive or sign for unless the v4 keyring still carries v2 material — and
+if it does, that is its own question with its own answer.
+
+**And `next_index` cannot be reconciled by inspection.** The same user has
+different derivation counters in the two databases:
+
+    user 019fcd54-…   ember   mainnet next_index=1    testnet next_index=3
+    user foresight    ember   mainnet next_index=32   testnet next_index=20
+
+Take the lower and the next derivation lands on an index already used — a
+duplicate address, possibly handed to a second user as their deposit address.
+Take the higher and it is only safe if both counters advanced over the same key
+material, which the version divergence says they did not.
+
+#### custody, also: two deployer keys for one binding
 
 Thirty of the thirty-one insert cleanly — zero address collisions, and
 `custody_keys_binding_uniq` is satisfied. One is not:
@@ -877,6 +906,12 @@ count each other's failures and open an incident against the wrong one.
 `seedRecurring` seeds JOBS, not probes, so nothing re-creates them at boot. They
 are either renamed and relabelled on the way in, or the merged beacon watches
 nothing on testnet until someone re-registers 29 targets by hand.
+
+#### settlement is blocked BEHIND custody
+
+Its `treasuries` and `sweep_sources` name custody addresses. Merging settlement
+while custody's 31 addresses stay in the other cluster produces a treasury
+pointing at an address the merged custody has never heard of.
 
 #### What is NOT blocked
 
