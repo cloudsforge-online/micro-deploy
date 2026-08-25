@@ -2444,6 +2444,8 @@ spec:
           value: production
         - name: PORT
           value: '4000'
+        - name: LEDGER_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/ledger_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -4219,6 +4221,8 @@ spec:
           value: '{"EMBER":"21000000000000","LTC":"10000","BTC":"3000"}'
         - name: WALLET_NETWORK
           value: mainnet
+        - name: WALLET_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/wallet_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE

@@ -277,16 +277,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: ledger
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: ledger
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: ledger.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -461,16 +457,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: wallet
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: wallet
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: wallet.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
