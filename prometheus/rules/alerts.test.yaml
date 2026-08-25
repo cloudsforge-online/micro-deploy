@@ -706,20 +706,24 @@ tests:
   # answered `["mainnet"]` on 2026-08-11 while the testnet indexer was serving
   # `indexer_tip_height{chain="ember",network="testnet"} 8958` to nobody.
   #
-  # THE LABEL SET IS THE ONE `cf-indexer-testnet` ACTUALLY PRODUCES, not an
-  # invented one: `job="cf-indexer-testnet"`, the container name as `instance`
-  # (both estates define a service called `indexer`, so a service name would be
-  # ambiguous on a container attached to both networks), `estate="testnet"` from
-  # the target, and NO `tier` — testnet has no SLO. That is the discipline
-  # check-alert-job-labels.py exists to enforce, and this fixture is exactly the
-  # kind of thing it scans.
+  # THE LABEL SET IS THE ONE THE CONSOLIDATED POD ACTUALLY PRODUCES, read off
+  # its own /metrics on 2026-08-25: `job="cf-services"`, `instance="indexer:4000"`,
+  # and `network="testnet"` from the series itself rather than from the target.
+  #
+  # It used to be `job="cf-indexer-testnet"` with `estate="testnet"` and no
+  # `tier`, from a second scrape of a second pod. That pod is gone: one process
+  # serves both estates and labels each series with the network it belongs to.
+  # `tier="1"` now rides along because it is a target label on `cf-services` —
+  # harmless here, because the SLO rules carry `tier` through a
+  # `by (network, service, tier)` grouping rather than selecting on it, so the
+  # two estates stay separate series and testnet does not join mainnet's budget.
   #
   # Same timing as the mainnet case above, because it is the same rule: a rule
   # that fired on a different schedule for testnet would be a second rule.
   # ══════════════════════════════════════════════════════════════════════════
   - interval: 1m
     input_series:
-      - series: 'indexer_tip_height{chain="ember",network="testnet",instance="cf-testnet-indexer-1:4000",job="cf-indexer-testnet",service="indexer",team="chain",estate="testnet"}'
+      - series: 'indexer_tip_height{chain="ember",network="testnet",instance="indexer:4000",job="cf-services",service="indexer",team="indexer",tier="1"}'
         values: "8958+1x19 8977+0x30 8978+1x20"
 
     alert_rule_test:
@@ -739,8 +743,12 @@ tests:
               alertname: EmberTipNotAdvancing
               chain: ember
               network: testnet
-              instance: cf-testnet-indexer-1:4000
-              job: cf-indexer-testnet
+              instance: indexer:4000
+              job: cf-services
+              # From the series, because `cf-services` is a tiered target. The
+              # rule sets no `tier`, so it survives; `team` and `service` do not,
+              # because the rule's own labels win over the series'.
+              tier: "1"
               estate: testnet
               severity: ticket
               team: chain
@@ -760,56 +768,70 @@ tests:
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-ember-tip-not-advancing.md
 
   # ══════════════════════════════════════════════════════════════════════════
-  # TestnetChainScrapeDown — the guard on the guard.
+  # TestnetChainSeriesMissing — the guard on the guard.
   #
-  # If `cf-indexer-testnet` stops being scraped, the case above goes silent, and
-  # silence is what it looks like when testnet is healthy. Nothing else covers
-  # that target: `TelemetryComponentDown` names five telemetry-plane jobs and
-  # the two other `up` rules name `cf-services`, `custody` and `beacon`.
+  # If the indexer stops holding a testnet chain scope, the case above goes
+  # silent, and silence is what it looks like when testnet is healthy.
   #
-  # `for: 10m` is the deliberate part — testnet is redeployed by hand and the
-  # target is legitimately absent for the length of a `docker compose up`. The
-  # 9m case below is what pins it; without a `for:`, every testnet deploy files
-  # a ticket.
+  # THIS USED TO WATCH `up{job="cf-indexer-testnet"}` AND COULD NOT HAVE CAUGHT
+  # THE FAILURE IT WAS WRITTEN FOR. When the consolidation replaced the testnet
+  # indexer with an ExternalName CNAME to the mainnet pod, that target stayed UP
+  # and answered — with mainnet's numbers wearing `estate="testnet"`. Liveness
+  # was never the question; presence of a testnet series was (micro-org#516).
+  #
+  # `indexer_chain_halted` and not `indexer_tip_height`: one is emitted per
+  # CONFIGURED chain scope at startup, the other only after a successful tip
+  # read. EMBER testnet sits at its difficulty floor and is often legitimately
+  # idle, so keying on the tip series would fire on a healthy quiet chain.
+  #
+  # `for: 15m` rather than 10m: the pod is redeployed with the whole estate now,
+  # not by hand, and a rollout plus a boot is longer than a `compose up` was.
+  # The 8m case below is what pins it.
   # ══════════════════════════════════════════════════════════════════════════
   - interval: 1m
     input_series:
-      - series: 'up{instance="cf-testnet-indexer-1:4000",job="cf-indexer-testnet",service="indexer",team="chain",estate="testnet"}'
-        values: "1+0x10 0+0x30"
+      # Present for ten minutes, then the scope disappears — which is what
+      # `INDEXER_CHAINS` losing its testnet entries looks like from here.
+      - series: 'indexer_chain_halted{chain="ember",network="testnet",instance="indexer:4000",job="cf-services",service="indexer",team="indexer",tier="1"}'
+        values: "0+0x10 _x30"
 
     alert_rule_test:
-      # Being scraped. Silent.
+      # The scope exists. Silent.
       - eval_time: 5m
-        alertname: TestnetChainScrapeDown
+        alertname: TestnetChainSeriesMissing
         exp_alerts: []
 
-      # Down since 11m and pending, not firing — a testnet redeploy lands here.
+      # Gone for 8m and pending, not firing — a rollout lands here.
       - eval_time: 19m
-        alertname: TestnetChainScrapeDown
+        alertname: TestnetChainSeriesMissing
         exp_alerts: []
 
-      # Ten minutes down. Now it is a ticket.
-      - eval_time: 22m
-        alertname: TestnetChainScrapeDown
+      # Gone for 19m. Now it is a ticket.
+      - eval_time: 30m
+        alertname: TestnetChainSeriesMissing
         exp_alerts:
           - exp_labels:
-              alertname: TestnetChainScrapeDown
-              instance: cf-testnet-indexer-1:4000
-              job: cf-indexer-testnet
+              alertname: TestnetChainSeriesMissing
+              # `absent()` carries only what its matcher named. There is no
+              # instance or job, and that is the point: the alert is about a
+              # series that does not exist, so it cannot name where it isn't.
+              network: testnet
               estate: testnet
               severity: ticket
               team: chain
               service: indexer
               sev: "4"
             exp_annotations:
-              summary: "The testnet indexer is not being scraped — both EMBER chain rules are blind to testnet"
+              summary: "The indexer exports no testnet chain series — both EMBER chain rules are blind to testnet"
               description: >-
-                Prometheus cannot reach cf-testnet-indexer-1. While this is true
-                EmberTipNotAdvancing and EmberDifficultyAtFloor evaluate against no
-                testnet series at all, so a frozen testnet chain produces silence
-                rather than a ticket. The usual cause is that Prometheus lost its
-                attachment to the testnet compose network, which a `docker compose
-                up` of the telemetry stack restores; the runbook has the check.
+                No `indexer_chain_halted{network="testnet"}` exists, which means the
+                consolidated indexer has no testnet chain scope configured at all.
+                While this is true EmberTipNotAdvancing and EmberDifficultyAtFloor
+                evaluate against no testnet series, so a frozen testnet chain
+                produces silence rather than a ticket. The usual cause is
+                INDEXER_CHAINS in compose/env/chain.mainnet.env having lost its
+                testnet entries, or env-chain-testnet not being mounted on the pod —
+                check `INDEXER_CHAINS` in the running container first.
               runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-testnet-chain-scrape-down.md
 
   # ══════════════════════════════════════════════════════════════════════════
@@ -1030,7 +1052,7 @@ tests:
       - series: 'indexer_chain_difficulty{chain="ember", network="mainnet", instance="indexer:4000", job="cf-services"}'
         values: "32768+0x100"
       # The measured 2026-08-12 tab: 55x (difficulty 14080), flat — never fires.
-      - series: 'indexer_chain_difficulty{chain="ember", network="testnet", instance="cf-testnet-indexer-1:4000", job="cf-indexer-testnet"}'
+      - series: 'indexer_chain_difficulty{chain="ember", network="testnet", instance="indexer:4000", job="cf-services"}'
         values: "14080+0x100"
     alert_rule_test:
       - eval_time: 3h

@@ -1094,7 +1094,7 @@ groups:
       # IT WHEN there is a stall this estate did NOT recover from without a
       # human — that observation, and only that, sets the threshold.
 
-      - alert: TestnetChainScrapeDown
+      - alert: TestnetChainSeriesMissing
         # THE TWO RULES ABOVE ARE WRITTEN FOR BOTH NETWORKS AND, UNTIL
         # 2026-08-12, COULD ONLY EVER MATCH ONE. `EmberTipNotAdvancing`'s own
         # summary says "EMBER {{ $labels.network }} tip", and
@@ -1118,8 +1118,29 @@ groups:
         # loss is a delayed ticket about a chain no user's money is on. `for:
         # 10m` because the testnet estate is redeployed by hand and a target is
         # legitimately absent for the length of a `docker compose up`.
-        expr: up{job="cf-indexer-testnet"} == 0
-        for: 10m
+        # ── WHY THIS NO LONGER WATCHES A SCRAPE ──────────────────────────
+        #
+        # It used to be `up{job="cf-indexer-testnet"} == 0`, and that job is
+        # gone: one pod serves both estates and labels its own series
+        # `network`, so there is no second target to be down.
+        #
+        # The `up` form could not have caught the failure it was written for.
+        # When the consolidation turned `indexer.cf-testnet` into a CNAME to the
+        # mainnet pod, the target stayed UP and answered — with mainnet's
+        # numbers under `estate="testnet"`. Both chain rules went on evaluating,
+        # against the wrong network, for five hours, and this alert stayed
+        # silent the whole time because its premise was liveness rather than
+        # presence (micro-org#516).
+        #
+        # `indexer_chain_halted` rather than `indexer_tip_height`: the indexer
+        # emits one per CONFIGURED chain scope at startup, whereas a tip series
+        # appears only after a successful tip read. A testnet chain that is
+        # healthy but idle — which EMBER testnet often is, sitting at its
+        # difficulty floor — has no tip series and is not a fault. Absence of
+        # the halted series means the scope was never configured, which is
+        # exactly the defect: `INDEXER_CHAINS` naming no testnet chain.
+        expr: absent(indexer_chain_halted{network="testnet"})
+        for: 15m
         labels:
           severity: ticket
           team: chain
@@ -1127,14 +1148,16 @@ groups:
           estate: testnet
           sev: "4"
         annotations:
-          summary: "The testnet indexer is not being scraped — both EMBER chain rules are blind to testnet"
+          summary: "The indexer exports no testnet chain series — both EMBER chain rules are blind to testnet"
           description: >-
-            Prometheus cannot reach cf-testnet-indexer-1. While this is true
-            EmberTipNotAdvancing and EmberDifficultyAtFloor evaluate against no
-            testnet series at all, so a frozen testnet chain produces silence
-            rather than a ticket. The usual cause is that Prometheus lost its
-            attachment to the testnet compose network, which a `docker compose
-            up` of the telemetry stack restores; the runbook has the check.
+            No `indexer_chain_halted{network="testnet"}` exists, which means the
+            consolidated indexer has no testnet chain scope configured at all.
+            While this is true EmberTipNotAdvancing and EmberDifficultyAtFloor
+            evaluate against no testnet series, so a frozen testnet chain
+            produces silence rather than a ticket. The usual cause is
+            INDEXER_CHAINS in compose/env/chain.mainnet.env having lost its
+            testnet entries, or env-chain-testnet not being mounted on the pod —
+            check `INDEXER_CHAINS` in the running container first.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-testnet-chain-scrape-down.md
 
   # ===================================================== TICKET — jobs ======
