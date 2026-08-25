@@ -248,11 +248,19 @@ def is_retired_surface(name, service):
 # An explicit list rather than a flag, so that adding a name is a reviewable diff
 # that says which service crossed and when.
 CONSOLIDATED_SERVICES: set[str] = {
-    # agora, 2026-08-25. The pilot: wave 2's lowest-risk service, and the one the
-    # plan used to prove each earlier step. Its testnet database is adopted, its
-    # testnet Service is a CNAME into this namespace, and its testnet Deployment
-    # sits at zero replicas — which is the rollback, and why it is not deleted.
+    # Wave 2, 2026-08-25 — the six the plan chose because a defect here costs
+    # nobody money. agora went first alone, as the pilot; §6.1 records what that
+    # changed. The other five followed as one batch once the mechanism was proven.
+    #
+    # Three of the six (community, analytics, policy) have no public router at
+    # all and are reached only service-to-service, which is why the testnet
+    # Service is a CNAME rather than a deletion.
     "agora",
+    "community",
+    "analytics",
+    "policy",
+    "pricing",
+    "devplatform",
 }
 
 EXCLUDED_SERVICES = {"postgres"}
