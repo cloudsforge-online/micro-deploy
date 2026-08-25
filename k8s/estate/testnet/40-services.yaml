@@ -131,16 +131,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: custody
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: custody
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: custody.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -363,16 +359,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: settlement
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: settlement
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
+  type: ExternalName
+  externalName: settlement.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
