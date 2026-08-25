@@ -280,6 +280,13 @@ CONSOLIDATED_SERVICES: set[str] = {
     "aetherholm",
     "foresight",
     "trade",
+
+    # Wave 6, 2026-08-25 — the money core. Moved last, as the plan requires, and
+    # only once every caller was already forwarding the header in production.
+    # Both are two-pool services, so this is the same adoption the others had:
+    # ledger carried 14,137 rows, wallet 89.
+    "ledger",
+    "wallet",
 }
 
 EXCLUDED_SERVICES = {"postgres"}
