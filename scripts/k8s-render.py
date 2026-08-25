@@ -248,6 +248,12 @@ SINGLE_DATABASE_SERVICES: set[str] = {
     # indexer keeps one database too — §5.4 found it needed no code change at all,
     # because every table that matters already carried `network`.
     "indexer",
+    # custody and settlement, 2026-08-25. Both keep one database with a `network`
+    # column. custody's 31 testnet keys and 2 surviving seeds were merged by hand
+    # first (micro-org#510); settlement follows because its treasuries and sweep
+    # sources name custody addresses.
+    "custody",
+    "settlement",
 }
 
 # ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
@@ -335,6 +341,11 @@ CONSOLIDATED_SERVICES: set[str] = {
     # by hand; everything else in that database is derived from the chain and the
     # merged indexer re-observes it from its own checkpoint.
     "indexer",
+
+    # custody and settlement, 2026-08-25. See §6.2 — the merge was row work plus a
+    # keyring that briefly held V2 beside V4, not a schema change.
+    "custody",
+    "settlement",
 }
 
 EXCLUDED_SERVICES = {"postgres"}
