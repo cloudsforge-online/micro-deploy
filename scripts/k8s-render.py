@@ -245,6 +245,9 @@ SINGLE_DATABASE_SERVICES: set[str] = {
     # than an estate's user data, and the public status page wants both estates
     # in one query.
     "beacon",
+    # indexer keeps one database too — §5.4 found it needed no code change at all,
+    # because every table that matters already carried `network`.
+    "indexer",
 }
 
 # ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
@@ -327,6 +330,11 @@ CONSOLIDATED_SERVICES: set[str] = {
     # landed. The twenty-one disabled ones were left behind: their last check is
     # 2026-08-14, the day the frontends they name were retired.
     "beacon",
+
+    # indexer, 2026-08-25. Its seven testnet watched addresses were carried over
+    # by hand; everything else in that database is derived from the chain and the
+    # merged indexer re-observes it from its own checkpoint.
+    "indexer",
 }
 
 EXCLUDED_SERVICES = {"postgres"}
