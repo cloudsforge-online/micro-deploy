@@ -91,7 +91,14 @@
 # ports open, each forwarding one network to one gateway Service:
 #
 #   127.0.0.1:9081 -> gateway.cloudsforge-estate.svc.cluster.local:81
-#   127.0.0.1:9181 -> gateway.cf-testnet.svc.cluster.local:81
+#   127.0.0.1:9181 -> gateway-testnet.cloudsforge-estate.svc.cluster.local:81
+#
+# BOTH FORWARDERS NOW POINT INTO ONE NAMESPACE, and the second one is not a
+# typo. `docs/network-consolidation.md` §6.3 moved the testnet gateway to sit
+# beside the thirty services it proxies to; it is a separate Deployment with a
+# separate env Secret, and `CF_EMBER_NETWORK=testnet` in that Secret is what
+# makes it a testnet gateway. The two loopback ports are unchanged, so nothing
+# in the Cloudflare dashboard moves.
 #
 # The tunnel's contract — "mainnet is at :9081, testnet at :9181" — is honoured
 # verbatim; only what stands behind it moved. Two sidecars rather than one
@@ -253,7 +260,7 @@ spec:
         imagePullPolicy: IfNotPresent
         args:
         - TCP-LISTEN:9181,bind=127.0.0.1,fork,reuseaddr
-        - TCP:gateway.cf-testnet.svc.cluster.local:81
+        - TCP:gateway-testnet.cloudsforge-estate.svc.cluster.local:81
         resources:
           requests: {cpu: 10m, memory: 16Mi}
           limits: {memory: 64Mi}
