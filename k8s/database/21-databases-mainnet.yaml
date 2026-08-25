@@ -3,7 +3,7 @@
 # Network:   mainnet
 # Namespace: cloudsforge-estate
 # Cluster:   postgres
-# Databases: 30
+# Databases: 52
 #
 # Regenerate with:
 #   ./scripts/k8s-render-databases.py --network mainnet --out k8s/database/21-databases-mainnet.yaml
@@ -18,7 +18,29 @@
 # NOTE: `metadata.name` is NOT the database name for every entry below. Kubernetes
 # object names are RFC 1123 subdomains and cannot contain `_`, which PostgreSQL
 # allows. `spec.name` is always the real database. Affected here:
+#   object activity-testnet  ->  database activity_testnet
 #   object admin-api  ->  database admin_api
+#   object admin-api-testnet  ->  database admin_api_testnet
+#   object aetherholm-testnet  ->  database aetherholm_testnet
+#   object agora-testnet  ->  database agora_testnet
+#   object analytics-testnet  ->  database analytics_testnet
+#   object billing-testnet  ->  database billing_testnet
+#   object community-testnet  ->  database community_testnet
+#   object devplatform-testnet  ->  database devplatform_testnet
+#   object emberkin-testnet  ->  database emberkin_testnet
+#   object foresight-testnet  ->  database foresight_testnet
+#   object lantern-testnet  ->  database lantern_testnet
+#   object ledger-testnet  ->  database ledger_testnet
+#   object market-testnet  ->  database market_testnet
+#   object mint-testnet  ->  database mint_testnet
+#   object nda-testnet  ->  database nda_testnet
+#   object policy-testnet  ->  database policy_testnet
+#   object pricing-testnet  ->  database pricing_testnet
+#   object studio-testnet  ->  database studio_testnet
+#   object tessera-testnet  ->  database tessera_testnet
+#   object trade-testnet  ->  database trade_testnet
+#   object wallet-testnet  ->  database wallet_testnet
+#   object worlds-testnet  ->  database worlds_testnet
 ---
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
@@ -29,6 +51,21 @@ metadata:
     online.cloudsforge.network: mainnet
 spec:
   name: activity
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: activity-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: activity_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -53,12 +90,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: admin-api-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: admin_api_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: aetherholm
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: aetherholm
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: aetherholm-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: aetherholm_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -83,12 +150,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: agora-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: agora_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: analytics
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: analytics
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: analytics-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: analytics_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -128,12 +225,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: billing-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: billing_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: community
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: community
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: community-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: community_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -173,12 +300,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: devplatform-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: devplatform_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: emberkin
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: emberkin
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: emberkin-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: emberkin_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -209,6 +366,21 @@ metadata:
     online.cloudsforge.network: mainnet
 spec:
   name: foresight
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: foresight-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: foresight_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -263,12 +435,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: lantern-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: lantern_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: ledger
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: ledger
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: ledger-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: ledger_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -293,6 +495,21 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: market-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: market_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: mint
   namespace: cloudsforge-estate
   labels:
@@ -308,12 +525,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: mint-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: mint_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: nda
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: nda
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: nda-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: nda_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -353,6 +600,21 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: policy-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: policy_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: pool
   namespace: cloudsforge-estate
   labels:
@@ -374,6 +636,21 @@ metadata:
     online.cloudsforge.network: mainnet
 spec:
   name: pricing
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: pricing-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: pricing_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -413,12 +690,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: studio-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: studio_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: tessera
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: tessera
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: tessera-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: tessera_testnet
   owner: cloudsforge
   cluster:
     name: postgres
@@ -443,6 +750,21 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: trade-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: trade_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: wallet
   namespace: cloudsforge-estate
   labels:
@@ -458,12 +780,42 @@ spec:
 apiVersion: postgresql.cnpg.io/v1
 kind: Database
 metadata:
+  name: wallet-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: wallet_testnet
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
   name: worlds
   namespace: cloudsforge-estate
   labels:
     online.cloudsforge.network: mainnet
 spec:
   name: worlds
+  owner: cloudsforge
+  cluster:
+    name: postgres
+  ensure: present
+  databaseReclaimPolicy: retain
+---
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: worlds-testnet
+  namespace: cloudsforge-estate
+  labels:
+    online.cloudsforge.network: mainnet
+spec:
+  name: worlds_testnet
   owner: cloudsforge
   cluster:
     name: postgres

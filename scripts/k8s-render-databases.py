@@ -69,6 +69,7 @@ same choice, for the same reason, as `reclaimPolicy: Retain` on the StorageClass
 holding it.
 """
 import argparse
+import importlib
 import pathlib
 import re
 import sys
@@ -162,7 +163,35 @@ duplicates = sorted({name for name in statements if statements.count(name) > 1})
 if duplicates:
     sys.exit(f"FAIL: {sql_path} creates these more than once: {', '.join(duplicates)}")
 
-names = sorted(statements)
+# ── THE ADOPTED TESTNET DATABASES ────────────────────────────────────────────
+#
+# `docs/network-consolidation.md` §6. A consolidated service serves both estates
+# from one pod and holds a SECOND database, `<db>_testnet`, in the mainnet
+# cluster. Those were created by `scripts/k8s-db-adopt-testnet.sh` with a plain
+# `CREATE DATABASE`, which is how the cutover had to work — but it left them
+# outside CloudNativePG entirely.
+#
+# That is the exact rot this file's own header warns about, one level up. Before
+# this, `kubectl get database` reported 30 of 30 healthy while TWENTY-TWO
+# databases the estate depends on were declared by nothing: a cluster rebuilt
+# from these manifests would have come up without them, and twenty-two services
+# would have refused every testnet request on an estate that looked fine.
+#
+# The list is imported from `k8s-render.py` rather than restated here. Two lists
+# of which services are consolidated would drift, and drift between two lists
+# that are each individually correct is the defect this whole plan kept
+# producing.
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+_render = importlib.import_module("k8s_render_shim")
+adopted: list[str] = []
+if args.network == "mainnet":
+    declared = set(statements)
+    for svc in sorted(_render.CONSOLIDATED_SERVICES - _render.SINGLE_DATABASE_SERVICES):
+        db = svc.replace("-", "_")
+        if db in declared:
+            adopted.append(f"{db}_testnet")
+
+names = sorted(statements + adopted)
 
 # ── THE POSTGRES NAME AND THE KUBERNETES NAME ────────────────────────────────
 #
