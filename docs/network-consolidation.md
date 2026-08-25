@@ -917,6 +917,72 @@ twenty-four used — the render already knows how, `SINGLE_DATABASE_SERVICES`
 already covers the no-second-handle case, and the freeze/adopt script already
 refuses to copy from a database that is still being written to.
 
+### 6.3 The gateway merge is not blocked by custody — and one Traefik is the wrong target
+
+Assessed 2026-08-25 against the live gateways, whose `gateway-dynamic` ConfigMap
+is byte-identical to the checkout in both namespaces.
+
+**micro-org#508 and #510 do not block the gateway.** They are about database rows
+and a UNIQUE constraint; the gateway cares only whether a router's upstream name
+resolves. Of the services still in `cf-testnet`, `settlement` and `backup-runner`
+have no router at all, and `custody`'s single router (`cf-web-vault`) answers 404
+to everything — 1,548 GETs, all 404, and mainnet's equivalent answers 404 too.
+Repointing it changes a 404 into a 404.
+
+**`site` is retired** (done). Its two retirement routers sit at priority 550 with
+`!PathPrefix('/v1')` and answer 34,184 requests with a 302 from middleware,
+never reaching an upstream. `cf-web-site` sits at 500 and therefore only ever
+matched `/v1`, which the bundle 404s: **41 requests in its entire life, every one
+a 404.** Scaled to zero; the Service stays, because it is the declared `service:`
+on three routers and `k8s-gateway.sh` refuses a router whose upstream has none.
+
+**The real coupling is the hearth pair.** `hearth-explorer-api` and
+`hearth-verify` exist ONLY in `cf-testnet` — mainnet's five `rpc.<apex>` devkit
+routes 502 today, deliberately, because `compose/mainnet.env` has no
+`CF_HEARTH_CHAIN_ID`. Move them under their current names and those five 502s
+become 200s **serving testnet chain data on a mainnet hostname**, which is §6.1's
+defect class exactly. They move as `*-testnet` with their own upstream variables,
+or mainnet gets its own devkit. That is a decision, not a step.
+
+#### Why one Traefik is the wrong target
+
+The two gateways are the same Traefik reading the same 281 KB of files; the whole
+difference is `env-traefik`. Rendering both:
+
+    routers        90 mainnet, 79 testnet — 76 names in common, 0 sharing a rule
+    middlewares    41 each, differing in exactly 2: cf-cors and cf-network
+
+Collapsing to one costs 76 router duplications in a 3,404-line file whose value
+is its comments, a second entrypoint chain, a doubled env Secret, a
+re-specification of `surface-routes.py` checks 6 and 10, and the hearth rename —
+to save one pod.
+
+And two invariants are easy to lose in it. `CF-Network` is stamped **on the
+entrypoint, not per router**, precisely so a forgotten router cannot deliver an
+unstamped request; per-router stamping would restore that failure. And the CORS
+asymmetry is a security property — `CF_VIEW_ORIGIN_SUFFIX` exists only in
+`traefik.testnet.env`, so testnet accepts reads from mainnet frontends and
+mainnet accepts nothing from testnet. One `cf-cors` on one entrypoint grants the
+forbidden direction silently.
+
+**So: two Traefik Deployments in `cloudsforge-estate`**, each with its own env
+Secret, both mounting the same unchanged ConfigMap. That removes the
+`cf-testnet` dependency with zero changes to `gateway/dynamic/*.yml` and
+preserves every invariant by construction. If one Traefik is still wanted, it is
+separate, later work — and it needs a second entrypoint (`tunnel-testnet`) with
+its own `cf-network-testnet` and `cf-cors-testnet`, never per-router middleware.
+
+**cloudflared is one line, and needs no dashboard.** It is already one connector
+in `cf-edge` with two socat sidecars on 9081/9181; the 61 ingress rules are
+token-delivered and stay untouched. Merging means repointing `origin-testnet`'s
+socat target. `scripts/k8s-cloudflared.sh` hard-asserts `cf-testnet` has a ready
+`gateway` Service, so it changes in the same commit or it refuses.
+
+**What still blocks deleting the namespace** is `faucet`, which reaches custody
+by bare name (`CUSTODY_URL=http://custody:4000`) — so faucet cannot move until
+custody does. That is where micro-org#510 finally lands: on namespace deletion,
+not on the gateway.
+
 ### The waves
 
 | wave | contents | why this order |
