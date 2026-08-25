@@ -3,34 +3,39 @@
 Written 2026-08-21, after the frontend combined view (micro-org#459) proved the
 pattern this generalises.
 
-## Status — all 30 services across; the gateway merge is what remains
+## Status — done, except the namespace, which should not be deleted
 
-Every service the plan names now serves both estates from one pod in
-`cloudsforge-estate`, with a CNAME in `cf-testnet` so callers and the testnet
-gateway resolve unchanged. `cf-testnet` is down from **51 running Deployments to
-five**, and none of the five is an application service.
+All 30 application services serve both estates from one pod each in
+`cloudsforge-estate`, and **both gateways now run there too** — `gateway` and
+`gateway-testnet`, two Deployments sharing one ConfigMap and one certificate,
+differing only in their env Secret. `cf-testnet` is down from **51 running
+Deployments to four**, none of them an application service or a gateway.
 
 **Across and verified (30).** agora, community, analytics, policy, pricing,
 devplatform, activity, studio, lantern, emberkin, worlds, nda, tessera, market,
 mint, billing, hub-api, admin-api, aetherholm, foresight, trade, ledger, wallet,
-identity, notify, beacon, indexer, custody, settlement, site. Twenty-two hold two
-database handles and their migrators run against both; the rest keep one database
-with a `network` column (§5.3, §5.4, §5.5) or, for site, no database at all.
+identity, notify, beacon, indexer, custody, settlement, site.
 
-**Still in `cf-testnet` (5), none of them pending:**
+**The gateway merge (§6.3), done.** What makes two Traefiks in one namespace safe
+is that `cf-network` is attached to the ENTRYPOINT, so every request is stamped
+`CF-Network` from that gateway's own `CF_EMBER_NETWORK` before any router is
+consulted — no router can be added that forgets to say which estate is asking.
+Proven behaviour-identical to the old gateway on 8 of 8 probes before any traffic
+moved, then cut over at the cloudflared socat sidecar with the loopback ports
+unchanged, so no Cloudflare dashboard edit was involved.
+
+**What remains in `cf-testnet` (4), all deliberate:**
 
 | | why it stays |
 |---|---|
-| `gateway` | the testnet Traefik — the remaining phase, assessed in §6.3 |
-| `faucet` | testnet-only by nature; there is no mainnet faucet to merge into |
-| `hearth-explorer-api`, `hearth-verify` | exist only in testnet ON PURPOSE — mainnet's five `rpc.<apex>` devkit routes 502 deliberately, and moving these under their current names would make them serve testnet chain data on a mainnet hostname |
+| `faucet` | testnet-only by nature; bridged INTO `cloudsforge-estate` by an ExternalName so the testnet gateway can reach it (§6.4) |
+| `hearth-explorer-api`, `hearth-verify` | moving them under their current names would give the mainnet gateway a resolvable backend for its five `rpc.<apex>` routers, turning documented 502s into 200s serving testnet chain data |
 | `backup-runner` | per-namespace by design |
 
-**What remains:** the gateway merge, for which §6.3 recommends two Traefik
-Deployments in `cloudsforge-estate` rather than one merged Traefik, and then the
-namespace. Note the namespace still holds the testnet CNPG cluster and the six
-abandoned custody mnemonics (§6.2), so deleting it is a decision about those,
-not a formality.
+**The namespace should NOT be deleted.** Beyond those four it still holds the
+testnet CloudNativePG cluster and the six abandoned custody mnemonics (§6.2).
+Deleting it is a decision about those, and the answer is currently no: nothing
+is gained, and the mnemonics have no second copy.
 
 ## 1. What already points this way
 
