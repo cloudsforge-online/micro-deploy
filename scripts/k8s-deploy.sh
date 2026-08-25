@@ -394,6 +394,34 @@ if want_wave 30; then
     fi
   fi
 
+  # ── A JOB'S POD TEMPLATE IS IMMUTABLE, AND THE CUTOVER CHANGES ONE ─────────
+  #
+  # Normally this never bites: a new release means a new Job NAME, so `apply`
+  # creates rather than patches. The consolidation cutover breaks that
+  # assumption — it adds `<PREFIX>_DATABASE_URL_TESTNET` to a migrator WITHOUT
+  # changing the release, so `apply` tries to patch a Job that already exists
+  # and the API server refuses with `spec.template: field is immutable`.
+  #
+  # It failed loudly, which is right, and it failed at wave 30, which meant
+  # NOTHING downstream was applied and the estate stayed on the previous state.
+  # Recovering by hand meant deleting the Jobs and re-running, so that is what
+  # this does — but only for the ones whose template actually differs, because
+  # deleting a completed migration Job that is already correct throws away the
+  # record of what ran.
+  #
+  # ONE server-side dry run for the whole file, not one per Job. `apply` reports
+  # each object independently and keeps going after a rejection, so the errors it
+  # prints name exactly the Jobs that cannot be patched — which is the question,
+  # asked of the same admission path the real apply will take.
+  immutable="$(kubectl apply -n "$NAMESPACE" -f "$DIR/30-migrate-jobs.yaml" --dry-run=server 2>&1 \
+    | grep -oE 'Job\.batch "[^"]+" is invalid' | cut -d'"' -f2 | sort -u | tr '\n' ' ')"
+  if [ -n "$immutable" ]; then
+    say "  these Jobs exist with a different pod template, which Kubernetes will not patch;"
+    say "  deleting so apply re-creates them (migrations are idempotent):"
+    for j in $immutable; do say "    $j"; done
+    kubectl delete job -n "$NAMESPACE" $immutable --ignore-not-found --wait=true >/dev/null 2>&1
+  fi
+
   kubectl apply -n "$NAMESPACE" -f "$DIR/30-migrate-jobs.yaml" >/dev/null || fail "wave 30 apply failed"
   say "  applied $JOB_COUNT Job(s), all in parallel — no migrator depends on another"
 
