@@ -859,101 +859,49 @@ populated, with records that exist in only one of them.
 | settlement | 1 confirmed tx, 1 treasury, 1 sweep source | **2** |
 | beacon | 29 probes | **29** |
 
-#### custody: the two databases are on DIFFERENT KEYRING VERSIONS
+#### custody: the blocker is a UNIQUE constraint, not the keyring
 
-This supersedes what the rest of this section first said. The colliding deployer
-key below is real but it is not the blocker — this is:
+This section said twice that the keyring was the blocker. It is not, and the
+second attempt was as wrong as the first.
 
-    cloudsforge-estate   custody_seeds.key_version = 4    custody_keys.key_version = 4
-    cf-testnet           custody_seeds.key_version = 2    custody_keys.key_version = 2
+**`key_version` is the at-rest AES-GCM envelope version, not a derivation
+version.** `hd.ts` derives from (mnemonic, family, network, index, chain) and
+takes no version at all; signing decrypts the blob, whose own `v<n>:` prefix is
+authoritative, and never reads the row's version. Re-encrypting a key changes no
+address. The runtime says so, and the plural is the tell:
 
-micro-org#339 rotated the custody keyring V3→V4 **on both machines**. The testnet
-custody in Kubernetes is still deriving at **v2**, two versions behind, for all
-31 of its keys and all 8 of its seed records. Filed as micro-org#508, because it
-is a defect whether or not anything ever consolidates.
+    cloudsforge-estate   "keyVersion":4,"readableKeyVersions":[4]
+    cf-testnet           "keyVersion":2,"readableKeyVersions":[2]
 
-For this plan it means the merge is not a copy under any reading. The merged
-custody runs v4; importing 31 v2-derived key records hands it addresses it
-cannot derive or sign for unless the v4 keyring still carries v2 material — and
-if it does, that is its own question with its own answer.
+`readableKeyVersions` is a LIST because a keyring is built to hold several at
+once — that is how `runbook-custody-master-secret.md` rotates without any blob
+ever becoming unreadable. Adding cf-testnet's V2 secret beside the estate's V4,
+leaving `CUSTODY_KEY_VERSION=4`, makes all 39 testnet blobs readable and all 31
+addresses signable; `reencrypt-cli.ts` then drains them to v4.
 
-**And `next_index` cannot be reconciled by inspection.** The same user has
-different derivation counters in the two databases:
+The `next_index` argument was wrong too. The two `foresight` counters index
+different keyspaces — different mnemonic and different coin-type branch, since
+every non-mainnet network takes coin type 1. Comparing them is a category error.
 
-    user 019fcd54-…   ember   mainnet next_index=1    testnet next_index=3
-    user foresight    ember   mainnet next_index=32   testnet next_index=20
+**The actual blocker (micro-org#510):**
 
-Take the lower and the next derivation lands on an index already used — a
-duplicate address, possibly handed to a second user as their deposit address.
-Take the higher and it is only safe if both counters advanced over the same key
-material, which the version divergence says they did not.
+    "custody_seeds_user_family_uniq" UNIQUE CONSTRAINT, btree (user_id, family)
 
-#### custody, also: two deployer keys for one binding
+Not keyed by network. **Six of the eight testnet seeds collide** with an estate
+seed for the same (user, family), covering 28 of the 30 HD-derived keys. A merged
+database holds one mnemonic per (user, family), so either six mnemonics are
+abandoned or the constraint gains `network` — and repointing the rows at the
+surviving seed is not an option, because `exports.ts` returns the SEED's phrase
+and the stated `derivation_path` would then name a different address than the row.
 
-Thirty of the thirty-one insert cleanly — zero address collisions, and
-`custody_keys_binding_uniq` is satisfied. One is not:
+Two more decisions ride along: **three** colliding key bindings rather than one —
+and `custody_keys_binding_uniq` is PARTIAL, so the two treasuries insert
+SILENTLY while only the deployer hard-fails — plus an `ember|testnet` treasury
+pin the estate does not have, without which a merged testnet refuses every sweep.
 
-    ember | testnet | deployer | foresight-estate | foresight-estate-oracle-1
-
-    cloudsforge-estate   0x2c71eb5753E7D08929d2ec14b303A5F5B3B0b9cA   2026-08-04
-    cf-testnet           0xc4FBE19A6f9932a6b5025d17a8092B7C75381d5b   2026-08-05
-
-Two custody instances each minted a testnet deployer for the same foresight
-oracle, a day apart. Whichever is not chosen keeps whatever gas was funded to
-it, unreachable. Going forward the merged pod will answer with the
-`cloudsforge-estate` one, because that is the database it reads — so the
-question is whether the other address holds anything, and that is a chain query
-plus a decision about which is canonical.
-
-#### settlement: two rows carrying the wrong estate
-
-    outbound_transactions   mainnet | ember | planned     2026-08-05
-    sweep_sources           mainnet | ember
-
-Both sit in the TESTNET database and both say `mainnet`. The planned
-transaction never executed, so it is harmless either way. The sweep source is
-not: copied as-is it adds a mainnet EMBER sweep source, and a sweep source is
-the thing that decides which addresses get drained into a treasury. Relabelling
-it `testnet` is probably right and "probably" is not the standard for a row that
-moves coin.
-
-#### beacon: 21 stale probes, and a merge that is actually mechanical
-
-An earlier draft of this section claimed the testnet beacon was measuring
-mainnet through followed redirects. That was wrong and micro-org#509 is closed
-as such: `probes.ts` passes `redirect: 'manual'`, so a probe pointed at a
-retirement redirect records the 302 and goes down rather than silently
-measuring the target.
-
-What is true is smaller. Of the 29 probes, **21 are disabled** — their last
-check is 2026-08-14, the day the frontends were retired — and the 8 still
-running are API paths, which the retirement did not touch:
-
-    aetherholm.chronicle  /v1/chronicle/seasons   expect 200   up
-    faucet.terms          /v1/faucet              expect 200   up
-    foresight.stakeassets /stake-assets           expect 200   up
-    market.collections    /v1/collections         expect 200   up
-    tessera.wards         /v1/wards               expect 200   up
-    worlds.titles         /v1/titles              expect 200   up
-    retired.apex          testnet apex            expect 302   up
-    retired.sub           hub-testnet             expect 302   up
-
-The last two assert the retirement still redirects, and pass.
-
-So beacon's merge is mechanical after all: eight rows, renamed with the
-`-testnet` suffix §5.3 requires and relabelled `network='testnet'`, and the 21
-disabled ones dropped rather than carried. The URLs still resolve.
-
-#### beacon, and separately: the names would have been wrong too
-
-All 29 say `network=mainnet` while describing testnet targets, and §5.3 requires
-the testnet copy of a probe to be NAMED `<service>-testnet` — the CHECK enforces
-it, and the reason is hysteresis: two estates sharing one `probe_state` row
-count each other's failures and open an incident against the wrong one.
-
-`seedRecurring` seeds JOBS, not probes, so nothing re-creates them at boot. They
-are either renamed and relabelled on the way in, or the merged beacon watches
-nothing on testnet until someone re-registers 29 targets by hand.
+micro-org#508 stays open for what is still true: the testnet keyring is two
+envelope versions behind and was never rotated with the estate's, though
+micro-org#339 recorded that rotation as done on both machines.
 
 #### settlement is blocked BEHIND custody
 
