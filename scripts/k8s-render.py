@@ -254,6 +254,14 @@ SINGLE_DATABASE_SERVICES: set[str] = {
     # sources name custody addresses.
     "custody",
     "settlement",
+
+    # site, 2026-08-25. Scaling it to zero by hand did not hold — the next
+    # `k8s-deploy.sh --network testnet` restored it from the render, which is
+    # exactly what a render is for. Retiring it durably means leaving the render,
+    # and the CNAME keeps `cf-web-site` resolvable: three routers declare it as
+    # their `service:` even though the retirement middleware answers first, and
+    # `k8s-gateway.sh` refuses a router whose upstream has no Service.
+    "site",
 }
 
 # ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
