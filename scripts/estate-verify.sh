@@ -372,6 +372,11 @@ fails=0
 
 ok()   { printf '  \033[32mok\033[0m   %s\n' "$1"; }
 bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails+1)); }
+# A third category, for something true and worth seeing that is neither a check
+# that passed nor one that failed. It does NOT touch `fails`: using `bad` for
+# these would make the run red for a condition nobody has decided is wrong, and
+# using `ok` would file it under things that were verified.
+note() { printf '  \033[33mnote\033[0m %s\n' "$1"; }
 code() { curl -s -o /tmp/slice.body -w '%{http_code}' "$@"; }
 
 echo "── health, over a real socket ───────────────────────────────────────────"
@@ -458,6 +463,19 @@ else
   db_live=$(cfpsql -qtA -d postgres \
     -c "select datname from pg_database where datistemplate = false and datname <> 'postgres' order by 1" \
     2>/dev/null | tr -d '\r' | sed '/^$/d')
+  # ── A RESTORE-VERIFICATION SCRATCH DATABASE IS NOT DRIFT ───────────────────
+  #
+  # The backup runner proves a backup by restoring it into `scratch_verify_<x>`
+  # and querying it. That database is a step in a proof, not a declaration, and
+  # initdb.sql must never grow a line for one — the name carries a per-run
+  # suffix, so the line could not match twice anyway.
+  #
+  # Reported rather than silently dropped: one of these is 8.8 GB, and a run
+  # that leaves it behind is spending the disk the backup floor needs. Excluded
+  # from the comparison, still visible in the output.
+  db_scratch=$(printf '%s\n' "$db_live" | grep -E '^scratch_verify_' || true)
+  db_live=$(printf '%s\n' "$db_live" | grep -vE '^scratch_verify_' || true)
+  [ -z "$db_scratch" ] || note "restore-verification scratch database(s) still present, not counted as drift: $(printf '%s' "$db_scratch" | tr '\n' ' ')— each is a full copy of the database it proved, so leaving one behind spends the disk the next backup needs"
   # `template0`, `template1` and `postgres` are the server's own and are excluded
   # by the query, not by a name list here — a name list is the thing that goes
   # stale.
