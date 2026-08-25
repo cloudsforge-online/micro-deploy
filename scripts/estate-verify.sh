@@ -2608,7 +2608,10 @@ GW_PORT=${CF_GATEWAY_HTTPS_PORT:-${CF_GATEWAY_PORT:-443}}
 # moves; `websecure` by NAME rather than by index, because the manifest lists
 # web, websecure and tunnel and their order is not a promise.
 if [ "$CF_RUNTIME" = k8s ]; then
-  gw_svc=$(kubectl get svc -n "$CF_NAMESPACE" gateway \
+  # Its own namespace and name, not CF_NAMESPACE: both gateways live in
+  # `cloudsforge-estate` now and testnet's is `gateway-testnet`. k8s-estate-verify.sh
+  # exports the pair; the fallbacks here keep a direct invocation working.
+  gw_svc=$(kubectl get svc -n "${CF_GATEWAY_NAMESPACE:-$CF_NAMESPACE}" "${CF_GATEWAY_SERVICE:-gateway}" \
     -o jsonpath='{.spec.clusterIP} {.spec.ports[?(@.name=="websecure")].port}' 2>/dev/null)
   gw_svc_addr=${gw_svc%% *}
   gw_svc_port=${gw_svc##* }

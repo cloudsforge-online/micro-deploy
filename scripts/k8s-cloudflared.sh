@@ -36,7 +36,7 @@
 # ── WHAT IT CHECKS BEFORE APPLYING ───────────────────────────────────────────
 #
 #   both gateways   The pod's two socat sidecars forward to
-#                   `gateway.cloudsforge-estate:81` and `gateway.cf-testnet:81`.
+#                   `gateway.cloudsforge-estate:81` and `gateway-testnet.cloudsforge-estate:81`.
 #                   A Service that does not exist, or does not carry port 81,
 #                   fails at cutover as a 502 on every public hostname at once.
 #                   Checked here, while nothing is at stake.

@@ -176,6 +176,16 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; }
 # `kubectl apply` sits there indefinitely looking exactly like a healthy gateway.
 CF_RUNTIME=${CF_RUNTIME:-compose}
 CF_NAMESPACE=${CF_NAMESPACE:-${CF_PROJECT:-cloudsforge-estate}}
+# Both gateways run in `cloudsforge-estate` (`docs/network-consolidation.md`
+# §6.3), so the gateway's location is no longer `CF_NAMESPACE` and its name is
+# no longer always `gateway`. A label selector that matches nothing returns
+# empty, and every caller below reads that as "no gateway" — so a stale testnet
+# router table would be reported as nothing to report.
+CF_GATEWAY_NAMESPACE=${CF_GATEWAY_NAMESPACE:-cloudsforge-estate}
+case "${CF_PROJECT:-}" in
+  cf-testnet) CF_GATEWAY_SERVICE=${CF_GATEWAY_SERVICE:-gateway-testnet} ;;
+  *)          CF_GATEWAY_SERVICE=${CF_GATEWAY_SERVICE:-gateway} ;;
+esac
 case "$CF_RUNTIME" in
   compose | k8s) ;;
   *) echo "gateway-reload: CF_RUNTIME='$CF_RUNTIME' is neither 'compose' nor 'k8s'." >&2; exit 2 ;;
@@ -316,7 +326,7 @@ gateway_container() {
 # treats as "no gateway" — the same conservative answer `gateway_container`
 # gives.
 gateway_pod() {
-  kubectl get pod -n "$CF_NAMESPACE" -l app.kubernetes.io/name=gateway \
+  kubectl get pod -n "$CF_GATEWAY_NAMESPACE" -l app.kubernetes.io/name="$CF_GATEWAY_SERVICE" \
     --field-selector=status.phase=Running \
     -o jsonpath='{.items[0].metadata.name}' 2>/dev/null
 }
@@ -768,7 +778,7 @@ EOF
   bad "  written     : ${changed_by:-the ConfigMap} at $(date -u -r "$changed" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "$changed")"
   bad "  last reload : $(date -u -r "$reload" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || echo "$reload")"
   bad "A kubelet syncs a changed ConfigMap into the mount within its sync period; if this"
-  bad "persists the mount is stale. Force it:  kubectl rollout restart -n $CF_NAMESPACE deploy/gateway"
+  bad "persists the mount is stale. Force it:  kubectl rollout restart -n $CF_GATEWAY_NAMESPACE deploy/$CF_GATEWAY_SERVICE"
   return 1
 }
 
@@ -789,7 +799,7 @@ if [ "$CF_RUNTIME" = k8s ] && [ "$mode" != check ]; then
   bad "There is no probe-Pod validator yet, and a rollout without one replaces a stale"
   bad "router table with an empty one. Apply and restart deliberately:"
   bad "    kubectl apply -k k8s/gateway"
-  bad "    kubectl rollout restart -n $CF_NAMESPACE deploy/gateway"
+  bad "    kubectl rollout restart -n $CF_GATEWAY_NAMESPACE deploy/$CF_GATEWAY_SERVICE"
   bad "    $0 --check"
   exit 2
 fi

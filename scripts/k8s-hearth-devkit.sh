@@ -170,6 +170,23 @@ check_upstream() {
   [ "$rest" != "$val" ] || fail "$var is not an http:// URL. Expected http://$want_svc:$want_port — the name a Service in $NAMESPACE resolves."
   rest="${rest%%/*}"
   got_svc="${rest%%:*}"; got_port="${rest##*:}"
+  # ── THE GATEWAY THAT READS THIS IS NO LONGER IN THIS NAMESPACE ─────────────
+  #
+  # The devkit stayed in `cf-testnet` while the testnet gateway moved to
+  # `cloudsforge-estate` (`docs/network-consolidation.md` §6.3), so testnet's
+  # env file names these two by their fully qualified Service name. A short name
+  # there would resolve, from the gateway's namespace, to nothing at all.
+  #
+  # The suffix is stripped before comparing rather than accepted as an
+  # alternative spelling, so this still catches a name that is simply wrong —
+  # and the qualification itself is asserted separately below, since dropping it
+  # would leave a value that is correct here and dead in the pod.
+  got_svc="${got_svc%.$NAMESPACE.svc.cluster.local}"
+  case "$NETWORK:$val" in
+    testnet:*".$NAMESPACE.svc.cluster.local:"*) ;;
+    testnet:*) fail "$var names a short hostname. The testnet gateway runs in cloudsforge-estate now,
+      where '$want_svc' resolves to nothing; it has to say $want_svc.$NAMESPACE.svc.cluster.local:$want_port." ;;
+  esac
   [ "$got_svc:$got_port" = "$want_svc:$want_port" ] || fail "$var does not name $want_svc:$want_port, which is what this manifest creates.
       Nothing else checks this pair — k8s-gateway.sh reads url: literals and skips {{ env }} templates — so a
       mismatch here is a 502 behind a gateway that reports healthy. Fix whichever of the two is wrong."

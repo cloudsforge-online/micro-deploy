@@ -99,10 +99,18 @@ trap 'rm -rf "$TMP"' EXIT
 python3 - > "$TMP/zone" <<'PY'
 import io, os, re, subprocess, sys
 
-# network -> (namespace, the env file Traefik renders its templates from)
+# network -> (namespace, gateway Service, the env file Traefik templates from)
+#
+# THE SERVICE NAME IS PART OF THE KEY, and it has to be. Both gateways now run
+# in `cloudsforge-estate` (`docs/network-consolidation.md` §6.3), so namespace
+# alone no longer identifies one. Correcting only the namespace here — the
+# obvious half-fix, since that is the field that visibly moved — would point
+# every testnet hostname in the generated CoreDNS zone at the MAINNET gateway's
+# ClusterIP. In-cluster testnet traffic would then be answered, with a 200, out
+# of mainnet rows, and the zone file would look entirely reasonable.
 NETWORKS = [
-    ("mainnet", "cloudsforge-estate", "compose/env/traefik.env"),
-    ("testnet", "cf-testnet", "compose/env/traefik.testnet.env"),
+    ("mainnet", "cloudsforge-estate", "gateway", "compose/env/traefik.env"),
+    ("testnet", "cloudsforge-estate", "gateway-testnet", "compose/env/traefik.testnet.env"),
 ]
 
 def envfile(path):
@@ -199,9 +207,9 @@ def hostnames(env):
                     found.add(h)
     return found, unresolved, unknown
 
-def gateway_ip(ns):
+def gateway_ip(ns, svc):
     p = subprocess.run(
-        ["kubectl", "get", "svc", "-n", ns, "gateway", "-o", "jsonpath={.spec.clusterIP}"],
+        ["kubectl", "get", "svc", "-n", ns, svc, "-o", "jsonpath={.spec.clusterIP}"],
         capture_output=True, text=True,
     )
     ip = p.stdout.strip()
@@ -209,14 +217,14 @@ def gateway_ip(ns):
 
 rows, notes, fatal = [], [], []
 claimed = {}
-for network, ns, path in NETWORKS:
+for network, ns, svc, path in NETWORKS:
     env = envfile(path)
     if not env:
         fatal.append("%s: %s does not exist on this host" % (network, path))
         continue
-    ip = gateway_ip(ns)
+    ip = gateway_ip(ns, svc)
     if not ip:
-        fatal.append("%s: no gateway Service with a ClusterIP in namespace %s" % (network, ns))
+        fatal.append("%s: no Service %s with a ClusterIP in namespace %s" % (network, svc, ns))
         continue
     names, unresolved, unknown = hostnames(env)
     for raw in sorted(unresolved):
