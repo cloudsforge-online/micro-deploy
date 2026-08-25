@@ -254,14 +254,6 @@ SINGLE_DATABASE_SERVICES: set[str] = {
     # sources name custody addresses.
     "custody",
     "settlement",
-
-    # site, 2026-08-25. Scaling it to zero by hand did not hold — the next
-    # `k8s-deploy.sh --network testnet` restored it from the render, which is
-    # exactly what a render is for. Retiring it durably means leaving the render,
-    # and the CNAME keeps `cf-web-site` resolvable: three routers declare it as
-    # their `service:` even though the retirement middleware answers first, and
-    # `k8s-gateway.sh` refuses a router whose upstream has no Service.
-    "site",
 }
 
 # ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
@@ -354,6 +346,20 @@ CONSOLIDATED_SERVICES: set[str] = {
     # keyring that briefly held V2 beside V4, not a schema change.
     "custody",
     "settlement",
+
+    # site, 2026-08-25. Not a database service at all — it is here purely so the
+    # testnet render stops emitting its Deployment and emits a CNAME instead.
+    #
+    # Scaling it to zero by hand did not hold: the next `k8s-deploy.sh --network
+    # testnet` restored it from the render, twice, which is exactly what a render
+    # is for. Retiring a service means removing it from the render, and nothing
+    # else is durable.
+    #
+    # The CNAME is not optional. `cf-retired-web-apex`, `cf-retired-web-sub` and
+    # `cf-web-www` all declare `cf-web-site` as their `service:` even though the
+    # retirement middleware answers first, and `k8s-gateway.sh` refuses to apply
+    # a router whose upstream resolves to nothing.
+    "site",
 }
 
 EXCLUDED_SERVICES = {"postgres"}

@@ -373,16 +373,12 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: site
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: testnet
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: site
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
+  type: ExternalName
+  externalName: site.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
