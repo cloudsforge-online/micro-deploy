@@ -240,6 +240,11 @@ def is_retired_surface(name, service):
 SINGLE_DATABASE_SERVICES: set[str] = {
     "identity",
     "notify",
+    # beacon is class B′ too — §5.3 corrected the plan's class-C listing. One
+    # database with a `network` column, because its rows are OBSERVATIONS rather
+    # than an estate's user data, and the public status page wants both estates
+    # in one query.
+    "beacon",
 }
 
 # ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
@@ -315,6 +320,13 @@ CONSOLIDATED_SERVICES: set[str] = {
     # and it turned out to be exact for both.
     "identity",
     "notify",
+
+    # beacon, 2026-08-25. Its eight live probes were carried over by hand first,
+    # renamed with the `-testnet` suffix §5.3 argues for and relabelled
+    # `network='testnet'`, and verified running from the mainnet pod before this
+    # landed. The twenty-one disabled ones were left behind: their last check is
+    # 2026-08-14, the day the frontends they name were retired.
+    "beacon",
 }
 
 EXCLUDED_SERVICES = {"postgres"}

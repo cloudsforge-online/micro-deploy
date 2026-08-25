@@ -896,27 +896,32 @@ the thing that decides which addresses get drained into a treasury. Relabelling
 it `testnet` is probably right and "probably" is not the standard for a row that
 moves coin.
 
-#### beacon: the probes measure the wrong estate entirely
+#### beacon: 21 stale probes, and a merge that is actually mechanical
 
-Worse than "named wrong", which is what this section said first. All 29 target
-`*-testnet.cloudsforge.online` hostnames that the apex consolidation retired,
-and which now 302 to the **mainnet** surface. The prober follows redirects, so
-it lands on mainnet and records a pass:
+An earlier draft of this section claimed the testnet beacon was measuring
+mainnet through followed redirects. That was wrong and micro-org#509 is closed
+as such: `probes.ts` passes `redirect: 'manual'`, so a probe pointed at a
+retirement redirect records the 302 and goes down rather than silently
+measuring the target.
 
-    last 24h:  up x57,147   down x374
+What is true is smaller. Of the 29 probes, **21 are disabled** — their last
+check is 2026-08-14, the day the frontends were retired — and the 8 still
+running are API paths, which the retirement did not touch:
 
-Testnet's status page is green because mainnet is green. If testnet were
-entirely down, those probes would still pass. Filed as micro-org#509.
+    aetherholm.chronicle  /v1/chronicle/seasons   expect 200   up
+    faucet.terms          /v1/faucet              expect 200   up
+    foresight.stakeassets /stake-assets           expect 200   up
+    market.collections    /v1/collections         expect 200   up
+    tessera.wards         /v1/wards               expect 200   up
+    worlds.titles         /v1/titles              expect 200   up
+    retired.apex          testnet apex            expect 302   up
+    retired.sub           hub-testnet             expect 302   up
 
-Which settles whether to import them: no. Copying 29 probes into the merged
-beacon produces 29 rows labelled `network=testnet` that measure mainnet — a
-testnet status page that is a copy of mainnet's and says so nowhere. Strictly
-worse than importing nothing.
+The last two assert the retirement still redirects, and pass.
 
-The probe set has to be re-derived rather than repointed. Testnet is no longer a
-hostname; it is `CF-Network: testnet` against the apex, which means a probe that
-measures it must SEND that header — and beacon needs per-probe request headers
-to do that.
+So beacon's merge is mechanical after all: eight rows, renamed with the
+`-testnet` suffix §5.3 requires and relabelled `network='testnet'`, and the 21
+disabled ones dropped rather than carried. The URLs still resolve.
 
 #### beacon, and separately: the names would have been wrong too
 
