@@ -225,6 +225,23 @@ def is_retired_surface(name, service):
 # `postgres` is not rendered. CloudNativePG owns the database now and
 # k8s/database/ carries the Cluster, the 30 Database objects and the `postgres`
 # Service alias that keeps all 57 DSNs spelling `@postgres:5432`.
+# ── CONSOLIDATED, BUT KEEPING ONE DATABASE ───────────────────────────────────
+#
+# A subset of CONSOLIDATED_SERVICES. These cross like the others — CNAME in the
+# testnet namespace, no Deployment there — but they get NO second DSN, because
+# they were designed to serve both estates from a single database with a
+# `network` column rather than from two pools (§5.3, §5.4, §5.5).
+#
+# Emitting `<PREFIX>_DATABASE_URL_TESTNET` for them would name a database that
+# does not exist in this cluster. Their code ignores the variable today, so it
+# would be inert — and an inert environment variable pointing at a nonexistent
+# database is precisely the kind of artefact that reads as intentional to the
+# next person and is acted on.
+SINGLE_DATABASE_SERVICES: set[str] = {
+    "identity",
+    "notify",
+}
+
 # ── SERVICES THAT SERVE BOTH ESTATES FROM ONE POD ────────────────────────────
 #
 # `docs/network-consolidation.md` §6. A name lands here when its cutover is done:
@@ -287,6 +304,17 @@ CONSOLIDATED_SERVICES: set[str] = {
     # ledger carried 14,137 rows, wallet 89.
     "ledger",
     "wallet",
+
+    # The class B′ singletons, 2026-08-25. One account set and one mail pipeline,
+    # as micro-org#459 settled and §5.5 records — so they are in
+    # SINGLE_DATABASE_SERVICES too and take no second handle.
+    #
+    # Their testnet databases were measured before this: three rows each, both in
+    # `jobs`, and nothing else at all. No users, no sessions, no deliveries, no
+    # notifications. "Vestigial" was the plan's word for identity's testnet pod
+    # and it turned out to be exact for both.
+    "identity",
+    "notify",
 }
 
 EXCLUDED_SERVICES = {"postgres"}
@@ -705,7 +733,11 @@ def main():
         # stood still through every future release until a boot-time schema assertion
         # refused testnet with the rest of the estate up. Caught on agora's cutover, by
         # reading the migrator's log rather than its exit code.
-        if args.network == "mainnet" and name.removesuffix("-migrate") in CONSOLIDATED_SERVICES:
+        if (
+            args.network == "mainnet"
+            and name.removesuffix("-migrate") in CONSOLIDATED_SERVICES
+            and name.removesuffix("-migrate") not in SINGLE_DATABASE_SERVICES
+        ):
             for entry in list(plain_env):
                 if not entry["name"].endswith("_DATABASE_URL"):
                     continue
