@@ -519,7 +519,9 @@ def main():
         (e[0], e[1], e[2], (e[3] if len(e) > 3 else {}), parse_env(root / e[1]))
         for e in entries
     ]
-    tokens_rel, tokens = next(((rel, data) for _, rel, kind, data in parsed if kind == "interp"), (None, None))
+    tokens_rel, tokens = next(
+        ((e[1], e[4]) for e in parsed if e[2] == "interp"), (None, None)
+    )
     if tokens is None:
         sys.exit("FAIL: this network has no `interp` file, so there is nothing to verify secret_vars against.")
 
