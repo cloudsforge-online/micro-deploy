@@ -105,10 +105,24 @@ secret_vars:
 # on testnet, and `jsonMap` refuses an empty URL at import — so settlement and its
 # migrator would both fail to boot, on the network where nobody would notice until
 # a withdrawal was tried.
-derived_vars:
-  SETTLEMENT_RPC_URLS:
-    consumers: [settlement, settlement-migrate]
-    from: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"${BTC_RPC_URL:+,"btc":"$BTC_RPC_URL"}${LTC_RPC_URL:+,"ltc":"$LTC_RPC_URL"}${DOGE_RPC_URL:+,"doge":"$DOGE_RPC_URL"}${ETC_RPC_URL:+,"etc":"$ETC_RPC_URL"}}'
+# ── NO DERIVED VARIABLES ON THIS NETWORK ─────────────────────────────────────
+#
+# `SETTLEMENT_RPC_URLS` used to be declared here. Its only consumers are
+# `settlement` and `settlement-migrate`, and settlement has served both networks
+# from one pod in `cloudsforge-estate` since the consolidation — so the testnet
+# render emits neither, and the renderer never consults this block for testnet.
+#
+# It was not merely dead configuration. `k8s-secrets.py` assembles `derived_vars`
+# into the `estate-derived` Secret and applies it, so declaring it here put a
+# JSON object of chain RPC endpoints — some of which carry basic-auth — into
+# `cf-testnet`, where no pod has read it since the cutover. That is the same
+# defect as the six per-service credential files removed from `FILES` on
+# 2026-08-26 and as `pg-cloudsforge` before them: a credential nothing reads is
+# excluded from every "is this still in use?" question by construction.
+#
+# `render-vars.mainnet.yaml` still declares it, because that is where settlement
+# actually runs. The two files are deliberately not symmetric.
+derived_vars: {}
 
 # Dropped, as on mainnet and for the same measured reason: no value in
 # `tokens.testnet.env` contains `host.docker.internal`, and its one RPC URL does

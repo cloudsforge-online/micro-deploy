@@ -145,12 +145,31 @@ FILES = {
     ],
     "testnet": [
         EnvFileSecret("estate-tokens", "compose/estate/tokens.testnet.env", "interp"),
-        EnvFileSecret("secret-outbox", "compose/secrets/outbox.testnet.env", "envfrom"),
-        EnvFileSecret("secret-custody", "compose/secrets/custody.testnet.env", "envfrom"),
-        EnvFileSecret("secret-identity-key", "compose/secrets/identity-key.testnet.env", "envfrom"),
-        EnvFileSecret("secret-analytics-pepper", "compose/secrets/analytics-pepper.testnet.env", "envfrom"),
-        EnvFileSecret("secret-studio", "compose/secrets/studio.testnet.env", "envfrom"),
-        EnvFileSecret("secret-chainrpc", "compose/secrets/chainrpc.testnet.env", "envfrom"),
+        # ── THE SIX PER-SERVICE CREDENTIAL FILES ARE GONE FROM HERE ──────────
+        #
+        # `secret-outbox`, `secret-custody`, `secret-identity-key`,
+        # `secret-analytics-pepper`, `secret-studio` and `secret-chainrpc` were
+        # applied into `cf-testnet` until 2026-08-26. Every service that read
+        # them — custody, identity, analytics, studio, settlement, the outbox
+        # relay in all thirty — now serves both networks from one pod in
+        # `cloudsforge-estate`, so the testnet render stopped emitting a single
+        # pod that references any of them.
+        #
+        # They were still built, because the guard in
+        # `check-k8s-render-matches-compose.py` used to require every network to
+        # build every Secret the renderer declares anywhere. Six live
+        # credentials sat in a namespace with nothing to read them.
+        #
+        # That is worse than untidy. A credential nothing reads is excluded from
+        # every "is this still in use?" question by construction: it survives
+        # the rotation meant to retire it, it is absent from any consumer list
+        # anyone greps, and there is no request that starts failing to say so.
+        # The same reasoning removed `pg-cloudsforge` from this namespace in
+        # `docs/consolidation-endgame.md` phase 2.
+        #
+        # The guard now derives what each NAMESPACE needs from the rendered
+        # manifests, so this list cannot silently regrow: adding a row back
+        # without a pod to read it fails CI.
         # ── THE TESTNET CHAIN RPCs, WHERE THE ONE INDEXER CAN REACH THEM ─────
         #
         # The indexer keeps ONE database with a `network` column

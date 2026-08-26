@@ -81,6 +81,8 @@ import subprocess
 import sys
 import tempfile
 
+import yaml
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 GENERATOR = ROOT / "scripts" / "k8s-render.py"
 SECRETS = ROOT / "scripts" / "k8s-secrets.py"
@@ -96,7 +98,11 @@ RENDERED = ("20-pvc.yaml", "30-migrate-jobs.yaml", "40-services.yaml", "50-deplo
 # renderer's table: it belongs to the gateway, which is not rendered from the
 # estate compose file at all. `check-k8s-gateway-matches-compose.py` is what
 # holds the gateway to its own env file.
-NOT_AN_ESTATE_ENV_FILE = {"env-traefik"}
+#
+# Both spellings, because the testnet row is retargeted: the gateway merge put
+# both estates' Traefik in cloudsforge-estate, so testnet's copy is applied as
+# `env-traefik-testnet` beside the mainnet one.
+NOT_AN_ESTATE_ENV_FILE = {"env-traefik", "env-traefik-testnet"}
 
 RELEASE_LINE = re.compile(r"^# Release:\s+(\S+)\s", re.M)
 RELEASE_ARG = re.compile(r"--release (\S+)")
@@ -225,27 +231,102 @@ if not failures:
     render = load(GENERATOR, "k8s_render")
     secrets = load(SECRETS, "k8s_secrets")
 
-    declared = set(render.ENV_FILE_SECRETS.values())
+    # ── WHAT A NETWORK NEEDS IS WHAT ITS MANIFESTS REFERENCE ─────────────────
+    #
+    # This used to require every network to build every Secret in
+    # ENV_FILE_SECRETS, which was right while both networks rendered the same
+    # ~50 services. Since the consolidation the testnet render emits one
+    # Deployment, and that rule kept six credential Secrets — outbox, custody,
+    # identity-key, analytics-pepper, studio, chainrpc — applied into cf-testnet
+    # with no pod on either side of them.
+    #
+    # A credential nothing reads is worse than clutter. It is excluded from
+    # every "is this still in use?" question by construction, so it outlives the
+    # rotation meant to retire it and nothing reports that it has.
+    #
+    # So the requirement is derived per network from the RENDERED manifests,
+    # which section 1 above has just proven are what the renderer produces. The
+    # check is strictly stronger in both directions: a Secret a pod references
+    # and nothing builds is still a failure, and now so is a Secret built for a
+    # network whose pods do not reference it.
+    #
+    # `optional: true` is why the first direction matters at all: for an
+    # `env_file` compose marks `required: false`, a missing Secret does not stop
+    # the pod. It starts, reports Ready, and runs without every credential in
+    # that file.
+    # ── COMPARED PER NAMESPACE, NOT PER NETWORK ──────────────────────────────
+    #
+    # A FILES row does not necessarily land in its own network's namespace. The
+    # testnet `env-chain` row is applied as `env-chain-testnet` INTO
+    # cloudsforge-estate, where the consolidated pods read it — so it is built
+    # under "testnet" and referenced by the MAINNET manifests. Comparing network
+    # against network would report it missing on one side and unused on the
+    # other, both wrong.
+    #
+    # The namespace is the thing both sides actually agree on: a pod can only
+    # mount a Secret that exists beside it.
+    env_file_secrets = set(render.ENV_FILE_SECRETS.values())
+
+    referenced_by_ns = {}
+    for network in NETWORKS:
+        namespace = secrets.NAMESPACES[network]
+        found = referenced_by_ns.setdefault(namespace, set())
+        for filename in RENDERED:
+            path = ROOT / "k8s" / "estate" / network / filename
+            if not path.exists():
+                continue
+            for doc in yaml.safe_load_all(path.read_text()):
+                if not doc or not isinstance(doc, dict) or "spec" not in doc:
+                    continue
+                pod = (doc["spec"].get("template") or {}).get("spec") or {}
+                for container in [*pod.get("containers", []), *pod.get("initContainers", [])]:
+                    for source in container.get("envFrom") or []:
+                        ref = source.get("secretRef")
+                        if ref:
+                            found.add(ref["name"])
+
+    built_by_ns = {}
     for network, entries in secrets.FILES.items():
         # By field name: the rows are EnvFileSecret, which exists precisely so
         # that adding one does not break an unpack here. See FILES.
-        built = {e.name for e in entries if e.kind == "envfrom"}
-        for name in sorted(declared - built):
+        for entry in entries:
+            if entry.kind != "envfrom":
+                continue
+            namespace = entry.applied_namespace(secrets.NAMESPACES[network])
+            built_by_ns.setdefault(namespace, set()).add(entry.applied_name())
+
+    for namespace in sorted(set(referenced_by_ns) | set(built_by_ns)):
+        referenced = referenced_by_ns.get(namespace, set())
+        built = built_by_ns.get(namespace, set())
+
+        # Only env-file Secrets are this table's business; `estate-tokens` and
+        # `gateway-trust` are referenced too and are built elsewhere. Matched by
+        # prefix as well as by exact name, because a retargeted row appends a
+        # network suffix to the declared name.
+        def is_env_file(name):
+            return name in env_file_secrets or any(
+                name.startswith(f"{declared}-") for declared in env_file_secrets
+            )
+
+        for name in sorted(n for n in referenced - built if is_env_file(n)):
             failures.append(
-                f"the renderer emits `envFrom: secretRef: {name}` and k8s-secrets.py does not\n"
-                f"       build it for {network}. For an `env_file` compose marks `required: false`\n"
-                "       the reference is `optional: true`, so the pod starts, reports Ready, and\n"
-                "       runs without every credential in that file.\n"
+                f"a pod in {namespace} references `envFrom: secretRef: {name}` and\n"
+                "       k8s-secrets.py does not build it there. The reference is `optional: true`,\n"
+                "       so the pod starts, reports Ready, and runs without every credential in\n"
+                "       that file.\n"
                 "       Both tables move together: ENV_FILE_SECRETS in scripts/k8s-render.py and\n"
                 "       FILES in scripts/k8s-secrets.py."
             )
-        for name in sorted(built - declared - NOT_AN_ESTATE_ENV_FILE):
+        for name in sorted(built - referenced - NOT_AN_ESTATE_ENV_FILE):
             failures.append(
-                f"k8s-secrets.py builds Secret `{name}` for {network} as an `envfrom` file and no\n"
-                "       service consumes it, because the renderer's ENV_FILE_SECRETS does not name\n"
-                "       it. Either the compose `env_file:` it came from is gone — delete the row —\n"
-                "       or the renderer has to be taught the mapping, or it is a gateway file and\n"
-                "       belongs in this check's NOT_AN_ESTATE_ENV_FILE with the reason written down."
+                f"k8s-secrets.py builds Secret `{name}` in {namespace}, and no pod rendered\n"
+                "       into that namespace references it. A credential nothing reads is excluded\n"
+                "       from every 'is this still in use?' question by construction, so it\n"
+                "       outlives the rotation meant to retire it and nothing reports that it has.\n"
+                "       Either a service that needs it stopped being rendered there — delete the\n"
+                "       FILES row — or the renderer has to be taught the mapping, or it is a\n"
+                "       gateway file and belongs in NOT_AN_ESTATE_ENV_FILE with the reason\n"
+                "       written down."
             )
 
 if failures:
