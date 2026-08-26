@@ -61,16 +61,44 @@ paths must be re-proven per bundle with the accessor test, not grep.
 
 ## Wave M0 — extract shared packages (enabler, no process change)
 
-- `@cloudsforge/clients`: typed clients for ledger, indexer, pricing, custody,
-  policy, billing, worlds. Replaces 30+ hand-rolled per-service client files.
-- `@cloudsforge/evm`: `keccak.ts`, `evm.ts`, `chains.ts` from
-  mint/foresight/settlement/faucet (+ wallet/beacon variants where they
-  converge).
+### `@cloudsforge/evm` — DONE 2026-08-26
 
-No deployment changes at all, big review-surface shrink, and a prerequisite
-for every later wave (a merged process should not carry two hand-rolled
-copies of the same client). Contracts note: publishing shapes moves into the
-frozen-tuple regime — [contracts-compat-tuple-append-only] applies.
+Shipped as micro-runtime#8, consumed by all five services (faucet, mint,
+foresight, settlement, wallet). No deployment change; every service's suite
+green.
+
+It carries `keccak256`, `keccak256Hex`, `sha3_256` and `toChecksumAddress`, and
+nothing else. `evm.ts`, `chains.ts` and the contract bytecode deliberately stay
+in the services that deploy and broadcast, because those differ per product in
+ways that matter — gas floors, kill switches, mainnet allowlists. What moved is
+only the part where differing at all is the defect.
+
+The removal tool refused unless each service's `toChecksumAddress` body hashed
+to the shared value first. That guard was the point: a service whose copy had
+quietly diverged is the one case where the rewrite would be wrong, and it is
+exactly what a regex would paper over. None refused.
+
+### `@cloudsforge/clients` — NOT the same kind of job, and not yet scoped
+
+The plan filed this beside the evm extraction as though they were the same
+move. They are not, and the difference is the whole risk.
+
+`keccak.ts` was **five byte-identical copies**: extracting it was a deletion.
+`ledgerclient.ts` exists in eleven services at **187 to 871 lines each, all
+different** — they are independent hand-rolled ports of one API, not copies of
+one file. There is no shared implementation to lift out; there is a client to
+*design*, and then eleven call sites to migrate onto it. That is a rewrite of
+the path every service uses to move money, and it must not be smuggled in under
+the heading that carried a mechanical deletion.
+
+So this half needs its own investigation first, answering: which of the eleven
+behaviours (retry, idempotency-key handling, circuit breaking, error mapping)
+are genuinely common, which are deliberate per-service choices, and which are
+accidents that would become bugs if unified. Until that exists, treat
+`@cloudsforge/clients` as unscoped rather than pending.
+
+Contracts note when it is scoped: publishing shapes moves into the frozen-tuple
+regime — [contracts-compat-tuple-append-only] applies.
 
 ## Wave M1 — `lantern` + `analytics` → one telemetry service
 
