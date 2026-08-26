@@ -110,6 +110,50 @@ stays scoped to the analytics routes, so the privacy boundary survives as a
 module boundary instead of a process boundary. Lowest risk: no service calls
 either of them on a hot path.
 
+### M1c — the deploy side, established 2026-08-27
+
+Measured rather than assumed, so the cutover is mechanical:
+
+- **Both services listen on 4000**, and both `Service`s expose `p4000`
+  (`k8s/estate/mainnet/40-services.yaml:144` and `:486`). So `analytics` can
+  become an `ExternalName` CNAME to `lantern` with no port remapping — the same
+  mechanism the network consolidation already uses for six services.
+- **Nothing in the estate calls analytics.** A tree-wide grep for
+  `ANALYTICS_URL`, `analytics:4000` and `//analytics` outside its own repo
+  returns nothing. The CNAME is therefore belt-and-braces rather than the thing
+  holding callers up, and the risk in this wave is not "a caller breaks".
+- **The CNAME must resolve THROUGH the merge, not into it.** `analytics` is
+  already in `CONSOLIDATED_SERVICES`, so `analytics.cf-testnet` is an
+  `ExternalName` to `analytics.cloudsforge-estate`. Pointing the mainnet one at
+  lantern would leave testnet chained through two CNAMEs. The renderer must
+  resolve the merge target when it emits the testnet alias, so
+  `analytics.cf-testnet` names `lantern.cloudsforge-estate` directly.
+- **lantern's pod gains exactly:** `ANALYTICS_DATABASE_URL`, `ANALYTICS_TOKEN`,
+  and the two `env_file`s analytics carries —
+  `secrets/outbox.${CF_EMBER_NETWORK}.env` and
+  `secrets/analytics-pepper.${CF_EMBER_NETWORK}.env`. Everything else in
+  analytics' environment (`AUTH_EXPECTED_NETWORK`, `CLOUDSFORGE_TAG`,
+  `IDENTITY_ISSUER`, `IDENTITY_JWKS_URL`, `IDENTITY_URL`, `INSTANCE_ID`,
+  `LOG_LEVEL`, `NODE_ENV`, `PORT`) is already on lantern with the same name and
+  the same value, from the shared `*common-env` and `*identity-trust` anchors.
+- **The `analytics` Prometheus job goes away**, because the merged process
+  serves one `/metrics`. That job exists separately from `cf-services` only
+  because it needs an `x-analytics-token` header
+  (`prometheus/prometheus.yml:187`); after the merge Prometheus reaches the same
+  registry through lantern's job with `x-lantern-token`. `module` labels are
+  what keep the two modules' series apart once they share it.
+- **No alert or recording rule matches `service="analytics"`**, checked across
+  `prometheus/rules/*.yaml` — so nothing goes silent here. That is NOT true of
+  M2; see the warning in that wave.
+
+The gateway half is already done and live: `cf-api-lantern` was narrowed from
+`PathPrefix(/ingest)` to `PathPrefix(/ingest/)` and deployed on 2026-08-27
+(micro-deploy#268). Proven against the live estate afterwards —
+`POST /ingest/client` and `POST /ingest/anything-else` both reach lantern and
+answer with its JSON and a `requestId`, while `POST /ingest` falls through to
+the `lantern-web` bundle and gets nginx's HTML. That is the collector's front
+door closed before the change that would otherwise open it.
+
 ## Wave M2 — `activity` + `notify` → one bus-tail service
 
 Both are pure consumers with an inbox and no outbox; their consumed-topic sets

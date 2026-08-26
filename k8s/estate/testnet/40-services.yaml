@@ -2,11 +2,11 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.100  (2026.8.100.yaml)
+# Release:   2026.8.99  (2026.8.99.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.100.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.99.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -67,20 +67,6 @@ metadata:
 spec:
   type: ExternalName
   externalName: agora.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: analytics
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: analytics
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: analytics.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -449,3 +435,17 @@ metadata:
 spec:
   type: ExternalName
   externalName: worlds.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: analytics
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: analytics
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into lantern: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: lantern.cloudsforge-estate.svc.cluster.local

@@ -651,7 +651,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_requests_total{service=~\"gateway|notify|activity|admin-api|devplatform|analytics\"}[5m]))",
+          "expr": "sum(rate(http_requests_total{service=~\"gateway|notify|activity|admin-api|devplatform|lantern\"}[5m]))",
           "legendFormat": "Platform",
           "range": true,
           "instant": false,
@@ -948,7 +948,7 @@
             "uid": "cf-prometheus"
           },
           "editorMode": "code",
-          "expr": "sum(rate(http_requests_total{service=~\"gateway|notify|activity|admin-api|devplatform|analytics\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{service=~\"gateway|notify|activity|admin-api|devplatform|analytics\"}[5m])), 1e-9)",
+          "expr": "sum(rate(http_requests_total{service=~\"gateway|notify|activity|admin-api|devplatform|lantern\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{service=~\"gateway|notify|activity|admin-api|devplatform|lantern\"}[5m])), 1e-9)",
           "legendFormat": "Platform",
           "range": true,
           "instant": false,
