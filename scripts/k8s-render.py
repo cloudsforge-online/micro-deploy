@@ -391,6 +391,28 @@ CONSOLIDATED_SERVICES: set[str] = {
 
 EXCLUDED_SERVICES = {"postgres"}
 
+# ── THE WEB BUNDLES ARE ONE POD NOW, RENDERED ELSEWHERE ──────────────────────
+#
+# Twenty bundles were twenty Deployments serving static files. They are now one
+# `web` Deployment emitted by `scripts/k8s-render-web.py`, which runs each
+# bundle's own nginx.conf unchanged on a loopback port — see that script's
+# header for why the configs are not merged into one route table.
+#
+# They stay in the COMPOSE file, because compose is still how the estate runs
+# locally and each bundle is still its own image, its own repo and its own
+# release entry. What changes is only how Kubernetes groups them, which is the
+# thing that was costing twenty pods.
+#
+# `status-web` is deliberately absent from this set and still renders its own
+# Deployment: a status page that shares a pod with what it reports on cannot
+# report the interesting outage (`docs/apex-consolidation.md` §1).
+MERGED_INTO_WEB_POD = {
+    "site", "market-web", "mint-web", "trade-web", "worlds-web", "emberkin-web",
+    "aetherholm-web", "tessera-web", "explorer-web", "devportal-web", "foresight-web",
+    "pool-web", "exchange-web", "journal-web", "agora-web", "hub-web", "admin-web",
+    "network-site", "lantern-web", "beacon-web",
+}
+
 # The Secret each compose `env_file:` becomes. Compose interpolates the network
 # into the path (`secrets/outbox.${CF_EMBER_NETWORK:-mainnet}.env`); the Secret
 # name drops the network because the namespace already carries it. Kept in step
@@ -747,7 +769,7 @@ def main():
                     }
                 )
             continue
-        if name in EXCLUDED_SERVICES:
+        if name in EXCLUDED_SERVICES or name in MERGED_INTO_WEB_POD:
             continue
         service = services[name]
 

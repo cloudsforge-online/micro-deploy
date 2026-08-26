@@ -3077,54 +3077,66 @@ http:
 {{ end }}
 
   services:
-    # The bundles. Port 8080 because the images are `nginx-unprivileged`: nothing in those
-    # containers is root and a non-root process cannot bind 80. Read from each frontend's
-    # Dockerfile `EXPOSE`, not chosen — the same rule public-api.yml states for its upstreams.
+    # ── EVERY BUNDLE UPSTREAM IS ONE POD ─────────────────────────────────────────────────────
+    #
+    # Twenty routers, twenty services, one backend: `web`, rendered by
+    # `scripts/k8s-render-web.py`. Each bundle's own nginx.conf still decides everything about
+    # its own paths — it runs unchanged on a loopback port inside that pod — so the ROUTERS
+    # above are untouched and each surface's cache rules, redirects and 404 shape are the file
+    # they always were.
+    #
+    # The router names are deliberately NOT collapsed. `cf-web-market` and `cf-web-journal`
+    # naming the same service is how a reader sees that the split is now a routing fact rather
+    # than a deployment one, and it is what makes putting one bundle back on its own pod a
+    # one-line change.
+    #
+    # Port 8080 because the image is `nginx-unprivileged`: nothing in that container is root and
+    # a non-root process cannot bind 80.
     cf-web-hub:
       loadBalancer:
-        servers: [{ url: "http://hub-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-site:
       loadBalancer:
-        servers: [{ url: "http://site:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-market:
       loadBalancer:
-        servers: [{ url: "http://market-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-create:
       loadBalancer:
-        servers: [{ url: "http://mint-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-trade:
       loadBalancer:
-        servers: [{ url: "http://trade-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-worlds:
       loadBalancer:
-        servers: [{ url: "http://worlds-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-explorer:
       loadBalancer:
-        servers: [{ url: "http://explorer-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-network:
       loadBalancer:
-        servers: [{ url: "http://network-site:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-developers:
       loadBalancer:
-        servers: [{ url: "http://devportal-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-admin:
       loadBalancer:
-        servers: [{ url: "http://admin-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-status:
       loadBalancer:
         servers: [{ url: "http://status-web:8080" }]
     cf-web-foresight:
       loadBalancer:
-        servers: [{ url: "http://foresight-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-emberkin:
       loadBalancer:
-        servers: [{ url: "http://emberkin-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-aetherholm:
       loadBalancer:
-        servers: [{ url: "http://aetherholm-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-tessera:
       loadBalancer:
-        servers: [{ url: "http://tessera-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     # The two operator consoles. 8080 for the same reason as every bundle above —
     # `nginx-unprivileged` cannot bind 80 — read from each repository's Dockerfile
     # `EXPOSE`, not chosen.
@@ -3137,10 +3149,10 @@ http:
     # bundle works at — see the block above them in the compose file.
     cf-web-lantern:
       loadBalancer:
-        servers: [{ url: "http://lantern-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     cf-web-beacon:
       loadBalancer:
-        servers: [{ url: "http://beacon-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     # The pool console. 8080 for the same reason, read from micro-pool-web's
     # Dockerfile `EXPOSE` — it runs `nginx-unprivileged`, which cannot bind 80.
     # Like the two above it this container publishes no host port; unlike them it
@@ -3150,7 +3162,7 @@ http:
     # one nobody tests.
     cf-web-pool:
       loadBalancer:
-        servers: [{ url: "http://pool-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     # Forge Exchange. 8080 for the third time and the same reason, read from
     # micro-exchange-web's Dockerfile `EXPOSE`: `nginx-unprivileged` cannot bind 80.
     # It is NOT 5194 — that is the registry devPort, and on this row alone the
@@ -3159,7 +3171,7 @@ http:
     # here either: the gateway needs the container name and nothing else.
     cf-web-exchange:
       loadBalancer:
-        servers: [{ url: "http://exchange-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     # Forge Journal. 8080 for the fourth time, same `nginx-unprivileged` reason,
     # read from micro-journal-web's Dockerfile `EXPOSE`. Not 5196 — that is the
     # registry devPort, and like exchange it names a vite dev server rather than
@@ -3167,7 +3179,7 @@ http:
     # be one: this bundle's whole backend is `src/content/`, compiled to files.
     cf-web-journal:
       loadBalancer:
-        servers: [{ url: "http://journal-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
     # Forge Agora's bundle. 8080 for the fifth time and the same
     # `nginx-unprivileged` reason, read from micro-agora-web's Dockerfile
     # `EXPOSE`. Not 5197 — that is vite's port in a development stack — and not
@@ -3176,7 +3188,7 @@ http:
     # the frontend are different processes, so the two are spelled out apart.
     cf-web-agora:
       loadBalancer:
-        servers: [{ url: "http://agora-web:8080" }]
+        servers: [{ url: "http://web:8080" }]
 
     # The APIs, on their surfaces' own hostnames. Every one listens on 4000 inside its own
     # container, which is fine because each has one; the 41xx numbers elsewhere in this estate are
