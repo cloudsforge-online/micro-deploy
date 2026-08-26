@@ -243,6 +243,65 @@ route → 200 shell, an unknown path → **404** with that bundle's shell, an as
 → `immutable`). Every way fifteen nginx route tables can merge wrongly produces
 a **200 with the wrong content**, which no health probe sees.
 
+## What the pods actually cost — measured 2026-08-26, and it changes the plan
+
+Wave W is done: twenty web Deployments became one, and the estate went from 72
+running pods to 54. That was the whole of the over-engineering. The remaining
+backend pods were then measured rather than assumed:
+
+```
+31 backend pods, 2410 Mi total, 77 Mi mean
+cloudsforge-estate: 37 pods, 129 mCPU total
+node cf-k8s: 341 mCPU (2%), 8520 Mi (56%)
+```
+
+**129 milli-cores. An eighth of one core, for the whole estate.** The mean
+backend holds 77 MiB, which is a Node baseline heap rather than a workload —
+most of these services are idle most of the time, because there are no users
+yet ([estate-has-no-real-users]).
+
+So the arithmetic for the remaining waves is:
+
+| wave | pods saved | memory freed |
+|---|--:|--:|
+| M1 lantern + analytics | 1 | ~50 MiB |
+| M2 activity + notify | 1 | ~50 MiB |
+| M3 emberkin + aetherholm | 1 | ~50 MiB |
+| deferred: agora+community, market+billing | 2 | ~100 MiB |
+
+Merging two Node services saves **one baseline heap**, not two pods' worth of
+memory — the merged process still carries both workloads. Five merges would
+free roughly 250 MiB out of 8.5 GiB in use, and remove five pods from a node
+running at 2% CPU.
+
+### The recommendation this leads to
+
+**Stop merging backend processes.** Not because it is hard, but because the
+measurement says the split is not what it was accused of being. Twenty nginx
+pods serving static files from twenty document roots was a process boundary
+bought for nothing, and deleting it was worth a day. Thirty-one services with
+thirty-one databases, thirty-one domains and thirty-one release cadences is an
+architecture — a large one for a product with no users, but each boundary is
+carrying something: its own schema, its own migrator, its own deploy blast
+radius.
+
+Trading that for 250 MiB would be the same mistake as the twenty nginx pods,
+pointed the other way: doing work because the shape looks wrong rather than
+because a measurement says it is.
+
+**M1a is kept and was worth doing on its own merits.** The seam removed several
+hundred lines of duplicated HTTP plumbing from each of lantern and analytics —
+`compile`, `send`, `errorReply`, the request-id logic, the network resolution
+and the metric block were the same code twice — and closing each handler over
+its own deps is what would make any future merge safe rather than merely
+possible. It also caught a live defect: `analytics/src/routeidempotency.test.ts`
+derives its route list by reading the source, and moving the table made it find
+**zero routes**, at which point three of its seven cases passed vacuously.
+
+If the backends are ever merged, M1b onward is fully designed below and the CI
+prerequisite is already shipped. The reason to do it then would be operational
+— fewer things to release, fewer runbooks — and not this table.
+
 ## Two questions the pod list invites, answered
 
 ### "Why are there two frontend pods — didn't we merge mainnet and testnet?"
