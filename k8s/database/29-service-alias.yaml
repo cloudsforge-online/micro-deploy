@@ -93,7 +93,32 @@ metadata:
   annotations:
     online.cloudsforge.why: >-
       Compatibility alias so the estate's DSNs can keep saying `@postgres:5432`.
-      Not created by CloudNativePG. Points at the primary via postgres-rw.
+      Not created by CloudNativePG. Points at the CONSOLIDATED cluster in
+      cloudsforge-estate — cf-testnet has no database server of its own.
 spec:
   type: ExternalName
-  externalName: postgres-rw.cf-testnet.svc.cluster.local
+  # ── POINTS OUT OF ITS OWN NAMESPACE, ON PURPOSE ────────────────────────────
+  #
+  # `docs/consolidation-endgame.md` phase 1. Every application service that used
+  # to read cf-testnet's own CloudNativePG cluster now serves both networks from
+  # cloudsforge-estate, and the last consumer left in this namespace was
+  # `faucet`, whose five rows were carried across and verified on 2026-08-26.
+  #
+  # Repointing the ALIAS rather than editing the DSN is the same argument the
+  # header makes for the alias existing at all: `faucet` and `faucet-migrate`
+  # both build `@postgres:5432` from the shared compose file, which the mainnet
+  # render also reads. One indirection moves both, and neither manifest grows a
+  # network-specific hostname that could be copied to the wrong estate.
+  #
+  # Two consequences, stated rather than discovered:
+  #
+  #   * `k8s-deploy.sh`'s preflight no longer looks for a CNPG Cluster in this
+  #     namespace. It resolves THIS field and checks the cluster where the alias
+  #     actually points, so the check follows the same indirection the DSNs do.
+  #
+  #   * `backup-runner` in cf-testnet was retired in the same change. It reads
+  #     `@postgres:5432` too, so leaving it running would have made it dump the
+  #     consolidated cluster a second time into the testnet rotation — 3 GB a
+  #     day of duplicate, and a backup tree that says "testnet" while holding
+  #     mainnet. See `scripts/k8s-backup-runner.sh`.
+  externalName: postgres-rw.cloudsforge-estate.svc.cluster.local
