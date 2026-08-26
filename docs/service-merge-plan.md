@@ -117,6 +117,104 @@ dependency.
 - `mint` + `foresight`: duplicated code, different products — the duplication
   is solved by M0's `@cloudsforge/evm`, not by a process merge.
 
+## What the design pass found, 2026-08-26 — four of this plan's claims are wrong
+
+W and M1 were both designed in detail before any code moved. The investigations
+corrected the plan rather than confirming it, which is the point of doing them
+first. Read this section before starting either wave.
+
+### M0 is further along than "no deployment changes" suggests
+
+`@cloudsforge/evm` exists and `faucet` and `mint` consume it. The measurement
+that justified it: `keccak.ts` existed five times (four byte-identical, wallet's
+differing only in its comment header — strip comments and all five hash to
+`0772cd9f`), and `toChecksumAddress` six times, five of those **function bodies**
+byte-identical (`dd24e0e2`) inside three differently-named files. The files all
+differ; only the function is the same, which is why it was easy to miss.
+
+One claim made in that PR was wrong and is corrected on it: four of the five
+services **do** pin the permutation against OpenSSL and the published vector.
+Only `foresight` had no direct coverage. The real argument is not "the tests
+were missing" but that **the same test was written four times**, and the one
+service that skipped it was invisible because nothing compared them.
+
+### M1: three statements in this plan cannot be executed as written
+
+1. **"absorbs the smaller as a workspace package" is forbidden by CI.**
+   `org/.github/workflows/service-ci.yml` pins an allow-list of importable
+   `@cloudsforge/*` names, and it contains runtime packages only. Adding a
+   SERVICE to it defeats the rule it enforces. The absorbed module must be
+   plain directories under `src/`, imported by relative path.
+2. **"The larger repo absorbs the smaller" points the wrong way here.**
+   analytics is larger (5.1k vs 4.3k LOC), but **lantern must absorb**: it holds
+   the public hostname, the gateway router and the OTLP endpoint every service
+   pushes to. Absorb by blast radius, not by line count.
+3. **The CI workflow is single-database by construction**, and this is the
+   dangerous one. `database-env-var` is one name; the DSN export, Rule 1's
+   `allow-match` and the skip-scan all derive from it. Merge into it as-is and
+   the build is either red for a correct repo or — far worse — **green with all
+   ten analytics database suites silently skipped**, because the skip-scan
+   classifies a foreign variable name as "a cross-service tier stood down" and
+   emits a notice. That is exactly the false green that block was written to
+   end. **`org` must be fixed first**, and the skip of an own-prefix variable
+   made fatal.
+
+Two more findings that are not in this plan at all:
+
+- **`PathPrefix('/ingest')` in the lantern router would publish analytics'
+  event-bus ingest to the internet** the moment the merged process sits behind
+  it. The MAC still gates it, so this is exposure rather than bypass — but the
+  rule must narrow to `/ingest/client` in the same change, and that router's own
+  comment claims its prefixes were read off `lantern/src/server.ts` route by
+  route, which merging silently invalidates.
+- **The job metrics collide.** Both services register `kind="rollup"` and
+  `kind="retention"`, so `jobs_failed_total{kind="rollup"}` would sum two
+  unrelated jobs; and both `sampleQueue`s write the **unlabelled** `jobs_pending`
+  / `jobs_overdue`, so one queue's depth is erased every scrape. A `module`
+  label in `@cloudsforge/telemetry` is the cheap fix and must land before the
+  merge.
+
+A live defect was found on the way and fixed separately: analytics'
+`POST /ingest` wrote every delivery through the boot-time primary handle
+instead of `ctx.sql`, so a testnet-stamped delivery landed in the mainnet
+database. It had never fired — both `events` tables were empty — so it was a
+one-line fix rather than a data repair.
+
+### W: the hazard this plan warns about does not apply
+
+**The base-path hazard is not in scope for wave W, and the wave should say so
+plainly** so it is not re-litigated. Fourteen of the twenty-one bundles already
+build for and serve from their apex subfolder: the prefix is in `vite.config.ts`,
+in `src/lib/routes.ts`'s `BASE`, in every nginx `location`, **and in the
+container filesystem** (`COPY --from=build /app/dist …/html/market`). Merging is
+a union of document roots that are already disjoint, so no bundle's base path
+changes. Both live checks confirm it today: `check-mounted-assets-compose.py`
+and `check-base-paths-agree.py` pass on all fourteen.
+
+It **would** apply if anyone proposed moving the seven root-served bundles into
+subfolders to fit one `server` block. Use `server_name` instead.
+
+Three corrections to how W should be built:
+
+- **Do not build a composite from N build stages.** Twenty-one `pnpm install` +
+  `vite build` runs in one context is a monorepo build in a repo that
+  deliberately is not one. Assemble instead from the **already-published
+  per-bundle images by digest**, with the Dockerfile generated from the release
+  manifest. Per-bundle CI, `cfctl release` and rollback all stay untouched.
+- **Pilot with `journal-web` + `exchange-web` + `agora-web`.** They are the only
+  bundles with no backend of their own, and journal brings the two hardest nginx
+  features in the estate (`sub_filter`, a real prerendered file tree). Three
+  routers to re-point; the blast radius is an archive and two product pages.
+- **`status-web` is never merged.** A status page that shares an origin with
+  what it reports on cannot report the interesting outage, and sharing a
+  *process* is strictly worse. Leave `hub-web` and `admin-web` alone too.
+
+The deliverable of W is not the image; it is a **config matrix test**: for each
+mount, assert four answers (root → 200 and that bundle's release tag, a deep
+route → 200 shell, an unknown path → **404** with that bundle's shell, an asset
+→ `immutable`). Every way fifteen nginx route tables can merge wrongly produces
+a **200 with the wrong content**, which no health probe sees.
+
 ## Merge mechanics (the template every M-wave follows)
 
 1. The larger repo absorbs the smaller as a workspace package; the smaller
