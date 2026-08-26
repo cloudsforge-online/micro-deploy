@@ -51,24 +51,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: aetherholm
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: aetherholm
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: aetherholm
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
   name: agora
   namespace: cloudsforge-estate
   labels:
@@ -580,6 +562,20 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: aetherholm
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: aetherholm
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into emberkin: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: emberkin.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service

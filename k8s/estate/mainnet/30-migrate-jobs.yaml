@@ -185,82 +185,6 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: aetherholm-migrate-2026-8-99
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: aetherholm-migrate
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  backoffLimit: 2
-  ttlSecondsAfterFinished: 3600
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: aetherholm-migrate
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: aetherholm-migrate
-        image: ghcr.io/cloudsforge-online/micro-aetherholm@sha256:6f404036775053ea6a584ac0c084f69edc1f23ffe57d105f3f7891748af25f85
-        imagePullPolicy: IfNotPresent
-        command:
-        - node
-        - --import
-        - tsx
-        - src/migrator.ts
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: AETHERHOLM_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm?sslmode=require
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: aetherholm-migrate
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: PORT
-          value: '4000'
-        - name: AETHERHOLM_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
-      restartPolicy: Never
----
-apiVersion: batch/v1
-kind: Job
-metadata:
   name: agora-migrate-2026-8-99
   namespace: cloudsforge-estate
   labels:
@@ -836,6 +760,8 @@ spec:
               name: estate-tokens
               key: EMBERKIN_SERVICE_TOKEN
               optional: false
+        - name: AETHERHOLM_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
           value: mainnet
         - name: BILLING_URL
@@ -862,6 +788,8 @@ spec:
           value: '4000'
         - name: WORLDS_URL
           value: http://worlds:4000
+        - name: AETHERHOLM_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm_testnet?sslmode=require
         - name: EMBERKIN_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/emberkin_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS

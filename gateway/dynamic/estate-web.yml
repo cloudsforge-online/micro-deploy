@@ -3343,7 +3343,7 @@ http:
         servers: [{ url: "http://emberkin:4000" }]
     cf-svc-aetherholm:
       loadBalancer:
-        servers: [{ url: "http://aetherholm:4000" }]
+        servers: [{ url: "http://emberkin:4000" }]
     # Behind the same condition as its router, and not because it would break —
     # an unreferenced service is harmless. Because a `cf-svc-faucet` defined in
     # an estate that runs no faucet is a standing invitation to point something

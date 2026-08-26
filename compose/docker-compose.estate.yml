@@ -3019,103 +3019,18 @@ services:
   # service credential here. Rule 9 is not "declare the variables you might want";
   # a variable nothing reads is a secret nothing needed, handed to a container
   # anyway.
-  aetherholm-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../aetherholm
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
-      INSTANCE_ID: aetherholm-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  aetherholm:
-    <<: *service-defaults
-    build:
-      context: ../../aetherholm
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
-      INSTANCE_ID: aetherholm-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}124:4000"
-    depends_on:
-      aetherholm-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # ----------------------------------------------------------------- emberkin
+  # ------------------------------------------------------------- aetherholm
   #
-  # The monster-collecting RPG, played through Forge Worlds. `emberkin-web` has
-  # been served by this estate with this API absent, exactly as aetherholm was.
+  # NOT A SERVICE ANY MORE. Wave M3 of `docs/service-merge-plan.md`: micro-aetherholm's
+  # code ships inside micro-emberkin's image as plain directories under `src/aetherholm/`,
+  # so `aetherholm` and `aetherholm-migrate` are GONE from here rather than merely
+  # unrendered — an absorbed service's old image is stale by construction, and running it
+  # beside the absorber would point two versions of the same code at one database.
   #
-  # HOST PORT 4122 IS DERIVED: index 22 in `deployableRepos()`. Its natural bind
-  # is 4100 — IDENTITY'S HOST PORT IN THIS FILE — so it is normalised to 4000 for
-  # the reason argued in the aetherholm block above.
-  #
-  # ── THE TEN-MINUTE CLIFF, AND THE REMEDY THIS BLOCK USED TO ONLY PREDICT ────
-  #
-  # What stood here said `EMBERKIN_SERVICE_TOKEN` "is a TOKEN and must not be
-  # handed a credential": `emberkin/src/index.ts` was `const token = (): string
-  # => env.serviceToken`, presenting the value verbatim as a Bearer with no
-  # exchange, so it had to be a ten-minute JWT from `POST /service-tokens` and a
-  # `cfsc_…` in that slot earned a 401 from all three upstreams with nothing in
-  # either log naming the cause. It then recorded the cliff as real and named the
-  # remedy: "micro-emberkin adopting `ServiceTokenProvider` and reading the
-  # credential instead".
-  #
-  # micro-emberkin#3 is that remedy, merged. `src/upstreams.ts` now exchanges
-  # `EMBERKIN_IDENTITY_CREDENTIAL` at `POST /service-tokens/exchange` and
-  # re-mints before expiry, the same way tessera, community, market and foresight
-  # already do. So the credential is wired below and the cliff is gone: emberkin's
-  # calls are on REQUEST paths rather than a 900-second timer, so a bootstrap was
-  # never guaranteed to outrun the expiry — it failed whenever a player acted more
-  # than ten minutes after one, which is not a state anything alerted on.
-  #
-  # ── THE ORDER OF THESE TWO LINES IS THE WHOLE DEPLOY RULE ───────────────────
-  #
-  # `env.ts` requires ONE OF the two and both slots are individually optional, so
-  # removing `EMBERKIN_SERVICE_TOKEN` before the credential is in place leaves
-  # neither satisfiable and emberkin refuses to boot at the door — `emberkin-migrate`
-  # with it, since it loads the same `env.ts`. The token therefore STAYS here for
-  # now and comes out in a later release, once every environment has run a
-  # bootstrap. Until the credential is present the service runs in `static` mode
-  # and behaves exactly as it does today, announcing the mode at boot, so there is
-  # nothing to hurry.
-  #
-  # Both slots refuse the OTHER'S value by name — `optionalMintedToken` demands a
-  # JWT, `assertServiceCredential` refuses one — so the two cannot be swapped by a
-  # deploy in a hurry, in either direction.
-  #
-  # ── AND THE PLACEHOLDER DEFAULT HAD TO GO WITH IT ───────────────────────────
-  #
-  # `${EMBERKIN_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}` was
-  # defensible while the slot was REQUIRED: it let a bootstrap-less host render.
-  # It cannot survive the slot becoming optional. That literal is 40 characters
-  # and does not match `/^ey[A-Za-z0-9_-]*\./`, so `optionalMintedToken` THROWS on
-  # it — meaning a host with a perfectly good credential and no minted token would
-  # crash-loop on the variable that is only still here for the rollout. Defaulted
-  # empty instead, which `env.ts` reads as absence ("absent and empty are the same
-  # thing here", says its own comment), leaving the credential to satisfy the
-  # check. Where neither is set the boot error now names both variables and the
-  # command that mints them, rather than complaining about the shape of a
-  # placeholder this file invented.
-  #
-  # No `IDENTITY_URL`: `env.ts` falls back to `IDENTITY_ISSUER`, which
-  # `*identity-trust` already supplies — the same reason tessera and community
-  # do not set it either.
-  #
-  # Its grant is DERIVED and already present: billing:read, ledger:post,
-  # worlds:title, from BILLING_SCOPES, LEDGER_SCOPES and WORLDS_SCOPES in its own
-  # three client modules. Nothing was typed into the map for it.
+  # `AETHERHOLM_DATABASE_URL` moved onto `emberkin` and `emberkin-migrate` above, and it is
+  # the only thing that moved. The NAME still resolves in Kubernetes: `scripts/k8s-render.py`
+  # emits it as an ExternalName from MERGED_INTO, and refuses to render if a compose service
+  # by that name returns.
   emberkin-migrate:
     <<: *migrate-defaults
     build:
@@ -3137,6 +3052,19 @@ services:
       # of them.
       EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
       EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
+      # ── AETHERHOLM'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M3) ──
+      #
+      # micro-aetherholm's code ships inside this image now, as plain directories
+      # under `src/aetherholm/`. Both databases are KEPT and named by their own
+      # variables — the two schemas share SIX table names (`outbox`,
+      # `event_subscriptions`, `outbox_deliveries`, `inbox`, `seasons`, `battles`),
+      # so a query against the wrong handle SUCCEEDS and returns wrong rows. That is
+      # why the merged service stamps a per-route selector rather than resolving one
+      # global handle, and why these stay two databases.
+      #
+      # These two variables are the whole of what moved: aetherholm holds no
+      # credential of its own and reaches no upstream service.
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
       INSTANCE_ID: emberkin-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -3162,6 +3090,19 @@ services:
       # in the same change that adds the line above is the one ordering that will
       # not boot.
       EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
+      # ── AETHERHOLM'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M3) ──
+      #
+      # micro-aetherholm's code ships inside this image now, as plain directories
+      # under `src/aetherholm/`. Both databases are KEPT and named by their own
+      # variables — the two schemas share SIX table names (`outbox`,
+      # `event_subscriptions`, `outbox_deliveries`, `inbox`, `seasons`, `battles`),
+      # so a query against the wrong handle SUCCEEDS and returns wrong rows. That is
+      # why the merged service stamps a per-route selector rather than resolving one
+      # global handle, and why these stay two databases.
+      #
+      # These two variables are the whole of what moved: aetherholm holds no
+      # credential of its own and reaches no upstream service.
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
       INSTANCE_ID: emberkin-estate
     env_file: *outbox-secrets
     ports:

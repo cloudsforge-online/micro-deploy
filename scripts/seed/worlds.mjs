@@ -108,7 +108,7 @@ const TITLES = [
     slug: 'aetherholm',
     name: 'Aetherholm',
     status: 'live',
-    serviceUrl: 'http://aetherholm:4000',
+    serviceUrl: 'http://emberkin:4000',
     // The only truthful `private_world` in the estate: aetherholm is the only
     // service implementing `POST /v1/provision`.
     capabilities: ['private_world', 'achievements'],
