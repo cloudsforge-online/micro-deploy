@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.100  (2026.8.100.yaml)
+# Release:   2026.8.99  (2026.8.99.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.100.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.99.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -51,24 +51,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: admin-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: admin-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: admin-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: aetherholm
   namespace: cloudsforge-estate
   labels:
@@ -83,24 +65,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: aetherholm-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: aetherholm-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: aetherholm-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -123,42 +87,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agora-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: agora-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: agora-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: analytics
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: analytics
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: analytics
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
   name: beacon
   namespace: cloudsforge-estate
   labels:
@@ -173,24 +101,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: beacon-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: beacon-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: beacon-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -267,24 +177,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: devportal-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: devportal-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: devportal-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: emberkin
   namespace: cloudsforge-estate
   labels:
@@ -299,60 +191,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: emberkin-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: emberkin-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: emberkin-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: exchange-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: exchange-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: exchange-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: explorer-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: explorer-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: explorer-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -375,24 +213,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: foresight-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: foresight-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: foresight-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: hub-api
   namespace: cloudsforge-estate
   labels:
@@ -407,24 +227,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: hub-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: hub-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: hub-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -465,24 +267,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: journal-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: journal-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: journal-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: lantern
   namespace: cloudsforge-estate
   labels:
@@ -497,24 +281,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: lantern-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: lantern-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: lantern-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -555,24 +321,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: market-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: market-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: market-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: mint
   namespace: cloudsforge-estate
   labels:
@@ -591,24 +339,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: mint-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: mint-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: mint-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: nda
   namespace: cloudsforge-estate
   labels:
@@ -623,24 +353,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: network-site
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: network-site
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: network-site
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -728,24 +440,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: pool-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: pool-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: pool-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: pricing
   namespace: cloudsforge-estate
   labels:
@@ -778,24 +472,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: site
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: site
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: site
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -854,24 +530,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: tessera-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: tessera-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: tessera-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
   name: trade
   namespace: cloudsforge-estate
   labels:
@@ -886,24 +544,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: trade-web
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: trade-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: trade-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
 ---
 apiVersion: v1
 kind: Service
@@ -944,20 +584,16 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: worlds-web
+  name: analytics
   namespace: cloudsforge-estate
   labels:
-    app.kubernetes.io/name: worlds-web
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
+    app.kubernetes.io/name: analytics
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into lantern: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
 spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: worlds-web
-  ports:
-  - name: p8080
-    port: 8080
-    targetPort: 8080
+  type: ExternalName
+  externalName: lantern.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service

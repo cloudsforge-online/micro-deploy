@@ -184,19 +184,27 @@ scrape_configs:
   # meant both "no token yet" and "right token, wrong container", and the second
   # reading is the one that cost four hours of alerting. Both are addressed by
   # naming the container: a `401` from now on is a token, not an address.
-  - job_name: analytics
-    scheme: http
-    http_headers:
-      x-analytics-token:
-        files:
-          - /etc/prometheus/secrets/analytics_token
-    static_configs:
-      - targets: ["cloudsforge-estate-analytics-1:4000"]
-        labels:
-          instance: analytics:4000
-          team: platform
-          service: analytics
-          tier: "2"
+  # `analytics` HAD A JOB HERE AND NO LONGER EXISTS AS A TARGET.
+  #
+  # Wave M1 (`docs/service-merge-plan.md`): its code runs inside lantern's pod now,
+  # so there is ONE process and ONE `/metrics`, reached by the lantern job below
+  # with `x-lantern-token`. `ANALYTICS_TOKEN` gated only the route that is gone.
+  #
+  # Analytics' series are still here — they arrive through that scrape, told apart
+  # by a `module` label the merged process stamps via `Metrics.withLabels`
+  # (micro-runtime#9). Without it `jobs_failed_total{kind="rollup"}` would have
+  # summed two unrelated queues, and `jobs_pending` — which carries no `kind` at
+  # all — would have had one module's depth ERASE the other's on every scrape,
+  # making a wedged queue absent rather than high.
+  #
+  # It does not reappear in the generated `cf-services` list below either: that
+  # list is built from the RELEASE MANIFEST, and analytics is no longer a deployed
+  # image. Nothing here needs to exclude it by name.
+  #
+  # No alert or recording rule selected `service="analytics"` — checked across
+  # `prometheus/rules/*.yaml` before removing this. Two Grafana panels DO name it
+  # in a hardcoded alternation (`cf-platform-overview.json`), and those are
+  # corrected in the same change.
 
   - job_name: lantern
     scheme: http

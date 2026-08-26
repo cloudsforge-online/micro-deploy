@@ -2005,44 +2005,22 @@ services:
     healthcheck: *healthcheck
 
   # ---------------------------------------------------------------- analytics
-  analytics-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../analytics
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
-      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
-      INSTANCE_ID: analytics-migrate
-    env_file:
-      - *outbox-secret-file
-      - *analytics-pepper-file
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  analytics:
-    <<: *service-defaults
-    build:
-      context: ../../analytics
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
-      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
-      INSTANCE_ID: analytics-estate
-    env_file:
-      - *outbox-secret-file
-      - *analytics-pepper-file
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}121:4000"
-    depends_on:
-      analytics-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
+  #
+  # NOT A SERVICE ANY MORE. Wave M1 of `docs/service-merge-plan.md`: micro-analytics'
+  # code ships inside micro-lantern's image as plain directories under `src/analytics/`,
+  # so `analytics` and `analytics-migrate` are GONE from here rather than merely
+  # unrendered.
+  #
+  # That is the difference between this and the twenty web bundles, which keep their
+  # compose services. A bundle is still its own image; an absorbed service's old image
+  # is STALE BY CONSTRUCTION, and leaving the entry here "so local dev still works"
+  # would run two versions of the same code against one database.
+  #
+  # `ANALYTICS_DATABASE_URL`, `ANALYTICS_TOKEN` and both secret files moved onto
+  # `lantern` and `lantern-migrate` above; nothing else in this block was unique to it.
+  # The NAME still resolves in Kubernetes — `scripts/k8s-render.py` emits it as an
+  # ExternalName from MERGED_INTO, and refuses to render at all if a compose service by
+  # that name comes back, because the two halves of a merge have to land together.
 
   # ====================================================== tier 2: needs policy
   # ------------------------------------------------------------------ custody
@@ -4745,7 +4723,24 @@ services:
       <<: [*common-env, *identity-trust]
       LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern?sslmode=require
       LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
+      # ── ANALYTICS' HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M1) ──
+      #
+      # micro-analytics' code ships inside this image now, as plain directories
+      # under `src/analytics/`. Both databases are KEPT and named by their own
+      # variables — no schema merge — and this service's one migrator runs both.
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
+      # `ANALYTICS_TOKEN` OPENS NOTHING IN THIS PROCESS, and that is deliberate
+      # rather than an oversight. It gated exactly one thing — analytics' own
+      # `/metrics` — and the merged process serves lantern's `/metrics`, gated by
+      # `LANTERN_TOKEN`, because Prometheus, the collector and every runbook
+      # present `x-lantern-token`. Kept required because the standalone analytics
+      # service still ships until the repo is archived, and micro-lantern asserts
+      # that in a test rather than leaving it to memory.
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
       INSTANCE_ID: lantern-migrate
+    env_file:
+      - *outbox-secret-file
+      - *analytics-pepper-file
     depends_on:
       postgres:
         condition: service_healthy
@@ -4865,7 +4860,28 @@ services:
         https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+      # ── ANALYTICS' HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M1) ──
+      #
+      # micro-analytics' code ships inside this image now, as plain directories
+      # under `src/analytics/`. Both databases are KEPT and named by their own
+      # variables — no schema merge — and this service's one migrator runs both.
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
+      # `ANALYTICS_TOKEN` OPENS NOTHING IN THIS PROCESS, and that is deliberate
+      # rather than an oversight. It gated exactly one thing — analytics' own
+      # `/metrics` — and the merged process serves lantern's `/metrics`, gated by
+      # `LANTERN_TOKEN`, because Prometheus, the collector and every runbook
+      # present `x-lantern-token`. Kept required because the standalone analytics
+      # service still ships until the repo is archived, and micro-lantern asserts
+      # that in a test rather than leaving it to memory.
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
       INSTANCE_ID: lantern-estate
+    env_file:
+      # Both arrived with analytics. The pepper file is the one that matters:
+      # `ANALYTICS_PSEUDONYM_KEY` is reachable only from `src/analytics/module.ts`
+      # inside the image, and micro-lantern's `privacyboundary.test.ts` fails if a
+      # future edit puts it in lantern's own deps.
+      - *outbox-secret-file
+      - *analytics-pepper-file
     ports:
       # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.
       # Derived, not chosen; `make check-web` re-derives it from micro-org.
