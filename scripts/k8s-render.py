@@ -436,6 +436,13 @@ MERGED_INTO = {
     # the gateway router and the OTLP endpoint every service in the estate pushes
     # to. Absorb by blast radius, not by line count.
     "analytics": "lantern",
+    # 2026-08-27. Both games hold a public hostname and an apex mount, so the
+    # blast-radius tiebreak that decided lantern/analytics does not separate this
+    # pair. emberkin absorbs on upstream count: it already reaches ledger,
+    # billing, worlds and identity and holds a service credential; aetherholm
+    # reaches no service at all. Folding the zero-upstream side into the
+    # four-upstream side widens nothing.
+    "aetherholm": "emberkin",
 }
 
 

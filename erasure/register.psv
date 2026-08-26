@@ -157,7 +157,7 @@ emberkin|emberkin|http://emberkin:4000/v1/events|mixed|reward_grants|insert into
 # abandoned rather than removed. `chronicles` and `battles` are frozen by trigger,
 # so a redaction records `digest_at_sealing` and `erasures_applied` — visible,
 # rather than a silent edit to an immutable log.
-aetherholm|aetherholm|http://aetherholm:4000/v1/events|mixed|-|insert into archipelagos (id, kind, name, seed, owner_subject, entitlement_id) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'skerry', 'Drill', 1, 'user:{{uid}}', 'drill-ent') on conflict do nothing; insert into research (archipelago_id, user_id, node) values ('00000000-0000-4000-8000-0000000d5111', '{{uid}}', 'drill-node')|SCAN
+aetherholm|aetherholm|http://emberkin:4000/v1/events|mixed|-|insert into archipelagos (id, kind, name, seed, owner_subject, entitlement_id) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'skerry', 'Drill', 1, 'user:{{uid}}', 'drill-ent') on conflict do nothing; insert into research (archipelago_id, user_id, node) values ('00000000-0000-4000-8000-0000000d5111', '{{uid}}', 'drill-node')|SCAN
 #
 # ── HAD A HANDLER NO EVENT COULD REACH, AND MOST OF THEM WERE ALSO WRONG ─────
 #
