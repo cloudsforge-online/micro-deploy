@@ -167,24 +167,68 @@ deleting, read its config and confirm it includes nothing BUT the old cluster �
 the miner-key lesson ([estate-miner-key-backup-covers-one-host]) is that backup
 scope is always narrower or wider than assumed, never exactly as assumed.
 
-## 4. Move faucet's Deployment into cloudsforge-estate — NOT DONE
+## 4. The unread credentials — DONE 2026-08-26. The faucet move — a considered no
 
-The only phase still outstanding, and the secret half of it is no longer merely
-tidy. After phases 1–3, everything running or rendered in cf-testnet consumes
-exactly two objects — `estate-tokens` and `gateway-trust` — and yet six
-credential Secrets are still applied there with no reader at all:
-`secret-outbox`, `secret-custody`, `secret-identity-key`,
-`secret-analytics-pepper`, `secret-studio`, `secret-chainrpc`.
+This phase had two halves, and they turned out to deserve opposite answers.
 
-`pg-cloudsforge` was removed in phase 2 on exactly this reasoning, so leaving
-these six is inconsistent as well as untidy: a credential nothing reads is one
-that outlives the rotation meant to retire it, and there is no signal when it
-does. They cannot simply be deleted — section 2 of
-`check-k8s-render-matches-compose.py` requires every declared env-file Secret
-to be built for every network, so the next `k8s-secrets.py --apply` puts them
-straight back. Teaching that guard to derive per-namespace requirements from
-the rendered manifests is the work, and it is the same work either way, which
-is why it belongs here rather than in a phase of its own.
+### The credentials: done
+
+After phases 1–3 the testnet render emits one Deployment, yet **seven**
+credential objects were still being applied into cf-testnet with no pod on
+either side of them: the six per-service env-file Secrets (`secret-outbox`,
+`secret-custody`, `secret-identity-key`, `secret-analytics-pepper`,
+`secret-studio`, `secret-chainrpc`) and `estate-derived`, which carries a JSON
+object of chain RPC endpoints, some of which carry basic-auth. `estate-derived`
+was not on the original list here; it came from a `derived_vars` block in
+`render-vars.testnet.yaml` naming consumers — settlement and
+settlement-migrate — that the testnet render stopped emitting at the
+consolidation.
+
+The guard was what kept them alive. Section 2 of
+`check-k8s-render-matches-compose.py` required every network to build every
+Secret the renderer declares anywhere: right while both networks rendered the
+same fifty services, wrong since. It now derives the requirement **per
+namespace** from the rendered manifests. Per namespace and not per network,
+because a `FILES` row does not necessarily land in its own network's namespace
+— the testnet `env-chain` row is applied as `env-chain-testnet` into
+cloudsforge-estate, so it is built under testnet and referenced by the mainnet
+manifests, and a network-against-network comparison would call it missing on
+one side and unused on the other. A pod can only mount a Secret beside it, so
+the namespace is what both sides agree on.
+
+cf-testnet now holds `estate-tokens` and `gateway-trust`, both of which faucet
+reads, and the list cannot silently regrow: adding a row back without a pod to
+read it fails CI.
+
+### The faucet move: rejected, and this is the reason
+
+Moving faucet's Deployment into cloudsforge-estate would buy the removal of one
+reverse ExternalName (`TESTNET_ONLY_BRIDGED`) and one CI guard (7c). It would
+cost a **second `estate-tokens` in cloudsforge-estate** — the name is taken
+there by the mainnet set — because every value faucet reads is interpolated
+from `tokens.testnet.env`: `FAUCET_DATABASE_URL`, `FAUCET_TOKEN`,
+`FAUCET_REQUESTER_SALT`, `FAUCET_RPC_URL`, `CUSTODY_URL`, `CUSTODY_TOKEN`,
+`FAUCET_FUNDING_ADDRESS` and four more.
+
+That is the trade this very phase just argued against. The whole point of the
+work above is that a credential should exist where something reads it and
+nowhere else; the move would put a testnet credential set into the namespace
+that holds the money core, to save one CNAME. Filtering it to the eleven keys
+faucet needs is possible — the `only` mechanism exists — but that is a new
+filtered credential object and a new renderer case ("a testnet-only service
+rendered into the estate namespace") in exchange for deleting a Service and a
+guard.
+
+There is also a plainer argument. cf-testnet's remaining purpose is to be the
+testnet bulkhead: the hearth devkit lives there precisely so the mainnet
+gateway's `rpc.<apex>` upstream does NOT resolve (§5). faucet is a testnet-only
+public giveaway endpoint, and it belongs on that side of the bulkhead rather
+than beside custody and settlement.
+
+So cf-testnet's end state is three pods — faucet and the two devkit services —
+and that is the intended shape rather than a leftover. Like the two-gateway
+decision in §6, this is written down as a decision so it is not rediscovered as
+an oversight.
 
 After phase 1, faucet in cf-testnet works but is the namespace's last
 render-managed object. Moving the Deployment+Service into the estate namespace
