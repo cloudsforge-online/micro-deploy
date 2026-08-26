@@ -146,7 +146,20 @@ Beyond the plan's list, two things had to move that it did not name:
 Verified after: 72 pods Running estate-wide, faucet 200 through the testnet
 gateway with its rows intact, a consolidated testnet route 200, mainnet 200.
 
-## 3. Retire backup-runner-testnet
+## 3. Retire backup-runner-testnet — DONE 2026-08-26, during phase 1
+
+Its ordering turned out not to be free. The runner reads `@postgres:5432` like
+everything else, so the moment phase 1 moved the alias it would have begun
+dumping the CONSOLIDATED cluster into the testnet rotation — about 3 GB a day
+of exact duplicate, in a tree labelled with the network it is not. It had to go
+before the alias moved, not after, and `k8s-backup-runner.sh --network testnet`
+now refuses with that reason.
+
+The inventory below was the thing to get right, and it was measured rather than
+assumed: all 22 adopted `*_testnet` databases are in the estate's backup set,
+every vault slot has a counterpart in the estate vault, world-assets is
+byte-identical, and the single studio asset that was not was carried across and
+verified by content address.
 
 With the old cluster gone it has nothing to dump. Delete the Deployment and
 `backup-runner-env`, and remove whatever deploy path applies them. Before
@@ -154,7 +167,24 @@ deleting, read its config and confirm it includes nothing BUT the old cluster �
 the miner-key lesson ([estate-miner-key-backup-covers-one-host]) is that backup
 scope is always narrower or wider than assumed, never exactly as assumed.
 
-## 4. Move faucet's Deployment into cloudsforge-estate (optional polish)
+## 4. Move faucet's Deployment into cloudsforge-estate — NOT DONE
+
+The only phase still outstanding, and the secret half of it is no longer merely
+tidy. After phases 1–3, everything running or rendered in cf-testnet consumes
+exactly two objects — `estate-tokens` and `gateway-trust` — and yet six
+credential Secrets are still applied there with no reader at all:
+`secret-outbox`, `secret-custody`, `secret-identity-key`,
+`secret-analytics-pepper`, `secret-studio`, `secret-chainrpc`.
+
+`pg-cloudsforge` was removed in phase 2 on exactly this reasoning, so leaving
+these six is inconsistent as well as untidy: a credential nothing reads is one
+that outlives the rotation meant to retire it, and there is no signal when it
+does. They cannot simply be deleted — section 2 of
+`check-k8s-render-matches-compose.py` requires every declared env-file Secret
+to be built for every network, so the next `k8s-secrets.py --apply` puts them
+straight back. Teaching that guard to derive per-namespace requirements from
+the rendered manifests is the work, and it is the same work either way, which
+is why it belongs here rather than in a phase of its own.
 
 After phase 1, faucet in cf-testnet works but is the namespace's last
 render-managed object. Moving the Deployment+Service into the estate namespace
