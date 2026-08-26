@@ -211,6 +211,12 @@ PG_PASSWORD_VAR = "CF_POSTGRES_PASSWORD"
 PG_USER = "cloudsforge"
 PG_SECRET = "pg-cloudsforge"
 
+# Which networks run a CloudNativePG cluster of their own, and therefore need
+# `pg-cloudsforge` in their namespace. `testnet` is absent deliberately: its
+# cluster was decommissioned on 2026-08-26 and its `postgres` Service is an
+# ExternalName into cloudsforge-estate. See docs/consolidation-endgame.md.
+PG_CLUSTER_NAMESPACES = {"mainnet": "cloudsforge-estate"}
+
 # The Secret holding values that had to be COMPUTED from other credentials
 # because Kubernetes' `$(VAR)` expansion cannot express the computation. Today
 # that is `SETTLEMENT_RPC_URLS` alone; see the render-vars comment for why a
@@ -646,15 +652,30 @@ def main():
             f"      CloudNativePG bootstraps the `{PG_USER}` role from it, and without it the\n"
             f"      cluster would come up with a password the estate's 57 DSNs do not know."
         )
-    print(f"  {PG_SECRET}  (kubernetes.io/basic-auth)  <- {PG_PASSWORD_VAR}   [username={PG_USER}]")
-    if not apply_secret(
-        namespace,
-        PG_SECRET,
-        {"username": PG_USER, "password": pg_password},
-        secret_type="kubernetes.io/basic-auth",
-        dry=not args.apply,
-    ):
-        ok = False
+    # ── ONLY WHERE THERE IS A CLUSTER TO BOOTSTRAP ───────────────────────────
+    #
+    # This Secret exists in the shape CloudNativePG demands for
+    # `bootstrap.initdb`, and nothing else reads it — the services get their
+    # password from `estate-tokens` like every other credential. Since
+    # `docs/consolidation-endgame.md` phase 2 there is no CNPG cluster in
+    # cf-testnet: that namespace's `postgres` Service is an ExternalName into
+    # cloudsforge-estate, whose own cluster has its own copy of this Secret.
+    #
+    # Emitting it here anyway would put a live database password in a namespace
+    # with nothing to authenticate to — a credential with no purpose, which is
+    # the kind that outlives the rotation that was supposed to retire it.
+    if PG_CLUSTER_NAMESPACES.get(args.network):
+        print(f"  {PG_SECRET}  (kubernetes.io/basic-auth)  <- {PG_PASSWORD_VAR}   [username={PG_USER}]")
+        if not apply_secret(
+            namespace,
+            PG_SECRET,
+            {"username": PG_USER, "password": pg_password},
+            secret_type="kubernetes.io/basic-auth",
+            dry=not args.apply,
+        ):
+            ok = False
+    else:
+        print(f"  {PG_SECRET}  skipped — {args.network} has no CloudNativePG cluster of its own")
 
     # ── THE COMPUTED VALUES ──────────────────────────────────────────────────
     #
