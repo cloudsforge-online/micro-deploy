@@ -233,13 +233,38 @@ say "preflight: $(printf '%s\n' "$NEED_SECRETS" | wc -l | tr -d ' ') secret(s), 
 # k8s/database/29-service-alias.yaml, not a CNPG service — CNPG names its own
 # `postgres-rw`. Without the alias every migrator fails DNS at once, which reads
 # like a database outage rather than a missing Service.
-kubectl get service postgres -n "$NAMESPACE" >/dev/null 2>&1 \
+ALIAS="$(kubectl get service postgres -n "$NAMESPACE" -o jsonpath='{.spec.externalName}' 2>/dev/null)"
+[ -n "$ALIAS" ] \
   || fail "service/postgres (the ExternalName alias) is missing. Apply k8s/database/29-service-alias.yaml."
-PHASE="$(kubectl get cluster.postgresql.cnpg.io postgres -n "$NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null)"
+
+# WHERE THE CLUSTER IS, IS WHAT THE ALIAS SAYS — not what this namespace is.
+#
+# This used to look for `cluster.postgresql.cnpg.io/postgres` in $NAMESPACE, which
+# was true only while every network had a database server of its own. Since
+# `docs/consolidation-endgame.md` phase 1, cf-testnet's alias points into
+# cloudsforge-estate and there is no CNPG Cluster in cf-testnet at all — the old
+# check would fail a deploy of a perfectly healthy estate, and its message would
+# tell the operator to apply a cluster manifest that would build a second,
+# unwanted database server.
+#
+# Parsed from the alias rather than mapped from $NETWORK so the check follows the
+# same indirection every DSN follows. Point the alias somewhere else and this
+# checks there too, which is the property that keeps it honest.
+PG_NAMESPACE="$(printf '%s' "$ALIAS" | awk -F. '{print $2}')"
+[ -n "$PG_NAMESPACE" ] \
+  || fail "service/postgres in $NAMESPACE has externalName '$ALIAS', which is not a <service>.<namespace>.svc.cluster.local name."
+PHASE="$(kubectl get cluster.postgresql.cnpg.io postgres -n "$PG_NAMESPACE" -o jsonpath='{.status.phase}' 2>/dev/null)"
 case "$PHASE" in
-  "Cluster in healthy state") say "preflight: postgres — $PHASE" ;;
-  "") fail "no CNPG Cluster/postgres in $NAMESPACE. Apply k8s/database/20-cluster-$NETWORK.yaml." ;;
-  *)  say "preflight: postgres — $PHASE"
+  "Cluster in healthy state")
+      if [ "$PG_NAMESPACE" = "$NAMESPACE" ]; then
+        say "preflight: postgres — $PHASE"
+      else
+        say "preflight: postgres — $PHASE (in $PG_NAMESPACE, via the alias)"
+      fi ;;
+  "") fail "no CNPG Cluster/postgres in $PG_NAMESPACE, where $NAMESPACE's postgres alias points.
+       Either apply k8s/database/20-cluster-*.yaml for that namespace, or correct
+       the alias in k8s/database/29-service-alias.yaml." ;;
+  *)  say "preflight: postgres — $PHASE (in $PG_NAMESPACE)"
       say "           Not healthy. The migrators will fail against it, so this stops here."
       exit 1 ;;
 esac

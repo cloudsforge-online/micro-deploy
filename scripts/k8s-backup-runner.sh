@@ -115,8 +115,36 @@ fi
 
 case "$NETWORK" in
   mainnet) NAMESPACE="cloudsforge-estate" ;;
-  testnet) NAMESPACE="cf-testnet" ;;
-  *) echo "usage: $0 --network mainnet|testnet [--dry-run] | --build" >&2; exit 2 ;;
+  # ── THERE IS NO TESTNET RUNNER ANY MORE ──────────────────────────────────
+  #
+  # `docs/consolidation-endgame.md` phase 1 and 3. This refuses rather than
+  # being deleted, because the failure it prevents is silent: the runner reads
+  # `@postgres:5432`, cf-testnet's alias now resolves to the CONSOLIDATED
+  # cluster, and a runner started here would dump all 55 of the estate's
+  # databases into `/srv/cloudsforge-backups/testnet/` — roughly 3 GB a day of
+  # exact duplicate, in a tree labelled with the network it is not.
+  #
+  # Everything it used to protect is protected by the mainnet runner, measured
+  # on 2026-08-26 rather than assumed:
+  #
+  #   databases      the estate set holds all 22 adopted `*_testnet` databases,
+  #                  and a restore drill matched every row count.
+  #   custody vault  every slot in cf-testnet's vault has a counterpart in the
+  #                  estate vault; the pre-consolidation copy is archived under
+  #                  /srv/cloudsforge-backups/decommissioned/.
+  #   world-assets   byte-identical to the estate's copy, all 394 files.
+  #   studio-assets  14 of 15 identical; the fifteenth was carried across and
+  #                  verified by content address.
+  #   miner-keys     the same hostPath on both, so one runner covers it.
+  testnet)
+    echo "refusing: there is no testnet backup runner." >&2
+    echo "          cf-testnet has no database server of its own — its postgres alias" >&2
+    echo "          points at cloudsforge-estate, so a runner here would dump the" >&2
+    echo "          consolidated cluster a second time into the testnet rotation." >&2
+    echo "          The mainnet runner already covers every testnet database, the" >&2
+    echo "          vault and both asset trees. See docs/consolidation-endgame.md." >&2
+    exit 2 ;;
+  *) echo "usage: $0 --network mainnet [--dry-run] | --build" >&2; exit 2 ;;
 esac
 
 # Same guard as every other k8s script here, and for the same reason: on at
