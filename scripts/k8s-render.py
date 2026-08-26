@@ -819,44 +819,8 @@ def main():
             continue
         if name in EXCLUDED_SERVICES or name in MERGED_INTO_WEB_POD:
             continue
-        # ── AN ABSORBED SERVICE HAS NO WORKLOAD, ONLY A NAME ─────────────────
-        #
-        # Its code runs inside the absorber's pod. Rendering a Deployment here
-        # would start a second copy of a process that is already running, and
-        # rendering its migrate Job would run a second migrator against a schema
-        # the absorber now owns — which is the fastest way to corrupt it.
-        #
-        # The Service survives as a CNAME so no caller has to move on cutover
-        # day. See MERGED_INTO.
-        if name.removesuffix("-migrate") in MERGED_INTO:
-            if not name.endswith("-migrate"):
-                svcs.append(
-                    {
-                        "apiVersion": "v1",
-                        "kind": "Service",
-                        "metadata": {
-                            "name": name,
-                            "namespace": namespace,
-                            "labels": {
-                                "app.kubernetes.io/name": name,
-                                "app.kubernetes.io/part-of": "cloudsforge",
-                            },
-                            "annotations": {
-                                "online.cloudsforge.why": (
-                                    f"Merged into {merge_target(name)}: this service's code now runs "
-                                    f"inside that pod as a module. A CNAME rather than a deletion so "
-                                    f"every service-to-service call keeps resolving unchanged, and so "
-                                    f"rollback is one line here rather than an edit per caller."
-                                )
-                            },
-                        },
-                        "spec": {
-                            "type": "ExternalName",
-                            "externalName": f"{merge_target(name)}.{namespace}.svc.cluster.local",
-                        },
-                    }
-                )
-            continue
+        # An absorbed service is not in the compose file at all — see the
+        # MERGED_INTO block after this loop — so there is nothing to skip here.
         service = services[name]
 
         service_profiles = set(service.get("profiles") or [])
@@ -1386,6 +1350,75 @@ def main():
         f"# Contains NO secret values. Every credential is a secretKeyRef by name; see the\n"
         f"# script's docstring for the three shapes and why each is handled the way it is.\n"
     )
+
+    # ── AN ABSORBED SERVICE IS A NAME WITH NO WORKLOAD ───────────────────────
+    #
+    # Emitted from MERGED_INTO rather than from the compose file, because an
+    # absorbed service IS NOT IN THE COMPOSE FILE. That is the difference between
+    # this and MERGED_INTO_WEB_POD above, and it is worth stating plainly:
+    #
+    #   * A web bundle keeps its compose service. It is still its own image and
+    #     its own repo, and `make up` still runs twenty containers locally. Only
+    #     Kubernetes groups them differently.
+    #   * An ABSORBED service does not. Its code now ships inside the absorber's
+    #     image, so its old image is stale by construction — and running that
+    #     stale image beside the absorber under compose would point two different
+    #     versions of the same code at the same database. Leaving the compose
+    #     entry in place to "keep local dev working" would be the bug.
+    #
+    # So the name survives here and only here: one Service, of type ExternalName,
+    # so that every `http://analytics:4000` still resolves on cutover day and no
+    # caller has to be edited in the same change that moves the code. Callers
+    # migrate to the absorber's name at leisure; rollback is deleting the map
+    # entry and re-adding the compose service.
+    # The two halves of a merge have to land together. If the compose service is
+    # still there, the loop above has ALREADY emitted a real ClusterIP under this
+    # name and the alias below would be a second Service with the same name in the
+    # same namespace — which `kubectl apply` rejects on the second document, half
+    # way through a deploy. Refuse here instead, where the message can say why.
+    for absorbed in sorted(MERGED_INTO):
+        if absorbed in services:
+            raise SystemExit(
+                f"'{absorbed}' is in MERGED_INTO but still has a compose service. Its code now "
+                f"ships inside {merge_target(absorbed)}'s image, so the old image is stale by "
+                f"construction and running both would point two versions of the same code at one "
+                f"database. Delete the '{absorbed}' and '{absorbed}-migrate' services from the "
+                f"compose file, and move any environment only they declared onto "
+                f"{merge_target(absorbed)}."
+            )
+
+    for absorbed in sorted(MERGED_INTO):
+        target = merge_target(absorbed)
+        svcs.append(
+            {
+                "apiVersion": "v1",
+                "kind": "Service",
+                "metadata": {
+                    "name": absorbed,
+                    "namespace": namespace,
+                    "labels": {
+                        "app.kubernetes.io/name": absorbed,
+                        "app.kubernetes.io/part-of": "cloudsforge",
+                    },
+                    "annotations": {
+                        "online.cloudsforge.why": (
+                            f"Merged into {target}: this service's code now runs inside that "
+                            f"pod as a module, so it has no Deployment and no migrate Job of "
+                            f"its own — a second migrator against a schema that pod now owns "
+                            f"is the fastest way to corrupt it. A CNAME rather than a deletion "
+                            f"so service-to-service calls keep resolving unchanged."
+                        )
+                    },
+                },
+                "spec": {
+                    "type": "ExternalName",
+                    # ALWAYS the mainnet namespace. The absorber is consolidated —
+                    # one pod answers for both estates — so pointing a testnet
+                    # alias at a testnet copy would name a pod that does not exist.
+                    "externalName": f"{target}.{NETWORKS['mainnet']}.svc.cluster.local",
+                },
+            }
+        )
 
     # ── the reverse CNAMEs; see TESTNET_ONLY_BRIDGED ─────────────────────────
     if args.network == "mainnet":
