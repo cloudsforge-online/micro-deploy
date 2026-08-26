@@ -243,6 +243,57 @@ route → 200 shell, an unknown path → **404** with that bundle's shell, an as
 → `immutable`). Every way fifteen nginx route tables can merge wrongly produces
 a **200 with the wrong content**, which no health probe sees.
 
+## Two questions the pod list invites, answered
+
+### "Why are there two frontend pods — didn't we merge mainnet and testnet?"
+
+There is **one** frontend Deployment. `web` runs `replicas: 2`, and both pods
+serve byte-identical content from the same ConfigMap and the same twenty
+digest-pinned bundle images. It is not mainnet and testnet.
+
+The testnet frontends were retired in wave 1 of the network consolidation and
+`testnet.<apex>` 302-redirects into the apex combined view; there has been one
+set of frontends since. The second replica exists because **one pod now carries
+every public surface**: a node eviction, an OOM or a bad rollout would
+otherwise take down the site, the account, every product page and the docs at
+once. Twenty separate Deployments were accidentally providing that resilience,
+and dropping to a single replica would quietly spend it.
+
+If the estate ever wants the absolute floor, `replicas: 1` is a one-line change
+in `scripts/k8s-render-web.py` — it buys one pod and costs the only redundancy
+the public surfaces have.
+
+### "And the two gateways?"
+
+Those **are** mainnet and testnet, and they stay. This is a considered no, not
+an oversight, and the cost is one pod.
+
+`CF-Network` is stamped by a middleware on the **entrypoint**, before any router
+is consulted, from that pod's `CF_EMBER_NETWORK`. So which estate's data a
+request reaches is a property of **which pod received it** — a topology fact
+that cannot be mismatched, and one a client cannot forge, because
+`customRequestHeaders` overwrites rather than appends.
+
+Merging into one Traefik would mean:
+
+* **Every router rendered twice.** The two gateways are one template rendered
+  with different `CF_WEB_SUFFIX` values — `agora.<apex>` and
+  `agora-testnet.<apex>` are the same router definition. One gateway needs both
+  hostname sets present simultaneously, so every one of ~115 router names has to
+  be split and renamed per network.
+* **The stamp moves from the entrypoint to each router.** That is the thing
+  `policy.yml` argues against in its own comment: forty-odd places to remember,
+  and the guarantee becomes a list that has to be kept right rather than a
+  structure that cannot be got wrong. It fails closed — `requestNetwork()`
+  refuses a request with no header — so a forgotten middleware is a 500 rather
+  than a leak. But a 500 on a live surface is still an outage, and the current
+  design makes it unreachable.
+
+That is a restructure of the estate's most sensitive routing surface to save
+one pod. The testnet gateway is also load-bearing rather than vestigial: the
+combined view works by the mainnet frontend calling `api-testnet.<apex>`, which
+is precisely what that pod exists to stamp.
+
 ## Merge mechanics (the template every M-wave follows)
 
 1. The larger repo absorbs the smaller as a workspace package; the smaller
