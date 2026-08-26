@@ -22,7 +22,7 @@ for each:
 Ordering matters: phase 1 unblocks phase 2, phase 2 makes phase 3 possible.
 Phase 4 is independent polish and can happen any time after phase 1.
 
-## 1. Repoint faucet at the consolidated Postgres
+## 1. Repoint faucet at the consolidated Postgres — DONE 2026-08-26
 
 The old cluster's only application consumer is faucet (verified 2026-08-26 from
 `pg_stat_activity`: the only non-backup connections are the faucet pod to
@@ -48,6 +48,41 @@ Note the rate-limit hazard recorded in
 [faucet-token-rotation-resets-the-rate-limit]: the requester salt is derived
 from `FAUCET_TOKEN` unless pinned. This plan does not rotate the token — only
 the DSN moves — but check the pin before touching anything else in that file.
+
+### What actually happened, including the step this plan missed
+
+The alias moved, the migrator ran, faucet came up on the consolidated cluster
+and answers 200 through the testnet gateway; the old cluster shows zero
+application connections. Five rows were carried and digest-verified
+(`dispenses` 2, `faucet_address_grants` 2, `faucet_budget` 1;
+`faucet_requester_grants` was empty on both sides). `jobs` and
+`schema_migrations` were deliberately not copied — the runtime seeds its own
+recurring jobs, and the migration ledger records what ran against THIS
+database.
+
+**The step this plan did not anticipate: the two clusters have different
+`cloudsforge` passwords.** Repointing the alias without moving the credential
+gives `password authentication failed for user "cloudsforge"`, three times,
+and the deploy stops at wave 30 with nothing downstream applied — a good
+failure, but a confusing one, because every symptom points at the database
+rather than at the secret. `CF_POSTGRES_PASSWORD` in
+`compose/estate/tokens.testnet.env` had to be set to the estate's value and
+`k8s-secrets.py --network testnet --apply` re-run. **`--apply` is not the
+default**: without it the script prints the names it would write and changes
+nothing, which is exactly what happened on the first attempt and is why the
+second deploy failed identically.
+
+The plan's step ordering was otherwise right, and one thing it got right by
+accident is worth keeping: retiring the testnet backup runner BEFORE the alias
+moved. The runner reads `@postgres:5432` too, so had it still been running it
+would have started dumping the consolidated cluster into the testnet rotation
+the moment the alias changed.
+
+Two defects were found while doing this, both pre-existing and both filed
+rather than fixed here: the estate had taken no backup since 2026-08-20 and
+had never backed up the adopted `*_testnet` databases at all (micro-org#511,
+now fixed and verified), and the testnet faucet's funding address holds zero
+EMBER with two drip requests queued since 2026-08-07 (micro-org#518).
 
 ## 2. Decommission the old cf-testnet Postgres
 
