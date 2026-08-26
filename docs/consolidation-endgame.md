@@ -84,7 +84,7 @@ had never backed up the adopted `*_testnet` databases at all (micro-org#511,
 now fixed and verified), and the testnet faucet's funding address holds zero
 EMBER with two drip requests queued since 2026-08-07 (micro-org#518).
 
-## 2. Decommission the old cf-testnet Postgres
+## 2. Decommission the old cf-testnet Postgres — DONE 2026-08-26
 
 Preconditions, all now true except (d):
 
@@ -112,6 +112,39 @@ Steps:
    any Prometheus target or estate-verify section that reads the old cluster.
    `check-prometheus-target-ambiguity.py` gets simpler here, not more complex —
    backup-runner-testnet was the one legitimate cf-testnet target (#513).
+
+### What actually happened
+
+The archive was taken first and proven **completely**, not sampled: all 31
+databases restored into scratch databases on the cluster being deleted, every
+per-table row count matching, no scratch left behind. Sampling three would have
+been the plan's letter; after the delete the archive is the only copy, so a
+dump that turns out to be unreadable is unrecoverable rather than
+inconvenient. The testnet custody vault (39 files) went into the same archive —
+every slot in it has a counterpart in the estate vault, re-encrypted, but key
+material is not something to delete on the strength of a counterpart.
+
+Deleting the CNPG `Cluster` cascaded to its two PVCs, and the `cf-retain`
+StorageClass left both PersistentVolumes `Released` with their data intact — a
+second safety net that costs nothing and can be reclaimed later.
+
+Beyond the plan's list, two things had to move that it did not name:
+
+* **The three manifests describing the cluster** (`20-cluster-testnet`,
+  `21-databases-testnet`, `22-bootstrap-testnet`) were deleted, and both
+  renderers now REFUSE `--network testnet` by name rather than losing the
+  choice — argparse's "invalid choice" tells someone following an old runbook
+  nothing about where the databases went. A negative test in
+  `check-k8s-databases-match-initdb.py` keeps the refusal from being tidied
+  away as dead code, and was itself negative-tested.
+* **`pg-cloudsforge` is no longer emitted into cf-testnet.** It exists in the
+  shape CloudNativePG wants for `bootstrap.initdb` and nothing else reads it,
+  so with no cluster there it was a live database password in a namespace with
+  nothing to authenticate to — the kind of credential that outlives the
+  rotation meant to retire it.
+
+Verified after: 72 pods Running estate-wide, faucet 200 through the testnet
+gateway with its rows intact, a consolidated testnet route 200, mainnet 200.
 
 ## 3. Retire backup-runner-testnet
 

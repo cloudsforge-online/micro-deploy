@@ -66,7 +66,21 @@ import sys
 
 NETWORKS = {
     "mainnet": "cloudsforge-estate",
-    "testnet": "cf-testnet",
+}
+
+# ── testnet HAD ONE, AND NO LONGER DOES ──────────────────────────────────────
+#
+# `docs/consolidation-endgame.md` phase 2. Kept as a named refusal rather than
+# an absent choice for the reason k8s-render-databases.py gives at greater
+# length: "invalid choice: 'testnet'" tells a person following an old runbook
+# nothing about where the databases went.
+RETIRED_NETWORKS = {
+    "testnet": (
+        "the cf-testnet CloudNativePG cluster was decommissioned on 2026-08-26.\n"
+        "       Its databases live in the cloudsforge-estate cluster now, under their\n"
+        "       `_testnet` names, and `22-bootstrap-mainnet.yaml` already creates them.\n"
+        "       See docs/consolidation-endgame.md phase 2."
+    ),
 }
 
 # Kept identical to k8s-render-databases.py ON PURPOSE. Two parsers over one
@@ -91,7 +105,7 @@ def databases(sql_text: str) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--network", required=True, choices=sorted(NETWORKS))
+    parser.add_argument("--network", required=True, choices=sorted({*NETWORKS, *RETIRED_NETWORKS}))
     parser.add_argument("--sql", default="compose/estate/initdb.sql")
     parser.add_argument("--owner", default="cloudsforge")
     parser.add_argument("--image", default="postgres:17-alpine", help="anything carrying psql")
@@ -102,6 +116,9 @@ def main() -> int:
     )
     parser.add_argument("--out")
     args = parser.parse_args()
+
+    if args.network in RETIRED_NETWORKS:
+        return fail(f"there is no {args.network} database cluster —\n       {RETIRED_NETWORKS[args.network]}")
 
     namespace = NETWORKS[args.network]
     sql_path = pathlib.Path(args.sql)

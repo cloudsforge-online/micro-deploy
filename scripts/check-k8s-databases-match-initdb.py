@@ -61,16 +61,32 @@ SQL = ROOT / "compose" / "estate" / "initdb.sql"
 # would look right on its own, and the failure would be a managed server missing exactly the
 # databases somebody added after the split — discovered when every service reports
 # `database "x" does not exist` at once.
+#
+# ── ONE NETWORK, SINCE 2026-08-26 ────────────────────────────────────────────
+#
+# There used to be a testnet column here. `docs/consolidation-endgame.md` phase
+# 2 decommissioned the cf-testnet CloudNativePG cluster: that namespace's
+# `postgres` Service is an ExternalName into cloudsforge-estate, and the
+# estate's cluster holds both networks' databases — the testnet ones under
+# their `_testnet` names, which `21-databases-mainnet.yaml` already declares.
+#
+# So this is not a narrowing of the check. The same 52 databases are still
+# checked against the same initdb.sql; what is gone is a second rendering of a
+# subset of them for a server that no longer exists.
 GENERATORS = {
     ROOT / "scripts" / "k8s-render-databases.py": {
         "mainnet": ROOT / "k8s" / "database" / "21-databases-mainnet.yaml",
-        "testnet": ROOT / "k8s" / "database" / "21-databases-testnet.yaml",
     },
     ROOT / "scripts" / "k8s-render-bootstrap.py": {
         "mainnet": ROOT / "k8s" / "database" / "22-bootstrap-mainnet.yaml",
-        "testnet": ROOT / "k8s" / "database" / "22-bootstrap-testnet.yaml",
     },
 }
+
+# Both renderers must still REFUSE the retired network by name rather than
+# emitting for it, because the failure this prevents is a second cluster being
+# built from a runbook nobody updated. Asserted here so the refusal is covered
+# by CI and cannot be dropped as dead code.
+RETIRED = "testnet"
 
 failures = []
 
@@ -103,10 +119,42 @@ if not failures:
                     f"--out {target.relative_to(ROOT)}"
                 )
 
+# ── THE RETIRED NETWORK STAYS REFUSED ────────────────────────────────────────
+#
+# Negative test, because the positive one above cannot see this. If a later
+# edit "tidies up" the RETIRED_NETWORKS branch as dead code, both renderers go
+# back to emitting a cluster and a database list for a namespace that has no
+# database server — and the first person to follow an old runbook builds a
+# second Postgres beside the consolidated one, with the same 22 databases under
+# their plain names. Nothing would report that as wrong.
+if not failures:
+    for generator in GENERATORS:
+        result = subprocess.run(
+            [sys.executable, str(generator), "--network", RETIRED, "--sql", str(SQL)],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode == 0:
+            failures.append(
+                f"{generator.name} --network {RETIRED} SUCCEEDED, and must not. The\n"
+                f"       {RETIRED} database cluster was decommissioned; emitting for it would\n"
+                "       describe a server that does not exist. Keep the RETIRED_NETWORKS\n"
+                "       refusal. See docs/consolidation-endgame.md phase 2."
+            )
+        elif RETIRED not in (result.stdout + result.stderr):
+            failures.append(
+                f"{generator.name} --network {RETIRED} failed without naming the network.\n"
+                "       The refusal has to say which cluster is gone and where its databases\n"
+                "       went, or it is just an error message."
+            )
+
 if failures:
     print("FAIL: check-k8s-databases-match-initdb")
     for failure in failures:
         print(f"  - {failure}")
     sys.exit(1)
 
-print(f"ok: all four generated database artefacts match {SQL.relative_to(ROOT)}")
+print(
+    f"ok: both generated database artefacts match {SQL.relative_to(ROOT)}, and both\n"
+    f"    generators refuse --network {RETIRED} by name"
+)

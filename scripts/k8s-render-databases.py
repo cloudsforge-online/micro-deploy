@@ -82,15 +82,42 @@ NETWORKS = {
     # PROJECT names, unchanged, so every runbook and dashboard that names one
     # goes on being right.
     "mainnet": ("cloudsforge-estate", "postgres"),
-    "testnet": ("cf-testnet", "postgres"),
+}
+
+# ── testnet HAD ONE, AND NO LONGER DOES ──────────────────────────────────────
+#
+# `docs/consolidation-endgame.md` phase 2. The cf-testnet CloudNativePG cluster
+# was decommissioned on 2026-08-26; that namespace's `postgres` Service is an
+# ExternalName pointing into cloudsforge-estate, and the estate's cluster holds
+# both networks' databases — the testnet ones under their `_testnet` names.
+#
+# Named here rather than simply dropped from NETWORKS, because argparse's
+# "invalid choice: 'testnet'" is a true statement that explains nothing. The
+# person typing it is following a runbook that used to be right, and what they
+# need to be told is that the cluster is gone and where its databases went.
+RETIRED_NETWORKS = {
+    "testnet": (
+        "the cf-testnet CloudNativePG cluster was decommissioned on 2026-08-26.\n"
+        "       Its databases live in the cloudsforge-estate cluster now, under their\n"
+        "       `_testnet` names, and `21-databases-mainnet.yaml` already declares them.\n"
+        "       See docs/consolidation-endgame.md phase 2."
+    ),
 }
 
 parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-parser.add_argument("--network", required=True, choices=sorted(NETWORKS), help="which network's namespace to emit for")
+parser.add_argument(
+    "--network",
+    required=True,
+    choices=sorted({*NETWORKS, *RETIRED_NETWORKS}),
+    help="which network's namespace to emit for",
+)
 parser.add_argument("--sql", default="compose/estate/initdb.sql", help="the source of truth")
 parser.add_argument("--owner", default="cloudsforge", help="the role that owns every database (there is only one)")
 parser.add_argument("--out", help="write here instead of stdout")
 args = parser.parse_args()
+
+if args.network in RETIRED_NETWORKS:
+    sys.exit(f"FAIL: there is no {args.network} database cluster —\n       {RETIRED_NETWORKS[args.network]}")
 
 namespace, cluster = NETWORKS[args.network]
 
