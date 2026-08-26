@@ -2166,8 +2166,41 @@ http:
     #     POST /ingest/client  OPTIONS /ingest/client
     #     /v1/requests/:requestId  /v1/issues  /v1/events  /v1/rum
     #
-    # — which is `/v1`, `/otlp`, `/ingest`, `/metrics`, `/livez`, `/readyz` and
-    # nothing else. `/otlp` and `/ingest` are the two a `/v1`-only rule would have
+    # — which is `/v1`, `/otlp`, `/ingest/`, `/metrics`, `/livez`, `/readyz`
+    # and nothing else.
+    #
+    # THE TRAILING SLASH ON `/ingest/` IS LOAD-BEARING, AND IS THE WHOLE POINT.
+    #
+    # This read `PathPrefix(`/ingest`)` until 2026-08-27. That is the same rule as
+    # this one while lantern is the only service on this upstream, and stops being
+    # the same rule the moment it is not. `micro-analytics` serves `POST /ingest`
+    # — the event-bus collector, which takes deliveries from the estate's own
+    # producers and is meant to be reachable from inside the cluster and nowhere
+    # else — and `docs/service-merge-plan.md` puts it behind this router. The old
+    # rule would have published it to the internet on cutover day, silently,
+    # because `/ingest` is a prefix of `/ingest` and nothing would have failed.
+    #
+    # The MAC on that route means that would have been exposure rather than
+    # bypass. It is narrowed anyway: the difference between "an attacker must
+    # forge a MAC" and "an attacker cannot reach the socket" is the whole reason
+    # the collector was never given a hostname. Narrowed ahead of the merge, so
+    # the change that makes it dangerous is not also the change that has to
+    # remember this.
+    #
+    # NOT narrowed to `/ingest/client`, which was the first attempt and was worse.
+    # `routes.ts` deliberately answers an unknown `/ingest/*` path with a JSON
+    # error naming the paths it does serve, and counts it in
+    # `lantern_unknown_ingest_path_total`, precisely so that a client posting to
+    # the wrong path is visible instead of silent. Pinning the rule to the one
+    # good path would have sent every wrong one to the bundle router below
+    # instead, where nginx answers 404 with the app shell — so the diagnostic
+    # would have gone quiet exactly when it had something to say, and the counter
+    # would have read zero and looked like health.
+    #
+    # `/ingest/` keeps every `/ingest/*` path reaching that handler and excludes
+    # the one path that is not under it: the bare `/ingest` analytics serves.
+    #
+    # `/otlp` and `/ingest/` are the two a `/v1`-only rule would have
     # dropped, and dropping them is the expensive mistake here: `/otlp/v1/logs`
     # begins with `/otlp` and NOT with `/v1`, so a prefix list copied from the
     # surface above would have sent every service's log export and every
@@ -2198,7 +2231,7 @@ http:
       middlewares: [cf-web-headers]
       service: cf-web-lantern
     cf-api-lantern:
-      rule: 'Host(`lantern{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/otlp`) || PathPrefix(`/ingest`) || PathPrefix(`/metrics`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
+      rule: 'Host(`lantern{{ env "CF_WEB_SUFFIX" }}`) && (PathPrefix(`/v1`) || PathPrefix(`/otlp`) || PathPrefix(`/ingest/`) || PathPrefix(`/metrics`) || PathPrefix(`/livez`) || PathPrefix(`/readyz`))'
       priority: 600
       entryPoints: [websecure, tunnel]
       service: cf-svc-lantern

@@ -183,12 +183,19 @@ NOT_CHECKED = {
     },
     "lantern": {
         "terms": [
-            "PathPrefix(/v1)", "PathPrefix(/otlp)", "PathPrefix(/ingest)",
+            "PathPrefix(/v1)", "PathPrefix(/otlp)", "PathPrefix(/ingest/)",
             "PathPrefix(/metrics)", "PathPrefix(/livez)", "PathPrefix(/readyz)",
         ],
-        "why": "`/v1` covers the API; `/otlp` and `/ingest` are the two telemetry intake "
+        "why": "`/v1` covers the API; `/otlp` and `/ingest/` are the two telemetry intake "
                "prefixes, whose paths are fixed by the OTLP spec and by the agents that "
-               "post to them, not by lantern",
+               "post to them, not by lantern. THE TRAILING SLASH IS THE DECLARATION: "
+               "`/ingest/` is closed because lantern answers every unserved `/ingest/*` "
+               "path itself, with a JSON error naming the served ones, so growth under "
+               "that prefix is handled rather than swallowed — while the bare `/ingest` "
+               "is left OUTSIDE the routed set on purpose, because micro-analytics serves "
+               "exactly that path as its event-bus collector and the merge in "
+               "docs/service-merge-plan.md puts it on this upstream. Widening this back "
+               "to `/ingest` publishes an internal collector to the internet",
     },
     "pool": {
         "terms": ["PathPrefix(/v1)", "PathPrefix(/livez)", "PathPrefix(/readyz)"],
