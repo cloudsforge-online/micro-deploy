@@ -413,6 +413,48 @@ MERGED_INTO_WEB_POD = {
     "network-site", "lantern-web", "beacon-web",
 }
 
+# ── SERVICES THAT ARE NOW MODULES OF ANOTHER SERVICE ─────────────────────────
+#
+# `absorbed -> absorber`. Wave M of `docs/service-merge-plan.md`: the absorbed
+# service's code ships INSIDE the absorber's image as plain directories under
+# its `src/`, so there is no second container to run and no second migrate Job —
+# the absorber's migrator runs both schemas, and both databases are kept under
+# their existing `*_DATABASE_URL` names.
+#
+# THE NAME STILL RESOLVES, and that is why this is a CNAME rather than a
+# deletion, for the same reason `CONSOLIDATED_SERVICES` above is. Callers are
+# not required to move on cutover day; they move at leisure, and rollback is the
+# old image plus flipping this map back rather than a coordinated edit across
+# every caller.
+#
+# Both sides of a merge must serve the SAME PORT for the alias to be transparent
+# — an ExternalName is a DNS CNAME and carries no port mapping. analytics and
+# lantern are both on 4000, which is what makes this alias free.
+MERGED_INTO = {
+    # 2026-08-27. lantern absorbs analytics even though analytics is the larger
+    # of the two (5.1k vs 4.3k LOC), because lantern holds the public hostname,
+    # the gateway router and the OTLP endpoint every service in the estate pushes
+    # to. Absorb by blast radius, not by line count.
+    "analytics": "lantern",
+}
+
+
+def merge_target(name: str) -> str:
+    """The service a name actually resolves to, following merges to the end.
+
+    Written as a loop rather than a single lookup so that a later `b -> c` on top
+    of an existing `a -> b` cannot leave `a` pointing at a service that no longer
+    runs. Guarded against a cycle, because a typo that made one is otherwise an
+    infinite loop inside a deploy.
+    """
+    seen = [name]
+    while name in MERGED_INTO:
+        name = MERGED_INTO[name]
+        if name in seen:
+            raise SystemExit(f"MERGED_INTO has a cycle: {' -> '.join([*seen, name])}")
+        seen.append(name)
+    return name
+
 # The Secret each compose `env_file:` becomes. Compose interpolates the network
 # into the path (`secrets/outbox.${CF_EMBER_NETWORK:-mainnet}.env`); the Secret
 # name drops the network because the namespace already carries it. Kept in step
@@ -764,12 +806,56 @@ def main():
                         },
                         "spec": {
                             "type": "ExternalName",
-                            "externalName": f"{name}.{NETWORKS['mainnet']}.svc.cluster.local",
+                            # RESOLVED THROUGH THE MERGE, NOT INTO IT. A merged
+                            # service's mainnet Service is itself a CNAME, and
+                            # chaining `analytics.cf-testnet -> analytics.<estate>
+                            # -> lantern.<estate>` would make every testnet caller
+                            # depend on a resolver following two hops. One hop to
+                            # the pod that actually answers.
+                            "externalName": f"{merge_target(name)}.{NETWORKS['mainnet']}.svc.cluster.local",
                         },
                     }
                 )
             continue
         if name in EXCLUDED_SERVICES or name in MERGED_INTO_WEB_POD:
+            continue
+        # ── AN ABSORBED SERVICE HAS NO WORKLOAD, ONLY A NAME ─────────────────
+        #
+        # Its code runs inside the absorber's pod. Rendering a Deployment here
+        # would start a second copy of a process that is already running, and
+        # rendering its migrate Job would run a second migrator against a schema
+        # the absorber now owns — which is the fastest way to corrupt it.
+        #
+        # The Service survives as a CNAME so no caller has to move on cutover
+        # day. See MERGED_INTO.
+        if name.removesuffix("-migrate") in MERGED_INTO:
+            if not name.endswith("-migrate"):
+                svcs.append(
+                    {
+                        "apiVersion": "v1",
+                        "kind": "Service",
+                        "metadata": {
+                            "name": name,
+                            "namespace": namespace,
+                            "labels": {
+                                "app.kubernetes.io/name": name,
+                                "app.kubernetes.io/part-of": "cloudsforge",
+                            },
+                            "annotations": {
+                                "online.cloudsforge.why": (
+                                    f"Merged into {merge_target(name)}: this service's code now runs "
+                                    f"inside that pod as a module. A CNAME rather than a deletion so "
+                                    f"every service-to-service call keeps resolving unchanged, and so "
+                                    f"rollback is one line here rather than an edit per caller."
+                                )
+                            },
+                        },
+                        "spec": {
+                            "type": "ExternalName",
+                            "externalName": f"{merge_target(name)}.{namespace}.svc.cluster.local",
+                        },
+                    }
+                )
             continue
         service = services[name]
 
