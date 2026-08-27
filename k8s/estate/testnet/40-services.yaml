@@ -271,20 +271,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: nda
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: nda
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: nda.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
   name: policy
   namespace: cf-testnet
   labels:
@@ -435,6 +421,20 @@ metadata:
 spec:
   type: ExternalName
   externalName: lantern.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nda
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: nda
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into emberkin: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: emberkin.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service

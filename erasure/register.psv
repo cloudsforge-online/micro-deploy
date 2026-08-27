@@ -187,7 +187,7 @@ devplatform|devplatform|http://devplatform:4000/v1/events|anonymise|-|insert int
 # every real deletion erased nothing and answered 202. Its own test built an
 # envelope carrying `subject`, so the test and the handler agreed with each other
 # and neither agreed with the producer.
-nda|nda|http://nda:4000/v1/events|delete|-|insert into worlds (id, name, season_length, width, height, tick_interval_minutes, seed) values ('drill-world', 'Drill', 30, 16, 16, 60, 'drill') on conflict do nothing; insert into players (id, world_id, user_id, handle, homestead_x, homestead_y, resources) values (concat('drill-', substr(md5('{{uid}}'), 1, 12)), 'drill-world', '{{uid}}', 'drill', 0, 0, '{}'::jsonb)|SCAN
+nda|nda|http://emberkin:4000/v1/events|delete|-|insert into worlds (id, name, season_length, width, height, tick_interval_minutes, seed) values ('drill-world', 'Drill', 30, 16, 16, 60, 'drill') on conflict do nothing; insert into players (id, world_id, user_id, handle, homestead_x, homestead_y, resources) values (concat('drill-', substr(md5('{{uid}}'), 1, 12)), 'drill-world', '{{uid}}', 'drill', 0, 0, '{}'::jsonb)|SCAN
 #
 # community — pseudonymisation, which is defensible for public posts and must be
 # described as what it is rather than as deletion. It reached 4 of the 11 columns

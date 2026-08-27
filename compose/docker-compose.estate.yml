@@ -2707,48 +2707,26 @@ services:
     healthcheck: *healthcheck
 
   # ---------------------------------------------------------------------- nda
-  nda-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../nda
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
-      WORLDS_URL: http://worlds:4000
-      BILLING_URL: http://billing:4000
-      INSTANCE_ID: nda-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
+  # ---------------------------------------------------------------------- nda
+  #
+  # NOT A SERVICE ANY MORE. Wave M4a: micro-nda's code ships inside micro-emberkin's
+  # image as plain directories under `src/nda/`, so `nda` and `nda-migrate` are GONE
+  # from here — an absorbed service's old image is stale by construction.
+  #
+  # `NDA_DATABASE_URL` and `NDA_IDENTITY_CREDENTIAL` moved onto `emberkin` above and
+  # are the only two that moved; everything else nda declared was already there.
+  # The NAME still resolves in Kubernetes as an ExternalName — nda binds 4000, the
+  # same port emberkin binds, which is what makes that alias transparent.
+  #
+  # TESSERA IS DELIBERATELY STILL ITS OWN SERVICE and this is the place to say why,
+  # because it is the obvious next thing somebody will try. Three reasons, any one
+  # sufficient: it binds 4022, and an ExternalName is a DNS CNAME that carries no
+  # port mapping, so the cutover mechanism this whole wave rests on does not exist
+  # for it; `GET /v1/title` and `POST /v1/provision` are FROZEN contract constants
+  # that aetherholm already mounts, so first-wins matching would have worlds
+  # provisioning a tessera ward and getting aetherholm's 200; and it verifies its
+  # webhook with INBOUND_SIGNING_SECRET, a variable this pod has never read.
 
-  nda:
-    <<: *service-defaults
-    build:
-      context: ../../nda
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
-      WORLDS_URL: http://worlds:4000
-      BILLING_URL: http://billing:4000
-      # The long-lived credential. See wallet's block for what it replaces.
-      NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: nda-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}116:4000"
-    depends_on:
-      nda-migrate:
-        condition: service_completed_successfully
-      worlds:
-        condition: service_healthy
-      billing:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # ---------------------------------------------------------------- community
   community-migrate:
     <<: *migrate-defaults
     build:
@@ -3020,6 +2998,8 @@ services:
       # These two variables are the whole of what moved: aetherholm holds no
       # credential of its own and reaches no upstream service.
       AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
+      # nda's half, since the merge — see the service below.
+      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
       INSTANCE_ID: emberkin-migrate
     env_file: *outbox-secrets
     depends_on:
@@ -3058,6 +3038,21 @@ services:
       # These two variables are the whole of what moved: aetherholm holds no
       # credential of its own and reaches no upstream service.
       AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
+      # ── NDA'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M4a) ──
+      #
+      # micro-nda's code ships inside this image now, as plain directories under
+      # `src/nda/`, joining aetherholm. THREE databases are kept, and that is not
+      # tidiness: all four of `outbox`, `event_subscriptions`, `outbox_deliveries`
+      # and `inbox` exist in every module with IDENTICAL columns, so a write
+      # through the wrong handle does not fail — it inserts into another module's
+      # dedupe table and swallows the redelivery for ever. `RouteSpec.sql` stamps
+      # the selector per route.
+      #
+      # These two variables are the whole of what moved. nda's upstreams
+      # (BILLING_URL, WORLDS_URL, IDENTITY_URL) were already on this service, which
+      # is exactly why nda was the one absorbed: it widens this pod by nothing.
+      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
+      NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: emberkin-estate
     env_file: *outbox-secrets
     ports:
