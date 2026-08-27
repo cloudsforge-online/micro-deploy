@@ -986,7 +986,7 @@ echo "── THE EVENT SEAM: outbox → signed HTTP → inbox ──────
 # No route creates a subscription — deliberately: who receives which topic is deploy
 # configuration, not something a caller decides. The deploy is this file, so it seeds the row.
 cfpsql -q -d identity -c \
-  "insert into event_subscriptions (topic, url) values ('identity.session.created', 'http://activity:4000/ingest') on conflict do nothing" \
+  "insert into event_subscriptions (topic, url) values ('identity.session.created', 'http://activity:4000/ingest/activity') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: identity.session.created → activity" \
   || bad "could not seed the subscription row"
 
@@ -1172,11 +1172,11 @@ echo "── THE ERASURE SEAM: the GDPR path, driven end to end ─────�
 # now and a subscription is deploy configuration, so this drill makes the sentence false: delete
 # an account and PROVE the consumer forgot the person.
 cfpsql -q -d identity -c \
-  "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://activity:4000/ingest') on conflict do nothing" \
+  "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://activity:4000/ingest/activity') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: identity.user.deleted → activity" \
   || bad "could not seed the erasure subscription"
 cfpsql -q -d identity -c \
-  "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://notify:4000/ingest') on conflict do nothing" \
+  "insert into event_subscriptions (topic, url) values ('identity.user.deleted', 'http://activity:4000/ingest/notify') on conflict do nothing" \
   >/dev/null 2>&1 && ok "subscription seeded: identity.user.deleted → notify" \
   || bad "could not seed notify's erasure subscription"
 

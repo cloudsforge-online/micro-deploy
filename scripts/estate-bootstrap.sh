@@ -985,11 +985,11 @@ subscribe() {
 # Only activity is subscribed. analytics is one of the two consumers the relay
 # cannot authenticate to — see above. Its onboarding denominator stays zero, and
 # that is now a named gap in another repository rather than a silence here.
-subscribe identity identity.user.registered http://activity:4000/ingest
+subscribe identity identity.user.registered http://activity:4000/ingest/activity
 
 # The one estate-verify already relied on, moved to where a deploy belongs. It
 # stays idempotent, so the copy still in the verifier is a no-op.
-subscribe identity identity.session.created http://activity:4000/ingest
+subscribe identity identity.session.created http://activity:4000/ingest/activity
 
 # ── ERASURE IS SEEDED FROM A LIST, NOT WRITTEN OUT HERE ───────────────────────
 #
@@ -1051,7 +1051,7 @@ fi
 # `learns: { channel: 'email', read: emailOf(event.payload) }` on
 # `identity.email.verification_requested`, and `pipeline.ts` writes the
 # `channel_targets` row. So this row is what puts an address on file at all.
-subscribe identity identity.email.verification_requested http://notify:4000/ingest
+subscribe identity identity.email.verification_requested http://activity:4000/ingest/notify
 
 # And this is the one that makes registration itself produce a notification.
 # `identity.user.registered` deliberately carries NO address
@@ -1060,7 +1060,7 @@ subscribe identity identity.email.verification_requested http://notify:4000/inge
 # PAIR and the order they arrive in matters: verification_requested teaches the
 # address, registered is the thing worth sending to it. Seeding one without the
 # other is how this path looked wired while delivering nothing.
-subscribe identity identity.user.registered http://notify:4000/ingest
+subscribe identity identity.user.registered http://activity:4000/ingest/notify
 
 # ── AND THE ONE THAT LETS SOMEBODY BACK IN ────────────────────────────────────
 #
@@ -1085,7 +1085,7 @@ subscribe identity identity.user.registered http://notify:4000/ingest
 # that predates verification has no `channel_targets` row at all, and a password
 # reset is exactly the message such an account needs. The event carries the
 # address for that reason.
-subscribe identity identity.password.reset_requested http://notify:4000/ingest
+subscribe identity identity.password.reset_requested http://activity:4000/ingest/notify
 
 # ── WALLET'S INBOX WAS FED BY NOBODY ──────────────────────────────────────────
 #
