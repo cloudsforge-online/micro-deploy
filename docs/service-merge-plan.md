@@ -100,6 +100,48 @@ accidents that would become bugs if unified. Until that exists, treat
 Contracts note when it is scoped: publishing shapes moves into the frozen-tuple
 regime — [contracts-compat-tuple-append-only] applies.
 
+## ALL THREE M-WAVES ARE DEPLOYED — 2026-08-27, release 2026.8.102
+
+**31 backend Deployments → 28.** Live and verified on the estate:
+
+| wave | absorbed → absorber | merged suite, both databases |
+|---|---|--:|
+| M1 | analytics → lantern | 615 pass / 0 fail / 0 skip |
+| M2 | notify → activity | 446 pass / 0 fail / 0 skip |
+| M3 | aetherholm → emberkin | 432 pass / 0 fail / 0 skip |
+
+All three absorbed names resolve as ExternalName aliases, all six `/readyz`
+answer 200, every public surface answers 200, and `cfctl release --verify`
+reports all 52 images resolving to the digest the release recorded.
+
+### Four things the plan got wrong, found by executing it
+
+1. **`ctx.sql` would have crossed the modules.** The kernel resolved one handle
+   from one selector, so an absorbed module's handlers would have been given the
+   absorber's database. With M3's six same-named tables that is not an error —
+   it is a query that SUCCEEDS and returns wrong rows. Fixed by `RouteSpec.sql`,
+   a per-route selector, in all three merges.
+2. **M2's CNAME promise is false.** Both services mounted `POST /ingest` with
+   DIFFERENT signing secrets. A CNAME moves a host, not a path; the merged
+   process serves `/ingest/activity` and `/ingest/notify` and answers the bare
+   path 410, and every producer subscription was re-pointed in the same change.
+3. **The topic sets are IDENTICAL, not "~84 vs ~86"** — exactly 85 on both
+   sides, nothing on either alone. That is what makes a shared mount impossible:
+   an envelope carries a topic, not a destination, so a single mount has no
+   information in the request that could tell the two sinks apart.
+4. **M2's network mismatch was NOT "gone".** activity opens two handles; notify
+   opens one and carries network as a column. Two models, reconciled rather than
+   removed.
+
+### And one the plan could not have known
+
+**A cleanup step no deploy path performs.** `kubectl apply` does not prune what
+the renderer stopped emitting, so after cutover the three absorbed Deployments
+were still running their pre-merge images against the same databases and the
+same job queues as the merged pods. They were deleted by hand. Any future merge
+must do the same, and the ExternalName alias makes this easy to miss — the NAME
+resolves correctly to the new pod while the OLD pod is still quietly working.
+
 ## Wave M1 — `lantern` + `analytics` → one telemetry service
 
 Same shape on both sides: signed/OTLP ingest → rollup job → retention prune →
