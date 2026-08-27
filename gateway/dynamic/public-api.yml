@@ -325,7 +325,7 @@ http:
         servers: [{ url: "http://worlds:4000" }]
     cf-api-nda:
       loadBalancer:
-        servers: [{ url: "http://nda:4000" }]
+        servers: [{ url: "http://emberkin:4000" }]
     cf-api-devplatform:
       loadBalancer:
         servers: [{ url: "http://devplatform:4000" }]

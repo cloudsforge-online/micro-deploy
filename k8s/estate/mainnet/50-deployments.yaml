@@ -911,6 +911,12 @@ spec:
               name: estate-tokens
               key: EMBERKIN_SERVICE_TOKEN
               optional: false
+        - name: NDA_IDENTITY_CREDENTIAL
+          valueFrom:
+            secretKeyRef:
+              name: estate-tokens
+              key: NDA_IDENTITY_CREDENTIAL
+              optional: false
         - name: AETHERHOLM_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
@@ -933,6 +939,8 @@ spec:
           value: http://ledger:4000
         - name: LOG_LEVEL
           value: info
+        - name: NDA_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda?sslmode=require
         - name: NODE_ENV
           value: production
         - name: PORT
@@ -943,6 +951,8 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/aetherholm_testnet?sslmode=require
         - name: EMBERKIN_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/emberkin_testnet?sslmode=require
+        - name: NDA_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -1860,106 +1870,6 @@ spec:
           value: http://pricing:4000
         - name: MINT_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
-        startupProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 2
-          timeoutSeconds: 5
-          failureThreshold: 45
-        ports:
-        - containerPort: 4000
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: nda
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: nda
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: nda
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: nda
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: nda
-        image: ghcr.io/cloudsforge-online/micro-nda@sha256:69c12ca011731c594c6b6e76ebba12e152be0370215bfcb479434d68e9d27dc1
-        imagePullPolicy: IfNotPresent
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: NDA_IDENTITY_CREDENTIAL
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: NDA_IDENTITY_CREDENTIAL
-              optional: false
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: BILLING_URL
-          value: http://billing:4000
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: nda-estate
-        - name: LOG_LEVEL
-          value: info
-        - name: NDA_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda?sslmode=require
-        - name: NODE_ENV
-          value: production
-        - name: PORT
-          value: '4000'
-        - name: WORLDS_URL
-          value: http://worlds:4000
-        - name: NDA_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE

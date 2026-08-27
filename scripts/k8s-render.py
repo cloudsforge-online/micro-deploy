@@ -454,6 +454,24 @@ MERGED_INTO = {
     # `/ingest/activity` and `/ingest/notify`. A CNAME moves a host, not a path.
     # Every producer subscription is re-pointed in the same change.
     "notify": "activity",
+    # 2026-08-27, wave M4a. nda joins the titles service as its third module.
+    # The cleanest merge in the estate: nda's upstreams (BILLING_URL, WORLDS_URL,
+    # IDENTITY_URL) are a strict SUBSET of emberkin's, so the absorbing pod gains
+    # no reach it did not already have, and nda binds 4000 like emberkin, so the
+    # alias below is transparent.
+    #
+    # TESSERA IS NOT HERE, DELIBERATELY, and it is the obvious fourth title:
+    #   * it binds 4022, and an ExternalName is a DNS CNAME that carries NO port
+    #     mapping — the cutover and rollback mechanism this map provides simply
+    #     does not exist for it;
+    #   * `GET /v1/title` and `POST /v1/provision` are FROZEN contract constants
+    #     (contracts/packages/worlds) that aetherholm already mounts, so
+    #     first-wins matching would have `worlds` provision a tessera ward and
+    #     receive aetherholm's 200 — with no second way in, because worlds
+    #     addresses a title by base URL and appends a fixed path;
+    #   * it verifies its webhook with INBOUND_SIGNING_SECRET, which this pod has
+    #     never read and which is deliberately held apart from OUTBOX_SIGNING_SECRET.
+    "nda": "emberkin",
 }
 
 
