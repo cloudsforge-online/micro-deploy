@@ -285,6 +285,24 @@ cf_image_revision() {
     k8s)
       ci_ref=$(kubectl get deploy -n "$CF_NAMESPACE" "$1" \
         -o jsonpath='{.spec.template.spec.containers[0].image}' 2>/dev/null)
+      # ── A BUNDLE HAS NO DEPLOYMENT OF ITS OWN ANY MORE ──────────────────
+      #
+      # Wave W: the twenty web bundles are initContainers in the single `web`
+      # pod, each copying its own document root into a shared volume, named
+      # `copy-<bundle>`. Each is STILL its own digest-pinned image carrying its
+      # own `org.opencontainers.image.revision`, so the stale-artefact check
+      # this feeds loses nothing — it just has to look in the pod that runs it
+      # rather than in a Deployment that no longer exists.
+      #
+      # Without this the lookup returns empty, `web_release_for` falls through
+      # to the literal `estate`, and every surface is reported as serving a
+      # STALE ARTEFACT while serving exactly the right one. Twenty accusations,
+      # all of them backwards — which is the failure mode the comment above
+      # `WEB_RELEASE` was written about, reappearing through a different door.
+      if [ -z "$ci_ref" ]; then
+        ci_ref=$(kubectl get deploy -n "$CF_NAMESPACE" web \
+          -o jsonpath="{range .spec.template.spec.initContainers[?(@.name=='copy-$1')]}{.image}{end}" 2>/dev/null)
+      fi
       [ -n "$ci_ref" ] || return 0
       sudo k3s crictl inspecti "$ci_ref" 2>/dev/null | python3 -c 'import sys, json
 try:
@@ -2344,6 +2362,27 @@ web_release_for() {
 # A path no surface enumerates, on purpose. If a surface ever claims it, this
 # check starts passing for the wrong reason, so it is deliberately unlovely.
 WEB_MISSING=/cf-estate-verify-no-such-page
+# ── THE SURFACE HOSTNAMES, HOISTED ──────────────────────────────────────────
+#
+# These three were defined with the GATEWAY section below, which is where they
+# were first needed. Wave W moved the need earlier: five bundles now keep their
+# own hostname inside the single `web` pod and are chosen by `server_name`, so
+# `web_surface` has to send a Host header and needs the suffix to build it.
+#
+# Defined here, before the first caller, because this file runs under `set -u` —
+# a reference to an unbound variable does not degrade, it ENDS THE SCRIPT, and
+# it ends it in the middle of the run with everything after it unreported. That
+# is how this arrived: the frontends section died on `WEB_SUFFIX: unbound
+# variable` and the sections below it never ran, which reads at a glance like
+# the checks passing.
+#
+# The gateway section still assigns them; the assignments are `${VAR:-default}`
+# and identical, so re-running them is a no-op rather than a second source of
+# truth.
+WEB_APEX=${CF_WEB_APEX:-cloudsforge.localtest.me}
+WEB_SUFFIX=${CF_WEB_SUFFIX:-.$WEB_APEX}
+SITE_HOST=${CF_SITE_HOST:-$WEB_APEX}
+
 
 # Fields: name  port  a-route-the-surface-DOES-own  [mount]
 #
@@ -2387,10 +2426,39 @@ web_surface() {
     compose) base="http://127.0.0.1:$port" ;;
     k8s) base="http://$(cf_svc_addr "$name")" ;;
   esac
+  # ── A BUNDLE IS NOT ITS OWN SERVICE ANY MORE (wave W) ─────────────────────
+  #
+  # Twenty bundles are one `web` pod: each nginx.conf runs unchanged on its own
+  # loopback port, and a dispatcher on 8080 chooses between them BY PATH for the
+  # apex mounts and BY `server_name` for the five that keep a hostname. So a
+  # bundle with no Service of its own is reached through `web`, and the ones
+  # with no mount need the Host header they are keyed on — without it the
+  # dispatcher has nothing to match and the probe is testing the wrong bundle.
+  #
+  # Left unfixed this produced `GET / returned 000` — not a 404, a failure to
+  # connect at all, because `cf_svc_addr` returned empty and `base` was the
+  # literal string `http://`. Fourteen surfaces reported dead while every one of
+  # them was serving correctly through the gateway.
+  web_host=""
+  if [ "$CF_RUNTIME" = k8s ] && [ "$base" = "http://" ]; then
+    base="http://$(cf_svc_addr web)"
+    case "$name" in
+      hub-web)      web_host="hub$WEB_SUFFIX" ;;
+      admin-web)    web_host="admin$WEB_SUFFIX" ;;
+      network-site) web_host="network$WEB_SUFFIX" ;;
+      lantern-web)  web_host="lantern$WEB_SUFFIX" ;;
+      beacon-web)   web_host="beacon$WEB_SUFFIX" ;;
+      *)            web_host="$SITE_HOST" ;;
+    esac
+  fi
+  # Every curl in this function goes through this, so the Host rides along on
+  # the shell probe, the unknown-path probe and the asset probe alike — a
+  # partial application would test three different bundles and pass.
+  web_curl() { if [ -n "$web_host" ]; then curl -s -H "Host: $web_host" "$@"; else curl -s "$@"; fi; }
   notes=""
 
   # 1. the shell, and the build identity
-  body=$(curl -s -w '\n%{http_code}' "$base$mount/")
+  body=$(web_curl -w '\n%{http_code}' "$base$mount/")
   status=$(printf '%s' "$body" | tail -1)
   html=$(printf '%s' "$body" | sed '$d')
   if [ "$status" != 200 ]; then
@@ -2423,7 +2491,7 @@ print('\n'.join(sorted(set(urls))))
   fi
   count=0; broken=""
   for a in $assets; do
-    ac=$(curl -s -o /dev/null -w '%{http_code}' "$base$a")
+    ac=$(web_curl -o /dev/null -w '%{http_code}' "$base$a")
     [ "$ac" = 200 ] && count=$((count+1)) || broken="$broken $a($ac)"
   done
   if [ -n "$broken" ]; then
@@ -2438,7 +2506,7 @@ print('\n'.join(sorted(set(urls))))
     bad "$name: no stylesheet in the shell — @cloudsforge/ui's tokens cannot have been bundled"
     return
   fi
-  if curl -s "$base$css" | grep -q -- '--cf-ember'; then
+  if web_curl "$base$css" | grep -q -- '--cf-ember'; then
     notes="$notes, design system"
   else
     bad "$name: $css carries no --cf-ember token — @cloudsforge/ui did not reach the bundle (the link: symlink into ../ui)"
@@ -2451,7 +2519,7 @@ print('\n'.join(sorted(set(urls))))
     bad "$name: the shell references no script — there is no application to mount"
     return
   fi
-  bytes=$(curl -s "$base$js" | wc -c | tr -d ' ')
+  bytes=$(web_curl "$base$js" | wc -c | tr -d ' ')
   if [ "${bytes:-0}" -gt 50000 ]; then
     notes="$notes, ${bytes}B of js"
   else
@@ -2460,7 +2528,7 @@ print('\n'.join(sorted(set(urls))))
   fi
 
   # 5. an enumerated client route survives a hard refresh
-  owned_body=$(curl -s -w '\n%{http_code}' "$base$mount$owned")
+  owned_body=$(web_curl -w '\n%{http_code}' "$base$mount$owned")
   owned_status=$(printf '%s' "$owned_body" | tail -1)
   if [ "$owned_status" != 200 ]; then
     bad "$name: $mount$owned answered $owned_status — an enumerated client route does not survive a hard refresh"
@@ -2476,7 +2544,7 @@ print('\n'.join(sorted(set(urls))))
   #    `try_files $uri /index.html` gives the shell with a 200, and a bare nginx
   #    error page gives a 404 with no application in it. Both are wrong and they
   #    are wrong in opposite directions.
-  missing_body=$(curl -s -w '\n%{http_code}' "$base$mount$WEB_MISSING")
+  missing_body=$(web_curl -w '\n%{http_code}' "$base$mount$WEB_MISSING")
   missing_status=$(printf '%s' "$missing_body" | tail -1)
   if [ "$missing_status" != 404 ]; then
     bad "$name: $mount$WEB_MISSING answered $missing_status, not 404 — an unknown address is being reported as a success"
@@ -2497,7 +2565,7 @@ print('\n'.join(sorted(set(urls))))
   # executing it, so the status is what is asserted here; the content type is
   # recorded as a finding for the fifteen frontend repositories rather than
   # asserted in a suite that cannot fix it.
-  ac=$(curl -s -o /dev/null -w '%{http_code}' "$base$mount/assets/cf-estate-verify-missing.js")
+  ac=$(web_curl -o /dev/null -w '%{http_code}' "$base$mount/assets/cf-estate-verify-missing.js")
   if [ "$ac" != 404 ]; then
     bad "$name: a missing asset answered $ac — a broken deploy would serve the shell as JavaScript"
     return
