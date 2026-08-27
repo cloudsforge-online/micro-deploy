@@ -546,6 +546,35 @@ if want_wave 50; then
     say "  applied $DEPLOY_COUNT Deployment(s)"
   fi
 
+  # -- THE ABSORBED DEPLOYMENT NOBODY PRUNES ---------------------------------
+  #
+  # `kubectl apply` does not delete what the renderer STOPPED emitting. After a
+  # wave-M merge the absorbed service's Deployment is still there, still
+  # Running, still on its PRE-MERGE image -- against the same databases and the
+  # same job queues as the pod that absorbed it. Two versions of one codebase,
+  # both live.
+  #
+  # The ExternalName alias is what hides it: the NAME resolves correctly to the
+  # new pod, every probe is green, and the old pod goes on quietly claiming
+  # jobs. Measured 2026-08-27 -- analytics, notify and aetherholm were all still
+  # up hours after their merges landed, and were deleted BY HAND. Three merges
+  # in, that is a step this script should own.
+  #
+  # The names come from k8s-render.py's MERGED_INTO, read with awk rather than
+  # imported, for the same reason k8s-estate-verify.sh reads it that way: an
+  # import drags in an argument parser and a render-vars read for one dict.
+  # The path is relative because this script cd'''s to the repo root at line 71.
+  # Deleting an absent name is not an error -- the second deploy after a merge
+  # finds nothing and says nothing.
+  absorbed=$(awk '/^MERGED_INTO/,/^\}/' scripts/k8s-render.py |
+             sed -n 's/^ *"\([a-z0-9-]*\)": *"[a-z0-9-]*",.*/\1/p')
+  for a in $absorbed; do
+    if kubectl get deploy "$a" -n "$NAMESPACE" >/dev/null 2>&1; then
+      kubectl delete deploy "$a" -n "$NAMESPACE" >/dev/null 2>&1 \
+        && say "  pruned Deployment/$a - absorbed, and it was still running its own image"
+    fi
+  done
+
   started=$SECONDS
   while :; do
     states="$(deploy_states)"
