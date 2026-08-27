@@ -147,15 +147,61 @@ for row in out.stdout.split("\n"):
     if len(parts) == 3 and parts[1] not in ("", "None"):
         addr[parts[0]] = parts[1] + ":" + parts[2]
 
+# ── A MERGED SERVICE HAS NO COMPOSE ENTRY, AND A MERGED BUNDLE HAS NO SERVICE ──
+#
+# Two different holes, both opened by consolidation, both of which used to end
+# this script with "published by no compose service" on a perfectly healthy
+# estate:
+#
+#   * An ABSORBED service (wave M) is deleted from the compose file entirely —
+#     its code runs inside the absorber's image — so the host-port lookup finds
+#     nothing. Read the absorber out of k8s-render.py's MERGED_INTO.
+#   * A WEB BUNDLE (wave W) keeps its compose service but is rendered into the
+#     one `web` pod, so the port resolves to a name with no Service. Read that
+#     set out of the same file.
+#
+# Parsed textually rather than imported, because importing k8s-render.py drags
+# in its argument parser and its render-vars read for two dict literals.
+render_py = io.open("scripts/k8s-render.py", encoding="utf-8").read()
+
+def _literal(block: str) -> str:
+    m = re.search(block + r"\s*[:=][^{]*\{(.*?)\n\}", render_py, re.S)
+    return m.group(1) if m else ""
+
+merged_into = dict(re.findall(r'"([a-z0-9-]+)":\s*"([a-z0-9-]+)"', _literal("MERGED_INTO")))
+in_web_pod = set(re.findall(r'"([a-z0-9-]+)"', _literal("MERGED_INTO_WEB_POD")))
+if not merged_into and not in_web_pod:
+    sys.exit("k8s-render.py published neither MERGED_INTO nor MERGED_INTO_WEB_POD — the pattern moved")
+
+def resolve(svc: str) -> str:
+    """Follow merges to the service that actually answers."""
+    seen = [svc]
+    while svc in merged_into or svc in in_web_pod:
+        svc = merged_into.get(svc, "web")
+        if svc in seen:
+            break
+        seen.append(svc)
+    return svc
+
 unmapped = []
 for name, port in sorted(variables.items(), key=lambda kv: kv[1]):
     svc = published.get(port)
     if svc is None:
+        # No compose entry: the variable name IS the service name for every
+        # absorbed service, which is what makes this recoverable.
+        guess = name.lower().replace("_", "-")
+        svc = guess if guess in merged_into else None
+    if svc is None:
         unmapped.append(f"{name} (host port {port} is published by no compose service)")
-    elif svc not in addr:
-        unmapped.append(f"{name} -> {svc} (no Service '{svc}' in namespace {ns})")
+        continue
+    target = resolve(svc)
+    if target not in addr:
+        unmapped.append(f"{name} -> {svc}"
+                        + (f" -> {target}" if target != svc else "")
+                        + f" (no Service '{target}' in namespace {ns})")
     else:
-        print(f"export {name}=http://{addr[svc]}")
+        note = "" if target == svc else f"   # {svc} is merged into {target}"
+        print(f"export {name}=http://{addr[target]}{note}")
 
 if unmapped:
     sys.stderr.write(
