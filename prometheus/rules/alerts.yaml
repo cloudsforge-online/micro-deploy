@@ -1525,9 +1525,25 @@ groups:
         # `for: 10m` on the absent half and not 0m, because a rolling deploy
         # legitimately has no notify series for a few scrapes and a page on
         # every release is a page nobody reads.
+        #
+        # ── `service="activity"`, AND THAT IS NOT A TYPO ─────────────────────
+        #
+        # Wave M2 of `docs/service-merge-plan.md` put notify's code inside
+        # micro-activity's process, so `notify` is no longer a scrape target and
+        # `up{job="cf-services", service="notify"}` selects NO SERIES — the exact
+        # unfireable shape this expression already had once, when it shipped as
+        # `up{job="notify"}` and returned nothing on mainnet while notify was up
+        # and healthy (2026-08-11). The label had to follow the process.
+        #
+        # The metric name is doing the identifying work either way:
+        # `notify_reserved_domain_guard` is emitted by the notify module and by
+        # nothing else, so the first half of this expression is unaffected by the
+        # merge. This half exists only to tell "the guard series vanished because
+        # the process is down" apart from "the guard series vanished while the
+        # process is up", and it is the PROCESS that moved.
         expr: >-
           notify_reserved_domain_guard == 0
-          or (up{job="cf-services", service="notify"} == 1 unless notify_reserved_domain_guard)
+          or (up{job="cf-services", service="activity"} == 1 unless notify_reserved_domain_guard)
         for: 10m
         labels:
           severity: ticket

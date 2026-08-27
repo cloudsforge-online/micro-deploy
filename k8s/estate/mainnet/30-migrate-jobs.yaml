@@ -65,10 +65,16 @@ spec:
           value: info
         - name: NODE_ENV
           value: production
+        - name: NOTIFY_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify?sslmode=require
+        - name: NOTIFY_PUBLIC_URL
+          value: https://hub.cloudsforge.online
         - name: PORT
           value: '4000'
         - name: ACTIVITY_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity_testnet?sslmode=require
+        - name: NOTIFY_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -1482,82 +1488,6 @@ spec:
           value: http://worlds:4000
         - name: NDA_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/nda_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
-      restartPolicy: Never
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: notify-migrate-2026-8-99
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: notify-migrate
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  backoffLimit: 2
-  ttlSecondsAfterFinished: 3600
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: notify-migrate
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: notify-migrate
-        image: ghcr.io/cloudsforge-online/micro-notify@sha256:365f5d9184e428c59fd5b72c314c18ea1d8becb0fb55301175a96ee024080d77
-        imagePullPolicy: IfNotPresent
-        command:
-        - node
-        - --import
-        - tsx
-        - src/migrator.ts
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: notify-migrate
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: NOTIFY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify?sslmode=require
-        - name: NOTIFY_PUBLIC_URL
-          value: https://hub.cloudsforge.online
-        - name: PORT
-          value: '4000'
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE

@@ -75,8 +75,8 @@
 # ── SEEDED SINCE BEFORE THIS FILE ─────────────────────────────────────────────
 # Both erase for real, and both were already proven end to end by estate-verify.
 # They are here so the register is the whole truth rather than the new part of it.
-activity|activity|http://activity:4000/ingest|delete|-|-|SCAN
-notify|notify|http://notify:4000/ingest|delete|-|-|SCAN
+activity|activity|http://activity:4000/ingest/activity|delete|-|-|SCAN
+notify|notify|http://activity:4000/ingest/notify|delete|-|-|SCAN
 #
 # ── HAD A HANDLER, HAD NO SUBSCRIPTION ───────────────────────────────────────
 # `trade` deletes bots and backtests and has done since it was written. Nothing

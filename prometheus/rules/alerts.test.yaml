@@ -449,7 +449,7 @@ tests:
       #
       # Flat at 0 for twenty minutes, then one increment. One is the whole point:
       # there is no "acceptable level" of mail to an address that cannot exist.
-      - series: 'notify_failed_total{channel="email",reason="reserved_domain",instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'notify_failed_total{channel="email",reason="reserved_domain",instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "0+0x20 1+0x20"
 
       # A second series that must NOT trigger it, and the reason the expression
@@ -459,7 +459,7 @@ tests:
       # expression ever loses its `reason` selector, this series pages
       # constantly, the operator silences the alert, and the estate loses the
       # signal exactly as it did before.
-      - series: 'notify_failed_total{channel="email",reason="rejected",instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'notify_failed_total{channel="email",reason="rejected",instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "0+3x40"
 
     alert_rule_test:
@@ -480,7 +480,7 @@ tests:
               alertname: MailSentToReservedDomain
               channel: email
               reason: reserved_domain
-              instance: notify:4000
+              instance: activity:4000
               job: cf-services
               tier: "2"
               severity: ticket
@@ -519,11 +519,11 @@ tests:
       # Zero for twenty minutes — the correct value, forever — then one row.
       # One is the whole threshold: there is no acceptable rate of writing a
       # delivery to an address the DNS root guarantees cannot resolve.
-      - series: 'notify_deliveries_reserved_domain{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'notify_deliveries_reserved_domain{instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "0+0x20 1+0x20"
 
       # Ordinary queue depth, non-zero throughout. Must never trigger it.
-      - series: 'notify_deliveries_pending{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'notify_deliveries_pending{instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "4+2x40"
 
     alert_rule_test:
@@ -539,7 +539,7 @@ tests:
         exp_alerts:
           - exp_labels:
               alertname: MailRoutedToReservedDomain
-              instance: notify:4000
+              instance: activity:4000
               job: cf-services
               tier: "2"
               severity: ticket
@@ -565,10 +565,25 @@ tests:
   # It says so at the first scrape, before any notification is created, which is
   # the "in minutes rather than in messages" the ticket asked for.
   #
-  # THE LABEL SET BELOW IS THE ONE MAINNET ACTUALLY PRODUCES, read off
+  # THE LABEL SET BELOW IS THE ONE MAINNET ACTUALLY PRODUCES. Read off
   # `up{instance="notify:4000"}` on 2026-08-11:
   #
   #     job="cf-services"  service="notify"  team="notify"  tier="2"
+  #
+  # AND MOVED AGAIN ON 2026-08-27, which is the point of this comment rather than
+  # a footnote to it. Wave M2 put notify's code inside micro-activity's process,
+  # so `notify` stopped being a scrape target and the metric now arrives on
+  # activity's:
+  #
+  #     instance="activity:4000"  job="cf-services"  service="activity"
+  #     team="activity"  tier="2"
+  #
+  # Leaving the old set here would have been the SAME defect a third time: the
+  # fixture would keep passing while the rule it tests selected nothing, because
+  # a fixture is free to fabricate a label set the estate no longer produces.
+  # The metric NAME still identifies the emitter — `notify_reserved_domain_guard`
+  # is the notify module's and nothing else's — which is why the alert survives
+  # the move at all.
   #
   # These three cases originally invented `job="notify"`, and passed, while the
   # rule they were testing selected nothing on the real estate — see the comment
@@ -580,9 +595,9 @@ tests:
   - interval: 1m
     input_series:
       # Healthy for twenty minutes, then a deploy that lost the rule.
-      - series: 'notify_reserved_domain_guard{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'notify_reserved_domain_guard{instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "1+0x20 0+0x30"
-      - series: 'up{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'up{instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "1+0x50"
 
     alert_rule_test:
@@ -604,7 +619,7 @@ tests:
         exp_alerts:
           - exp_labels:
               alertname: NotifyReservedDomainGuardLost
-              instance: notify:4000
+              instance: activity:4000
               job: cf-services
               tier: "2"
               severity: ticket
@@ -638,7 +653,7 @@ tests:
   # ══════════════════════════════════════════════════════════════════════════
   - interval: 1m
     input_series:
-      - series: 'up{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'up{instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "1+0x40"
       # No notify_reserved_domain_guard series at all. Its absence is the input.
 
@@ -654,7 +669,7 @@ tests:
         exp_alerts:
           - exp_labels:
               alertname: NotifyReservedDomainGuardLost
-              instance: notify:4000
+              instance: activity:4000
               job: cf-services
               tier: "2"
               severity: ticket
@@ -681,13 +696,14 @@ tests:
   # and once as a lost guard, and the second page would be a lie. A service that
   # is not running is not sending mail to anybody.
   #
-  # Deleting `up{job="cf-services", service="notify"} == 1 unless` from the
-  # expression turns this case
-  # red, which is the point of it.
+  # Deleting `up{job="cf-services", service="activity"} == 1 unless` from the
+  # expression turns this case red, which is the point of it. (That selector read
+  # `service="notify"` until wave M2 moved notify's code into activity's process —
+  # see the label-set note above.)
   # ══════════════════════════════════════════════════════════════════════════
   - interval: 1m
     input_series:
-      - series: 'up{instance="notify:4000",job="cf-services",service="notify",team="notify",tier="2"}'
+      - series: 'up{instance="activity:4000",job="cf-services",service="activity",team="activity",tier="2"}'
         values: "0+0x40"
 
     alert_rule_test:

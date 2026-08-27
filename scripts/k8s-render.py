@@ -443,6 +443,17 @@ MERGED_INTO = {
     # reaches no service at all. Folding the zero-upstream side into the
     # four-upstream side widens nothing.
     "aetherholm": "emberkin",
+    # 2026-08-27. activity absorbs notify despite notify being the larger (10.5k
+    # vs 5.9k LOC), a third of which is table data rather than surface. activity
+    # holds the pair's only public router, is the only one a synthetic monitor
+    # probes, and notify has no public hostname at all.
+    #
+    # THIS ONE BREAKS THE "no caller changes on cutover day" PROMISE, and the
+    # CNAME below does not rescue it: both services mounted `POST /ingest` and
+    # verified it with DIFFERENT signing secrets, so the merged process serves
+    # `/ingest/activity` and `/ingest/notify`. A CNAME moves a host, not a path.
+    # Every producer subscription is re-pointed in the same change.
+    "notify": "activity",
 }
 
 

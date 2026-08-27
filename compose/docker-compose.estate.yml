@@ -1574,42 +1574,9 @@ services:
       <<: [*common-env, *identity-trust]
       ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity?sslmode=require
       # The same secret identity signs its outbox with: the MAC is the seam.
-      INSTANCE_ID: activity-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  activity:
-    <<: *service-defaults
-    build:
-      context: ../../activity
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity?sslmode=require
-      INSTANCE_ID: activity-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}109:4000"
-    depends_on:
-      activity-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # ------------------------------------------------------------------- notify
-  # Holds the most personal data in the estate — addresses, phone numbers, push
-  # tokens, preferences — which is exactly why the registry's erasure SLA names
-  # it first among the services that must forget a deleted user.
-  notify-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../notify
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
+      # notify's half, since the merge — see the service below. The migrate
+      # entrypoint runs BOTH migrators; NOTIFY_PUBLIC_URL is read by env.ts at
+      # import, so it is required here even though no migration uses it.
       NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify?sslmode=require
       # ── EVERY LINK IN EVERY NOTIFICATION EMAIL WAS POINTING AT localhost ────────────────────
       #
@@ -1628,19 +1595,33 @@ services:
       # `IDENTITY_ACCOUNT_URL` two hundred lines up, so the two agree about where an account
       # lives, and the localtest.me fallback keeps a bare `docker compose up` working.
       NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
-      INSTANCE_ID: notify-migrate
+      INSTANCE_ID: activity-migrate
     env_file: *outbox-secrets
     depends_on:
       postgres:
         condition: service_healthy
 
-  notify:
+  activity:
     <<: *service-defaults
     build:
-      context: ../../notify
+      context: ../../activity
       additional_contexts: *build-contexts
     environment:
       <<: [*common-env, *identity-trust]
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity?sslmode=require
+      # ── NOTIFY'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M2) ──
+      #
+      # micro-notify's code ships inside this image now, as plain directories under
+      # `src/notify/`. Both databases are KEPT: `inbox` exists in BOTH schemas with
+      # IDENTICAL columns, so a write through the wrong handle is not an error — it
+      # is an insert into the other module's dedupe table that makes the next
+      # genuine delivery look like a duplicate. The merged service stamps a
+      # per-route selector rather than resolving one global handle.
+      #
+      # The SMTP block and MAIL_DOMAIN come across untouched: the reserved-domain
+      # guard and the quota_exhausted classification are enforced per delivery, so
+      # they are indifferent to which process runs them — but only if they keep
+      # their configuration.
       NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify?sslmode=require
       # ── EVERY LINK IN EVERY NOTIFICATION EMAIL WAS POINTING AT localhost ────────────────────
       #
@@ -1684,61 +1665,35 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
       MAIL_DOMAIN: ${MAIL_DOMAIN:-}
-      INSTANCE_ID: notify-estate
+      INSTANCE_ID: activity-estate
     env_file: *outbox-secrets
     ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}110:4000"
+      - "127.0.0.1:${CF_PORT_BASE:-4}109:4000"
     depends_on:
-      notify-migrate:
+      activity-migrate:
         condition: service_completed_successfully
       identity:
         condition: service_healthy
     healthcheck: *healthcheck
 
-  # ------------------------------------------------------------------- studio
+  # ------------------------------------------------------------------- notify
+  # Holds the most personal data in the estate — addresses, phone numbers, push
+  # tokens, preferences — which is exactly why the registry's erasure SLA names
+  # it first among the services that must forget a deleted user.
+  # ------------------------------------------------------------------- notify
   #
-  # ── THE ASSET ROOT, AND WHY IT NEEDED A CONTAINER OF ITS OWN ──────────────────
+  # NOT A SERVICE ANY MORE. Wave M2 of `docs/service-merge-plan.md`: micro-notify's
+  # code ships inside micro-activity's image as plain directories under `src/notify/`,
+  # so `notify` and `notify-migrate` are GONE from here rather than merely unrendered
+  # — an absorbed service's old image is stale by construction.
   #
-  # `STUDIO_ASSET_ROOT` was UNSET here, and `studio/src/env.ts` defaults it to
-  # `./out` — resolved against WORKDIR, so `/app/out`. `/app` is root-owned
-  # (`drwxr-xr-x root root`, every layer COPYed as root) and the image drops to
-  # `USER node` (uid 1000). So the first thing every generation did was
-  #
-  #     EACCES: permission denied, mkdir '/app/out'
-  #
-  # for EVERY kind, flux and placeholder alike — while `/readyz` answered 200 and
-  # compose reported the container `healthy`. Nothing in the service probes the
-  # directory it exists to write, so the environment held a studio that could not
-  # studio and said nothing. Driven, not read: a `mark` generation through
-  # `POST /v1/brand-kits/:id/generate` returned that exact string in
-  # `job.errorDetail`. micro-studio should refuse to be ready in this state; that
-  # is its change to make and is filed rather than done here.
-  #
-  # The image's own comment states the contract this satisfies: the asset root
-  # "must be a mounted volume THE DEPLOY MAKES WRITABLE — it is deliberately NOT
-  # baked into the image, because an asset written into a container layer is an
-  # asset lost on the next deploy" (studio/Dockerfile:68).
-  #
-  # ── WHY THE INIT CONTAINER IS NOT CEREMONY ────────────────────────────────────
-  #
-  # Naming a volume is NOT enough, and both obvious fixes reproduce the bug
-  # exactly. Docker creates a fresh named volume's mount point root:root unless
-  # the image already has that path with other ownership, so
-  # `studio-assets:/assets` and `studio-assets:/home/node/assets` BOTH land
-  # `drwxr-xr-x root root` and still EACCES as uid 1000. Both were run against
-  # this image before this block was written.
-  #
-  # A host bind mount appears to work — and only here. Docker Desktop maps
-  # ownership across virtiofs so the write lands whoever owns the host directory;
-  # on Linux the same YAML gives a genuinely root-owned directory and the
-  # original failure returns. A fix that is true on one operator's laptop and
-  # false on the CI runner is the estate's signature defect wearing a fix's
-  # clothes, so it is not used.
-  #
-  # One root one-shot that chowns the volume to 1000:1000 is portable, is the
-  # standard pattern for exactly this, and keeps `USER node` intact — the
-  # alternative, running studio as root, would trade a visible failure for a
-  # permanently weaker container.
+  # Its configuration moved onto `activity` and `activity-migrate` above. The NAME
+  # still resolves in Kubernetes as an ExternalName, but THE PATH DID NOT SURVIVE:
+  # both services mounted `POST /ingest` and verified it with different secrets, so
+  # the merged process serves `/ingest/activity` and `/ingest/notify` and answers
+  # the bare `/ingest` with 410. A CNAME moves a host, not a path — every producer
+  # subscription had to be re-pointed in the same change.
+
   studio-assets-init:
     image: busybox:1.37
     # The ONLY container here that runs as root, and it runs for milliseconds and
