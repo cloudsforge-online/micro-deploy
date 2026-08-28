@@ -388,6 +388,33 @@ Merging them buys one pod out of thirty-one, on a node measured at 2% CPU. That
 is a smaller number bought with a worse boundary, which is the same trade as
 twenty nginx pods, pointed the other way.
 
+### Two areas assessed later, outside the service list — 2026-08-28
+
+**The telemetry plane is not a consolidation candidate.** Six pods in
+`cf-telemetry`, measured: Prometheus 6m/110Mi, Tempo 3m/210Mi, Loki 4m/63Mi,
+otel-collector 2m/72Mi, Grafana 1m/71Mi, Alertmanager 1m/28Mi — **17 milli-cores
+between them.** They are six distinct upstream binaries, not this estate's own
+over-separation, and there is no merge available: the only way to reduce the
+count is to DELETE a capability (drop Tempo, drop Loki), which is a decision
+about what the estate can see, not about how it is packaged. This estate has
+gone silently blind before; that trade is not made in passing.
+
+**The 28 migrate Jobs stay 28.** They could be one Job running every migrator,
+and that would be worse: `k8s-deploy.sh` applies them in PARALLEL precisely
+because no migrator depends on another, and the wave finishes in ~128s. One Job
+serialises them.
+
+**What DOES remain, and it is real:** four repositories whose code now runs
+inside another pod are still full deployables — `cfctl bump` version-bumps them
+every release, every push builds and publishes an image no pod runs, and all
+four sit in a 52-entry release manifest describing an estate of 31 Deployments.
+That is an artefact lying about what runs, which is the same class of defect as
+everything else this consolidation fixed. Tracked separately, because the fix
+has a trap: **derived ports are POSITIONAL in `deployableRepos()`**
+(`cfctl.ts:2438`), so removing those rows would renumber every port beneath them
+— including numbers this repository's compose file has already written down.
+The row must stay and the release must skip it.
+
 ### Everything else, for completeness
 
 - **The two Traefik gateways stay** — `consolidation-endgame.md` §6. `CF-Network`
