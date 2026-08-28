@@ -213,6 +213,35 @@ def verify_pins():
         if line.startswith("#"):
             continue
 
+        # THE `${PB}` FORM IS THE ONLY ONE ESTATE-VERIFY WRITES ANY MORE, AND THIS
+        # PARSER MATCHED NONE OF IT.
+        #
+        # The pattern below wants a literal `127.0.0.1:4110`. estate-verify.sh moved
+        # its 26 backend URLs to `127.0.0.1:${PB}110`, where `PB` is the port base,
+        # and the regex stopped matching every one of them — while this script went
+        # on printing "ok — all 42 compose pins and 15 driven ports match". The 15
+        # were the surface-table lines below, which still use the bare-number shape.
+        #
+        # So a check that exists to prove estate-verify drives the ports the registry
+        # derives was proving it for 15 of 41 lines and reporting success. Measured
+        # 2026-08-28: 26 `${PB}` lines, 0 literal ones. A parser that silently matches
+        # nothing is this repository's named defect, and it had it.
+        #
+        # Both shapes are accepted now. `zero_pins_is_a_failure` guards the compose
+        # side against exactly this; the equivalent guard for THIS side is the count
+        # assertion in main(), added with this fix.
+        m = re.match(r'^([A-Z][A-Z0-9_]*)=\$\{\1:-https?://127\.0\.0\.1:\$\{PB\}(\d{3})\}', line)
+        if m:
+            var, port = m.group(1), int(f"{BASE_PORT // 1000}{m.group(2)}")
+            if var in VAR_ALIASES:
+                name = VAR_ALIASES[var]
+                if name is None:
+                    continue
+            else:
+                name = var.lower().replace("_", "-")
+            pins.setdefault(name, []).append((port, n))
+            continue
+
         m = re.match(r'^([A-Z][A-Z0-9_]*)=\$\{\1:-https?://127\.0\.0\.1:(\d+)\}', line)
         if m:
             var, port = m.group(1), int(m.group(2))
@@ -243,8 +272,27 @@ def main():
     if zero_pins_is_a_failure(compose):
         return 1
     verify = verify_pins()
+    driven = sum(len(v) for v in verify.values())
+    # THE SAME GUARD THE COMPOSE SIDE ALREADY HAS, FOR THE SIDE THAT DID NOT HAVE IT.
+    #
+    # `zero_pins_is_a_failure` was written because the compose regex once stopped
+    # matching and every check downstream became a silent no-op. The verify side had
+    # no such guard and then suffered a subtler version of it: the pattern matched
+    # the 15 surface-table lines and NONE of the 26 backend URLs, so this script
+    # reported "15 driven ports match" and looked healthy while checking 37% of the
+    # file. A floor rather than a zero-check, because 15 is exactly the number that
+    # looked fine.
+    #
+    # The floor is deliberately below the current 41 so that legitimately deleting a
+    # service does not fail the build, and far above 15 so that losing a whole shape
+    # cannot pass again.
+    if driven < 30:
+        print(f"FAIL: only {driven} driven port(s) parsed out of {VERIFY.name}. Both shapes "
+              f"together have matched 41; a number this low means a pattern stopped matching "
+              f"and the checks below are reading an almost-empty dict.")
+        return 1
     print(f"pinned:   {len(compose)} in {COMPOSE.name}, "
-          f"{sum(len(v) for v in verify.values())} in {VERIFY.name}\n")
+          f"{driven} in {VERIFY.name}\n")
 
     # ── 1 & 4. every compose pin against the derivation ──────────────────────
     for service, (port, line) in sorted(compose.items(), key=lambda kv: kv[1][0]):
