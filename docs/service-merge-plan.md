@@ -329,6 +329,85 @@ route → 200 shell, an unknown path → **404** with that bundle's shell, an as
 → `immutable`). Every way fifteen nginx route tables can merge wrongly produces
 a **200 with the wrong content**, which no health probe sees.
 
+## THE DISPOSITION OF EVERY REMAINING SERVICE — 2026-08-28
+
+Consolidation is **complete**. Not "paused" — every backend service in the
+estate has been assessed against a stated rule and has a recorded disposition,
+so this does not need re-deriving. Four merges shipped; everything else is
+refused for a reason written down here.
+
+**31 Deployments** in `cloudsforge-estate`, from 72 running pods at the start.
+
+### The rule the evidence produced
+
+The plan's own hard-exclusion list already contains the principle, stated for
+one service and never generalised — `settlement` is excluded because "merging
+widens the set of code paths that can reach a broadcast". Measured across the
+fourteen remaining candidates, the same sentence applies to `ledger.postEntry`,
+and it decides most of them:
+
+> **A service holding ledger-posting authority must not share a process with a
+> public surface.** Every route in that process becomes a route that can reach
+> `postEntry` after one memory-safety or logic bug.
+
+Measured by `grep -rl postEntry <svc>/src`, excluding tests:
+
+| holds `postEntry` — 9 | does not — 5 |
+|---|---|
+| admin-api, community, foresight, mint, wallet, worlds, market, billing, tessera | agora, devplatform, policy, pricing, studio |
+
+### The five without money authority, and why none of them merge either
+
+- **pricing** polls third-party HTTP feeds (`api.coingecko.com` via
+  `src/sources.ts`). Network-facing with timeouts, retries and somebody else's
+  rate limits — the same "resource profile is nothing like an API service"
+  ground on which `beacon` and `indexer` are already excluded.
+- **studio** owns a PersistentVolumeClaim (`studio-assets`). Merging it makes
+  the absorber stateful and node-affine, which is a property no API service in
+  this estate has and none should acquire by accident.
+- **policy** is the one genuinely clean candidate — pure-local, no outbound
+  calls at all, 4.4k LOC. It has no partner: `pricing` is a profile mismatch and
+  `studio` carries the PVC.
+- **devplatform** (0 callers, 1 router) and **agora** (0 callers, 4 routers) are
+  the only structurally clean PAIR left: neither posts to the ledger, neither is
+  called by any service, so a merge would widen nothing measurable.
+
+### Why devplatform + agora is still a no, which is the closest call here
+
+It would work. It is refused on the one ground the four shipped merges all
+shared and this one does not have: **a domain.**
+
+M1 merged two telemetry services. M2 merged two bus-tail consumers. M3 and M4a
+merged four game titles. In each case the merged process had ONE reason to
+change. A developer portal and a social network have no shared code, no shared
+upstream, no shared vocabulary and no shared release cadence — the merged
+service would have two unrelated reasons to change, and every devplatform deploy
+would restart the social product.
+
+Merging them buys one pod out of thirty-one, on a node measured at 2% CPU. That
+is a smaller number bought with a worse boundary, which is the same trade as
+twenty nginx pods, pointed the other way.
+
+### Everything else, for completeness
+
+- **The two Traefik gateways stay** — `consolidation-endgame.md` §6. `CF-Network`
+  is stamped at the entrypoint, so a request's network is a property of WHICH POD
+  received it: a topology fact that cannot be mis-matched. One gateway would
+  re-derive it per route, and one bad rule writes one estate's data into the
+  other.
+- **cf-testnet's three pods stay** — `consolidation-endgame.md` §5. The hearth
+  devkit is a bulkhead: the mainnet gateway's `rpc.<apex>` refusal DEPENDS on
+  that name failing to resolve in the estate namespace. `faucet` is a public
+  unauthenticated giveaway and stays out of anything holding mainnet tokens.
+- **`status-web` stays** — a status page sharing a pod with what it reports on
+  cannot report the interesting outage.
+- **`tessera` refused** — binds 4022 (an ExternalName carries no port mapping,
+  so the cutover mechanism does not exist for it) and mounts frozen contract
+  paths aetherholm already owns.
+- **`market` + `billing` refused** — the first candidate with no
+  zero-blast-radius side at all; four byte-identical bus tables make a wrong
+  handle a silent erasure failure and a permanent entitlement-event loss.
+
 ## What the pods actually cost — measured 2026-08-26, and it changes the plan
 
 Wave W is done: twenty web Deployments became one, and the estate went from 72
