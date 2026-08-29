@@ -329,6 +329,71 @@ route → 200 shell, an unknown path → **404** with that bundle's shell, an as
 → `immutable`). Every way fifteen nginx route tables can merge wrongly produces
 a **200 with the wrong content**, which no health probe sees.
 
+## M5 — THE PLATFORM MONOLITH. OWNER DECISION 2026-08-29, TARGET UNDER 20
+
+The disposition below stands as the record of what each boundary was worth. The
+owner has decided the trade the other way: **the ecosystem runs in under 20
+containers.** For an app at this scale — no real users, 129 mCPU across the
+whole estate — one process per domain was the defensible reading; one process
+per *trust tier* is the one now chosen. This section supersedes the refusals
+below where they conflict; the reasoning is kept because it names the hazards
+each wave must carry, not because it still decides.
+
+### Target: 18 ecosystem containers, from 40
+
+| # | container | holds |
+|---|---|---|
+| 1 | `gateway` | mainnet Traefik (unchanged) |
+| 2 | `gateway-testnet` | testnet Traefik (unchanged — endgame §6 still applies) |
+| 3 | `web` | all 20 bundles, **replicas 2 → 1** |
+| 4 | `status-web` | unchanged: must not share fate with what it reports |
+| 5 | `identity` | root of trust, ALONE — the one isolation kept absolute |
+| 6 | `ledger` | financial source of truth, ALONE |
+| 7 | `vault` | **custody + settlement** — the signing/key plane, no public routes |
+| 8 | `indexer` | chain follower (restart cost, P2P wire) |
+| 9 | `pool` | stratum TCP listener |
+| 10 | `beacon` | headless Chromium prober |
+| 11 | `platform` | **everything else**: hub-api, activity(+notify), lantern(+analytics), agora, community, devplatform, market, billing, mint, foresight, studio, pricing, policy, trade, worlds, emberkin(+aetherholm+nda), tessera, admin-api, wallet |
+| 12 | `postgres` | CNPG (all databases KEPT — schemas never merge) |
+| 13-15 | `cloudflared` +2 socat | rollback contract with the dashboard kept |
+| 16-18 | `faucet`, `hearth-explorer-api`, `hearth-verify` | testnet bulkhead |
+
+backup-runner becomes a **CronJob** — a scheduled container is not a running
+one. kube-system, telemetry and the CNPG operator are the node's, not the
+ecosystem's; they are counted separately and trimmed where free.
+
+### What the trade buys and what it costs, said once
+
+Buys: 40 → 18, one release surface, one process to read logs from, ~1.5 GiB.
+Costs: an RCE anywhere in `platform`'s ~19 public route tables reaches every
+module's database handle and the ledger-posting clients. The mitigations that
+made M1-M4a safe are MANDATORY here, not advisory: per-route `RouteSpec.sql`,
+one `JobRunner` per module, `module` metric labels, per-module event paths with
+subscription sweeps, and the structural pepper/secret scoping the kernel
+pattern provides. identity, ledger and vault stay out of `platform` precisely
+so that the worst platform bug still cannot mint tokens, rewrite the book, or
+sign a transaction.
+
+### Waves, in order — each is the proven mechanic at larger scale
+
+- **M5a** — `agora` becomes `platform`'s seed: ports the kernel, absorbs
+  `devplatform`, `policy`, `pricing`, `studio`. No money authority in any of
+  the five. The PVC objection is void on a single-node cluster; pricing's feed
+  polling becomes a module job.
+- **M5b** — + `community`, `market`, `billing`, `mint`, `foresight`, `worlds`,
+  `tessera` (the commerce/games tier; the postEntry rule is overruled, the
+  event-path split and inbox separation are not).
+- **M5c** — + `activity` and `lantern`, which bring `notify` and `analytics`
+  with them as already-built modules.
+- **M5d** — + `emberkin` (brings aetherholm, nda), `trade`, `admin-api`,
+  `hub-api`, `wallet`. Platform complete; rename the Deployment `platform`.
+- **M5e** — `vault` = custody + settlement. Signing plane, internal-only.
+- **M5f** — web replicas 1; backup-runner → CronJob; final count audit.
+
+Every wave ends the way M1-M4a did: MERGED_INTO entries, compose deletions,
+gateway upstream re-points, erasure/subscription sweeps, release, deploy,
+prune, estate-verify run once.
+
 ## THE DISPOSITION OF EVERY REMAINING SERVICE — 2026-08-28
 
 Consolidation is **complete**. Not "paused" — every backend service in the
