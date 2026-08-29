@@ -383,10 +383,18 @@ sign a transaction.
 
 ### Waves, in order — each is the proven mechanic at larger scale
 
-- **M5a** — `agora` becomes `platform`'s seed: ports the kernel, absorbs
-  `devplatform`, `policy`, `pricing`, `studio`. No money authority in any of
-  the five. The PVC objection is void on a single-node cluster; pricing's feed
-  polling becomes a module job.
+- **M5a** — ✅ **SHIPPED 2026-08-29, release 2026.8.104.** `agora` became
+  `platform`'s seed: ports the kernel, absorbed `devplatform`, `policy`,
+  `pricing`, `studio`. No money authority in any of the five. The PVC objection
+  is void on a single-node cluster; pricing's feed polling became a module job.
+  Live-verified: four modules healthy via ExternalName→agora, public APIs 200
+  (developers.<apex>/v1/scopes → devplatform; agora timeline), bare `/v1/events`
+  410s and the three suffixed paths answer with their own keys, studio writes
+  its PVC asset root, the two identity `user.deleted` subscriptions swept to the
+  split paths, four Deployments pruned. estate-verify: 3 fails, all non-M5a
+  (`app` DB not in initdb; market listings need item escrow micro-org#407; the
+  studio content-address false-positive was a `cfx`-execs-pruned-pod bug, fixed
+  so future waves' exec checks resolve the absorber). **Estate 50 → 46 pods.**
 - **M5b** — + `community`, `market`, `billing`, `mint`, `foresight`, `worlds`,
   `tessera` (the commerce/games tier; the postEntry rule is overruled, the
   event-path split and inbox separation are not).
