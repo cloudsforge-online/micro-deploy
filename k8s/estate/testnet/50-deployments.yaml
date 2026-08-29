@@ -2,11 +2,11 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.103  (2026.8.103.yaml)
+# Release:   2026.8.104  (2026.8.104.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.103.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.104.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -37,7 +37,7 @@ spec:
     spec:
       containers:
       - name: faucet
-        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:e82e0354647be45046fd892b9bb8d22febcb6e3423f0ba8f81d6b167074befa6
+        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:c38084d074bef372a33586834d585a27cdc26837ba8aa4c8f34c0ca75b4f14e5
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD

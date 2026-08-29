@@ -2,11 +2,11 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.103  (2026.8.103.yaml)
+# Release:   2026.8.104  (2026.8.104.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.103.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.104.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -109,20 +109,6 @@ metadata:
 spec:
   type: ExternalName
   externalName: custody.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: devplatform
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: devplatform
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: devplatform.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -271,34 +257,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: policy
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: policy
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: policy.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: pricing
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: pricing
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: pricing.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
   name: settlement
   namespace: cf-testnet
   labels:
@@ -323,20 +281,6 @@ metadata:
 spec:
   type: ExternalName
   externalName: site.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: studio
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: studio
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: studio.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -425,6 +369,20 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: devplatform
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: devplatform
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: nda
   namespace: cf-testnet
   labels:
@@ -449,3 +407,45 @@ metadata:
 spec:
   type: ExternalName
   externalName: activity.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: policy
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: policy
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pricing
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: pricing
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: studio
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local

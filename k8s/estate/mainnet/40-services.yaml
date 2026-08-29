@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.103  (2026.8.103.yaml)
+# Release:   2026.8.104  (2026.8.104.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.103.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.104.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -133,24 +133,6 @@ spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: custody
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: devplatform
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: devplatform
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: devplatform
   ports:
   - name: p4000
     port: 4000
@@ -321,24 +303,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: policy
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: policy
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: policy
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
   name: pool
   namespace: cloudsforge-estate
   labels:
@@ -386,24 +350,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: pricing
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: pricing
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: pricing
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
   name: settlement
   namespace: cloudsforge-estate
   labels:
@@ -436,24 +382,6 @@ spec:
   - name: p8080
     port: 8080
     targetPort: 8080
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: studio
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: studio
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: studio
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
 ---
 apiVersion: v1
 kind: Service
@@ -558,6 +486,20 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: devplatform
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: devplatform
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: nda
   namespace: cloudsforge-estate
   labels:
@@ -582,6 +524,48 @@ metadata:
 spec:
   type: ExternalName
   externalName: activity.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: policy
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: policy
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pricing
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: pricing
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: studio
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: studio
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service

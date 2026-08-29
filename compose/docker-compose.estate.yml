@@ -1288,59 +1288,6 @@ services:
   # This is the tier that can be brought up and verified before the bootstrap
   # has minted anything.
 
-  # ------------------------------------------------------------------- policy
-  policy-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../policy
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy?sslmode=require
-      INSTANCE_ID: policy-migrate
-    # The migrator reaches env.ts too, so it needs the same file — see the note on
-    # the service below (#196).
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  policy:
-    <<: *service-defaults
-    build:
-      context: ../../policy
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy?sslmode=require
-      INSTANCE_ID: policy-estate
-    # ── THE ONE SERVICE THE BUS-KEY ROTATION MISSED (#196) ────────────────────
-    #
-    # `policy` was the only service in the estate that reads an outbox secret and
-    # was never given one: measured ABSENT on both estates, while the other 25
-    # services that require one all had it. It consumes `identity.user.deleted`
-    # and verifies the producer's HMAC, so with no secret `eventAcceptSecrets` is
-    # an empty list and `POST /v1/events` answers 503 to every delivery.
-    #
-    # That fails in the quietest possible way — `env.ts` returns an empty frozen
-    # array rather than refusing to boot, so `/livez` is green and the service
-    # looks fine while every erasure event bounces. `inbox.ts`'s own header
-    # predicts it: "a relay retrying a 403 nobody would look at until an audit
-    # asked why nothing had been erased."
-    #
-    # Empty is deliberately NOT "accept anything" — the alternative would let an
-    # unauthenticated caller erase any user — so this is a missing credential and
-    # not a missing guard.
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}101:4000"
-    depends_on:
-      policy-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # ------------------------------------------------------------------- ledger
   ledger-migrate:
     <<: *migrate-defaults
@@ -1520,45 +1467,6 @@ services:
         condition: service_healthy
     healthcheck: *healthcheck
 
-  # ------------------------------------------------------------------ pricing
-  pricing-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../pricing
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      PRICING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pricing?sslmode=require
-      INSTANCE_ID: pricing-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  pricing:
-    <<: *service-defaults
-    build:
-      context: ../../pricing
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      PRICING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pricing?sslmode=require
-      # One source, because this environment has no outbound network to four
-      # exchanges. env.ts permits 1 explicitly and says why: at this setting the
-      # divergence check is inert because there is nothing to diverge from. It
-      # is NOT a production value.
-      PRICING_MIN_SOURCES: "1"
-      INSTANCE_ID: pricing-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}105:4000"
-    depends_on:
-      pricing-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # ----------------------------------------------------------------- activity
   # The EVENT seam — outbox → signed HTTP → inbox — which no pair of unit suites
   # can reach, and which found two defects on its first composition: both
@@ -1705,91 +1613,6 @@ services:
     # 1000:1000 is `node` in node:22-slim, which is what studio's final stage
     # selects. Idempotent: re-running it on a populated volume is a no-op.
     command: ["sh", "-c", "mkdir -p /assets && chown -R 1000:1000 /assets && chmod 755 /assets"]
-
-  studio-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../studio
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      STUDIO_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/studio?sslmode=require
-      INSTANCE_ID: studio-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  studio:
-    <<: *service-defaults
-    build:
-      context: ../../studio
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      STUDIO_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/studio?sslmode=require
-      # The variable this whole block exists for. See the header above.
-      STUDIO_ASSET_ROOT: /var/lib/studio/assets
-      # STUDIO_ASSET_BASE_URL is deliberately left unset: no HTTP server in this
-      # environment serves that directory, so a base URL here would mint
-      # `storageUrl`s that look fetchable and 404 — a zero wearing a status code.
-      # Unset, `assets.ts` stores a `file://` URL, which is honest about where
-      # the bytes actually are. Read them with
-      #   docker compose -f compose/docker-compose.estate.yml run --rm \
-      #     -v studio-assets:/a busybox:1.37 find /a -type f
-      INSTANCE_ID: studio-estate
-    # Spelled out rather than `*outbox-secrets`, because this service needs TWO
-    # secret files and a YAML anchor cannot merge two sequences — which is the
-    # exact case `x-outbox-secret-file`'s header says the ITEM anchor exists for.
-    env_file:
-      - *outbox-secret-file
-      - *studio-secret-file
-    volumes:
-      - studio-assets:/var/lib/studio/assets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}111:4000"
-    depends_on:
-      studio-assets-init:
-        condition: service_completed_successfully
-      studio-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # -------------------------------------------------------------- devplatform
-  devplatform-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../devplatform
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/devplatform?sslmode=require
-      INSTANCE_ID: devplatform-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  devplatform:
-    <<: *service-defaults
-    build:
-      context: ../../devplatform
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/devplatform?sslmode=require
-      INSTANCE_ID: devplatform-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}118:4000"
-    depends_on:
-      devplatform-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
 
   # ------------------------------------------------------------------ indexer
   # INDEXER_CHAINS is deliberately unset, so indexer follows NO chain. There is
@@ -2065,7 +1888,7 @@ services:
         condition: service_completed_successfully
       custody-keys-init:
         condition: service_completed_successfully
-      policy:
+      agora:
         condition: service_healthy
     healthcheck: *healthcheck
 
@@ -2171,7 +1994,7 @@ services:
       # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
       # indexer follows no chain and has no deposit to report. This service must
       # boot whether or not indexer is healthy, exactly as it did before.
-      pricing:
+      agora:
         condition: service_healthy
     healthcheck: *healthcheck
 
@@ -2614,7 +2437,7 @@ services:
       # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
       # indexer follows no chain and has no deposit to report. This service must
       # boot whether or not indexer is healthy, exactly as it did before.
-      policy:
+      agora:
         condition: service_healthy
     healthcheck: *healthcheck
 
@@ -2658,7 +2481,7 @@ services:
         condition: service_completed_successfully
       ledger:
         condition: service_healthy
-      pricing:
+      agora:
         condition: service_healthy
       billing:
         condition: service_healthy
@@ -2780,7 +2603,7 @@ services:
         condition: service_completed_successfully
       ledger:
         condition: service_healthy
-      policy:
+      agora:
         condition: service_healthy
     healthcheck: *healthcheck
 
@@ -2904,7 +2727,7 @@ services:
     depends_on:
       tessera-migrate:
         condition: service_completed_successfully
-      studio:
+      agora:
         condition: service_healthy
       ledger:
         condition: service_healthy
@@ -3427,7 +3250,7 @@ services:
         condition: service_healthy
       ledger:
         condition: service_healthy
-      policy:
+      agora:
         condition: service_healthy
       admin-api:
         condition: service_healthy
@@ -4158,13 +3981,9 @@ services:
         condition: service_healthy
       billing:
         condition: service_healthy
-      pricing:
-        condition: service_healthy
-      policy:
+      agora:
         condition: service_healthy
       activity:
-        condition: service_healthy
-      notify:
         condition: service_healthy
     healthcheck: *healthcheck
 
@@ -5455,8 +5274,22 @@ services:
       # takes an advisory lock, applies migrations and exits. A migrator that
       # could reach the moderation gate is a migrator that can be blocked by it.
       AGORA_IDENTITY_CREDENTIAL: ${AGORA_IDENTITY_CREDENTIAL:-}
+      # M5a: the merged migrator migrates all FIVE databases in one pass, so it
+      # needs all five DSNs. `agora/src/migrator.ts` reads exactly these five and
+      # nothing else — its CI job ("the migrator, on five empty databases") sets
+      # exactly these and no secret, which is why the runtime pod's
+      # PRICING_MIN_SOURCES / STUDIO_ASSET_ROOT are deliberately absent here.
+      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/devplatform?sslmode=require
+      POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy?sslmode=require
+      PRICING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pricing?sslmode=require
+      STUDIO_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/studio?sslmode=require
       INSTANCE_ID: agora-migrate
-    env_file: *outbox-secrets
+    # Mirrors the runtime pod's env_file (outbox + studio), as lantern-migrate
+    # mirrors lantern. The migrator does not READ these secrets; carrying them
+    # keeps the pair in step for check-env-file-pairing.
+    env_file:
+      - *outbox-secret-file
+      - *studio-secret-file
     depends_on:
       postgres:
         condition: service_healthy
@@ -5502,16 +5335,61 @@ services:
       # `-testnet.cloudsforge.online`, which is not a legal DNS label. Each estate
       # still advertises its own hostname and neither can be handed the other's.
       AGORA_PUBLIC_URL: https://${CF_SITE_HOST:-cloudsforge.localtest.me}/agora
+      # ── M5a: THE FOUR ABSORBED MODULES' DATABASES (micro-deploy#282) ──────────
+      #
+      # devplatform, policy, pricing and studio are modules of THIS process now.
+      # Each of their `createXModule()` factories reads its OWN `X_DATABASE_URL`
+      # and opens its OWN pool inside `src/index.ts`; that file never imports the
+      # modules' env and so cannot be handed the wrong handle — the comment at the
+      # top of `agora/src/index.ts` is the whole argument. So these five URLs are
+      # five separate connections to five separate databases, exactly as when the
+      # four ran as their own containers, and a `RouteSpec.sql` mis-selection can
+      # only fail LOUDLY (wrong pool = wrong schema) rather than silently.
+      DEVPLATFORM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/devplatform?sslmode=require
+      POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy?sslmode=require
+      PRICING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pricing?sslmode=require
+      STUDIO_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/studio?sslmode=require
+      # pricing's one non-default: accept a price with a single source rather than
+      # refusing to quote until two agree. Carried verbatim from pricing's block.
+      PRICING_MIN_SOURCES: "1"
+      # studio writes generated bytes to this tree on the studio-assets PVC below.
+      # `STUDIO_ASSET_BASE_URL` stays UNSET on purpose (see studio's old block):
+      # nothing here serves that directory over HTTP, so `assets.ts` mints honest
+      # `file://` URLs instead of fetchable-looking 404s.
+      STUDIO_ASSET_ROOT: /var/lib/studio/assets
       INSTANCE_ID: agora-estate
-    env_file: *outbox-secrets
+    # `*outbox-secrets` alone until M5a: policy/devplatform verify inbound events
+    # against `OUTBOX_ACCEPT_SECRETS`/`DEVPLATFORM_INGEST_SECRETS`, both of which
+    # live in the outbox file. studio adds ONE more file for `AZURE_FOUNDRY_API_KEY`
+    # — spelled as an explicit two-item list because a YAML anchor cannot merge two
+    # sequences (studio's old block made the same note).
+    env_file:
+      - *outbox-secret-file
+      - *studio-secret-file
+    volumes:
+      # studio's asset tree. A ReadWriteOnce PVC, so the renderer stamps this pod
+      # `strategy: Recreate` automatically (k8s-render.py) — a rolling update
+      # cannot attach it to the new pod while the old one still holds it.
+      - studio-assets:/var/lib/studio/assets
     ports:
       # 4150 — `deployableRepos()` index 50, immediately after journal-web's
       # 4149. Derived, not chosen; `make check-web` re-derives it from micro-org.
       - "127.0.0.1:${CF_PORT_BASE:-4}150:4000"
     depends_on:
+      # ONE migrator for the whole process. The absorbed services' own migrate
+      # jobs are DELETED — `agora/src/migrator.ts` migrates all five databases in
+      # one pass (agora's CI proves it: "the migrator, on five empty databases").
+      # `policy` is no longer a depends_on either: it is not a separate container
+      # to wait on any more, it is this process. agora reaches its own policy
+      # module over `POLICY_URL` (which the M5a ExternalName resolves back here)
+      # and the moderation gate is SOFT, so a self-probe cannot deadlock boot.
+      # studio-assets-init survives as its own one-shot: it preps the PVC this
+      # pod now mounts, and it is not a migrator, so the renderer leaves it be.
       agora-migrate:
         condition: service_completed_successfully
-      policy:
+      studio-assets-init:
+        condition: service_completed_successfully
+      identity:
         condition: service_healthy
     healthcheck: *healthcheck
 

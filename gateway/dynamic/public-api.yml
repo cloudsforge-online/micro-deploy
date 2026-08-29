@@ -301,7 +301,10 @@ http:
     # it is derived rather than typed.
     cf-api-pricing:
       loadBalancer:
-        servers: [{ url: "http://pricing:4000" }]
+        # M5a: pricing is a module of agora now. Re-pointed at the absorber, as
+        # analytics/notify/aetherholm/nda were; the `pricing` ExternalName still
+        # resolves here too, this just names the real upstream.
+        servers: [{ url: "http://agora:4000" }]
     cf-api-activity:
       loadBalancer:
         servers: [{ url: "http://activity:4000" }]
@@ -328,7 +331,8 @@ http:
         servers: [{ url: "http://emberkin:4000" }]
     cf-api-devplatform:
       loadBalancer:
-        servers: [{ url: "http://devplatform:4000" }]
+        # M5a: devplatform is a module of agora now. Re-pointed at the absorber.
+        servers: [{ url: "http://agora:4000" }]
 
     # `cf-api-unrouted` was here — the `http://127.0.0.1:1` blackhole the
     # deleted catch-all pointed at. See the note where that router used to be:

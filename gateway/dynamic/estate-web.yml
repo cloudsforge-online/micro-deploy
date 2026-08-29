@@ -3275,7 +3275,8 @@ http:
         servers: [{ url: "http://worlds:4000" }]
     cf-svc-devplatform:
       loadBalancer:
-        servers: [{ url: "http://devplatform:4000" }]
+        # M5a: devplatform is a module of agora now. Re-pointed at the absorber.
+        servers: [{ url: "http://agora:4000" }]
     # The chain index. Named for the SERVICE (`indexer`) rather than for the surface it sits
     # under (`explorer`), because they are two different things and the registry has no `indexer`
     # key at all — which is the substitution micro-network-site had to name in its own header
@@ -3316,7 +3317,10 @@ http:
     # the project of the services they serve (micro-org#257) — but the measurement stands.
     cf-svc-studio:
       loadBalancer:
-        servers: [{ url: "http://studio:4000" }]
+        # M5a: studio is a module of agora now (its asset PVC is mounted into the
+        # agora pod). Re-pointed at the absorber; both bind 4000 so the measured
+        # `/livez` note above still holds through the merge.
+        servers: [{ url: "http://agora:4000" }]
     # The second half of `pay.<apex>`. See the block beside `cf-api-pay-billing` for why one
     # hostname has two backends and why splitting it by resource is the registry's own model.
     cf-svc-billing:

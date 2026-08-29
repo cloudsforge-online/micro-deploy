@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.103  (2026.8.103.yaml)
+# Release:   2026.8.104  (2026.8.104.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.103.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.104.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -37,7 +37,7 @@ spec:
     spec:
       containers:
       - name: activity
-        image: ghcr.io/cloudsforge-online/micro-activity@sha256:12ae6094e9df41f2c8fc4718ac834b6ac9f40e4ef549a945db3e1900a3c15ed1
+        image: ghcr.io/cloudsforge-online/micro-activity@sha256:9f39bb3c2b1ed7ed985becb1f5649a140f540bb4ce950b455408a148c1b1bbb2
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -181,7 +181,7 @@ spec:
     spec:
       containers:
       - name: admin-api
-        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:30cf6e3af9503aafded28d8bce29e64ad3ac54d52a2cf8d7a4942141bcc1b0a3
+        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:65f901e251174f57bc385aec3291c95cf05d58323eb15d326376149054673388
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -279,7 +279,7 @@ spec:
     matchLabels:
       app.kubernetes.io/name: agora
   strategy:
-    type: RollingUpdate
+    type: Recreate
   template:
     metadata:
       labels:
@@ -289,7 +289,7 @@ spec:
     spec:
       containers:
       - name: agora
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:22cc094b0d2a6d07efe4e04205c47e92b5c30b6455e6202188ce92be5923734a
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:60b17a7c9ea003fb23908fdee93ac1be7d46eb0d651a1379aeba721303e4b446
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -312,6 +312,8 @@ spec:
           value: mainnet
         - name: CLOUDSFORGE_TAG
           value: estate
+        - name: DEVPLATFORM_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform?sslmode=require
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_JWKS_URL
@@ -324,14 +326,32 @@ spec:
           value: info
         - name: NODE_ENV
           value: production
+        - name: POLICY_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy?sslmode=require
         - name: POLICY_URL
           value: http://policy:4000
         - name: PORT
           value: '4000'
+        - name: PRICING_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing?sslmode=require
+        - name: PRICING_MIN_SOURCES
+          value: '1'
+        - name: STUDIO_ASSET_ROOT
+          value: /var/lib/studio/assets
+        - name: STUDIO_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio?sslmode=require
         - name: STUDIO_PUBLIC_URL
           value: https://studio.cloudsforge.online
         - name: AGORA_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/agora_testnet?sslmode=require
+        - name: DEVPLATFORM_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform_testnet?sslmode=require
+        - name: POLICY_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy_testnet?sslmode=require
+        - name: PRICING_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing_testnet?sslmode=require
+        - name: STUDIO_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio_testnet?sslmode=require
         - name: NODE_EXTRA_CA_CERTS
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
@@ -340,7 +360,13 @@ spec:
         - secretRef:
             name: secret-outbox
             optional: false
+        - secretRef:
+            name: secret-studio
+            optional: false
         volumeMounts:
+        - name: studio-assets
+          mountPath: /var/lib/studio/assets
+          readOnly: false
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
           readOnly: true
@@ -362,6 +388,9 @@ spec:
         ports:
         - containerPort: 4000
       volumes:
+      - name: studio-assets
+        persistentVolumeClaim:
+          claimName: studio-assets
       - name: gateway-trust
         configMap:
           name: gateway-trust
@@ -391,7 +420,7 @@ spec:
     spec:
       containers:
       - name: beacon
-        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:68e5180b6925982ce8306a01a02c09bd2a296d04d0ea8cafbef69bccfbbadec6
+        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:0496cbb349036c60b710505f76b012011e354b6f003cd82fc11569baf3a17d10
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -501,7 +530,7 @@ spec:
     spec:
       containers:
       - name: billing
-        image: ghcr.io/cloudsforge-online/micro-billing@sha256:7daac9a025ac1e4390e46594a83744d34490417db48ffdef4be1e0e4d48efbec
+        image: ghcr.io/cloudsforge-online/micro-billing@sha256:0842e92991ac141538d90c90a3a6b6d5df29f14ff89055b5a65d19cc4940ad86
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -601,7 +630,7 @@ spec:
     spec:
       containers:
       - name: community
-        image: ghcr.io/cloudsforge-online/micro-community@sha256:274cdac6a36a054fb305c43a8ff0afd7673a6ff83e12e4a2a3a7a31e26227d5a
+        image: ghcr.io/cloudsforge-online/micro-community@sha256:2bd7bcdb2707820074e8f9e3c5a1243f6c827cffbb0b38f79d4eeed6b2781085
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -701,7 +730,7 @@ spec:
     spec:
       containers:
       - name: custody
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:9c432454dcfc066b7c141523982a569220dab68a3709f1b18d133e5f8b44778a
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:90dd5ba2c2f895bf430d6f8e65d20f8ed32dbfca3433e93d6ccfa4c8210570ea
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -778,96 +807,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: devplatform
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: devplatform
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: devplatform
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: devplatform
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: devplatform
-        image: ghcr.io/cloudsforge-online/micro-devplatform@sha256:27dc48f784c52a72c51f6d4a9a2b129676c4b8d78dd561e1458a02c9b6adfd0b
-        imagePullPolicy: IfNotPresent
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: DEVPLATFORM_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform?sslmode=require
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: devplatform-estate
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: PORT
-          value: '4000'
-        - name: DEVPLATFORM_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
-        startupProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 2
-          timeoutSeconds: 5
-          failureThreshold: 45
-        ports:
-        - containerPort: 4000
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: emberkin
   namespace: cloudsforge-estate
   labels:
@@ -890,7 +829,7 @@ spec:
     spec:
       containers:
       - name: emberkin
-        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:6440fdb9e1a82e0e46c2029d5b081cf99a81458f08734265713429fbfdbd51f8
+        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:a56eddf89f9e43b2cae5419077a271223ed75eb33dda2144b5ff2cd323f1145a
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1012,7 +951,7 @@ spec:
     spec:
       containers:
       - name: foresight
-        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:024b16352615b7e088575d1c06a39457a85aff2c3b98b3b536c66d4b96700dbf
+        image: ghcr.io/cloudsforge-online/micro-foresight@sha256:ac3ea6e6d34fe507620270e587af0fbe33689d2e17147977885c423e2e186c57
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1156,7 +1095,7 @@ spec:
     spec:
       containers:
       - name: hub-api
-        image: ghcr.io/cloudsforge-online/micro-hub-api@sha256:44aed555fd70da2862212c399d96acd9654f81ab8e4c5ba5a6a64790402dc03d
+        image: ghcr.io/cloudsforge-online/micro-hub-api@sha256:295791ab769f45bfd52a849948471ebdb0b6b315af59eb3497bc5697f65db7f4
         imagePullPolicy: IfNotPresent
         env:
         - name: HUB_API_IDENTITY_CREDENTIAL
@@ -1254,7 +1193,7 @@ spec:
     spec:
       containers:
       - name: identity
-        image: ghcr.io/cloudsforge-online/micro-identity@sha256:049aed4d95851bd6e9929859f9151856b3aae87e29194c6df50790ad779ea436
+        image: ghcr.io/cloudsforge-online/micro-identity@sha256:dcf9778f8d792dff82f5c144e4807cf454e416ab53451225f578a790fd399826
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1391,7 +1330,7 @@ spec:
     spec:
       containers:
       - name: indexer
-        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:d80f8153eedddc3ff6e94f3c97230c4c31887d9bf34b64860021df729e89cb6b
+        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:9a30f70da6be86f5614a78d7ab8ce575ce0795b3404d35a0cd19f6d502bc704c
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1494,7 +1433,7 @@ spec:
     spec:
       containers:
       - name: lantern
-        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:6dcef9fa735551d3814d2a573ef755f1f5943f8df53be06b54d5b8a225664af4
+        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:b976b95666ce83c752e7065b90db37dc00852a83353c0a50404b321af9f04801
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1605,7 +1544,7 @@ spec:
     spec:
       containers:
       - name: ledger
-        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:f41aab65c792d9f53ecfb120891385e3444f7fb5ab3b4aa9b9f7a2671d530021
+        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:164c6811eed4810160ec367df09be0936a648989387405acd2bdd3554d9cbcb4
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1709,7 +1648,7 @@ spec:
     spec:
       containers:
       - name: market
-        image: ghcr.io/cloudsforge-online/micro-market@sha256:6a5445b491af4444df174855bccd247bb7b1631808baaa92bc8994972158506f
+        image: ghcr.io/cloudsforge-online/micro-market@sha256:df352051e513054c28ddd8e832fb6f4c9f160d3239a5ac88d4b945b004f6be33
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1813,7 +1752,7 @@ spec:
     spec:
       containers:
       - name: mint
-        image: ghcr.io/cloudsforge-online/micro-mint@sha256:9c79166ca9a65de40aa1c233550bb5a47f365882e8c3630c05fe8b26ce6dfa81
+        image: ghcr.io/cloudsforge-online/micro-mint@sha256:978f277238d89088b4460fd4030b69f7189e9b07a090a3e3d4bf8431943ebafa
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1907,96 +1846,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: policy
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: policy
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: policy
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: policy
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: policy
-        image: ghcr.io/cloudsforge-online/micro-policy@sha256:5790e8e1eb679a3c5b6a760eb2811d7c2375e0db437db97e6937a92a3c121e5e
-        imagePullPolicy: IfNotPresent
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: policy-estate
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: POLICY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy?sslmode=require
-        - name: PORT
-          value: '4000'
-        - name: POLICY_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
-        startupProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 2
-          timeoutSeconds: 5
-          failureThreshold: 45
-        ports:
-        - containerPort: 4000
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: pool
   namespace: cloudsforge-estate
   labels:
@@ -2019,7 +1868,7 @@ spec:
     spec:
       containers:
       - name: pool
-        image: ghcr.io/cloudsforge-online/micro-pool@sha256:c9544986292b60841d8269120bb92e44e3f27a74299ddb4e94a9761a574eae07
+        image: ghcr.io/cloudsforge-online/micro-pool@sha256:f1d4ef8b9574cd9b26783ba88a926c69035202cd91e075cfa49f7f8c91427969
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2137,98 +1986,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: pricing
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: pricing
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: pricing
-  strategy:
-    type: RollingUpdate
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: pricing
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: pricing
-        image: ghcr.io/cloudsforge-online/micro-pricing@sha256:fb3f5674471b7afce8bd338cd1e413a6c6dc88dc4d9bd53a72eeb94be4abb0b0
-        imagePullPolicy: IfNotPresent
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: pricing-estate
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: PORT
-          value: '4000'
-        - name: PRICING_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing?sslmode=require
-        - name: PRICING_MIN_SOURCES
-          value: '1'
-        - name: PRICING_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
-        startupProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 2
-          timeoutSeconds: 5
-          failureThreshold: 45
-        ports:
-        - containerPort: 4000
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: settlement
   namespace: cloudsforge-estate
   labels:
@@ -2251,7 +2008,7 @@ spec:
     spec:
       containers:
       - name: settlement
-        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:88a22f0493925255494bd7cd2373d60f3ba7737b82d1207d5f7e2ebe4e50fffc
+        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:0307ffbefc14ac53c438f963c2608597fac6fa0bb78fd41a94bfde16baddeea3
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2359,7 +2116,7 @@ spec:
     spec:
       containers:
       - name: status-web
-        image: ghcr.io/cloudsforge-online/micro-status-web@sha256:9515ca6d03bbe1f9d790ff380f3e83cb046917ad70158ce41da7af64beaae58b
+        image: ghcr.io/cloudsforge-online/micro-status-web@sha256:97d66bb30c4ba3a9af5ebc3fd687eeab0f9da0519f68b3a7ab30417b7205606b
         imagePullPolicy: IfNotPresent
         env:
         - name: NODE_EXTRA_CA_CERTS
@@ -2395,107 +2152,6 @@ spec:
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: studio
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: studio
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app.kubernetes.io/name: studio
-  strategy:
-    type: Recreate
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: studio
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: studio
-        image: ghcr.io/cloudsforge-online/micro-studio@sha256:4934f40dbaf323f6f8592619b6bd73675c8021ee53cd23e47ae922937965c024
-        imagePullPolicy: IfNotPresent
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: studio-estate
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: PORT
-          value: '4000'
-        - name: STUDIO_ASSET_ROOT
-          value: /var/lib/studio/assets
-        - name: STUDIO_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio?sslmode=require
-        - name: STUDIO_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        - secretRef:
-            name: secret-studio
-            optional: false
-        volumeMounts:
-        - name: studio-assets
-          mountPath: /var/lib/studio/assets
-          readOnly: false
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-        readinessProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 30
-          timeoutSeconds: 5
-          failureThreshold: 3
-        startupProbe:
-          httpGet:
-            path: /readyz
-            port: 4000
-          periodSeconds: 2
-          timeoutSeconds: 5
-          failureThreshold: 45
-        ports:
-        - containerPort: 4000
-      volumes:
-      - name: studio-assets
-        persistentVolumeClaim:
-          claimName: studio-assets
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
   name: tessera
   namespace: cloudsforge-estate
   labels:
@@ -2518,7 +2174,7 @@ spec:
     spec:
       containers:
       - name: tessera
-        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:56afd943f4e005065f6be8a8d839b106e48eef7b593e4ab94459a3a33c28df12
+        image: ghcr.io/cloudsforge-online/micro-tessera@sha256:cae1e065e407e5f2c5bc4feb7847a5902dc25d982285687a0131c307a7523ed2
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2620,7 +2276,7 @@ spec:
     spec:
       containers:
       - name: trade
-        image: ghcr.io/cloudsforge-online/micro-trade@sha256:41b5bdd06d6b2bd76672bf18f15065ea3abd662fec56728d06942d9b15518482
+        image: ghcr.io/cloudsforge-online/micro-trade@sha256:0071023cb636cbd2d0409fb96c8c15095302b6cc184509cecb90debbe4715cd9
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2722,7 +2378,7 @@ spec:
     spec:
       containers:
       - name: wallet
-        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:dc64632f9a30cc8bf196eff7ab6af930ebd3bf3770133fb8304d13164fceed61
+        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:d0a6f925015999a7a49bbf198f71c8960047288dcd9ab8a4aeb3c3bb15c86722
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -2834,7 +2490,7 @@ spec:
     spec:
       containers:
       - name: worlds
-        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:18ea05fa8a054778e2be937a54317132dd9c1d22ded0588156fdc298f60d2db7
+        image: ghcr.io/cloudsforge-online/micro-worlds@sha256:5cde07efd1cfaa3531153d1d53e771601eb0cd60293d801f9d2484f31a927279
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD

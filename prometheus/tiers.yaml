@@ -94,7 +94,7 @@ billing: "2"
 # Not in §8 — every one of these postdates it.
 admin-api: "2"     # Operator BFF. Two-eyes approvals gate money; the surface itself is not in the money path.
 analytics: "2"     # Pseudonymised product analytics (AD-21). Loopback only, no gateway route.
-agora: "2"         # The public square. Posts, circles and whispers — product, and it custodies no value; the one thing it holds that nothing else does is a private message, and that is a confidentiality property, not an availability one.
+agora: "1"         # Promoted from Tier 2 at wave M5a. The square itself custodies no value, but the process now ALSO runs pricing and policy, both Tier 1 here — pricing feeds every quote in the estate and policy is the moderation authority. A tier is the STRICTEST property of everything in the process, so the absorber inherits its most-critical constituent's tier. devplatform and studio (both Tier 2) do not lower it back.
 emberkin: "2"      # Game title.
 foresight: "2"     # Parimutuel markets — "never custodies stake" (34-service-catalogue.md), so not Tier 1.
 aetherholm: "2"    # Game title.

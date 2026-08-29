@@ -472,6 +472,21 @@ MERGED_INTO = {
     #   * it verifies its webhook with INBOUND_SIGNING_SECRET, which this pod has
     #     never read and which is deliberately held apart from OUTBOX_SIGNING_SECRET.
     "nda": "emberkin",
+    # 2026-08-29, wave M5a — the platform-monolith SEED (micro-deploy#282). agora
+    # absorbs the four platform-tier services it shares no ledger authority with:
+    # devplatform, policy, pricing and studio. All four bind 4000, as does agora,
+    # so every alias below is transparent — the tessera port-mismatch trap does
+    # not apply. Each keeps its own database; the merged `agora/src/index.ts`
+    # opens one pool per module and cannot cross them.
+    #
+    # These aliases are the SAFETY NET for service-to-service callers that still
+    # spell the old name (market -> pricing, and agora -> its own `POLICY_URL`,
+    # which resolves right back here). The gateway upstreams are re-pointed at
+    # `agora` directly, exactly as analytics/notify/aetherholm/nda were.
+    "devplatform": "agora",
+    "policy": "agora",
+    "pricing": "agora",
+    "studio": "agora",
 }
 
 
