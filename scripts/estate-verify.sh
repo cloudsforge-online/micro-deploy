@@ -186,12 +186,33 @@ esac
 # forwards stdin either way, so under compose the two are the same command — the
 # distinction costs the compose path nothing and saves the k8s path from a class
 # of silent empty answer this file has already been bitten by twice.
+# `cfx studio` must exec into `deploy/agora` once wave M5a merged studio in: the
+# `deploy/studio` this used to name was pruned, and `kubectl exec` against a
+# Deployment that does not exist fails in a way that reads as an empty answer
+# rather than an error — which is exactly how the studio content-address check
+# came back "a green with no bytes" on a merge that had in fact written the file.
+# CF_MERGED_INTO is the absorbed->absorber map the k8s wrapper emits (space-
+# separated `svc=absorber` pairs); chase it to a fixpoint so a chain resolves.
+# Empty/unset under compose, where every absorbed service still has its own entry.
+cf_merged_target() {
+  cf_mt=$1
+  for _ in 1 2 3 4 5; do
+    cf_mt_hit=
+    for cf_mt_pair in ${CF_MERGED_INTO:-}; do
+      case "$cf_mt_pair" in
+        "$cf_mt="*) cf_mt=${cf_mt_pair#*=}; cf_mt_hit=1; break ;;
+      esac
+    done
+    [ -n "$cf_mt_hit" ] || break
+  done
+  printf '%s' "$cf_mt"
+}
 cfx() {
   cfx_svc=$1
   shift
   case "$CF_RUNTIME" in
     compose) docker compose -f "$COMPOSE" exec -T "$cfx_svc" "$@" ;;
-    k8s) kubectl exec -n "$CF_NAMESPACE" "deploy/$cfx_svc" -- "$@" ;;
+    k8s) kubectl exec -n "$CF_NAMESPACE" "deploy/$(cf_merged_target "$cfx_svc")" -- "$@" ;;
   esac
 }
 cfx_in() {
@@ -199,7 +220,7 @@ cfx_in() {
   shift
   case "$CF_RUNTIME" in
     compose) docker compose -f "$COMPOSE" exec -T "$cfx_svc" "$@" ;;
-    k8s) kubectl exec -i -n "$CF_NAMESPACE" "deploy/$cfx_svc" -- "$@" ;;
+    k8s) kubectl exec -i -n "$CF_NAMESPACE" "deploy/$(cf_merged_target "$cfx_svc")" -- "$@" ;;
   esac
 }
 

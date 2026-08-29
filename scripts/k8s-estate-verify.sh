@@ -212,6 +212,13 @@ if unmapped:
     )
     sys.exit(1)
 
+# The absorbed->absorber map, for the shell's exec helper. URL resolution above
+# already chases MERGED_INTO for ClusterIPs, but `cfx <svc>` execs `deploy/<svc>`
+# directly — and for an absorbed service that Deployment was pruned, so the exec
+# hits nothing and every command "succeeds" empty (the studio content-address
+# check read as "a green with no bytes" after wave M5a). Emit the map so `cfx`
+# can chase it to the absorber's Deployment. Names are [a-z0-9-], safe unquoted.
+print("export CF_MERGED_INTO='" + " ".join(f"{k}={v}" for k, v in merged_into.items()) + "'")
 print("export CF_VERIFY_SERVICE_URLS=%d" % len(variables))
 PY
 ) || exit 1
