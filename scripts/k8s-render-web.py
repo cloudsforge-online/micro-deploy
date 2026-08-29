@@ -295,10 +295,16 @@ def render(release: pathlib.Path) -> str:
             "kind": "Deployment",
             "metadata": {"name": "web", "namespace": "cloudsforge-estate", "labels": labels},
             "spec": {
-                # Two, because this one pod now carries every public surface. A single replica
-                # would make a node eviction an estate-wide outage — which twenty separate
-                # Deployments were accidentally protecting against, and this must not lose.
-                "replicas": 2,
+                # ONE, since wave M5f (owner decision 2026-08-29: the ecosystem
+                # runs in under 20 containers). This used to be two, arguing that
+                # a single replica makes a node eviction an estate-wide outage.
+                # That argument quietly assumed a second node to be evicted TO —
+                # and this is a single-node cluster, so both replicas always sat
+                # on the same node and died together. The second replica bought
+                # zero-downtime ROLLOUTS only, and maxSurge=1 below still buys
+                # exactly that: the new pod comes up beside the old one during a
+                # deploy, then the old one goes. Steady state is one container.
+                "replicas": 1,
                 "selector": {"matchLabels": {"app.kubernetes.io/name": "web"}},
                 "strategy": {
                     "type": "RollingUpdate",
