@@ -358,8 +358,15 @@ each wave must carry, not because it still decides.
 | 13-15 | `cloudflared` +2 socat | rollback contract with the dashboard kept |
 | 16-18 | `faucet`, `hearth-explorer-api`, `hearth-verify` | testnet bulkhead |
 
-backup-runner becomes a **CronJob** — a scheduled container is not a running
-one. kube-system, telemetry and the CNPG operator are the node's, not the
+backup-runner **STAYS A DEPLOYMENT — M5f amendment, 2026-08-29.** The CronJob
+conversion was investigated and refused: `BackupAgeExceeded` alerts on
+`time() - backup_last_success_unixtime`, and its own comment says the point is
+alerting on AGE because "a backup job that silently stops firing produces no
+failure to alert on". That design REQUIRES a continuously-scraped exporter; a
+CronJob's pod exists only while it runs, the metric vanishes between runs, and
+the alert that was written after six days of silently-stopped backups becomes
+unable to fire. One ~10Mi container is the price of the estate's only
+backup-age signal. The target count becomes 19 — still under 20. kube-system, telemetry and the CNPG operator are the node's, not the
 ecosystem's; they are counted separately and trimmed where free.
 
 ### What the trade buys and what it costs, said once
