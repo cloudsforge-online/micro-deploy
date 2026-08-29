@@ -2086,6 +2086,35 @@ http:
       entryPoints: [websecure, tunnel]
       service: cf-svc-custody
 
+    # ── THE TWO MONEY HOSTS LEAKED /metrics, EXACTLY AS nimbus DID ─────────────
+    #
+    # `cf-deny-nimbus-metrics` above closed identity's `/metrics` to the internet
+    # after 298 lines of its Prometheus output — which services are failing and
+    # how fast — were found reachable from any browser. `pay.<apex>` (wallet) and
+    # `vault.<apex>` (custody) are whole-host routers with no path condition, so
+    # they had the same hole, and custody is the estate's HIGHEST-value service:
+    # its `/metrics` names the signing purposes and refusal gates. A `/metrics`
+    # request needs no token here, because these routers carry none.
+    #
+    # Same mechanism as nimbus: a priority-700 router that matches `Host && Path`
+    # and hands it to `cf-deny-public` (loopback-only ipAllowList), which the
+    # whole-host router at 500 cannot outrank. `Path`, not `PathPrefix`, so the
+    # key-export ceremony's own routes under `/v1/...` are untouched — only the
+    # exact `/metrics` string is refused. `estate-verify.sh:3306` drives
+    # `/v1/exports` on this host and must stay green.
+    cf-deny-pay-metrics:
+      rule: 'Host(`pay{{ env "CF_WEB_SUFFIX" }}`) && Path(`/metrics`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-deny-public]
+      service: cf-svc-wallet
+    cf-deny-vault-metrics:
+      rule: 'Host(`vault{{ env "CF_WEB_SUFFIX" }}`) && Path(`/metrics`)'
+      priority: 700
+      entryPoints: [websecure, tunnel]
+      middlewares: [cf-deny-public]
+      service: cf-svc-custody
+
     # ─────────────────────────────────────────── studio — the image bytes, and nothing else ──
     #
     # NO IMAGE COULD RENDER ANYWHERE IN THE ESTATE BEFORE THIS ROUTER. micro-studio was up and
