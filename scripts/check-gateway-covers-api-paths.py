@@ -113,7 +113,6 @@ CHECKED = {
         "unrouted": {
             "/livez": "an orchestration probe, read on the docker network",
             "/readyz": "an orchestration probe, read on the docker network",
-            "/metrics": "the Prometheus scrape, taken in-network",
             "/internal": "`/internal/entitlements/:userId` answers OTHER SERVICES asking "
                          "what a user has bought. Routing it publicly would let anyone "
                          "read anyone's entitlements by id",
@@ -154,6 +153,23 @@ NOT_CHECKED = {
         "terms": ["PathPrefix(/v1)", "Path(/readyz)"],
         "why": "versioned like the rest, plus ONE exact `/readyz` — an exact `Path`, "
                "not a prefix, so it exposes that single route and cannot grow",
+    },
+    "vault": {
+        "terms": ["Path(/metrics)"],
+        "why": "NOT a shared host: `vault.<apex>` IS micro-custody's public face — the "
+               "key-export ceremony runs in the user's own browser and needs the app CORS "
+               "allowlist that `api.<apex>` does not carry (`custody/src/exports.ts` gates on "
+               "amr/auth_time), so `cf-web-vault` is the API, not a bundle, and there is no "
+               "static site for an unmatched path to be swallowed by. It appears in the "
+               "shared-host scan only because of `cf-deny-vault-metrics`, a REFUSAL rather "
+               "than a route: an exact `Path(/metrics)` carrying `cf-deny-public`, added "
+               "2026-08-29 alongside pay's — custody's `/metrics` names its signing purposes "
+               "and refusal gates, and it was reachable from any browser exactly as identity's "
+               "was. An exact Path cannot grow. KNOWN GAP, recorded rather than hidden: the "
+               "catch-all still serves custody's whole route table — including `/v1/sign` and "
+               "the admin mint routes — to the internet behind bearer auth alone. Narrowing it "
+               "to the ceremony's paths is wave M5e's step 1; until then bearer scope is the "
+               "only control on those routes, and this entry is the place that says so",
     },
     "nimbus": {
         "terms": ["Path(/metrics)"],
