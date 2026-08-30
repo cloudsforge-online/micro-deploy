@@ -2123,324 +2123,6 @@ services:
       # boot whether or not indexer is healthy, exactly as it did before.
     healthcheck: *healthcheck
 
-  # ------------------------------------------------------------------ billing
-  billing-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../billing
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      BILLING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/billing?sslmode=require
-      BILLING_LEDGER_URL: http://ledger:4000
-      BILLING_PRICING_URL: http://pricing:4000
-      INSTANCE_ID: billing-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  billing:
-    <<: *service-defaults
-    build:
-      context: ../../billing
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      BILLING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/billing?sslmode=require
-      BILLING_LEDGER_URL: http://ledger:4000
-      BILLING_PRICING_URL: http://pricing:4000
-      # The long-lived credential. See wallet's block for what it replaces.
-      BILLING_IDENTITY_CREDENTIAL: ${BILLING_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: billing-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}106:4000"
-    depends_on:
-      billing-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # --------------------------------------------------------------------- mint
-  mint-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../mint
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      MINT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/mint?sslmode=require
-      # Mint prices in USD and settles in EMBER since its migration 6, so it needs
-      # pricing at boot exactly as billing does. Missing, mint refuses to start and
-      # its migrator never runs — which is how billing spent a morning serving v10
-      # code against a v11 schema. Same variable, same value, same reason.
-      PRICING_URL: http://pricing:4000
-      LEDGER_URL: http://ledger:4000
-      CUSTODY_URL: http://custody:4000
-      INDEXER_URL: http://indexer:4000
-      INSTANCE_ID: mint-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  mint:
-    <<: *service-defaults
-    build:
-      context: ../../mint
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      MINT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/mint?sslmode=require
-      # Mint prices in USD and settles in EMBER since its migration 6, so it needs
-      # pricing at boot exactly as billing does. Missing, mint refuses to start and
-      # its migrator never runs — which is how billing spent a morning serving v10
-      # code against a v11 schema. Same variable, same value, same reason.
-      PRICING_URL: http://pricing:4000
-      LEDGER_URL: http://ledger:4000
-      CUSTODY_URL: http://custody:4000
-      INDEXER_URL: http://indexer:4000
-      # The long-lived credential. See wallet's block for what it replaces.
-      MINT_IDENTITY_CREDENTIAL: ${MINT_IDENTITY_CREDENTIAL:-}
-      # ── WHICH NETWORK MINT SAYS IT IS ON ─────────────────────────────────
-      #
-      # Unset, mint's own code defaults to `testnet`, so `/v1/catalogue` on the
-      # MAINNET estate answered `"network":"testnet"` — measured on the running
-      # container, not inferred. The service that mints assets was telling every
-      # mainnet user they were on a test network, which is the kind of thing that
-      # makes somebody treat real holdings as disposable.
-      #
-      # INTERPOLATED, NEVER A LITERAL, and that is the whole point. The testnet
-      # estate is equally unset and currently answers "testnet" BY COINCIDENCE —
-      # a hardcoded `mainnet` here would fix this estate by silently breaking the
-      # one whose entire purpose is to be identifiable as a test network. Same
-      # variable and same spelling as LEDGER_RECONCILE_NETWORK above, so the two
-      # cannot drift apart.
-      MINT_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
-      # ── WHAT A DEPLOY COSTS, AND WHY TESTNET CANNOT USE MAINNET'S PRICE ──
-      #
-      # Never set anywhere before this line — not here, not in either `*.env`,
-      # not in the tokens files — so `mint/src/env.ts:369` supplied its own
-      # default of `2_500n` cents on BOTH estates. $25.00, priced in USD and
-      # settled in EMBER at the administered rate.
-      #
-      # MEASURED 2026-08-15, on the running containers rather than inferred.
-      # Pricing publishes EMBER at $0.0001, so $25.00 is **250,000 EMBER**:
-      #
-      #   mainnet  custody holds 66,881 EMBER — every EMBER the estate has ever
-      #            mined. The largest single holder has 66,836. Nobody on the
-      #            network can afford one deploy, and nobody ever has: every
-      #            order since 2026-08-04 sits at `awaiting_payment`.
-      #   testnet  the ledger's entire EMBER supply is 25 EMBER. The faucet that
-      #            is supposed to hand out more advertises a 10 EMBER drip from
-      #            a funding address holding 0.
-      #
-      # So the price is not merely high on testnet, it is unpayable by four
-      # orders of magnitude, and the one network whose purpose is to let someone
-      # rehearse a deploy is the one where a deploy cannot be rehearsed.
-      #
-      # INTERPOLATED, NEVER A LITERAL, for the same reason as `MINT_NETWORK`
-      # directly above: the default preserves mainnet's published $25 exactly,
-      # and `testnet.env` alone lowers it. A hardcoded testnet-friendly number
-      # here would quietly discount the real product.
-      #
-      # THIS IS A PRICE, NOT A GATE. Lowering it does not open mainnet deploys
-      # to anyone — `server.ts:562` still refuses any mainnet deploy whose owner
-      # is absent from the empty `MINT_MAINNET_ALLOWLIST`, and this variable does
-      # not touch that. Whether mainnet's $25 is the right number for a chain
-      # with 66,881 coins in existence is the owner's call, and deliberately not
-      # made here.
-      MINT_DEPLOY_PRICE_USD_CENTS: ${CF_MINT_DEPLOY_PRICE_USD_CENTS:-2500}
-      # ── WITHOUT THIS, NOTHING MINT ACCEPTS CAN EVER BE MINTED ────────────
-      #
-      # `MINT_RPC_URLS` was never set here — not in this file, not in either
-      # `*.env`, not in the tokens files. `env.ts` defaults it to `'{}'`, and
-      # `index.ts`'s `rpc()` throws `no JSON-RPC endpoint configured for ember`
-      # for anything in it. So mint took orders, priced them, would have taken
-      # payment for them, and could not have deployed one. Read off the running
-      # containers on 2026-08-11, mainnet AND testnet said the same thing at
-      # boot:
-      #
-      #   chains: [{"chain":"ember","implemented":true,"endpoint":false},
-      #            {"chain":"eth",  "implemented":true,"endpoint":false}, …]
-      #
-      # `implemented: true, endpoint: false` — the code was there and the node
-      # was not. mint logs exactly that pair at boot for exactly this reason
-      # ("A chain with a family but no endpoint is the failure most likely to be
-      # a deploy mistake"), and it went unread for as long as nothing tried to
-      # deploy. The estate seeder is what tried, and reported it as a skip:
-      # "MINT_RPC_URLS is unset in the estate compose file and mint refuses
-      # rather than falling back to a public node nobody chose".
-      #
-      # ── THE SAME EXPRESSION AS FORESIGHT'S, DELIBERATELY ────────────────
-      #
-      # `FORESIGHT_RPC_URLS` two thousand lines below is character-for-character
-      # this, and it must stay that way: both services sign EMBER transactions
-      # against the same node, and a second spelling is a second thing to move
-      # when the chain host moves. `EMBER_RPC_URL` is the estate's one name for
-      # where the chain is — `testnet.env` sets it to :8745, the tokens files
-      # pin it per host, and `verify-chain-backing.sh` asserts what answers.
-      #
-      # `eth` is deliberately absent rather than given a public endpoint. mint
-      # will keep answering `endpoint: false` for it, which is true: this estate
-      # runs no Ethereum node, and pointing it at somebody else's would make the
-      # platform's deploys depend on a service nobody here chose or pays for.
-      #
-      # This does NOT open mainnet deploys. `server.ts:562` refuses any mainnet
-      # deploy whose owner is not in `MINT_MAINNET_ALLOWLIST`, which is empty and
-      # stays empty until the owner puts a subject in it. That gate is about who
-      # may spend real gas; this variable is about whether the wire exists at all.
-      MINT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
-      INSTANCE_ID: mint-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}112:4000"
-    depends_on:
-      mint-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-      custody:
-        condition: service_healthy
-      # indexer is a member of the estate now (its profile is gone; see its
-      # block) so INDEXER_URL resolves. It is still NOT waited on here, and that
-      # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
-      # indexer follows no chain and has no deposit to report. This service must
-      # boot whether or not indexer is healthy, exactly as it did before.
-    healthcheck: *healthcheck
-
-  # ------------------------------------------------------------------- market
-  market-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../market
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      MARKET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/market?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      INDEXER_URL: http://indexer:4000
-      POLICY_URL: http://policy:4000
-      # Kept identical to the `market` block below, per the note directly under
-      # this line. It is OPTIONAL in env.ts, so its absence would not have failed
-      # the migrator — which is exactly the kind of difference that starts a
-      # drift, and the drift is what that note forbids. See there for what it is.
-      STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
-      # The migrator loads the SAME env module as the service, so it fails at the
-      # same line for the same missing variable — and it fails FIRST, taking
-      # eleven services with it through `service_completed_successfully`. Keep
-      # this identical to the `market` block below; the two drifting apart is
-      # what turned a market-only change into a testnet-wide outage once already.
-      MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: market-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  market:
-    <<: *service-defaults
-    build:
-      context: ../../market
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      MARKET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/market?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      INDEXER_URL: http://indexer:4000
-      POLICY_URL: http://policy:4000
-      # ── WHERE A BROWSER REACHES STUDIO, WHICH IS NOT WHERE MARKET DOES ───
-      #
-      # Market stores a studio ASSET REFERENCE now rather than image bytes, so a
-      # listing's picture is a URL this service composes at read time. An
-      # in-cluster `http://studio:4000` is useless for that: it is a docker
-      # network name, and the thing that must fetch it is somebody's browser.
-      # Hence a second, PUBLIC, variable naming the same service.
-      #
-      # UNSET IS A SUPPORTED MODE AND IT IS SILENT. `env.ts` defaults it to
-      # '' and `server.ts` then answers `uploadUrl: null` — which that file
-      # calls "the honest answer", and it is, but the cost is that every gallery
-      # image fails to render with no error anywhere. Market's own metric help
-      # text names this exact case: "a `detached` that climbs far above
-      # `attached` is sellers finding their images are not rendering, which is
-      # what an unset STUDIO_PUBLIC_URL looks like from the outside"
-      # (server.ts).
-      #
-      # Interpolated rather than literal, for the reason the hand-off allowlist
-      # above is: a literal would serve testnet's listings from mainnet's studio.
-      # That is a WORKING url to the wrong estate's asset, which is worse than a
-      # broken one because nothing about it looks wrong.
-      #
-      # NOT REACHABLE YET, AND THAT IS KNOWN RATHER THAN OVERLOOKED. `studio`
-      # has no gateway router as this lands, so the hostname does not resolve
-      # and no image renders anywhere in the estate. The router and its DNS
-      # record are the other half; this variable is necessary and not
-      # sufficient. It is set now rather than afterwards because the alternative
-      # is a router going live against services still holding ''.
-      STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
-      # ── WHY A STATIC SERVICE TOKEN CANNOT BE THE ANSWER HERE ─────────────
-      #
-      # A service token's TTL is 10 MINUTES, hard-coded, and identity refuses to
-      # lengthen it (identity/src/tokens.ts). estate-bootstrap.sh bakes one
-      # into this environment and the container then runs for days. Measured on
-      # this estate 2026-08-05: market's token had been expired for 17.5 HOURS.
-      # Calling policy from inside the container with market's own token returned
-      # `401 unauthenticated`, so every listing was being created unmoderated
-      # behind a `{"decision":"review","reasons":["policy_unavailable"],
-      # "degraded":true}` verdict that nothing paged on.
-      #
-      # THE REAL FIX IS THE CREDENTIAL BELOW, not a fresher token. It is
-      # long-lived, `ServiceTokenProvider` exchanges it for short-lived scoped
-      # tokens and refreshes them, and it survives a restart — the pattern
-      # `foresight` (src/upstreams.ts) and `ledger` already use.
-      # estate-bootstrap.sh has minted MARKET_IDENTITY_CREDENTIAL all along and
-      # nothing read it. IDENTITY_URL is not set because market falls back to
-      # IDENTITY_ISSUER, which `*identity-trust` above already provides.
-      #
-      # ── AND WHY THE PLACEHOLDER IS STILL HERE, WHICH IS NOT AN OVERSIGHT ──
-      #
-      # It was removed and PUT BACK, deliberately, after removing it took the
-      # testnet estate down. The reason is worth writing down because it decides
-      # when this line may finally go:
-      #
-      #   * The testnet stack is brought up with `--env-file compose/testnet.env`,
-      #     which REPLACES the default `.env` rather than adding to it (see
-      #     runbooks/runbook-outbox-signing-secret.md). `.env` is a symlink to
-      #     `estate/tokens.env`, so testnet receives NO bootstrap-minted value
-      #     for this variable at all — it has only ever had the placeholder.
-      #   * The market image both estates run reads this with `requiredSecret`
-      #     and exits at `startup failed at: env — MARKET_SERVICE_TOKEN is
-      #     required`. So an empty default is not "fail closed and loudly", it is
-      #     an estate that does not boot, and market-migrate takes eleven other
-      #     services down with it through `service_completed_successfully`.
-      #
-      # DELETE THIS LINE once the market build that makes the token optional and
-      # reads the credential is released to both estates. Until then the honest
-      # statement is that this placeholder is load-bearing, and the defect it
-      # causes is contained on the client side instead: market/src/policyclient.ts
-      # :183-188 maps a peer 401/403 to a DEGRADED verdict rather than a denial,
-      # so a seller is no longer told they are banned when the fault is ours.
-      MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: market-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}113:4000"
-    depends_on:
-      market-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-      # indexer is a member of the estate now (its profile is gone; see its
-      # block) so INDEXER_URL resolves. It is still NOT waited on here, and that
-      # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
-      # indexer follows no chain and has no deposit to report. This service must
-      # boot whether or not indexer is healthy, exactly as it did before.
-      agora:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # -------------------------------------------------------------------- trade
   trade-migrate:
     <<: *migrate-defaults
@@ -2483,257 +2165,7 @@ services:
         condition: service_healthy
       agora:
         condition: service_healthy
-      billing:
-        condition: service_healthy
     healthcheck: *healthcheck
-
-  # ------------------------------------------------------------------- worlds
-  worlds-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../worlds
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      WORLDS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/worlds?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      BILLING_URL: http://billing:4000
-      INSTANCE_ID: worlds-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  worlds:
-    <<: *service-defaults
-    build:
-      context: ../../worlds
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      WORLDS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/worlds?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      BILLING_URL: http://billing:4000
-      # The long-lived credential. See wallet's block for what it replaces.
-      WORLDS_IDENTITY_CREDENTIAL: ${WORLDS_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: worlds-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}115:4000"
-    depends_on:
-      worlds-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-      billing:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # ---------------------------------------------------------------------- nda
-  # ---------------------------------------------------------------------- nda
-  #
-  # NOT A SERVICE ANY MORE. Wave M4a: micro-nda's code ships inside micro-emberkin's
-  # image as plain directories under `src/nda/`, so `nda` and `nda-migrate` are GONE
-  # from here — an absorbed service's old image is stale by construction.
-  #
-  # `NDA_DATABASE_URL` and `NDA_IDENTITY_CREDENTIAL` moved onto `emberkin` above and
-  # are the only two that moved; everything else nda declared was already there.
-  # The NAME still resolves in Kubernetes as an ExternalName — nda binds 4000, the
-  # same port emberkin binds, which is what makes that alias transparent.
-  #
-  # TESSERA IS DELIBERATELY STILL ITS OWN SERVICE and this is the place to say why,
-  # because it is the obvious next thing somebody will try. Three reasons, any one
-  # sufficient: it binds 4022, and an ExternalName is a DNS CNAME that carries no
-  # port mapping, so the cutover mechanism this whole wave rests on does not exist
-  # for it; `GET /v1/title` and `POST /v1/provision` are FROZEN contract constants
-  # that aetherholm already mounts, so first-wins matching would have worlds
-  # provisioning a tessera ward and getting aetherholm's 200; and it verifies its
-  # webhook with INBOUND_SIGNING_SECRET, a variable this pod has never read.
-
-  community-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../community
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community?sslmode=require
-      LEDGER_BASE_URL: http://ledger:4000
-      POLICY_BASE_URL: http://policy:4000
-      # The credential community presents to identity to MINT its own short-lived tokens, replacing
-      # the pre-minted JWT that used to sit in COMMUNITY_SERVICE_CREDENTIAL. That variable is gone
-      # from this file rather than left set: it now faces `assertServiceCredential`, which refuses a
-      # JWT BY NAME (micro-org#222), so leaving the 701-byte token in it would refuse the boot. Its
-      # old default here was `estate-placeholder-token-0000000000000000` — a #142 placeholder that
-      # every guard in the estate passed, which is the whole reason the shape check exists.
-      #
-      # No IDENTITY_URL: it derives from IDENTITY_ISSUER, which *identity-trust already supplies.
-      COMMUNITY_IDENTITY_CREDENTIAL: ${COMMUNITY_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: community-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  community:
-    <<: *service-defaults
-    build:
-      context: ../../community
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community?sslmode=require
-      LEDGER_BASE_URL: http://ledger:4000
-      POLICY_BASE_URL: http://policy:4000
-      # The credential community presents to identity to MINT its own short-lived tokens, replacing
-      # the pre-minted JWT that used to sit in COMMUNITY_SERVICE_CREDENTIAL. That variable is gone
-      # from this file rather than left set: it now faces `assertServiceCredential`, which refuses a
-      # JWT BY NAME (micro-org#222), so leaving the 701-byte token in it would refuse the boot. Its
-      # old default here was `estate-placeholder-token-0000000000000000` — a #142 placeholder that
-      # every guard in the estate passed, which is the whole reason the shape check exists.
-      #
-      # No IDENTITY_URL: it derives from IDENTITY_ISSUER, which *identity-trust already supplies.
-      COMMUNITY_IDENTITY_CREDENTIAL: ${COMMUNITY_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: community-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}117:4000"
-    depends_on:
-      community-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-      agora:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # ------------------------------------------------------------------ tessera
-  #
-  # ── THE PORT, AND WHY THIS BLOCK LOOKS DIFFERENT FROM THE TWENTY-ONE ABOVE ──
-  #
-  # Every other service here binds 4000 (from `x-common-env`) and is mapped to a
-  # derived host port. **tessera binds 4022**, and that is not a quirk to
-  # normalise — it is the point of the choice, argued at 23-tessera.md §10.1 and
-  # again in `tessera/src/env.ts`.
-  #
-  # This estate keeps three port spaces and keeps confusing them: the port a
-  # service BINDS, the HOST port here (derived, `4100 + index in
-  # deployableRepos()`), and micro-ui's `devPort`, which is documented as "not an
-  # allocation; it is a fact about a service". Spaces one and two already collide
-  # THREE TIMES in repositories that are pushed and green: emberkin binds 4100,
-  # which is identity's host port in this very file; aetherholm binds 4120, which
-  # is admin-api's; nda binds 4110, which is notify's. Each of those services
-  # binds a number this file hands to somebody else.
-  #
-  # 4022 sits BELOW the derived 4100+ block, so no number of repositories
-  # appended to `deployableRepos()` can grow into it. Setting `PORT: "4000"` here
-  # would make this container disagree with its own Dockerfile (`EXPOSE 4022`),
-  # with `tessera/src/env.ts`, and with the `tessera` row in micro-ui's registry
-  # — whose test pins 4022 as "the port the service binds". A pin that is false
-  # in the only environment that exists is worse than no pin, so the port stays
-  # and the healthcheck moves. That is the whole cost: one extra anchor.
-  #
-  # ── HOST PORT 4125, AND WHY IT IS NO LONGER 4140 ────────────────────────────
-  #
-  # This block used to read "micro-org's REGISTRY has no `tessera` or
-  # `tessera-web` entry … so no index exists to derive from", and took 4140 and
-  # 4141 by hand. THAT IS NO LONGER TRUE. The registry was swept from 46 rows to
-  # 70 and now carries both, so both are derived like everything else — and the
-  # sweep INSERTED the new rows mid-list rather than appending, which moved
-  # sixteen of this file's thirty-nine host ports at once.
-  #
-  # `tessera` derives to 4125 (index 25), behind `emberkin`, `foresight` and
-  # `aetherholm`, which were inserted ahead of it. 4140 now belongs to
-  # `aetherholm-web`, so leaving this at 4140 would not have been a stale number
-  # — it would have been ANOTHER SERVICE'S number.
-  #
-  # `tessera-web` derives to 4141, which is exactly what was chosen for it by
-  # hand. That agreement is arithmetic coincidence and is worth naming, because
-  # it is precisely what makes this class of drift look survivable: two ports
-  # were noticed, one of them already matched, and fourteen others were wrong.
-  # `scripts/web-check.py` now recomputes ALL of them against the registry.
-  #
-  # The BIND port below is a different question and is not touched: 4022 stays.
-  #
-  # ── WHAT IT TALKS TO, AND WHAT IS DELIBERATELY OPTIONAL ─────────────────────
-  #
-  # `STUDIO_URL`, `LEDGER_URL` and `MARKET_URL` are all optional in
-  # `tessera/src/env.ts`, and their absence is a SUPPORTED mode: the Kiln
-  # answers 503 `kiln_unconfigured` rather than 500 and every other route still
-  # serves. They are set anyway, because a world whose Kiln is cold in the one
-  # environment we can drive is a world whose Kiln has never been driven.
-  tessera-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../tessera
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      # Explicit, and it OVERRIDES the 4000 in `x-common-env` — an explicit key
-      # beats a merge key in YAML. The migrator binds nothing, but it loads the
-      # same `env.ts`, and a migrator that disagreed with its service about the
-      # port would be one more copy of a fact to drift.
-      PORT: "4022"
-      TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera?sslmode=require
-      # A SECOND variable holding the same value, on purpose. `tessera/src/env.ts`
-      # explains it: outbound signatures and inbound verification are one secret
-      # today and stop being one the day the estate moves to per-producer signing
-      # keys. A service that read one variable for both would have to be found.
-      INSTANCE_ID: tessera-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  tessera:
-    <<: *service-defaults
-    build:
-      context: ../../tessera
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      PORT: "4022"
-      TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera?sslmode=require
-      STUDIO_URL: http://studio:4000
-      LEDGER_URL: http://ledger:4000
-      MARKET_URL: http://market:4000
-      # ── NOW A CREDENTIAL, BECAUSE THE FIX THIS COMMENT ASKED FOR HAS LANDED ──
-      #
-      # This block used to explain why tessera had to be handed a ten-minute JWT:
-      # it presented the value directly as a bearer, so a long-lived credential
-      # would have produced a Bearer that is not a JWT and studio would have
-      # answered 401 to every firing. It ended by naming the fix — micro-tessera
-      # adopting `ServiceTokenProvider`. That is what 1.2.0 does, so the token is
-      # gone and the credential it exchanges takes its place.
-      #
-      # `TESSERA_SERVICE_CREDENTIAL` is NOT passed through. It is vestigial in
-      # 1.2.0 and the value the tokens files still hold for it is a 718-byte JWT,
-      # which `assertServiceCredential` refuses BY NAME (micro-org#222) — so
-      # forwarding it would refuse the boot rather than degrade. The identity
-      # credential below always wins when both are set, which makes the variable
-      # pure downside here.
-      #
-      # The default this replaces was `estate-placeholder-token-0000000000000000`:
-      # 40 characters, on no deny-list, over every length floor, and therefore
-      # passed by every guard in the estate. That is micro-org #142 exactly, and
-      # it is why the guard now asserts SHAPE instead of keeping a list.
-      #
-      # No IDENTITY_URL: it derives from IDENTITY_ISSUER via *identity-trust.
-      TESSERA_IDENTITY_CREDENTIAL: ${TESSERA_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: tessera-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}125:4022"
-    depends_on:
-      tessera-migrate:
-        condition: service_completed_successfully
-      agora:
-        condition: service_healthy
-      ledger:
-        condition: service_healthy
-      market:
-        condition: service_healthy
-    healthcheck: *healthcheck-4022
 
   # --------------------------------------------------------------- aetherholm
   #
@@ -2887,374 +2319,9 @@ services:
         condition: service_healthy
       ledger:
         condition: service_healthy
-      billing:
-        condition: service_healthy
-      worlds:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # ---------------------------------------------------------------- foresight
-  #
-  # ── THE LAST OF THE FIVE, AND THE ONE THAT PUTS A CONTRACT ON A CHAIN ───────
-  #
-  # The aetherholm block above names five deployables this file never served:
-  # `aetherholm`, `emberkin`, `foresight`, `beacon`, `faucet`. This is the fifth
-  # and last. `foresight-web` and `foresight-admin-web` have both been up on
-  # their own hostnames with this API absent since the day they were added, and
-  # `foresight-admin` answered 404 to `/ideas` and `/categories` for exactly that
-  # reason — the gateway routed them at a service that was not running.
-  #
-  # ── HOST PORT 4123 IS DERIVED, NOT CHOSEN ───────────────────────────────────
-  #
-  # Index 23 in `deployableRepos()`, via `portFor` (org/tools/cfctl.ts), and
-  # re-derived rather than copied from a brief: `node --experimental-strip-types`
-  # over `org/tools/registry.ts` prints `4123 foresight` at position 23, between
-  # `4122 emberkin` and `4124 aetherholm`. `make check-web` recomputes it.
-  #
-  # ── THE BIND PORT IS 4021 AND IT IS NOT NORMALISED TO 4000 ──────────────────
-  #
-  # This was handed to me as "it binds a non-4000 port that collides with existing
-  # host pins — follow the `nda` normalisation argued in the aetherholm block".
-  # **That is wrong, and checking it is the whole point of the two-case rule the
-  # tessera and aetherholm blocks set up between them.** The two cases are told
-  # apart by WHICH number a service binds, never by the bare fact that it is not
-  # 4000:
-  #
-  #   * aetherholm binds 4120, which is admin-api's HOST port in this file, and
-  #     nda binds 4110, which is notify's. Those numbers are taken, here, today —
-  #     so both are normalised to 4000 by `x-common-env`.
-  #   * tessera binds 4022, which sits BELOW the derived 4100+ block where no
-  #     number of repositories appended to `deployableRepos()` can ever reach it.
-  #     So it keeps its port and the healthcheck moves.
-  #
-  # foresight binds 4021 (`foresight/src/env.ts`, `Dockerfile:86 EXPOSE 4021`,
-  # and micro-ui's registry row, whose test pins it as "the port the service
-  # actually binds"). 4021 is tessera's case exactly — one below 4022, in the same
-  # unreachable region — and it collides with nothing: every host pin in this file
-  # is 4100–4144. So the port stays and `x-healthcheck-4021` is the one extra
-  # anchor it costs, exactly as tessera's did.
-  #
-  # There is a second, decisive reason not to normalise it, and it is already
-  # committed: `gateway/dynamic/public-api.yml` sends the public API's
-  # `/v1/markets`, `/v1/categories` and `/v1/stake-assets` to
-  # `http://foresight:4021`, read off this
-  # image's own `EXPOSE`. Setting `PORT: "4000"` here would break the public API
-  # surface and put this file in drift with the gateway, which
-  # `scripts/surface-routes.py` now fails on.
-  #
-  # ── FORESIGHT NOW EXCHANGES A CREDENTIAL. THIS BLOCK USED TO SAY THE OPPOSITE ─
-  #
-  # It was right when written, and it is worth keeping the correction visible
-  # rather than swapping the paragraph out. It said `FORESIGHT_SERVICE_TOKEN` is
-  # PRESENTED verbatim — `foresight/src/index.ts` was `const token = () =>
-  # env.serviceToken` handed straight to five HttpClients — so handing it the
-  # credential would have sent custody, the indexer, the ledger and policy a
-  # Bearer that is not a JWT, earning 401 with nothing in any log naming why.
-  #
-  # It also named the consequence exactly: **a ten-minute token behind LEASED
-  # BACKGROUND JOBS**, which is the shape that froze EMBER through `ledger`. A
-  # market approved eleven minutes after a bootstrap sat in `awaiting_funds` with
-  # a 401 from custody until somebody re-ran the bootstrap. And it named the fix —
-  # "one seam wide, `index.ts` is already a function called per request,
-  # exactly so that it could become `serviceTokenProvider(...).token`".
-  #
-  # That is what micro-foresight did. `foresight/src/upstreams.ts` builds a
-  # real `ServiceTokenProvider`, so **both variables are passed below**: the
-  # credential is what it exchanges, and the token remains for the paths that
-  # still present one. The service prefers the credential when both are set, and
-  # a test pins that precedence — added because the first attempt to break it
-  # passed, since nothing had exercised the state this compose file now creates.
-  #
-  # Live proof rather than inference: `mirror_cursors` held the before and the
-  # after in one table — the old container's `last_error` was
-  # `GET …/activity → 401`, and the replacement, **13m53s after boot** and well
-  # past the 600-second cliff, had `last_error` null with two tokens minted.
-  #
-  # The `:-` default is empty on purpose. `estate-bootstrap.sh` §5b mints this
-  # into `tokens.env`; an unset credential leaves the service on the old token
-  # and the cliff returns, which is a failure worth being loud about rather than
-  # papering over with a placeholder that looks like a value.
-  #
-  # ── TWO CUSTODY ADDRESSES, AND WHY NEITHER IS WRITTEN HERE ──────────────────
-  #
-  # `FORESIGHT_ORACLE_ADDRESS` and `FORESIGHT_TREASURY_ADDRESS` are both required
-  # and both must be REAL: `ForesightMarket`'s constructor reverts `BadConstruction`
-  # on a zero oracle or a zero treasury, so the placeholders below boot the service
-  # and refuse to produce a working market — which is the fail-closed shape the
-  # faucet's `FAUCET_FUNDING_ADDRESS` has. Neither can be written into this file,
-  # for the reason section 5e already gives: an address does not exist until
-  # custody derives it, and custody takes the next BIP-44 index off a seed whose
-  # state lives in its own database. `estate-bootstrap.sh` section 5f mints both,
-  # reuses them on every later run, and appends them to `tokens.env`.
-  #
-  # The ORACLE is `purpose: 'deployer'`, which looks wrong and is not.
-  # `custody/src/gates.ts` has three signable purposes and none of them signs a
-  # contract CALL — `transfer` requires empty calldata and says widening it would
-  # make the key a signing oracle. So foresight's oracle resolves a market by
-  # CREATING a contract (`ForesightResolver`, whose constructor calls `oracleAct`
-  # and which then has no runtime code), and the market checks
-  # `msg.sender == createAddress(oracle, nonce)`, which is exactly as strong as
-  # checking the oracle address itself. Nothing about custody changed.
-  #
-  # The per-market DEPLOYER addresses are NOT bootstrapped: the service mints one
-  # per market itself, idempotently on `(chain, network, userId='foresight',
-  # orderId=<market id>)` (`deploy.ts`), which is what `custody:address:create`
-  # is in its grant for. Each one needs gas before its market can deploy; the
-  # service reports that as `awaiting_funds` and logs the exact shortfall rather
-  # than burning an attempt.
-  #
-  # ── WHAT IS DELIBERATELY ABSENT, BECAUSE ABSENT IS A DECLARED MODE ──────────
-  #
-  # `foresight/src/env.ts` names four groups whose absence its header calls a
-  # supported mode rather than an error, and all four stay unset:
-  #
-  #   * `FORESIGHT_CUSTODIAL_ADDRESS`. The platform address the custodial pool
-  #     share is staked from, when there is one. It stays unset, and since
-  #     micro-foresight#22 that is an ordinary mode rather than a switch nobody
-  #     is allowed to throw.
-  #
-  #     It used to be the ONE thing `server.ts` read to decide whether
-  #     `GET /stake-assets` reported custodial staking available at all, and it
-  #     was held unset on purpose: the lifecycle after `accepted` had no route,
-  #     so setting it would have escrowed a stranger's coins with no way to
-  #     stake, refund or settle them. Migration 12 built that route — a fifth
-  #     terminal state, `paid`, settled out of the ledger and constrained to
-  #     carry no `tx_hash` — because `custody/src/gates.ts` signs only for
-  #     `deployer`, `treasury` and `deposit`, and `stake(uint8)` is a
-  #     value-bearing CALL with calldata that no key in this estate can make.
-  #
-  #     A `paid` stake never reaches the chain, so it needs no address, and
-  #     migration 13 ties `platform_address` to the two states that assert the
-  #     chain saw the stake. Availability no longer reads this variable. Set it
-  #     only if the platform ever holds a key that can place the aggregate
-  #     position itself.
-  #   * `FORESIGHT_HOUSE_ADDRESS` (21 §5). The house seed address must hold its
-  #     own key OUTSIDE this estate's custody — `houseseed.ts` explains that
-  #     custody has no transaction shape that can call `stake(uint8)` at all — and
-  #     this estate has no such key. So it runs no engagement programme and
-  #     `POST /markets/:id/approve` refuses a `houseSeedPerOutcomeWei` plainly,
-  #     which is the documented behaviour and not a degradation.
-  #   * `FORESIGHT_PROPOSER_*` and `FORESIGHT_SEARCH_*`. No external model or
-  #     search adapter is wired here, so the idea pipeline records "no proposals"
-  #     and the operator queue stays empty. `index.ts` logs
-  #     `proposerConfigured: false` at boot so an operator can see which mode they
-  #     are in without an error line every six hours.
-  #   * `FORESIGHT_MAINNET_ENABLED`. NO LONGER IN THIS GROUP, and the correction
-  #     belongs here rather than only where the change is. This bullet used to say
-  #     the variable was unset and `FORESIGHT_NETWORK` was `testnet`, so two
-  #     deliberate settings stood between this estate and a mainnet. There is a
-  #     real EMBER mainnet now — `hearth`, chain 7411 — and on that environment
-  #     BOTH settings are made, in `env/chain.mainnet.env`, together, with the
-  #     reason written beside them. Still two settings and still deliberate; what
-  #     changed is that one environment has deliberately made them.
-  #
-  # `ADMIN_API_URL` IS set even though it is optional, and that is the one
-  # judgement call in this list. It is `admin:read` on the engagement caps, which
-  # is unreachable while there is no house address — so by the aetherholm rule
-  # ("a variable nothing reads is a secret nothing needed") it could go. It stays
-  # because the moment a house address exists this deployment must read caps
-  # BEFORE anything moves (21 §8), and because leaving it out would make
-  # `admin:read` an unexplained entry in a DERIVED grant map. The token it is
-  # handed is the same one, so it is no extra secret.
-  #
-  # ── FORESIGHT_RPC_URLS IS THE ONE THING WITHOUT WHICH NOTHING REACHES A CHAIN
-  #
-  # Empty by default, so a chain with no endpoint is refused rather than falling
-  # back to a public node nobody chose. `host.docker.internal` and `extra_hosts`
-  # for the reason the faucet and indexer blocks give: Docker Desktop resolves it
-  # and the Linux daemon does not, and there this service would boot, log
-  # `rpcConfigured: false`, serve, and refuse every deploy.
-  foresight-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../foresight
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      # Explicit, and it OVERRIDES the 4000 in `x-common-env` — an explicit key
-      # beats a merge key in YAML. tessera's reasoning: the migrator binds
-      # nothing, but it loads the same `env.ts`, and a migrator that disagreed
-      # with its service about the port would be one more copy of a fact to drift.
-      PORT: "4021"
-      FORESIGHT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/foresight?sslmode=require
-      # Foresight quotes a stake brought in BTC or ETH against EMBER, so it needs
-      # pricing. Left OPTIONAL in the service rather than required, deliberately: a
-      # missing quote makes non-EMBER staking inert, where a required variable would
-      # refuse to boot and take EMBER staking down with it. Wired here so it is not
-      # inert. Third service this week to need this line — billing and mint were the
-      # others, both found only when something failed.
-      PRICING_URL: http://pricing:4000
-      # The migrator imports the same `env.ts`, which builds the WHOLE config
-      # before it opens a connection — so every required value is supplied here
-      # too. It dials none of them and signs nothing.
-      CUSTODY_URL: http://custody:4000
-      INDEXER_URL: http://indexer:4000
-      LEDGER_URL: http://ledger:4000
-      POLICY_URL: http://policy:4000
-      FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
-      FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
-      FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
-      # The published house-seed address (21 §5). Absent means no seed: foresight refuses a
-      # houseSeedPerOutcomeWei plainly rather than staking nothing and reporting success. It was
-      # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
-      # silently — a control that reports success while doing nothing.
-      FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
-      # The published address the CUSTODIAL pool share is staked from, when there is one — the
-      # second way to bet, with coins already deposited here rather than a browser wallet.
-      #
-      # IT IS MAPPED HERE AND LEFT UNSET, and mapping it unset is still the point: it was readable
-      # only by `foresight/src/env.ts` before this line, so an operator who set it in an env file
-      # would have got no error and no effect — the same trap `docs/house-seed.md` §3.1 records for
-      # the line above. A variable that cannot be set is also a variable whose absence nobody can
-      # prove.
-      #
-      # WHAT CHANGED (micro-foresight#22): this is no longer the switch. `server.ts` used to derive
-      # `custodialStakingAvailable` from nothing but this being set, and the instruction here was DO
-      # NOT SET IT YET — because `server.ts` called one of the lifecycle functions `custodialstakes.ts`
-      # exports, so the intake moved a stranger's BTC from available to escrow and then had no route
-      # to stake, refund or settle it.
-      #
-      # Migration 12 built the route: `paid`, a fifth terminal state settled out of the ledger and
-      # constrained to carry no `tx_hash`. It exists because `custody/src/gates.ts` signs only for
-      # `deployer`, `treasury` and `deposit`, and `stake(uint8)` is a value-bearing CALL with
-      # calldata — so no key in this estate can place the platform's aggregate position, and waiting
-      # for one would have been waiting forever. A `paid` stake never reaches the chain and needs no
-      # address; migration 13 ties `platform_address` to the states that assert the chain saw it.
-      #
-      # So availability is now `true` and this stays unset. Set it only if the platform ever holds a
-      # key that can stake the aggregate itself.
-      FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
-      FORESIGHT_ORACLE_USER_ID: foresight-estate
-      FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
-      INSTANCE_ID: foresight-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  foresight:
-    <<: *service-defaults
-    build:
-      context: ../../foresight
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      PORT: "4021"
-      FORESIGHT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/foresight?sslmode=require
-      # Foresight quotes a stake brought in BTC or ETH against EMBER, so it needs
-      # pricing. Left OPTIONAL in the service rather than required, deliberately: a
-      # missing quote makes non-EMBER staking inert, where a required variable would
-      # refuse to boot and take EMBER staking down with it. Wired here so it is not
-      # inert. Third service this week to need this line — billing and mint were the
-      # others, both found only when something failed.
-      PRICING_URL: http://pricing:4000
-      CUSTODY_URL: http://custody:4000
-      INDEXER_URL: http://indexer:4000
-      LEDGER_URL: http://ledger:4000
-      POLICY_URL: http://policy:4000
-      ADMIN_API_URL: http://admin-api:4000
-      # The browser-facing half of studio, exactly as in `market` above — see the
-      # long note there. Foresight holds an asset reference and builds `bytesUrl`
-      # from this at read time, deliberately NOT storing a URL in the durable
-      # event (`foresight/src/images.test.ts` asserts that), so the value is
-      # read on every render and a wrong one is wrong everywhere at once.
-      #
-      # `env.test.ts` requires an ORIGIN and rejects a path — a trailing
-      # slash is accepted and normalised, anything more throws at boot. The
-      # interpolation below produces a bare origin on both estates.
-      #
-      # Gated on studio's gateway router and its DNS record, which do not exist
-      # yet. Set now for the reason given in market's block.
-      STUDIO_PUBLIC_URL: https://studio${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
-      # A TOKEN, NOT A CREDENTIAL. See the long note above; it is presented
-      # verbatim by `index.ts` and a `cfsc_…` secret here 401s all five
-      # upstreams.
-      FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
-      # `FORESIGHT_NETWORK` AND `FORESIGHT_MAINNET_ENABLED` ARE IN THE SAME
-      # `env_file` AS THE INDEXER'S, AND THAT IS THE POINT.
-      #
-      # `env.ts` refuses to boot on `FORESIGHT_NETWORK=mainnet` unless
-      # `FORESIGHT_MAINNET_ENABLED=true`, so that a one-word typo cannot put
-      # strangers' money on a live chain. That gate is worth keeping and is easy
-      # to defeat by accident — the obvious parameterisation here would have been
-      # `FORESIGHT_MAINNET_ENABLED: ${…:-false}` beside a `FORESIGHT_NETWORK`
-      # derived from `CF_EMBER_NETWORK`, which turns two independent settings
-      # into one and removes the whole defence.
-      #
-      # So NEITHER is written here. Both are stated, per network, in
-      # `env/chain.<network>.env` — a committed file whose only subject is which
-      # chain this estate is on, where the pair is visible together and turning
-      # the gate on is a diff somebody has to read. `foresight` reads the same
-      # file as `indexer` so the two cannot name different networks.
-      #
-      # `chainIdOf(chain, market.network)` (`foresight/src/deploy.ts`) is what
-      # actually signs, so a `FORESIGHT_NETWORK` disagreeing with the node would
-      # produce transactions the node rejects on EIP-155 — silently, at the one
-      # moment a market is created.
-      FORESIGHT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
-      # Minted by estate-bootstrap.sh §5f and reused thereafter. The zero
-      # placeholders boot the service and cannot produce a market: the contract's
-      # constructor reverts on either.
-      FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
-      FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
-      # The published house-seed address (21 §5). Absent means no seed: foresight refuses a
-      # houseSeedPerOutcomeWei plainly rather than staking nothing and reporting success. It was
-      # documented at :2623 and never MAPPED, so setting it in an env file changed nothing,
-      # silently — a control that reports success while doing nothing.
-      FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
-      # The published address the CUSTODIAL pool share is staked from, when there is one — the
-      # second way to bet, with coins already deposited here rather than a browser wallet.
-      #
-      # IT IS MAPPED HERE AND LEFT UNSET, and mapping it unset is still the point: it was readable
-      # only by `foresight/src/env.ts` before this line, so an operator who set it in an env file
-      # would have got no error and no effect — the same trap `docs/house-seed.md` §3.1 records for
-      # the line above. A variable that cannot be set is also a variable whose absence nobody can
-      # prove.
-      #
-      # WHAT CHANGED (micro-foresight#22): this is no longer the switch. `server.ts` used to derive
-      # `custodialStakingAvailable` from nothing but this being set, and the instruction here was DO
-      # NOT SET IT YET — because `server.ts` called one of the lifecycle functions `custodialstakes.ts`
-      # exports, so the intake moved a stranger's BTC from available to escrow and then had no route
-      # to stake, refund or settle it.
-      #
-      # Migration 12 built the route: `paid`, a fifth terminal state settled out of the ledger and
-      # constrained to carry no `tx_hash`. It exists because `custody/src/gates.ts` signs only for
-      # `deployer`, `treasury` and `deposit`, and `stake(uint8)` is a value-bearing CALL with
-      # calldata — so no key in this estate can place the platform's aggregate position, and waiting
-      # for one would have been waiting forever. A `paid` stake never reaches the chain and needs no
-      # address; migration 13 ties `platform_address` to the states that assert the chain saw it.
-      #
-      # So availability is now `true` and this stays unset. Set it only if the platform ever holds a
-      # key that can stake the aggregate itself.
-      FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
-      FORESIGHT_ORACLE_USER_ID: foresight-estate
-      FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
-      INSTANCE_ID: foresight-estate
-    env_file:
-      - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
-      - *outbox-secret-file
-    # Docker Desktop resolves `host.docker.internal`; the Linux daemon does not.
-    # Same reason as the `faucet` and `indexer` blocks.
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}123:4021"
-    depends_on:
-      foresight-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-      custody:
-        condition: service_healthy
-      indexer:
-        condition: service_healthy
-      ledger:
-        condition: service_healthy
       agora:
         condition: service_healthy
-      admin-api:
-        condition: service_healthy
-    healthcheck: *healthcheck-4021
+    healthcheck: *healthcheck
 
   # ------------------------------------------------------------------- beacon
   #
@@ -3522,9 +2589,7 @@ services:
         condition: service_healthy
       ledger:
         condition: service_healthy
-      market:
-        condition: service_healthy
-      worlds:
+      agora:
         condition: service_healthy
       activity:
         condition: service_healthy
@@ -3865,9 +2930,7 @@ services:
         condition: service_completed_successfully
       ledger:
         condition: service_healthy
-      billing:
-        condition: service_healthy
-      market:
+      agora:
         condition: service_healthy
     healthcheck: *healthcheck
 
@@ -3978,8 +3041,6 @@ services:
       ledger:
         condition: service_healthy
       wallet:
-        condition: service_healthy
-      billing:
         condition: service_healthy
       agora:
         condition: service_healthy
@@ -5283,6 +4344,16 @@ services:
       POLICY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/policy?sslmode=require
       PRICING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/pricing?sslmode=require
       STUDIO_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/studio?sslmode=require
+      # M5b: seven more. TWELVE databases in one migrator pass now — agora's CI
+      # job "the migrator, on twelve empty databases" runs exactly this set, twice,
+      # to prove it is idempotent.
+      COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community?sslmode=require
+      MARKET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/market?sslmode=require
+      BILLING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/billing?sslmode=require
+      MINT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/mint?sslmode=require
+      FORESIGHT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/foresight?sslmode=require
+      WORLDS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/worlds?sslmode=require
+      TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera?sslmode=require
       INSTANCE_ID: agora-migrate
     # Mirrors the runtime pod's env_file (outbox + studio), as lantern-migrate
     # mirrors lantern. The migrator does not READ these secrets; carrying them
@@ -5357,6 +4428,75 @@ services:
       # nothing here serves that directory over HTTP, so `assets.ts` mints honest
       # `file://` URLs instead of fetchable-looking 404s.
       STUDIO_ASSET_ROOT: /var/lib/studio/assets
+      # ── M5b: THE COMMERCE/GAMES TIER'S SEVEN DATABASES (micro-deploy#282) ─────
+      #
+      # community, market, billing, mint, foresight and worlds hold
+      # `ledger.postEntry`; tessera issues items. The owner overruled the
+      # ledger-authority isolation rule for the platform tier (plan §M5), and the
+      # mitigations that make it survivable are NOT optional: per-route
+      # `RouteSpec.sql`, one JobRunner per module, `module` metric labels, and the
+      # per-module event paths swept below. Each module opens its OWN pool from
+      # its OWN URL — `agora/src/index.ts` cannot hand a module the wrong handle.
+      COMMUNITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/community?sslmode=require
+      MARKET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/market?sslmode=require
+      BILLING_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/billing?sslmode=require
+      MINT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/mint?sslmode=require
+      FORESIGHT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/foresight?sslmode=require
+      WORLDS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/worlds?sslmode=require
+      TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera?sslmode=require
+      # ── THE ABSORBED MODULES' UPSTREAMS ──────────────────────────────────────
+      #
+      # `PORT` IS DELIBERATELY ABSENT. Standalone, foresight set `PORT: "4021"`
+      # and tessera `PORT: "4022"`; in the merged process there is ONE listener on
+      # 4000 and either line would move it, taking all twelve modules with it.
+      # The gateway upstreams that named those two ports are re-pointed at
+      # `agora:4000` in the same change.
+      #
+      # Several of these resolve back to THIS pod through the M5a/M5b aliases —
+      # POLICY_URL, POLICY_BASE_URL, PRICING_URL, BILLING_*, MARKET_URL,
+      # STUDIO_URL are all modules here now. They stay as HTTP self-calls rather
+      # than becoming direct function calls: the module boundary is the thing
+      # that makes this reversible, and `POLICY_URL` has been a self-call since
+      # M5a without trouble. ledger, indexer, custody and admin-api are genuinely
+      # other pods and stay so — ledger and custody by the isolation rule.
+      LEDGER_URL: http://ledger:4000
+      LEDGER_BASE_URL: http://ledger:4000
+      POLICY_BASE_URL: http://policy:4000
+      INDEXER_URL: http://indexer:4000
+      CUSTODY_URL: http://custody:4000
+      PRICING_URL: http://pricing:4000
+      BILLING_URL: http://billing:4000
+      BILLING_LEDGER_URL: http://ledger:4000
+      BILLING_PRICING_URL: http://pricing:4000
+      MARKET_URL: http://market:4000
+      STUDIO_URL: http://studio:4000
+      ADMIN_API_URL: http://admin-api:4000
+      # STUDIO_PUBLIC_URL is NOT repeated here: agora already sets it above, for
+      # its own avatar/attachment `bytesUrl`, at the identical value market and
+      # foresight used. A second copy is a duplicate mapping key, which
+      # `docker compose config` refuses outright (PyYAML silently takes the last).
+      # One credential per module, exactly as each carried standalone. They are
+      # NOT interchangeable: each is exchanged for a service token whose grants
+      # are that module's own, so sharing one would widen every module's reach to
+      # the union of all seven.
+      COMMUNITY_IDENTITY_CREDENTIAL: ${COMMUNITY_IDENTITY_CREDENTIAL:-}
+      MARKET_IDENTITY_CREDENTIAL: ${MARKET_IDENTITY_CREDENTIAL:-}
+      BILLING_IDENTITY_CREDENTIAL: ${BILLING_IDENTITY_CREDENTIAL:-}
+      MINT_IDENTITY_CREDENTIAL: ${MINT_IDENTITY_CREDENTIAL:-}
+      FORESIGHT_IDENTITY_CREDENTIAL: ${FORESIGHT_IDENTITY_CREDENTIAL:-}
+      WORLDS_IDENTITY_CREDENTIAL: ${WORLDS_IDENTITY_CREDENTIAL:-}
+      TESSERA_IDENTITY_CREDENTIAL: ${TESSERA_IDENTITY_CREDENTIAL:-}
+      # mint's and foresight's own settings, carried verbatim.
+      MINT_NETWORK: ${CF_EMBER_NETWORK:-mainnet}
+      MINT_DEPLOY_PRICE_USD_CENTS: ${CF_MINT_DEPLOY_PRICE_USD_CENTS:-2500}
+      MINT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
+      FORESIGHT_RPC_URLS: '{"ember":"${EMBER_RPC_URL:-http://host.docker.internal:8545}"}'
+      FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_HOUSE_ADDRESS: ${FORESIGHT_HOUSE_ADDRESS:-}
+      FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
+      FORESIGHT_ORACLE_USER_ID: foresight-estate
+      FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: agora-estate
     # `*outbox-secrets` alone until M5a: policy/devplatform verify inbound events
     # against `OUTBOX_ACCEPT_SECRETS`/`DEVPLATFORM_INGEST_SECRETS`, both of which
@@ -5364,8 +4504,19 @@ services:
     # — spelled as an explicit two-item list because a YAML anchor cannot merge two
     # sequences (studio's old block made the same note).
     env_file:
+      # M5b: foresight read the chain file standalone (its EVM settings), and mint
+      # reads the same RPC variables. The outbox file already carries every module
+      # secret this process needs — COMMUNITY_INGEST_SECRETS for community and
+      # INBOUND_SIGNING_SECRET for tessera's webhook are both in it, held apart
+      # from OUTBOX_SIGNING_SECRET exactly as tessera required standalone.
+      - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
       - *outbox-secret-file
       - *studio-secret-file
+    # foresight carried this standalone, for the reason the faucet and indexer
+    # blocks state: Docker Desktop resolves `host.docker.internal`, the Linux
+    # daemon does not, and mint's and foresight's RPC defaults name it.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       # studio's asset tree. A ReadWriteOnce PVC, so the renderer stamps this pod
       # `strategy: Recreate` automatically (k8s-render.py) — a rolling update

@@ -3263,16 +3263,16 @@ http:
         servers: [{ url: "http://admin-api:4000" }]
     cf-svc-market:
       loadBalancer:
-        servers: [{ url: "http://market:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-mint:
       loadBalancer:
-        servers: [{ url: "http://mint:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-trade:
       loadBalancer:
         servers: [{ url: "http://trade:4000" }]
     cf-svc-worlds:
       loadBalancer:
-        servers: [{ url: "http://worlds:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-devplatform:
       loadBalancer:
         # M5a: devplatform is a module of agora now. Re-pointed at the absorber.
@@ -3291,7 +3291,7 @@ http:
     # connection refused that looks exactly like a container that has not started.
     cf-svc-tessera:
       loadBalancer:
-        servers: [{ url: "http://tessera:4022" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-identity:
       loadBalancer:
         servers: [{ url: "http://identity:4000" }]
@@ -3325,7 +3325,7 @@ http:
     # hostname has two backends and why splitting it by resource is the registry's own model.
     cf-svc-billing:
       loadBalancer:
-        servers: [{ url: "http://billing:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     # 4000, like every other service here: the estate sets `PORT: "4000"` through
     # `*common-env`. Lantern's own DEFAULT is 4010 — the number the registry
     # carries as its devPort, and the one a bundle resolves on a loopback origin —
@@ -3398,7 +3398,7 @@ http:
     # host-port block where nothing can grow into it, which is tessera's case and not theirs.
     cf-svc-foresight:
       loadBalancer:
-        servers: [{ url: "http://foresight:4021" }]
+        servers: [{ url: "http://agora:4000" }]
 
     # ── the chain, which is the only upstream here that is not a container of ours ──
     #

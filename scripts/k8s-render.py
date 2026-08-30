@@ -487,6 +487,36 @@ MERGED_INTO = {
     "policy": "agora",
     "pricing": "agora",
     "studio": "agora",
+    # 2026-08-30, wave M5b — the commerce/games tier joins the monolith
+    # (micro-deploy#282, micro-agora#8). Twelve modules in one process now.
+    #
+    # SIX OF THESE SEVEN HOLD `ledger.postEntry`, and that is a rule being
+    # OVERRULED rather than satisfied: the owner's under-20 decision (plan §M5)
+    # trades the money-authority isolation for the container count. What is NOT
+    # traded is the machinery that makes it survivable — per-route
+    # `RouteSpec.sql`, one JobRunner per module, `module` metric labels, and a
+    # separate signed inbox per module (`/v1/events/<module>`, the bare path 410s).
+    # identity, ledger and custody stay OUT, which is what still keeps the worst
+    # platform bug away from minting a token, rewriting the book, or signing.
+    #
+    # ── THE TWO PORTS THAT ARE NOT 4000, AND WHY THE ALIAS IS STILL SAFE ──────
+    #
+    # foresight bound 4021 and tessera 4022, and an ExternalName carries NO port
+    # mapping — the exact trap that refused tessera at M4a. It does not bite here
+    # because nothing addresses either by port any more: as MODULES they mount
+    # into agora's single 4000 listener (their `PORT:` lines are deliberately
+    # absent from agora's compose block), and the only callers that ever named
+    # `:4021`/`:4022` were four gateway upstreams and one erasure row, all
+    # re-pointed at `agora:4000` in this same change. Measured, not assumed:
+    # `grep -rE "http://(foresight|tessera):[0-9]+"` over compose and gateway
+    # returns nothing else.
+    "community": "agora",
+    "market": "agora",
+    "billing": "agora",
+    "mint": "agora",
+    "foresight": "agora",
+    "worlds": "agora",
+    "tessera": "agora",
 }
 
 

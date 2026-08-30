@@ -96,7 +96,7 @@ trade|trade|http://trade:4000/v1/events|delete|-|insert into series (id, symbol,
 # would make the drill green by choosing not to look. A red line naming the
 # service and the reason is the honest form of "not done", and it turns green the
 # day market erases rather than the day somebody remembers to add it back.
-market|market|http://market:4000/v1/events|NOT ERASING — expires listings only|-|insert into listings (seller_subject, asset_kind, item_urn, quantity, item_asset_code, pricing_mode, price, asset_code, settlement_mode, status) values ('user:{{uid}}', 'token', 'cf:mint:token:drill', 1, 'DRILL', 'fixed', 100, 'EMBER', 'custodial', 'draft')|SCAN
+market|market|http://agora:4000/v1/events/market|NOT ERASING — expires listings only|-|insert into listings (seller_subject, asset_kind, item_urn, quantity, item_asset_code, pricing_mode, price, asset_code, settlement_mode, status) values ('user:{{uid}}', 'token', 'cf:mint:token:drill', 1, 'DRILL', 'fixed', 100, 'EMBER', 'custodial', 'draft')|SCAN
 #
 # ── THE FOURTEEN THAT STORED A PERSON AND HAD NO SUBSCRIBER AT ALL ───────────
 #
@@ -113,7 +113,7 @@ market|market|http://market:4000/v1/events|NOT ERASING — expires listings only
 # usage_records and idempotency_keys are deleted — the last held a full copy of
 # the subject inside its `response` jsonb, which no survey of `subject` COLUMNS
 # would ever have found.
-billing|billing|http://billing:4000/v1/events|mixed|-|insert into usage_records (subject, meter, quantity) values ('user:{{uid}}', 'drill', 1)|SCAN
+billing|billing|http://agora:4000/v1/events/billing|mixed|-|insert into usage_records (subject, meter, quantity) values ('user:{{uid}}', 'drill', 1)|SCAN
 #
 # settlement — `outbound_transactions` keeps raw_tx, tx_hash and to_address as
 # proof the withdrawal was authorised (Art. 17(3)(b) and (e)); `user_id` is
@@ -137,13 +137,13 @@ policy|policy|http://agora:4000/v1/events/policy|mixed|policy_decisions,freezes|
 # are deleted. Nine `on delete restrict` foreign keys make the final
 # `delete from accounts` a completeness PROOF: miss one table and it raises 23503
 # rather than passing quietly.
-tessera|tessera|http://tessera:4022/v1/events|mixed|-|insert into accounts (subject) values ('user:{{uid}}')|SCAN
+tessera|tessera|http://agora:4000/v1/events/tessera|mixed|-|insert into accounts (subject) values ('user:{{uid}}')|SCAN
 #
 # mint — split on whether the token ever reached a chain. A never-broadcast token
 # is deleted outright; a broadcast one keeps `owner_address` and `tx_hash` under
 # Art. 17(3)(b) because the chain is immutable and the record is what reconciles
 # against it, while `owner_subject` and `owner_wallet_id` go.
-mint|mint|http://mint:4000/v1/events|mixed|-|insert into tokens (owner_subject, owner_wallet_id, owner_address, chain, network, name, symbol, decimals, supply, price_shards) values ('user:{{uid}}', 'drill-wallet', '0xd5110000000000000000000000000000000d5111', 'ember', 'mainnet', 'Drill', 'DRL', 0, 1, 1)|SCAN
+mint|mint|http://agora:4000/v1/events/mint|mixed|-|insert into tokens (owner_subject, owner_wallet_id, owner_address, chain, network, name, symbol, decimals, supply, price_shards) values ('user:{{uid}}', 'drill-wallet', '0xd5110000000000000000000000000000000d5111', 'ember', 'mainnet', 'Drill', 'DRL', 0, 1, 1)|SCAN
 #
 # emberkin — the save cascades to battles; achievements go with it. One row is
 # kept, anonymised: `reward_grants` records a ledger posting that was actually
@@ -195,7 +195,7 @@ nda|nda|http://emberkin:4000/v1/events|delete|-|insert into worlds (id, name, se
 # subjects, `proposals.target_subject`, `executions.executed_by` and the body of
 # `discussion_posts` all survived, the last because `redacted_at` masked on READ
 # only — the text was still in the table.
-community|community|http://community:4000/v1/events|pseudonymise|-|insert into communities (id, slug, name, kind, owner_subject, join_policy, governance_model) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'drill', 'Drill', 'guild', 'user:{{uid}}', 'open', 'one_member_one_vote') on conflict do nothing; insert into memberships (community_id, subject) values ('00000000-0000-4000-8000-0000000d5111', 'user:{{uid}}')|SCAN
+community|community|http://agora:4000/v1/events/community|pseudonymise|-|insert into communities (id, slug, name, kind, owner_subject, join_policy, governance_model) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'drill', 'Drill', 'guild', 'user:{{uid}}', 'open', 'one_member_one_vote') on conflict do nothing; insert into memberships (community_id, subject) values ('00000000-0000-4000-8000-0000000d5111', 'user:{{uid}}')|SCAN
 #
 # analytics — the only one whose handler was RIGHT in shape and wrong in aim: the
 # subject came from `envelope.actor`, which is whoever REQUESTED the deletion. A

@@ -310,7 +310,7 @@ http:
         servers: [{ url: "http://activity:4000" }]
     cf-api-foresight:
       loadBalancer:
-        servers: [{ url: "http://foresight:4021" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-api-identity:
       loadBalancer:
         servers: [{ url: "http://identity:4000" }]
@@ -319,13 +319,13 @@ http:
         servers: [{ url: "http://wallet:4000" }]
     cf-api-market:
       loadBalancer:
-        servers: [{ url: "http://market:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-api-mint:
       loadBalancer:
-        servers: [{ url: "http://mint:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-api-worlds:
       loadBalancer:
-        servers: [{ url: "http://worlds:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-api-nda:
       loadBalancer:
         servers: [{ url: "http://emberkin:4000" }]

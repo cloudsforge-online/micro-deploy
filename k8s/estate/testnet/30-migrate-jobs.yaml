@@ -2,11 +2,11 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.104  (2026.8.104.yaml)
+# Release:   2026.8.105  (2026.8.105.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.104.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.105.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -15,7 +15,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-keys-init-2026-8-104
+  name: custody-keys-init-2026-8-105
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: custody-keys-init
@@ -67,7 +67,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: faucet-migrate-2026-8-104
+  name: faucet-migrate-2026-8-105
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: faucet-migrate
@@ -85,7 +85,7 @@ spec:
     spec:
       containers:
       - name: faucet-migrate
-        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:c38084d074bef372a33586834d585a27cdc26837ba8aa4c8f34c0ca75b4f14e5
+        image: ghcr.io/cloudsforge-online/micro-faucet@sha256:7cf5828d65a1fef175c96850a708548a1709fcd6eb0ba7cafb572f6ccd19944e
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -173,7 +173,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-assets-init-2026-8-104
+  name: studio-assets-init-2026-8-105
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: studio-assets-init
@@ -225,7 +225,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-assets-check-2026-8-104
+  name: tessera-assets-check-2026-8-105
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: tessera-assets-check

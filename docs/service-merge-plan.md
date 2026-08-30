@@ -397,7 +397,23 @@ sign a transaction.
   so future waves' exec checks resolve the absorber). **Estate 50 → 46 pods.**
 - **M5b** — + `community`, `market`, `billing`, `mint`, `foresight`, `worlds`,
   `tessera` (the commerce/games tier; the postEntry rule is overruled, the
-  event-path split and inbox separation are not).
+  event-path split and inbox separation are not). **Code merged 2026-08-30
+  (micro-agora#8), registry micro-org#526, shipping as release 2026.8.105.**
+  Twelve modules in one process; the render drops 23 Deployments to 16.
+
+  **THE TWO PORTS, AND WHY THE M4a REFUSAL NO LONGER HOLDS.** tessera bound 4022
+  and foresight 4021, and an ExternalName carries no port mapping — the exact
+  reason M4a refused tessera. As MODULES they mount into agora's single 4000
+  listener, so their `PORT:` lines are deliberately absent from agora's compose
+  block (the render confirms `PORT=4000`, containerPort 4000). The refusal's
+  other two limbs are answered too: the frozen `GET /v1/title` /
+  `POST /v1/provision` contract paths do not collide because aetherholm is in a
+  DIFFERENT process (the emberkin pod) — **that collision becomes real at M5d
+  and must be split there** — and `INBOUND_SIGNING_SECRET` is carried as
+  tessera's own module secret, still held apart from `OUTBOX_SIGNING_SECRET`.
+  Measured rather than assumed: nothing else in compose or the gateway ever
+  named `:4021` or `:4022`; the four gateway upstreams and one erasure row that
+  did are re-pointed at `agora:4000`.
 - **M5c** — + `activity` and `lantern`, which bring `notify` and `analytics`
   with them as already-built modules.
 - **M5d** — + `emberkin` (brings aetherholm, nda), `trade`, `admin-api`,
