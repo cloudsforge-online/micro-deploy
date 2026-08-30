@@ -229,28 +229,58 @@ spec:
               name: estate-tokens
               key: AGORA_IDENTITY_CREDENTIAL
               optional: false
+        - name: FORESIGHT_ORACLE_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: estate-tokens
+              key: FORESIGHT_ORACLE_ADDRESS
+              optional: false
+        - name: FORESIGHT_TREASURY_ADDRESS
+          valueFrom:
+            secretKeyRef:
+              name: estate-tokens
+              key: FORESIGHT_TREASURY_ADDRESS
+              optional: false
         - name: AGORA_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/agora?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
           value: mainnet
         - name: BILLING_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/billing?sslmode=require
+        - name: BILLING_LEDGER_URL
+          value: http://ledger:4000
+        - name: BILLING_PRICING_URL
+          value: http://pricing:4000
+        - name: BILLING_URL
+          value: http://billing:4000
         - name: CLOUDSFORGE_TAG
           value: estate
         - name: COMMUNITY_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/community?sslmode=require
+        - name: CUSTODY_URL
+          value: http://custody:4000
         - name: DEVPLATFORM_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform?sslmode=require
         - name: FORESIGHT_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/foresight?sslmode=require
+        - name: FORESIGHT_ORACLE_ORDER_ID
+          value: foresight-estate-oracle-1
+        - name: FORESIGHT_ORACLE_USER_ID
+          value: foresight-estate
         - name: IDENTITY_ISSUER
           value: http://identity:4000
         - name: IDENTITY_JWKS_URL
           value: http://identity:4000/.well-known/jwks.json
         - name: IDENTITY_URL
           value: http://identity:4000
+        - name: INDEXER_URL
+          value: http://indexer:4000
         - name: INSTANCE_ID
           value: agora-migrate
+        - name: LEDGER_BASE_URL
+          value: http://ledger:4000
+        - name: LEDGER_URL
+          value: http://ledger:4000
         - name: LOG_LEVEL
           value: info
         - name: MARKET_DATABASE_URL
@@ -259,12 +289,18 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint?sslmode=require
         - name: NODE_ENV
           value: production
+        - name: POLICY_BASE_URL
+          value: http://policy:4000
         - name: POLICY_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy?sslmode=require
+        - name: POLICY_URL
+          value: http://policy:4000
         - name: PORT
           value: '4000'
         - name: PRICING_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/pricing?sslmode=require
+        - name: PRICING_URL
+          value: http://pricing:4000
         - name: STUDIO_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/studio?sslmode=require
         - name: TESSERA_DATABASE_URL

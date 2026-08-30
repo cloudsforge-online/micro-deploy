@@ -4354,6 +4354,35 @@ services:
       FORESIGHT_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/foresight?sslmode=require
       WORLDS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/worlds?sslmode=require
       TESSERA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/tessera?sslmode=require
+      # ── THE MIGRATOR NEEDS THE MODULES' UPSTREAMS, AND THAT IS NOT OBVIOUS ────
+      #
+      # A migrator opens databases and applies SQL; it calls no upstream. It still
+      # needs these because `src/migrator.ts` IMPORTS every module, and a module's
+      # `env.ts` validates at import — `required(source, 'LEDGER_BASE_URL')` in
+      # community/env.ts throws before a single migration runs.
+      #
+      # Measured, not guessed: leaving them out failed the 2026.8.105 deploy at
+      # wave 30 with `community … LEDGER_BASE_URL is required`, three times, and
+      # the wave gate correctly applied nothing downstream. agora's own CI migrate
+      # job ("the migrator, on twelve empty databases") sets this same set beside
+      # the twelve DSNs, which is why CI was green while this block was not — the
+      # job is the authority for what the merged migrator reads.
+      #
+      # Mirrors the runtime block above, as lantern-migrate mirrors lantern.
+      LEDGER_URL: http://ledger:4000
+      LEDGER_BASE_URL: http://ledger:4000
+      POLICY_URL: http://policy:4000
+      POLICY_BASE_URL: http://policy:4000
+      INDEXER_URL: http://indexer:4000
+      CUSTODY_URL: http://custody:4000
+      PRICING_URL: http://pricing:4000
+      BILLING_URL: http://billing:4000
+      BILLING_LEDGER_URL: http://ledger:4000
+      BILLING_PRICING_URL: http://pricing:4000
+      FORESIGHT_TREASURY_ADDRESS: ${FORESIGHT_TREASURY_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
+      FORESIGHT_ORACLE_USER_ID: foresight-estate
+      FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
       INSTANCE_ID: agora-migrate
     # Mirrors the runtime pod's env_file (outbox + studio), as lantern-migrate
     # mirrors lantern. The migrator does not READ these secrets; carrying them
