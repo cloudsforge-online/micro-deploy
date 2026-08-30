@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.105  (2026.8.105.yaml)
+# Release:   2026.8.106  (2026.8.106.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.105.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.106.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -15,89 +15,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: activity-migrate-2026-8-105
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: activity-migrate
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  backoffLimit: 2
-  ttlSecondsAfterFinished: 3600
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: activity-migrate
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: activity-migrate
-        image: ghcr.io/cloudsforge-online/micro-activity@sha256:a093d5a5b2dd6f0fca10fa2ea89d815398e28c0e9e80245397a84ea086e9a67f
-        imagePullPolicy: IfNotPresent
-        command:
-        - node
-        - --import
-        - tsx
-        - src/migrator.ts
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: ACTIVITY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity?sslmode=require
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: activity-migrate
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: NOTIFY_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify?sslmode=require
-        - name: NOTIFY_PUBLIC_URL
-          value: https://hub.cloudsforge.online
-        - name: PORT
-          value: '4000'
-        - name: ACTIVITY_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity_testnet?sslmode=require
-        - name: NOTIFY_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
-      restartPolicy: Never
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: admin-api-migrate-2026-8-105
+  name: admin-api-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: admin-api-migrate
@@ -115,7 +33,7 @@ spec:
     spec:
       containers:
       - name: admin-api-migrate
-        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:9aafe2d94761c75903b3917d4954a9834fbf2fef013dde7c50e2cb03091e2f06
+        image: ghcr.io/cloudsforge-online/micro-admin-api@sha256:ac43b7ab4a84df85eb6957b260773789e62c53a46894e53e3d0f3f8c2d0e109c
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -191,7 +109,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: agora-migrate-2026-8-105
+  name: agora-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: agora-migrate
@@ -209,7 +127,7 @@ spec:
     spec:
       containers:
       - name: agora-migrate
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:9471e13ac6eebf21c79dcf6ce7b9d6dc9fda4d7c29b7fe5df26705e658e302cc
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:92c5f8b6294bce5eddfa0098f4a79d96bdc1ce7e919ab433c459e2e1f4471d6d
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -229,6 +147,12 @@ spec:
               name: estate-tokens
               key: AGORA_IDENTITY_CREDENTIAL
               optional: false
+        - name: ANALYTICS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: estate-tokens
+              key: ANALYTICS_TOKEN
+              optional: false
         - name: FORESIGHT_ORACLE_ADDRESS
           valueFrom:
             secretKeyRef:
@@ -241,8 +165,18 @@ spec:
               name: estate-tokens
               key: FORESIGHT_TREASURY_ADDRESS
               optional: false
+        - name: LANTERN_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: estate-tokens
+              key: LANTERN_TOKEN
+              optional: false
+        - name: ACTIVITY_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity?sslmode=require
         - name: AGORA_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/agora?sslmode=require
+        - name: ANALYTICS_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/analytics?sslmode=require
         - name: AUTH_EXPECTED_NETWORK
           value: mainnet
         - name: BILLING_DATABASE_URL
@@ -277,6 +211,8 @@ spec:
           value: http://indexer:4000
         - name: INSTANCE_ID
           value: agora-migrate
+        - name: LANTERN_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern?sslmode=require
         - name: LEDGER_BASE_URL
           value: http://ledger:4000
         - name: LEDGER_URL
@@ -289,6 +225,10 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint?sslmode=require
         - name: NODE_ENV
           value: production
+        - name: NOTIFY_DATABASE_URL
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify?sslmode=require
+        - name: NOTIFY_PUBLIC_URL
+          value: https://hub.cloudsforge.online
         - name: POLICY_BASE_URL
           value: http://policy:4000
         - name: POLICY_DATABASE_URL
@@ -307,8 +247,12 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/tessera?sslmode=require
         - name: WORLDS_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/worlds?sslmode=require
+        - name: ACTIVITY_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/activity_testnet?sslmode=require
         - name: AGORA_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/agora_testnet?sslmode=require
+        - name: ANALYTICS_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/analytics_testnet?sslmode=require
         - name: BILLING_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/billing_testnet?sslmode=require
         - name: COMMUNITY_DATABASE_URL_TESTNET
@@ -317,10 +261,14 @@ spec:
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/devplatform_testnet?sslmode=require
         - name: FORESIGHT_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/foresight_testnet?sslmode=require
+        - name: LANTERN_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern_testnet?sslmode=require
         - name: MARKET_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/market_testnet?sslmode=require
         - name: MINT_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint_testnet?sslmode=require
+        - name: NOTIFY_DATABASE_URL_TESTNET
+          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/notify_testnet?sslmode=require
         - name: POLICY_DATABASE_URL_TESTNET
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/policy_testnet?sslmode=require
         - name: PRICING_DATABASE_URL_TESTNET
@@ -342,6 +290,9 @@ spec:
         - secretRef:
             name: secret-studio
             optional: false
+        - secretRef:
+            name: secret-analytics-pepper
+            optional: false
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
@@ -356,7 +307,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: beacon-migrate-2026-8-105
+  name: beacon-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: beacon-migrate
@@ -374,7 +325,7 @@ spec:
     spec:
       containers:
       - name: beacon-migrate
-        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:9d6743fc6c1a416309ca145793900c52a4f767a6aaa5ac44df5e16fcce171fe5
+        image: ghcr.io/cloudsforge-online/micro-beacon@sha256:9d042dc73e294b1aa0262a98bbfda3d202f6463e95ebd82440f6f789956fc33e
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -432,7 +383,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-keys-init-2026-8-105
+  name: custody-keys-init-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: custody-keys-init
@@ -484,7 +435,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-migrate-2026-8-105
+  name: custody-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: custody-migrate
@@ -502,7 +453,7 @@ spec:
     spec:
       containers:
       - name: custody-migrate
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:f364d88052853b2696c1166639b980a1a332201b1ffef00bfa265635361d121f
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:2e7eaf6310474ea986e5553fff483695c8ae4675e61ded848fe8c24b30aa0830
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -563,7 +514,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: emberkin-migrate-2026-8-105
+  name: emberkin-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: emberkin-migrate
@@ -581,7 +532,7 @@ spec:
     spec:
       containers:
       - name: emberkin-migrate
-        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:f1d62859f45772f25e86ce05a7a71eb9ed406e694626d648ffe5e8d42b9f714d
+        image: ghcr.io/cloudsforge-online/micro-emberkin@sha256:e78fa69a71d9ec42542b569c4128840c775c7092c025f751a23374e175e64381
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -665,7 +616,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: identity-migrate-2026-8-105
+  name: identity-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: identity-migrate
@@ -683,7 +634,7 @@ spec:
     spec:
       containers:
       - name: identity-migrate
-        image: ghcr.io/cloudsforge-online/micro-identity@sha256:ec0ec7d9a4c64da7125535f1a495e397e1ce427a51d7b4a7fc8827035b2320a2
+        image: ghcr.io/cloudsforge-online/micro-identity@sha256:cdd933db14dc926b1f36914f584a7f02822c31c0fdf7b6a60e51d8b8d1b89e68
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -744,7 +695,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: indexer-migrate-2026-8-105
+  name: indexer-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: indexer-migrate
@@ -762,7 +713,7 @@ spec:
     spec:
       containers:
       - name: indexer-migrate
-        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:777de04046e40010946553ea7b43a4d44b58133a05f1a59c45ff4146b3b0b486
+        image: ghcr.io/cloudsforge-online/micro-indexer@sha256:40aefd0581c12a78245960bd480f375c57cfc3a9c84ff3b243e51690bc0f377d
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -818,102 +769,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: lantern-migrate-2026-8-105
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: lantern-migrate
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  backoffLimit: 2
-  ttlSecondsAfterFinished: 3600
-  template:
-    metadata:
-      labels:
-        app.kubernetes.io/name: lantern-migrate
-        app.kubernetes.io/part-of: cloudsforge-estate
-        online.cloudsforge.network: mainnet
-    spec:
-      containers:
-      - name: lantern-migrate
-        image: ghcr.io/cloudsforge-online/micro-lantern@sha256:43b60eaa6cf8e3df8b41acee170f28d99b6db0e45402e4a258dc055228602c09
-        imagePullPolicy: IfNotPresent
-        command:
-        - node
-        - --import
-        - tsx
-        - src/migrator.ts
-        env:
-        - name: CF_POSTGRES_PASSWORD
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: CF_POSTGRES_PASSWORD
-              optional: false
-        - name: ANALYTICS_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: ANALYTICS_TOKEN
-              optional: false
-        - name: LANTERN_TOKEN
-          valueFrom:
-            secretKeyRef:
-              name: estate-tokens
-              key: LANTERN_TOKEN
-              optional: false
-        - name: ANALYTICS_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/analytics?sslmode=require
-        - name: AUTH_EXPECTED_NETWORK
-          value: mainnet
-        - name: CLOUDSFORGE_TAG
-          value: estate
-        - name: IDENTITY_ISSUER
-          value: http://identity:4000
-        - name: IDENTITY_JWKS_URL
-          value: http://identity:4000/.well-known/jwks.json
-        - name: IDENTITY_URL
-          value: http://identity:4000
-        - name: INSTANCE_ID
-          value: lantern-migrate
-        - name: LANTERN_DATABASE_URL
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern?sslmode=require
-        - name: LOG_LEVEL
-          value: info
-        - name: NODE_ENV
-          value: production
-        - name: PORT
-          value: '4000'
-        - name: ANALYTICS_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/analytics_testnet?sslmode=require
-        - name: LANTERN_DATABASE_URL_TESTNET
-          value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/lantern_testnet?sslmode=require
-        - name: NODE_EXTRA_CA_CERTS
-          value: /etc/ssl/estate/trust.crt
-        - name: CF_NETWORK_SINGLE
-          value: mainnet
-        envFrom:
-        - secretRef:
-            name: secret-outbox
-            optional: false
-        - secretRef:
-            name: secret-analytics-pepper
-            optional: false
-        volumeMounts:
-        - name: gateway-trust
-          mountPath: /etc/ssl/estate/trust.crt
-          readOnly: true
-          subPath: trust.crt
-      volumes:
-      - name: gateway-trust
-        configMap:
-          name: gateway-trust
-      restartPolicy: Never
----
-apiVersion: batch/v1
-kind: Job
-metadata:
-  name: ledger-migrate-2026-8-105
+  name: ledger-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: ledger-migrate
@@ -931,7 +787,7 @@ spec:
     spec:
       containers:
       - name: ledger-migrate
-        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:41624db1babfbfb1fa30a986ed64c23fd566331b694fa4de38e7b101a165b9dc
+        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:ca549169d5133d12bb5015b2ae7309dcbd1c5d8072e3a8f2eaf4755d7c536753
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -989,7 +845,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pool-migrate-2026-8-105
+  name: pool-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: pool-migrate
@@ -1007,7 +863,7 @@ spec:
     spec:
       containers:
       - name: pool-migrate
-        image: ghcr.io/cloudsforge-online/micro-pool@sha256:f1f6919a59da4b9fd9219e9526028403b841541bcba5679d7f6ff7f00aa970cc
+        image: ghcr.io/cloudsforge-online/micro-pool@sha256:af123d76be29cdc489de166ee1a6a6a487d876a0590aa1fcfdd4b34742d9eef8
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1103,7 +959,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: settlement-migrate-2026-8-105
+  name: settlement-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: settlement-migrate
@@ -1121,7 +977,7 @@ spec:
     spec:
       containers:
       - name: settlement-migrate
-        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:ca542f301f616c80b6d679b099cfb51b84656f7d68370ca4c0b7e12bac89ac02
+        image: ghcr.io/cloudsforge-online/micro-settlement@sha256:7abaec6b943a52a068669b540435f3db533e1e93239a11f86910ee2e1873dd81
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1197,7 +1053,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-assets-init-2026-8-105
+  name: studio-assets-init-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: studio-assets-init
@@ -1249,7 +1105,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-assets-check-2026-8-105
+  name: tessera-assets-check-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: tessera-assets-check
@@ -1298,7 +1154,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: trade-migrate-2026-8-105
+  name: trade-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: trade-migrate
@@ -1316,7 +1172,7 @@ spec:
     spec:
       containers:
       - name: trade-migrate
-        image: ghcr.io/cloudsforge-online/micro-trade@sha256:ab509c00bacefb844279f3a712dc8d3d2412c4ec6ca1e63ec08b15ff5599bf45
+        image: ghcr.io/cloudsforge-online/micro-trade@sha256:e4e5e3482c51bdc18f0374eaf59bbf6d3e99489b6709e4c31d1bec30a91f9856
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -1386,7 +1242,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: wallet-migrate-2026-8-105
+  name: wallet-migrate-2026-8-106
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: wallet-migrate
@@ -1404,7 +1260,7 @@ spec:
     spec:
       containers:
       - name: wallet-migrate
-        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:89d4856afb9c31f41b7e6b935f06867b101110373daa928b11157be8556eb7f0
+        image: ghcr.io/cloudsforge-online/micro-wallet@sha256:3699e81fc7dcb8e35e625d61f256f437d3b1453764f74adb9e76c078eef8ca97
         imagePullPolicy: IfNotPresent
         command:
         - node

@@ -75,8 +75,8 @@
 # ── SEEDED SINCE BEFORE THIS FILE ─────────────────────────────────────────────
 # Both erase for real, and both were already proven end to end by estate-verify.
 # They are here so the register is the whole truth rather than the new part of it.
-activity|activity|http://activity:4000/ingest/activity|delete|-|-|SCAN
-notify|notify|http://activity:4000/ingest/notify|delete|-|-|SCAN
+activity|activity|http://agora:4000/ingest/activity|delete|-|-|SCAN
+notify|notify|http://agora:4000/ingest/notify|delete|-|-|SCAN
 #
 # ── HAD A HANDLER, HAD NO SUBSCRIPTION ───────────────────────────────────────
 # `trade` deletes bots and backtests and has done since it was written. Nothing
@@ -209,7 +209,7 @@ community|community|http://agora:4000/v1/events/community|pseudonymise|-|insert 
 # be exactly the vacuous check the BEFORE phase exists to refuse. The
 # acknowledgement is what proves the seam: until this row existed, `eraseSubject`
 # was code no event could reach.
-analytics|analytics|http://analytics:4000/ingest|destroy the per-subject salt|-|-|ACK-ONLY
+analytics|analytics|http://agora:4000/ingest/analytics|destroy the per-subject salt|-|-|ACK-ONLY
 #
 # ── REGISTERED IN THE RELEASE THAT FIRST SHIPPED IT ──────────────────────────
 #

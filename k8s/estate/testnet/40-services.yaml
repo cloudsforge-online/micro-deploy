@@ -2,29 +2,15 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.105  (2026.8.105.yaml)
+# Release:   2026.8.106  (2026.8.106.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.105.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.106.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
 # script's docstring for the three shapes and why each is handled the way it is.
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: activity
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: activity
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: activity.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -159,20 +145,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: lantern
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: lantern
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: lantern.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
   name: ledger
   namespace: cf-testnet
   labels:
@@ -243,6 +215,20 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: activity
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: activity
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: aetherholm
   namespace: cf-testnet
   labels:
@@ -263,10 +249,10 @@ metadata:
     app.kubernetes.io/name: analytics
     app.kubernetes.io/part-of: cloudsforge
   annotations:
-    online.cloudsforge.why: "Merged into lantern: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
 spec:
   type: ExternalName
-  externalName: lantern.cloudsforge-estate.svc.cluster.local
+  externalName: agora.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -327,6 +313,20 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: lantern
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: lantern
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: market
   namespace: cf-testnet
   labels:
@@ -375,10 +375,10 @@ metadata:
     app.kubernetes.io/name: notify
     app.kubernetes.io/part-of: cloudsforge
   annotations:
-    online.cloudsforge.why: "Merged into activity: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
 spec:
   type: ExternalName
-  externalName: activity.cloudsforge-estate.svc.cluster.local
+  externalName: agora.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service

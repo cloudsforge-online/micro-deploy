@@ -3332,7 +3332,7 @@ http:
     # but in this environment it binds 4000 like the rest.
     cf-svc-lantern:
       loadBalancer:
-        servers: [{ url: "http://lantern:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     # 4000, through `*common-env`'s `PORT: "4000"`, like everything else here.
     # micro-pool's own default is 4146 (`pool/src/env.ts`) — the number the
     # registry derives and `pnpm dev` binds — and the compose file normalises the

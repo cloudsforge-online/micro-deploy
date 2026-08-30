@@ -307,7 +307,7 @@ http:
         servers: [{ url: "http://agora:4000" }]
     cf-api-activity:
       loadBalancer:
-        servers: [{ url: "http://activity:4000" }]
+        servers: [{ url: "http://agora:4000" }]
     cf-api-foresight:
       loadBalancer:
         servers: [{ url: "http://agora:4000" }]

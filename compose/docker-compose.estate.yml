@@ -1467,141 +1467,6 @@ services:
         condition: service_healthy
     healthcheck: *healthcheck
 
-  # ----------------------------------------------------------------- activity
-  # The EVENT seam — outbox → signed HTTP → inbox — which no pair of unit suites
-  # can reach, and which found two defects on its first composition: both
-  # consumer inboxes demanded a bearer no relay presents (fixed — the MAC is the
-  # gate now), and the topic lists of producer, registry and consumer had
-  # drifted three ways (18 §3.3p).
-  activity-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../activity
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity?sslmode=require
-      # The same secret identity signs its outbox with: the MAC is the seam.
-      # notify's half, since the merge — see the service below. The migrate
-      # entrypoint runs BOTH migrators; NOTIFY_PUBLIC_URL is read by env.ts at
-      # import, so it is required here even though no migration uses it.
-      NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify?sslmode=require
-      # ── EVERY LINK IN EVERY NOTIFICATION EMAIL WAS POINTING AT localhost ────────────────────
-      #
-      # A template declares a RELATIVE `path` — `/wallet`, `/settings/security/exports`,
-      # `/developers/keys` — and notify resolves it against this. The value here was the dev
-      # default, hardcoded rather than interpolated, on BOTH estates. So the welcome mail arrived
-      # with a link to `http://localhost:4110/`, and so would every other templated link; the
-      # verification mail was the one exception, because it carries a `verifyUrl` identity built
-      # from `IDENTITY_ACCOUNT_URL` and never touches this.
-      #
-      # It went unseen because almost no mail was ever sent: the welcome mail could not be
-      # addressed at all until micro-org#447, and the first one delivered after that fix is what
-      # exposed this. Found by the owner, in an inbox, which is the only place it was visible.
-      #
-      # `hub`, because every path in `notify/src/templates.ts` is a hub-web route. Same shape as
-      # `IDENTITY_ACCOUNT_URL` two hundred lines up, so the two agree about where an account
-      # lives, and the localtest.me fallback keeps a bare `docker compose up` working.
-      NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
-      INSTANCE_ID: activity-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  activity:
-    <<: *service-defaults
-    build:
-      context: ../../activity
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity?sslmode=require
-      # ── NOTIFY'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M2) ──
-      #
-      # micro-notify's code ships inside this image now, as plain directories under
-      # `src/notify/`. Both databases are KEPT: `inbox` exists in BOTH schemas with
-      # IDENTICAL columns, so a write through the wrong handle is not an error — it
-      # is an insert into the other module's dedupe table that makes the next
-      # genuine delivery look like a duplicate. The merged service stamps a
-      # per-route selector rather than resolving one global handle.
-      #
-      # The SMTP block and MAIL_DOMAIN come across untouched: the reserved-domain
-      # guard and the quota_exhausted classification are enforced per delivery, so
-      # they are indifferent to which process runs them — but only if they keep
-      # their configuration.
-      NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify?sslmode=require
-      # ── EVERY LINK IN EVERY NOTIFICATION EMAIL WAS POINTING AT localhost ────────────────────
-      #
-      # A template declares a RELATIVE `path` — `/wallet`, `/settings/security/exports`,
-      # `/developers/keys` — and notify resolves it against this. The value here was the dev
-      # default, hardcoded rather than interpolated, on BOTH estates. So the welcome mail arrived
-      # with a link to `http://localhost:4110/`, and so would every other templated link; the
-      # verification mail was the one exception, because it carries a `verifyUrl` identity built
-      # from `IDENTITY_ACCOUNT_URL` and never touches this.
-      #
-      # It went unseen because almost no mail was ever sent: the welcome mail could not be
-      # addressed at all until micro-org#447, and the first one delivered after that fix is what
-      # exposed this. Found by the owner, in an inbox, which is the only place it was visible.
-      #
-      # `hub`, because every path in `notify/src/templates.ts` is a hub-web route. Same shape as
-      # `IDENTITY_ACCOUNT_URL` two hundred lines up, so the two agree about where an account
-      # lives, and the localtest.me fallback keeps a bare `docker compose up` working.
-      NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
-      # ── SMTP: PASSED THROUGH, NEVER WRITTEN HERE ─────────────────────────────
-      #
-      # Unconfigured is still a supported mode and still the default: every value
-      # below falls back to empty, and `notify` treats an unset SMTP_HOST as "this
-      # deployment does without email" rather than as an error. A local drill needs
-      # rows, not emails.
-      #
-      # What changed is that a deployment which DOES send can now say so without
-      # editing this file. The values arrive from `compose/estate/tokens.env` —
-      # gitignored, symlinked as `compose/.env`, and loaded by Compose
-      # automatically. **A credential must never be written into this file**, which
-      # is committed and public.
-      #
-      # SMTP_SECURE is the one worth reading twice: it means IMPLICIT TLS, which is
-      # port 465 only. On 587 and 2525 the session starts in the clear and upgrades
-      # with STARTTLS, so `SMTP_SECURE=true` on 587 does not harden anything — it
-      # makes the connection fail. Default false, because 587 is the port to use.
-      SMTP_HOST: ${SMTP_HOST:-}
-      SMTP_PORT: ${SMTP_PORT:-587}
-      SMTP_USER: ${SMTP_USER:-}
-      SMTP_PASS: ${SMTP_PASS:-}
-      SMTP_SECURE: ${SMTP_SECURE:-false}
-      SMTP_FROM: ${SMTP_FROM:-}
-      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
-      MAIL_DOMAIN: ${MAIL_DOMAIN:-}
-      INSTANCE_ID: activity-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}109:4000"
-    depends_on:
-      activity-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
-  # ------------------------------------------------------------------- notify
-  # Holds the most personal data in the estate — addresses, phone numbers, push
-  # tokens, preferences — which is exactly why the registry's erasure SLA names
-  # it first among the services that must forget a deleted user.
-  # ------------------------------------------------------------------- notify
-  #
-  # NOT A SERVICE ANY MORE. Wave M2 of `docs/service-merge-plan.md`: micro-notify's
-  # code ships inside micro-activity's image as plain directories under `src/notify/`,
-  # so `notify` and `notify-migrate` are GONE from here rather than merely unrendered
-  # — an absorbed service's old image is stale by construction.
-  #
-  # Its configuration moved onto `activity` and `activity-migrate` above. The NAME
-  # still resolves in Kubernetes as an ExternalName, but THE PATH DID NOT SURVIVE:
-  # both services mounted `POST /ingest` and verified it with different secrets, so
-  # the merged process serves `/ingest/activity` and `/ingest/notify` and answers
-  # the bare `/ingest` with 410. A CNAME moves a host, not a path — every producer
-  # subscription had to be re-pointed in the same change.
-
   studio-assets-init:
     image: busybox:1.37
     # The ONLY container here that runs as root, and it runs for milliseconds and
@@ -2591,8 +2456,6 @@ services:
         condition: service_healthy
       agora:
         condition: service_healthy
-      activity:
-        condition: service_healthy
       hub-api:
         condition: service_healthy
     healthcheck: *healthcheck
@@ -3044,8 +2907,6 @@ services:
         condition: service_healthy
       agora:
         condition: service_healthy
-      activity:
-        condition: service_healthy
     healthcheck: *healthcheck
 
   # ══════════════════════════════════════════ tier 5: the sixteen frontends ════
@@ -3460,207 +3321,6 @@ services:
       context: ../../beacon-web
       additional_contexts: *web-contexts
       args: *web-build-args
-
-  # ------------------------------------------------ lantern (ops)          4142
-  #
-  # ══════════════════════════════════════════════════════════════════════════════
-  # THE OBSERVABILITY SINK, WHICH THIS FILE DID NOT CONTAIN.
-  #
-  # `grep -c lantern docker-compose.estate.yml` returned 0. Sixteen frontends have
-  # shipped `src/lib/obs.ts` posting browser telemetry since the day the template
-  # was written, and NOT ONE EVENT HAS EVER BEEN STORED — because there was no
-  # container to store it, and because the bundles were posting the wrong path,
-  # the wrong envelope key and the wrong record shape at the same time.
-  #
-  # Those two failures HID EACH OTHER. A cross-origin POST to a host that does not
-  # exist surfaces to the page as `TypeError: Failed to fetch`; so does a 404 that
-  # carries no CORS headers. Deploying the service without fixing the bundles
-  # would have produced `202 {"stored":0}` — accepted and discarded — and fixing
-  # the bundles without deploying the service changes nothing observable at all.
-  # Both halves are required before anything can be proven, which is why neither
-  # was done for months.
-  #
-  # It sits LAST because nothing depends on it. That is a property worth stating:
-  # a telemetry sink that another service waited on would be a telemetry sink
-  # whose outage is an estate outage, and this one is deliberately not that. It
-  # is also why it has no `depends_on` from anybody above.
-  # ══════════════════════════════════════════════════════════════════════════════
-  lantern-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../lantern
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern?sslmode=require
-      LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
-      # ── ANALYTICS' HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M1) ──
-      #
-      # micro-analytics' code ships inside this image now, as plain directories
-      # under `src/analytics/`. Both databases are KEPT and named by their own
-      # variables — no schema merge — and this service's one migrator runs both.
-      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
-      # `ANALYTICS_TOKEN` OPENS NOTHING IN THIS PROCESS, and that is deliberate
-      # rather than an oversight. It gated exactly one thing — analytics' own
-      # `/metrics` — and the merged process serves lantern's `/metrics`, gated by
-      # `LANTERN_TOKEN`, because Prometheus, the collector and every runbook
-      # present `x-lantern-token`. Kept required because the standalone analytics
-      # service still ships until the repo is archived, and micro-lantern asserts
-      # that in a test rather than leaving it to memory.
-      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
-      INSTANCE_ID: lantern-migrate
-    env_file:
-      - *outbox-secret-file
-      - *analytics-pepper-file
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  lantern:
-    <<: *service-defaults
-    build:
-      context: ../../lantern
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern?sslmode=require
-      # Thirty-six characters. `requiredSecret` refuses anything under 24 AND
-      # refuses a known placeholder by name (`changeme`, `secret`, `token`, …),
-      # so this cannot be shortened or made "obvious" without a dead container.
-      LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
-      # ══════════════════════════════════════════════════════════════════════════
-      # WITHOUT THIS THE SINK IS OFF, AND OFF MEANS 404 ON EVERYTHING.
-      #
-      # `rumOrigins` defaults to EMPTY, and empty is not "allow all" — it is the
-      # sink disabled. `server.ts` throws NotFoundError before reading a byte, and
-      # its own unknown-path diagnostics are unreachable too. Lantern would be
-      # deployed, healthy, and still silent: the exact state this whole change
-      # exists to end, wearing a green healthcheck.
-      #
-      # THESE ARE THE GATEWAY ORIGINS, NOT THE LOOPBACK PORTS, and that is the
-      # correction that mattered. A bundle derives its siblings from the hostname
-      # it was served on (`cloudsforgeHosts()`): served from
-      # `https://hub.<apex>` it posts to `https://lantern.<apex>`, which is the
-      # path the estate's own browser tier drives. Served from
-      # `http://127.0.0.1:4126` it takes the LOCAL_HOSTS branch and posts to
-      # `http://localhost:4010` — lantern's BIND port, which this file does not
-      # publish because host ports here are derived, not chosen. So the loopback
-      # origins are deliberately absent: listing them would advertise a route that
-      # cannot complete, and an allowlist entry that can never match is another
-      # check that cannot fail.
-      #
-      # Twenty surfaces, same list and same order as IDENTITY_HANDOFF_ORIGINS
-      # above, minus that list's one loopback dev port. `site` is the bare apex —
-      # empty `subdomain` in the registry — which is why the first entry carries
-      # no label.
-      #
-      # THE COUNT IN THAT SENTENCE WAS WRONG UNTIL THE LINE BELOW IT WAS DELETED,
-      # and both facts are recorded rather than quietly fixed. It said twenty
-      # while the list held twenty-one; `journal.` left in wave 1 of
-      # `docs/apex-consolidation.md` (see IDENTITY_HANDOFF_ORIGINS above for why
-      # a surface that becomes a path on the apex keeps its grant through the
-      # apex's own entry), and the number became true again by arithmetic rather
-      # than by anyone checking. A hand-written count next to a hand-written list
-      # is a second thing to keep in step, which is the argument for check 9
-      # deriving the whole list from the registry instead of reading this prose.
-      #
-      # ── `pool.` WAS MISSING HERE TOO, AND HERE IT WAS COSTING SOMETHING ───────
-      #
-      # The micro-org#480 sweep found `pool.` absent from both lists. Above it was
-      # inert — pool-web has no account bar, so nothing had asked. Here it was
-      # not: pool-web DOES call `initObs()` and DOES post to `/ingest/client`,
-      # so every client error, every unhandled rejection and every web-vital that
-      # surface has ever produced was answered 400 and dropped. Measured on the
-      # live estate before the fix: `POST https://lantern.<apex>/ingest/client`
-      # with `Origin: https://pool.<apex>` → 400, the same call with `hub.` or
-      # `journal.` → 202.
-      #
-      # This is `exchange.` again, exactly — an origin shipping the shared UI and
-      # reporting nothing, which reads as a page nobody is having trouble with
-      # rather than as a page nobody can report trouble FROM. Twice is a pattern,
-      # so `scripts/surface-routes.py` now derives both lists from the registry
-      # and fails the build on the next one.
-      #
-      # ── `exchange.` WAS MISSING HERE LONGER THAN IT WAS MISSING ABOVE ─────────
-      #
-      # It shipped as a surface on 2026-08-14 and was added to this list on
-      # 2026-08-16, which means exchange-web's `src/lib/obs.ts` spent two days
-      # POSTing to `/ingest/client` and collecting 400s. Nothing broke visibly:
-      # RUM is fire-and-forget, so the only symptom was a surface with no client
-      # errors in Lantern at all — which reads as a page nobody is having trouble
-      # with rather than as a page nobody can report trouble from. An origin that
-      # ships the shared UI belongs here on the day it ships, not on the day it
-      # grows an account.
-      #
-      # ── THE LAST TWO, AND WHY `lantern.` ITSELF IS ON ITS OWN ALLOWLIST ───────
-      #
-      # `lantern.` and `beacon.` are the operator consoles that now share these
-      # two hostnames with their services. `beacon.` is the ordinary case — one
-      # more surface shipping the shared UI, so one more origin posting to
-      # `${hosts().lantern}/ingest/client` from `src/lib/obs.ts`.
-      #
-      # `lantern.` looks like a mistake and is not. `isAllowedOrigin` is
-      # `env.rumOrigins.includes(origin)` over the browser's `Origin` header, and
-      # a browser sends `Origin` on a cross-site-capable POST whether or not the
-      # target happens to be the page's own host. So the console that exists to
-      # READ Lantern would have had its own error reports refused with 400 — a
-      # blind spot precisely over the pages an operator opens when something is
-      # already wrong, which is the worst possible place for one.
-      # ══════════════════════════════════════════════════════════════════════════
-      # ── WAVE 3f REMOVED THREE ENTRIES, AND A COMMENT CANNOT GO INSIDE THE LIST ──
-      #
-      # `emberkin.`, `aetherholm.` and `tessera.` were granted here and no longer
-      # need to be: each title runs at `<apex>/worlds/<title>` now, so the ORIGIN
-      # of a hand-off or a telemetry write from any of them is the APEX — the
-      # first entry below. Those hostnames load no page in either environment;
-      # the tombstone routers 301 them, and a browser follows that before making
-      # the request a grant would have covered.
-      #
-      # Same removal `journal`, `market`, `create`, `trade`, `agora`, `pool` and
-      # `worlds` already had. The note lives HERE and not among the entries
-      # because the value below is a YAML FOLDED SCALAR: a `#` line inside it is
-      # not a comment, it is one more origin — which is exactly what the first
-      # attempt did, and `surface-routes.py` reported four prose fragments as
-      # ungranted origins rather than letting them through.
-      # Wave 3g removed `developers.` for the same reason as the three above it.
-      LANTERN_RUM_ORIGINS: >-
-        https://${CF_SITE_HOST:-cloudsforge.localtest.me},
-        https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
-        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
-      # ── ANALYTICS' HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M1) ──
-      #
-      # micro-analytics' code ships inside this image now, as plain directories
-      # under `src/analytics/`. Both databases are KEPT and named by their own
-      # variables — no schema merge — and this service's one migrator runs both.
-      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
-      # `ANALYTICS_TOKEN` OPENS NOTHING IN THIS PROCESS, and that is deliberate
-      # rather than an oversight. It gated exactly one thing — analytics' own
-      # `/metrics` — and the merged process serves lantern's `/metrics`, gated by
-      # `LANTERN_TOKEN`, because Prometheus, the collector and every runbook
-      # present `x-lantern-token`. Kept required because the standalone analytics
-      # service still ships until the repo is archived, and micro-lantern asserts
-      # that in a test rather than leaving it to memory.
-      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
-      INSTANCE_ID: lantern-estate
-    env_file:
-      # Both arrived with analytics. The pepper file is the one that matters:
-      # `ANALYTICS_PSEUDONYM_KEY` is reachable only from `src/analytics/module.ts`
-      # inside the image, and micro-lantern's `privacyboundary.test.ts` fails if a
-      # future edit puts it in lantern's own deps.
-      - *outbox-secret-file
-      - *analytics-pepper-file
-    ports:
-      # 4142 — `deployableRepos()` index 42, immediately after tessera-web's 4141.
-      # Derived, not chosen; `make check-web` re-derives it from micro-org.
-      - "127.0.0.1:${CF_PORT_BASE:-4}141:4000"
-    depends_on:
-      lantern-migrate:
-        condition: service_completed_successfully
-    healthcheck: *healthcheck
 
   # ------------------------------------------ the world-art mount, VALIDATED ──
   #
@@ -4383,13 +4043,30 @@ services:
       FORESIGHT_ORACLE_ADDRESS: ${FORESIGHT_ORACLE_ADDRESS:-0x0000000000000000000000000000000000000000}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
+      # M5c: four more databases (sixteen now), and the four modules' own
+      # required configuration. agora's CI migrate job says why in its own words:
+      # "`src/migrator.ts` imports the modules' `module.ts`, which import their
+      # `env.ts`, so this job validates all configurations and would exit 1
+      # before touching a schema." That is the M5b lesson restated — the migrator
+      # calls no upstream and still needs their env.
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity?sslmode=require
+      NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify?sslmode=require
+      LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern?sslmode=require
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
+      NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+      LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
       INSTANCE_ID: agora-migrate
-    # Mirrors the runtime pod's env_file (outbox + studio), as lantern-migrate
-    # mirrors lantern. The migrator does not READ these secrets; carrying them
-    # keeps the pair in step for check-env-file-pairing.
+    # Mirrors the runtime pod's env_file, as lantern-migrate mirrors lantern.
+    # The outbox file also carries ACTIVITY_INGEST_SECRETS,
+    # NOTIFY_INGEST_SIGNING_SECRET and ANALYTICS_DELIVERY_SECRETS, which the M5c
+    # modules validate at import; the pepper file carries ANALYTICS_PSEUDONYM_KEY,
+    # which analytics validates the same way. A migrator that cannot construct a
+    # module's config exits 1 before touching a schema.
     env_file:
       - *outbox-secret-file
       - *studio-secret-file
+      - *analytics-pepper-file
     depends_on:
       postgres:
         condition: service_healthy
@@ -4526,6 +4203,49 @@ services:
       FORESIGHT_CUSTODIAL_ADDRESS: ${FORESIGHT_CUSTODIAL_ADDRESS:-}
       FORESIGHT_ORACLE_USER_ID: foresight-estate
       FORESIGHT_ORACLE_ORDER_ID: foresight-estate-oracle-1
+      # ── M5c: THE BUS TAIL AND THE TELEMETRY SINK (micro-deploy#282) ──────────
+      #
+      # activity brings notify (merged at M2) and lantern brings analytics
+      # (merged at M1), so this wave adds FOUR modules and agora reaches sixteen.
+      # Their nesting is preserved — `src/activity/notify`, `src/lantern/analytics`
+      # — rather than flattened, so each keeps its own pool, runner and inbox.
+      ACTIVITY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/activity?sslmode=require
+      NOTIFY_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/notify?sslmode=require
+      LANTERN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/lantern?sslmode=require
+      ANALYTICS_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/analytics?sslmode=require
+      # ── THE MAIL PIPELINE MOVES INTO THE PLATFORM, AND THAT IS A WIDENING ────
+      #
+      # notify is the estate's only sender. Carrying SMTP_* here means an RCE in
+      # any of the platform's public route tables reaches the mail credentials.
+      # That is INSIDE the owner's trust-tier decision (notify is platform tier,
+      # plan §M5) and it is written down rather than left implicit: identity,
+      # ledger and the vault stay out precisely so the same bug cannot also mint
+      # a token, rewrite the book, or sign a transaction.
+      #
+      # `NOTIFY_PUBLIC_URL` is the HUB, not this service — every link notify
+      # renders is a hub link, and it has never been agora's own address.
+      NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_SECURE: ${SMTP_SECURE:-false}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_REPLY_TO: ${SMTP_REPLY_TO:-}
+      MAIL_DOMAIN: ${MAIL_DOMAIN:-}
+      # lantern's inbound token and its browser-origin allowlist. The list is NOT
+      # "allow all" when empty — empty DISABLES the sink and every RUM POST 404s,
+      # which is a service that looks healthy and is silent. Carried verbatim.
+      LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
+      LANTERN_RUM_ORIGINS: >-
+        https://${CF_SITE_HOST:-cloudsforge.localtest.me},
+        https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://network${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://admin${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://status${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
+        https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
+      ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
       INSTANCE_ID: agora-estate
     # `*outbox-secrets` alone until M5a: policy/devplatform verify inbound events
     # against `OUTBOX_ACCEPT_SECRETS`/`DEVPLATFORM_INGEST_SECRETS`, both of which
@@ -4541,6 +4261,14 @@ services:
       - env/chain.${CF_EMBER_NETWORK:-mainnet}.env
       - *outbox-secret-file
       - *studio-secret-file
+      # M5c: analytics' pepper. `ANALYTICS_PSEUDONYM_KEY` derives STORED
+      # pseudonyms and CANNOT be drained — `lookup_key` is HMAC(pepper, subject)
+      # and the raw subject is never kept, so a new pepper cannot recompute the
+      # old mapping. It stays the analytics module's own (the merge keeps
+      # `src/lantern/analytics` nested for exactly this reason) and its boundary
+      # guard now scans every file agora compiles, because prevention is the only
+      # control a key that cannot be rotated has.
+      - *analytics-pepper-file
     # foresight carried this standalone, for the reason the faucet and indexer
     # blocks state: Docker Desktop resolves `host.docker.internal`, the Linux
     # daemon does not, and mint's and foresight's RPC defaults name it.

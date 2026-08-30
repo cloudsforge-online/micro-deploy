@@ -517,6 +517,17 @@ MERGED_INTO = {
     "foresight": "agora",
     "worlds": "agora",
     "tessera": "agora",
+    # 2026-08-30, wave M5c — the bus tail and the telemetry sink (micro-agora#9).
+    # These two are already ABSORBERS themselves: `notify` merged into activity at
+    # M2 and `analytics` into lantern at M1. Adding these two entries therefore
+    # lengthens two existing chains rather than starting them, and that is safe
+    # because `merge_target()` FOLLOWS MERGES TO THE END — notify now resolves
+    # notify -> activity -> agora and is emitted as a single ExternalName straight
+    # at agora, not as a CNAME hop through a name that no longer has a pod.
+    #
+    # Both bind 4000, so both aliases are transparent. Sixteen modules.
+    "activity": "agora",
+    "lantern": "agora",
 }
 
 
