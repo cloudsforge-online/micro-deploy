@@ -433,8 +433,37 @@ sign a transaction.
   Measured rather than assumed: nothing else in compose or the gateway ever
   named `:4021` or `:4022`; the four gateway upstreams and one erasure row that
   did are re-pointed at `agora:4000`.
-- **M5c** — + `activity` and `lantern`, which bring `notify` and `analytics`
-  with them as already-built modules.
+- **M5c** — ✅ **SHIPPED 2026-08-30, release 2026.8.106** (micro-agora#9,
+  micro-org#527). + `activity` and `lantern`, which brought `notify` and
+  `analytics` with them: FOUR modules, agora at sixteen. **Estate 20 → 18
+  Deployments — under the target — 0 unhealthy, agora in 149Mi.**
+
+  Live-verified: `/livez`+`/readyz` 200, BOTH bare paths 410 (`/ingest` and
+  `/v1/events` are two disjoint split families), the three signed inboxes
+  (`/ingest/{activity,notify,analytics}`) each reject unsigned with their own
+  key, both Deployments pruned, and the seven live `/ingest/*` subscriptions
+  swept. estate-verify: the same 2 pre-existing failures and nothing new.
+
+  **Two invariants of the repo caught real mistakes, and both were obeyed rather
+  than bypassed.** `absorbed()` hardcoded `kind: 'service'`, which would have
+  silently demoted lantern from `ops` — it now takes an optional kind. And the
+  registry already asserted that an absorber is never itself absorbed ("there is
+  no pod at the end of that chain"): after this wave there is no activity pod and
+  no lantern pod, so notify and analytics were FLATTENED onto agora rather than
+  left pointing at a dead name. The render proves it — all four emit an
+  ExternalName straight at agora.
+
+  **THE MAIL PIPELINE AND THE ANALYTICS PEPPER NOW LIVE IN THE PLATFORM.** An RCE
+  in any platform route table reaches `SMTP_*`. That is inside the owner's
+  trust-tier decision, and it is why identity, ledger and the vault stay out. The
+  pepper cannot be drained, so its boundary guard was WIDENED to scan every file
+  agora compiles.
+
+  The flake premise was also wrong and got corrected: files do not run
+  concurrently (`--test-concurrency=1` was already set). The real cause was
+  `tick()` not awaiting the re-arm — `RunnerEvent` handlers are `=> void`, so
+  `rescheduleRecurring` fires `void queue.enqueue(…)`. The read now waits for
+  those writes with a deadline and asserts exactly what it did before.
 - **M5d** — + `emberkin` (brings aetherholm, nda), `trade`, `admin-api`,
   `hub-api`, `wallet`. Platform complete; rename the Deployment `platform`.
 - **M5e** — `vault` = custody + settlement. Signing plane, internal-only.
