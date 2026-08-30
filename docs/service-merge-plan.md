@@ -397,9 +397,28 @@ sign a transaction.
   so future waves' exec checks resolve the absorber). **Estate 50 → 46 pods.**
 - **M5b** — + `community`, `market`, `billing`, `mint`, `foresight`, `worlds`,
   `tessera` (the commerce/games tier; the postEntry rule is overruled, the
-  event-path split and inbox separation are not). **Code merged 2026-08-30
-  (micro-agora#8), registry micro-org#526, shipping as release 2026.8.105.**
-  Twelve modules in one process; the render drops 23 Deployments to 16.
+  event-path split and inbox separation are not). ✅ **SHIPPED 2026-08-30,
+  release 2026.8.105** (micro-agora#8, micro-org#526). Twelve modules in one
+  process. **Estate 27 → 20 Deployments, 0 unhealthy.**
+
+  Live-verified: all nine split event paths answer with their own key (401/403),
+  the bare `/v1/events` 410s, `/livez`+`/readyz` 200, the seven absorbed
+  Deployments pruned, and the five live `identity.user.deleted` subscriptions
+  swept to their split paths. estate-verify: 2 failures, both pre-existing and
+  unrelated (`app` DB absent from initdb.sql; market listings need item escrow,
+  micro-org#407) — and studio's content-address check now PASSES, because the
+  `cfx` fix resolves an absorbed service to its absorber. agora holds twelve
+  modules in 137Mi.
+
+  **Two things bit, and both will bite again.** The migrator needs the modules'
+  UPSTREAM URLs, not just their DSNs — `src/migrator.ts` imports every module and
+  a module's `env.ts` validates at import, so community's
+  `required('LEDGER_BASE_URL')` threw and wave 30 refused the deploy with nothing
+  downstream applied. agora's CI migrate job is the authority for that set; mirror
+  it onto `agora-migrate` every wave. And the merged suite FLAKES: one counting
+  assertion in foresight's recurring-jobs test failed the release build, because
+  far more test FILES now share each module's single test database. Per-file
+  isolation should land before M5d.
 
   **THE TWO PORTS, AND WHY THE M4a REFUSAL NO LONGER HOLDS.** tessera bound 4022
   and foresight 4021, and an ExternalName carries no port mapping — the exact
