@@ -83,7 +83,7 @@ notify|notify|http://agora:4000/ingest/notify|delete|-|-|SCAN
 # ever delivered the event to it, so the code was correct and unreachable — which
 # is indistinguishable from absent, and is why the register seeds rather than
 # documents.
-trade|trade|http://trade:4000/v1/events|delete|-|insert into series (id, symbol, asset_code, timeframe, source) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'DRILL', 'EMBER', '1h', 'drill') on conflict do nothing; insert into backtests (user_id, series_id, strategy_id, seed, start_cash, fee_bps, slippage_bps) values ('{{uid}}', '00000000-0000-4000-8000-0000000d5111', 'sma-cross', 1, 100, 10, 10)|SCAN
+trade|trade|http://agora:4000/v1/events/trade|delete|-|insert into series (id, symbol, asset_code, timeframe, source) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'DRILL', 'EMBER', '1h', 'drill') on conflict do nothing; insert into backtests (user_id, series_id, strategy_id, seed, start_cash, fee_bps, slippage_bps) values ('{{uid}}', '00000000-0000-4000-8000-0000000d5111', 'sma-cross', 1, 100, 10, 10)|SCAN
 #
 # ── REGISTERED BECAUSE IT IS BROKEN, NOT BECAUSE IT WORKS ────────────────────
 # `market`'s handler runs and erases NOTHING: it sets `expires_at` on the
@@ -149,7 +149,7 @@ mint|mint|http://agora:4000/v1/events/mint|mixed|-|insert into tokens (owner_sub
 # kept, anonymised: `reward_grants` records a ledger posting that was actually
 # made, Art. 17(3)(b). Its `idempotency_key` held the PLAINTEXT user uuid rather
 # than a hash, which is why anonymising the row alone was not enough.
-emberkin|emberkin|http://emberkin:4000/v1/events|mixed|reward_grants|insert into saves (user_id, warden_name, seed, current_region) values ('{{uid}}', 'Drill', 1, 'ember-vale')|SCAN
+emberkin|emberkin|http://agora:4000/v1/events/emberkin|mixed|reward_grants|insert into saves (user_id, warden_name, seed, current_region) values ('{{uid}}', 'Drill', 1, 'ember-vale')|SCAN
 #
 # aetherholm — research and alliance membership are deleted. Battles, fleets and
 # cities split on whether a battle pins them: a two-sided battle record is the
@@ -157,7 +157,7 @@ emberkin|emberkin|http://emberkin:4000/v1/events|mixed|reward_grants|insert into
 # abandoned rather than removed. `chronicles` and `battles` are frozen by trigger,
 # so a redaction records `digest_at_sealing` and `erasures_applied` — visible,
 # rather than a silent edit to an immutable log.
-aetherholm|aetherholm|http://emberkin:4000/v1/events|mixed|-|insert into archipelagos (id, kind, name, seed, owner_subject, entitlement_id) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'skerry', 'Drill', 1, 'user:{{uid}}', 'drill-ent') on conflict do nothing; insert into research (archipelago_id, user_id, node) values ('00000000-0000-4000-8000-0000000d5111', '{{uid}}', 'drill-node')|SCAN
+aetherholm|aetherholm|http://agora:4000/v1/events/emberkin|mixed|-|insert into archipelagos (id, kind, name, seed, owner_subject, entitlement_id) values ('00000000-0000-4000-8000-0000000d5111'::uuid, 'skerry', 'Drill', 1, 'user:{{uid}}', 'drill-ent') on conflict do nothing; insert into research (archipelago_id, user_id, node) values ('00000000-0000-4000-8000-0000000d5111', '{{uid}}', 'drill-node')|SCAN
 #
 # ── HAD A HANDLER NO EVENT COULD REACH, AND MOST OF THEM WERE ALSO WRONG ─────
 #
@@ -172,7 +172,7 @@ aetherholm|aetherholm|http://emberkin:4000/v1/events|mixed|-|insert into archipe
 # Art. 17(3)(b) and (e), with the reachable half implemented instead: an erasure
 # register, an Art. 18 restriction at the read surface, and real anonymisation of
 # `approvals`, which is not chained.
-admin-api|admin_api|http://admin-api:4000/v1/events|mixed|audit_events,audit_subject_erasures|insert into approvals (action, subject_kind, subject_id, reason_code, reason, requested_by, expires_at) values ('drill', 'user', '{{uid}}', 'drill', 'drill', 'user:00000000-0000-4000-8000-0000000d5100', now() + interval '1 day')|SCAN
+admin-api|admin_api|http://agora:4000/v1/events/admin-api|mixed|audit_events,audit_subject_erasures|insert into approvals (action, subject_kind, subject_id, reason_code, reason, requested_by, expires_at) values ('drill', 'user', '{{uid}}', 'drill', 'drill', 'user:00000000-0000-4000-8000-0000000d5100', now() + interval '1 day')|SCAN
 #
 # devplatform — the handler was an explicit no-op returning `{revoked: 0}`, the
 # worst of the failure modes because it reports success. Its REASONING was right
@@ -187,7 +187,7 @@ devplatform|devplatform|http://agora:4000/v1/events/devplatform|anonymise|-|inse
 # every real deletion erased nothing and answered 202. Its own test built an
 # envelope carrying `subject`, so the test and the handler agreed with each other
 # and neither agreed with the producer.
-nda|nda|http://emberkin:4000/v1/events|delete|-|insert into worlds (id, name, season_length, width, height, tick_interval_minutes, seed) values ('drill-world', 'Drill', 30, 16, 16, 60, 'drill') on conflict do nothing; insert into players (id, world_id, user_id, handle, homestead_x, homestead_y, resources) values (concat('drill-', substr(md5('{{uid}}'), 1, 12)), 'drill-world', '{{uid}}', 'drill', 0, 0, '{}'::jsonb)|SCAN
+nda|nda|http://agora:4000/v1/events/emberkin|delete|-|insert into worlds (id, name, season_length, width, height, tick_interval_minutes, seed) values ('drill-world', 'Drill', 30, 16, 16, 60, 'drill') on conflict do nothing; insert into players (id, world_id, user_id, handle, homestead_x, homestead_y, resources) values (concat('drill-', substr(md5('{{uid}}'), 1, 12)), 'drill-world', '{{uid}}', 'drill', 0, 0, '{}'::jsonb)|SCAN
 #
 # community — pseudonymisation, which is defensible for public posts and must be
 # described as what it is rather than as deletion. It reached 4 of the 11 columns

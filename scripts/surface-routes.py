@@ -441,12 +441,29 @@ BACKEND_BY_SUBDOMAIN = {
     # that means "the chain index", which is the substitution micro-network-site
     # had to name in its own header (network-site/src/lib/hosts.ts).
     "explorer": "indexer",
-    "hub": "hub-api",
-    "admin": "admin-api",
+    # ── THREE SURFACES WHOSE BACKEND IS NOW A MODULE, NOT A CONTAINER (wave M5d) ────────
+    #
+    # `hub-api`, `admin-api` and `wallet` were compose services until 2026-08-31. They are
+    # directories under `agora/src/` now, so the compose file declares none of them and
+    # check 3 — which asserts the named service EXISTS — went red on all three. That red
+    # is the check working: the mapping had stopped being true, and a mapping that has
+    # stopped being true silently stops covering the surface it names.
+    #
+    # Re-pointed at the absorber rather than deleted, because the surfaces are still
+    # routed and still have a backend; what changed is which process serves them. The
+    # gateway services (`cf-svc-hub-api`, `cf-svc-admin-api`, `cf-svc-wallet`) keep their
+    # own names for the rollback reason MERGED_INTO records, and this map is what joins
+    # those names to the one container behind them.
+    #
+    # It does NOT capture the path rewrites two of the three now carry (`cf-hub-prefix`,
+    # `cf-admin-operator-worlds`). Nothing here does — see `check-gateway-covers-api-paths.py`
+    # for the check that reads a module's own `REMOUNTED_PATHS` and demands the rule.
+    "hub": "agora",
+    "admin": "agora",
+    "pay": "agora",
     # A drip is posted to the Network site's own hostname; `faucet` the registry
     # row is a PAGE on it (basePath /faucet), not a host.
     "network": "faucet",
-    "pay": "wallet",
 }
 
 

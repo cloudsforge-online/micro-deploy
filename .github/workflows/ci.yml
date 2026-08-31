@@ -355,6 +355,31 @@ jobs:
         working-directory: deploy
         run: python3 scripts/check-api-remount.py
 
+      # ── AND A PATH A MODULE REMOUNTED INSIDE THE MERGED PROCESS HAS ITS REWRITE ──
+      #
+      # The check above is about a SURFACE that moved. This one is about a MODULE
+      # that moved inside one process, which is a different failure with the same
+      # shape and no overlap in what can see it.
+      #
+      # Merging services makes route matching first-wins across one flat table, so
+      # when two modules declare one path the loser is a handler that is never
+      # called — in a module whose own suite still passes completely. The rule is
+      # that the public owner keeps the bare path and the other remounts; the half
+      # that is easy to skip is that the bytes on the wire still say the bare path,
+      # so the router has to rewrite.
+      #
+      # Wave M5b skipped it. `/v1/listings` on tessera's two hostnames was answered
+      # by MARKET for a day: 200 with an empty array, unauthenticated, on every
+      # signed-in user's page, with nothing logging a fault. The remount was in one
+      # repository and the router in another and both were individually correct.
+      #
+      # This derives the requirement from each module's own `REMOUNTED_PATHS`
+      # rather than a list kept here, so a module that adds a remount is covered
+      # the day it adds it.
+      - name: A remounted module path has an attached gateway rewrite
+        working-directory: deploy
+        run: python3 scripts/check-remount-rewrites.py
+
       # ── AND ITS PICTURES MOVED WITH IT, WHICH IS THE HALF THAT SHIPPED BROKEN ──
       #
       # The three checks above cover the ROUTES. Nothing covered the ASSETS, and

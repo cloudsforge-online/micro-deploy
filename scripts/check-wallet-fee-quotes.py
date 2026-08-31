@@ -105,7 +105,22 @@ RPC_VARIABLE = "SETTLEMENT_RPC_URLS"
 # Both containers run wallet's eager `env.ts`. A migrator left off the anchor stops the release at
 # its migration step rather than starting with a different table, which is worse in one specific
 # way: the estate is then half-deployed on a value nobody chose.
-FEE_READERS = ("wallet", "wallet-migrate")
+#
+# ── WAVE M5d: THE TWO CONTAINERS ARE NOW NAMED `agora` ───────────────────────────────────────
+#
+# wallet is a MODULE of agora since 2026-08-31 (`agora/src/wallet/`), so there is no `wallet`
+# service in the compose file to check and there is no `wallet-migrate` Job. The property this
+# check defends is unchanged and, if anything, sharper: `agora/src/wallet/env.ts` still parses
+# WALLET_FEE_QUOTES eagerly at import, and `agora/src/migrator.ts` still reaches it — through
+# `walletMigrationTargets()` in `agora/src/wallet/module.ts` — so a malformed table is still a
+# crash loop on the server pod AND a stopped migration, and a container left off the anchor still
+# opens no chain at all or reads a second, drifting copy.
+#
+# What is NEW is that these two containers now carry twenty-three modules between them, so an
+# anchor missed here takes the whole estate down rather than the wallet. That makes the check more
+# load-bearing than it was, not less, which is why the names are updated rather than the readers
+# dropped to one.
+FEE_READERS = ("agora", "agora-migrate")
 
 # `${VAR:+,"chain":"$VAR"}` — one optional chain, its key and the variable that supplies it.
 FRAGMENT = re.compile(r'\$\{(?P<var>[A-Z0-9_]+):\+,"(?P<chain>[a-z]+)":')

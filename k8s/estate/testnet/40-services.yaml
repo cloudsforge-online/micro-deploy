@@ -2,29 +2,15 @@
 #
 # Network:   testnet
 # Namespace: cf-testnet
-# Release:   2026.8.106  (2026.8.106.yaml)
+# Release:   2026.8.107  (2026.8.107.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.testnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.106.yaml \
+#   ./scripts/k8s-render.py --network testnet --release ../org/releases/2026.8.107.yaml \
 #       --outdir k8s/estate/testnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
 # script's docstring for the three shapes and why each is handled the way it is.
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: admin-api
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: admin-api
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: admin-api.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -71,20 +57,6 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: emberkin
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: emberkin
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: emberkin.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
   name: faucet
   namespace: cf-testnet
   labels:
@@ -99,20 +71,6 @@ spec:
   - name: p4000
     port: 4000
     targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: hub-api
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: hub-api
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: hub-api.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -187,38 +145,24 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: trade
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: trade
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: trade.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: wallet
-  namespace: cf-testnet
-  labels:
-    app.kubernetes.io/name: wallet
-    app.kubernetes.io/part-of: cloudsforge
-  annotations:
-    online.cloudsforge.why: 'Consolidated: one pod in cloudsforge-estate serves both estates. A CNAME rather than a deletion so the gateway''s namespace-local backend and every service-to-service call keep resolving unchanged.'
-spec:
-  type: ExternalName
-  externalName: wallet.cloudsforge-estate.svc.cluster.local
----
-apiVersion: v1
-kind: Service
-metadata:
   name: activity
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: activity
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-api
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: admin-api
     app.kubernetes.io/part-of: cloudsforge
   annotations:
     online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
@@ -235,10 +179,10 @@ metadata:
     app.kubernetes.io/name: aetherholm
     app.kubernetes.io/part-of: cloudsforge
   annotations:
-    online.cloudsforge.why: "Merged into emberkin: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
 spec:
   type: ExternalName
-  externalName: emberkin.cloudsforge-estate.svc.cluster.local
+  externalName: agora.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -299,10 +243,38 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: emberkin
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: emberkin
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: foresight
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: foresight
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hub-api
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: hub-api
     app.kubernetes.io/part-of: cloudsforge
   annotations:
     online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
@@ -361,10 +333,10 @@ metadata:
     app.kubernetes.io/name: nda
     app.kubernetes.io/part-of: cloudsforge
   annotations:
-    online.cloudsforge.why: "Merged into emberkin: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
 spec:
   type: ExternalName
-  externalName: emberkin.cloudsforge-estate.svc.cluster.local
+  externalName: agora.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -429,6 +401,34 @@ metadata:
   namespace: cf-testnet
   labels:
     app.kubernetes.io/name: tessera
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trade
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: trade
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet
+  namespace: cf-testnet
+  labels:
+    app.kubernetes.io/name: wallet
     app.kubernetes.io/part-of: cloudsforge
   annotations:
     online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."

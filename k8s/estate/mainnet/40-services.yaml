@@ -2,33 +2,15 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.106  (2026.8.106.yaml)
+# Release:   2026.8.107  (2026.8.107.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.106.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.107.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
 # script's docstring for the three shapes and why each is handled the way it is.
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: admin-api
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: admin-api
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: admin-api
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
 ---
 apiVersion: v1
 kind: Service
@@ -79,42 +61,6 @@ spec:
   type: ClusterIP
   selector:
     app.kubernetes.io/name: custody
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: emberkin
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: emberkin
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: emberkin
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: hub-api
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: hub-api
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: hub-api
   ports:
   - name: p4000
     port: 4000
@@ -260,46 +206,24 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: trade
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: trade
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: trade
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: wallet
-  namespace: cloudsforge-estate
-  labels:
-    app.kubernetes.io/name: wallet
-    app.kubernetes.io/part-of: cloudsforge-estate
-    online.cloudsforge.network: mainnet
-spec:
-  type: ClusterIP
-  selector:
-    app.kubernetes.io/name: wallet
-  ports:
-  - name: p4000
-    port: 4000
-    targetPort: 4000
----
-apiVersion: v1
-kind: Service
-metadata:
   name: activity
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: activity
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: admin-api
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: admin-api
     app.kubernetes.io/part-of: cloudsforge
   annotations:
     online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
@@ -316,10 +240,10 @@ metadata:
     app.kubernetes.io/name: aetherholm
     app.kubernetes.io/part-of: cloudsforge
   annotations:
-    online.cloudsforge.why: "Merged into emberkin: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
 spec:
   type: ExternalName
-  externalName: emberkin.cloudsforge-estate.svc.cluster.local
+  externalName: agora.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -380,10 +304,38 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
+  name: emberkin
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: emberkin
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
   name: foresight
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: foresight
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: hub-api
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: hub-api
     app.kubernetes.io/part-of: cloudsforge
   annotations:
     online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
@@ -442,10 +394,10 @@ metadata:
     app.kubernetes.io/name: nda
     app.kubernetes.io/part-of: cloudsforge
   annotations:
-    online.cloudsforge.why: "Merged into emberkin: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
 spec:
   type: ExternalName
-  externalName: emberkin.cloudsforge-estate.svc.cluster.local
+  externalName: agora.cloudsforge-estate.svc.cluster.local
 ---
 apiVersion: v1
 kind: Service
@@ -510,6 +462,34 @@ metadata:
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: tessera
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: trade
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: trade
+    app.kubernetes.io/part-of: cloudsforge
+  annotations:
+    online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."
+spec:
+  type: ExternalName
+  externalName: agora.cloudsforge-estate.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wallet
+  namespace: cloudsforge-estate
+  labels:
+    app.kubernetes.io/name: wallet
     app.kubernetes.io/part-of: cloudsforge
   annotations:
     online.cloudsforge.why: "Merged into agora: this service's code now runs inside that pod as a module, so it has no Deployment and no migrate Job of its own \u2014 a second migrator against a schema that pod now owns is the fastest way to corrupt it. A CNAME rather than a deletion so service-to-service calls keep resolving unchanged."

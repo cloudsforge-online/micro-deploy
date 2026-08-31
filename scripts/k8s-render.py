@@ -528,6 +528,50 @@ MERGED_INTO = {
     # Both bind 4000, so both aliases are transparent. Sixteen modules.
     "activity": "agora",
     "lantern": "agora",
+    # 2026-08-31, wave M5d — the account tier, the trading engine, the wallet, the
+    # operator console and the three titles. TWENTY-THREE modules in one process,
+    # which is the plan's §M5 target reached: the estate drops below twenty
+    # containers.
+    #
+    # ── THE CHAIN THAT IS NOW THREE LONG, AND WHY THAT IS SAFE ───────────────
+    #
+    # `emberkin: agora` lengthens two existing chains rather than starting them:
+    # aetherholm -> emberkin -> agora, and nda -> emberkin -> agora. `merge_target`
+    # FOLLOWS MERGES TO THE END, so both are emitted as a single ExternalName
+    # straight at agora rather than as a CNAME hop through a name with no pod.
+    #
+    # ── THE TWO PORTS THAT ARE NOT 4000 ──────────────────────────────────────
+    #
+    # emberkin binds 4100 and admin-api 4014. Same reasoning as foresight/tessera
+    # at M5b, and the same measurement rather than an assumption: as MODULES they
+    # mount into agora's single 4000 listener, their `PORT:` lines are deliberately
+    # absent from agora's compose block, and the callers that named those ports
+    # were gateway upstreams re-pointed in this same change. hub-api, trade and
+    # wallet already bind 4000, so those three aliases are transparent outright.
+    #
+    # ── WHAT A CNAME CANNOT RESCUE, AND IS THEREFORE MOVED IN THIS CHANGE ────
+    #
+    # A CNAME moves a HOST, not a PATH. Four path families move with this wave and
+    # each has a caller that must move with it:
+    #
+    #   * hub's whole `/v1` surface -> `/v1/hub/*`; `cf-api-hub` rewrites.
+    #   * admin's `/v1/worlds…` -> `/v1/operator/worlds…`; `cf-api-admin` rewrites.
+    #     Its `/v1/engagement/policies` deliberately does NOT move, because billing
+    #     dials it by service name and no gateway rewrite could follow.
+    #   * aetherholm's two FROZEN contract paths -> `/aetherholm/v1/…`; the
+    #     re-pointing is aetherholm's BASE URL in the `worlds` title registry, not
+    #     a gateway rule, because `worlds` computes a title's address from that row.
+    #   * three more suffixed webhooks (`/v1/events/{trade,admin-api,emberkin}`);
+    #     `estate-bootstrap.sh`'s subscription rows move with them.
+    #
+    # wallet moves NOTHING: it is the public owner of every path it collides on —
+    # seven `api.<apex>` prefixes plus the whole `pay.<suffix>` host — so hub is
+    # the side that gave way.
+    "hub-api": "agora",
+    "trade": "agora",
+    "wallet": "agora",
+    "admin-api": "agora",
+    "emberkin": "agora",
 }
 
 

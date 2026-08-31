@@ -1719,7 +1719,22 @@ wtok2=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $at
 # authorised and declined the catalogue entry — the answer `worlds/src/titleclient.ts`
 # treats as terminal.
 prov_body='{"entitlementId":"estate-verify-unsupported-sku","subject":"estate-verify","userId":"'"$uid"'","sku":"cf.aetherholm.no-such-sku","scope":"skerry","metadata":{}}'
-prov=$(code -X POST "$AETHERHOLM/v1/provision" -H "authorization: Bearer $wtok2" \
+# ── WAVE M5d: THE PATH CARRIES A MOUNT, AND THE MOUNT IS THE TITLE'S BASE URL ──
+#
+# `GET /v1/title` and `POST /v1/provision` are FROZEN constants in
+# `@cloudsforge/contracts-worlds`, and both aetherholm and tessera mount them.
+# Since 2026-08-31 they are modules of ONE process, where matching is first-wins,
+# so aetherholm serves its two under `/aetherholm` and is REGISTERED at
+# `http://agora:4000/aetherholm` — `worlds/src/titleclient.ts` composes a title's
+# address as `base.pathname + FROZEN_SUFFIX`, so nothing about the contract moved.
+#
+# `$AETHERHOLM_BASE` rather than `$AETHERHOLM` so this file states the mount once.
+# A bare `$AETHERHOLM/v1/provision` here would now be answered by TESSERA, which
+# is the exact confusion the remount exists to prevent — and it would answer 401
+# rather than 422, so this check would fail LOUDLY rather than pass for the wrong
+# reason. That is worth having, but it is not worth relying on.
+AETHERHOLM_BASE="${AETHERHOLM_BASE:-$AETHERHOLM/aetherholm}"
+prov=$(code -X POST "$AETHERHOLM_BASE/v1/provision" -H "authorization: Bearer $wtok2" \
   -H 'content-type: application/json' -d "$prov_body")
 [ "$prov" = 422 ] \
   && ok "worlds' aetherholm:provision token is ACCEPTED by aetherholm and an unknown SKU is refused 422 — the scope is spent, not just minted" \
@@ -1731,7 +1746,7 @@ prov=$(code -X POST "$AETHERHOLM/v1/provision" -H "authorization: Bearer $wtok2"
 # operator's own token is the strongest form of that test — if administrator rights
 # were enough to provision a world, every paid entitlement in the catalogue would be
 # optional for anyone who could reach this route.
-[ "$(code -X POST "$AETHERHOLM/v1/provision" -H "authorization: Bearer $atok" \
+[ "$(code -X POST "$AETHERHOLM_BASE/v1/provision" -H "authorization: Bearer $atok" \
      -H 'content-type: application/json' -d "$prov_body")" = 403 ] \
   && ok "a user token is refused at /v1/provision even when it is the administrator's — provisioning is a service act" \
   || bad "aetherholm accepted a USER token at /v1/provision; a paid entitlement is not required to raise a world"

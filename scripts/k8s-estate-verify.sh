@@ -187,10 +187,31 @@ unmapped = []
 for name, port in sorted(variables.items(), key=lambda kv: kv[1]):
     svc = published.get(port)
     if svc is None:
-        # No compose entry: the variable name IS the service name for every
-        # absorbed service, which is what makes this recoverable.
+        # ── NO COMPOSE ENTRY, SO THE PORT JOIN HAS NOTHING TO JOIN TO ────────
+        #
+        # The variable name IS the service name for most absorbed services —
+        # MARKET -> market, TRADE -> trade, NDA -> nda — and that is what makes
+        # this recoverable at all.
+        #
+        # It is not true of two, and this file's own header named them before
+        # either was absorbed: `HUB` is `hub-api` and `ADMIN` is `admin-api`.
+        # While they had compose entries the port join covered them; wave M5d
+        # absorbed both, and the guess below stopped resolving on the same day.
+        #
+        # A hand-written `{"HUB": "hub-api"}` is what that header refused, and
+        # it refused it for a reason that has not changed: it would be right
+        # today and wrong at the next service. So the alias is DERIVED — a
+        # guess that names no service is matched as a PREFIX against the
+        # absorbed set, and an ambiguous prefix is left unresolved rather than
+        # picked. `hub` matches `hub-api` alone; `admin` matches `admin-api`
+        # alone; a future `MINT` against `mint` and `mint-api` would match two
+        # and be reported, which is the answer a guess cannot give.
         guess = name.lower().replace("_", "-")
-        svc = guess if guess in merged_into else None
+        if guess in merged_into:
+            svc = guess
+        else:
+            prefixed = [k for k in merged_into if k.startswith(guess + "-")]
+            svc = prefixed[0] if len(prefixed) == 1 else None
     if svc is None:
         unmapped.append(f"{name} (host port {port} is published by no compose service)")
         continue

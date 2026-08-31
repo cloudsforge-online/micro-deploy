@@ -1271,7 +1271,24 @@ subscribe_all() {
   [ -n "$missing" ] && ok "  not subscribed, producer not deployed here:$missing" || true
 }
 
-subscribe_all admin-api http://admin-api:4000/v1/events $audited
+# ── WAVE M5d: THE PATH MOVED, AND A CNAME COULD NOT HAVE CARRIED IT ──────────────────────────
+#
+# admin-api is a module of agora since 2026-08-31, and `admin-api` still RESOLVES — the
+# ExternalName `k8s-render.py` emits sees to that. What an ExternalName cannot do is move a PATH,
+# and this one moved: eleven modules of the merged process mount `POST /v1/events` and they do not
+# verify with the same key, so each serves its own suffixed inbox and the bare path answers 410.
+#
+# Left at `http://admin-api:4000/v1/events` this row would deliver every audited topic to a 410 —
+# which is deliberately LOUD, in the producer's `outbox_deliveries.last_error`, rather than the 404
+# that reads like a typo. But loud is not correct: admin's inbox is what drives its erasure handler
+# and its audit mirror, so a subscription nobody re-pointed is an audit of record that quietly
+# records nothing.
+#
+# THE HOST IS SPELT `agora` AND NOT `admin-api` HERE, unlike wallet's row above which keeps its own
+# name. The difference is that this line is also changing the PATH, so it is being rewritten
+# anyway; naming the absorber where the path already names the module is one fewer indirection for
+# an operator reading `event_subscriptions` during an incident.
+subscribe_all admin-api http://agora:4000/v1/events/admin-api $audited
 
 # ── ANALYTICS, WHICH COULD NOT BE SUBSCRIBED UNTIL NOW ────────────────────────
 #

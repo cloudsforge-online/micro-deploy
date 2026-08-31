@@ -316,7 +316,10 @@ http:
         servers: [{ url: "http://identity:4000" }]
     cf-api-wallet:
       loadBalancer:
-        servers: [{ url: "http://wallet:4000" }]
+        # M5d: wallet is a module of agora now, and its paths did NOT move — the
+        # seven prefixes the router above names are the SDK's published surface
+        # and wallet is their public owner. See `cf-svc-wallet` in estate-web.yml.
+        servers: [{ url: "http://agora:4000" }]
     cf-api-market:
       loadBalancer:
         servers: [{ url: "http://agora:4000" }]
@@ -328,7 +331,11 @@ http:
         servers: [{ url: "http://agora:4000" }]
     cf-api-nda:
       loadBalancer:
-        servers: [{ url: "http://emberkin:4000" }]
+        # M5d: emberkin — and nda inside it — is a module of agora now. `/v1/worlds`
+        # is still nda's, bare: it is the public owner of that prefix on this host,
+        # and admin-api's operator world controls are the ones that moved (to
+        # `/v1/operator/worlds`, on the ADMIN host behind Access).
+        servers: [{ url: "http://agora:4000" }]
     cf-api-devplatform:
       loadBalancer:
         # M5a: devplatform is a module of agora now. Re-pointed at the absorber.

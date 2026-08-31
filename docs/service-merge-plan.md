@@ -464,8 +464,129 @@ sign a transaction.
   `tick()` not awaiting the re-arm — `RunnerEvent` handlers are `=> void`, so
   `rescheduleRecurring` fires `void queue.enqueue(…)`. The read now waits for
   those writes with a deadline and asserts exactly what it did before.
-- **M5d** — + `emberkin` (brings aetherholm, nda), `trade`, `admin-api`,
-  `hub-api`, `wallet`. Platform complete; rename the Deployment `platform`.
+- **M5d** — ✅ **SHIPPED 2026-08-31, release 2026.8.107** (micro-agora#10,
+  micro-org#528). + `hub-api`, `trade`, `wallet`, `admin-api` and `emberkin` —
+  which brings `aetherholm` and `nda` NESTED inside it, because emberkin was
+  already a merged process. **agora reaches TWENTY-THREE modules from nineteen
+  factory calls**, and cloudsforge-estate goes 18 Deployments → 13. The under-20
+  target was met at M5c; this is the wave that makes the platform tier complete.
+
+  **THREE COLLISION SHAPES, FROM ONE RULE.** Ten pairs collided across the
+  merged table, computed mechanically rather than reasoned about. The rule is
+  the one every wave has used — the PUBLIC owner, the module a caller outside
+  the estate already addresses, keeps the bare path — and it produced three
+  different answers because the modules differ, not because the rule bent:
+
+  * `hub` moved EVERYTHING to `/v1/hub`. Seven of eleven paths collided
+    (`/v1/search` with the square's, six with wallet's) and a module split
+    across two address spaces is a rule nobody can hold. Its `REMOUNTED_PATHS`
+    is DERIVED from its own route table, so a route added there is remounted
+    without anyone remembering to.
+  * `wallet` moved NOTHING — seven `api.<apex>` prefixes plus the whole `pay.`
+    host are routed straight at it, so it is the public owner of every path it
+    collides on and `hub` is the side that gave way.
+  * `admin` moved exactly TWO families. `/v1/worlds…` → `/v1/operator/worlds…`,
+    because `GET /v1/worlds` is nda's public surface; and its webhook. The first
+    design remounted all thirty-one under `/v1/admin` and two findings killed
+    it: `wallet` already owns `/v1/admin/exchange-desk`, and **billing dials
+    admin's BARE `/v1/engagement/policies` by service name**, container to
+    container, where no gateway rewrite could follow it.
+
+  **hub is the first module of this process that owns no database.** No pool, no
+  schema assertion, no migration target, no job runner; its specs carry no
+  `RouteSpec.sql`, which is only safe because its own `RequestContext` declares
+  no `sql` field and it rebuilds the kernel's context field by field rather than
+  spreading it. It is also the one module `agora/src/migrator.ts` does NOT
+  import, which is why `agora-migrate` needs none of its eight upstream URLs.
+
+  **emberkin keeps its fan-out** — one signature check, three sinks — which is
+  refused everywhere else in this process and legitimate here because all three
+  titles read the same estate-wide `OUTBOX_SIGNING_SECRET` and all three
+  subscribe to `identity.user.deleted`.
+
+  **THE COLLISION THIS PLAN REFUSED TESSERA OVER, RESOLVED.** M3's note said
+  `GET /v1/title` and `POST /v1/provision` are frozen contract constants that
+  BOTH aetherholm and tessera mount, and that the fix was out of micro-emberkin's
+  scope. It is in scope here: `worlds` composes a title's address as
+  `base.pathname + FROZEN_SUFFIX` (`worlds/src/titleclient.ts`), so aetherholm
+  serves them under `/aetherholm` and its row in the title registry names
+  `http://agora:4000/aetherholm`. **The registry UPDATE is a hard prerequisite of
+  the deploy, not a follow-up** — left at the origin-only URL it had, `worlds`
+  asks `/v1/title` and tessera answers, and a paid archipelago is delivered as a
+  ward with a 200. Tessera's own move is the next release (see below).
+
+  **AND THE HALF M5b SKIPPED, FIXED.** M5b remounted tessera's `/v1/listings`
+  and did not touch the gateway; measured on 2026-08-30, `/v1/listings` on both
+  of tessera's hostnames was answered by MARKET — 200 with an empty array,
+  unauthenticated, on every signed-in user's page. Three `replacePathRegex`
+  middlewares now carry the three remounts that need one, and
+  `scripts/check-remount-rewrites.py` derives the requirement from each module's
+  own `REMOUNTED_PATHS` so the next wave cannot repeat it. It found two more
+  cases while being written — community's — which turned out to need no rewrite
+  because community has no router at all, and that exemption is now declared AND
+  checked.
+
+  Follow-up, next release: move tessera's two frozen paths to `/tessera/v1/*`
+  as well. While ONE title still answers the bare path, a title registered at an
+  origin-only base URL is answered by that title rather than 404ing loudly.
+
+  **THE CUTOVER STEPS THAT ARE NOT IN A FILE.** Two live changes ship with this
+  release and neither is a manifest, so both are written here rather than
+  discovered:
+
+  ```sql
+  -- 1. aetherholm's base URL, in `worlds`. MANDATORY, and the window matters:
+  --    until it runs, `worlds` asks `/v1/title` and TESSERA answers.
+  update titles
+     set service_url = 'http://agora:4000/aetherholm', updated_at = now()
+   where slug = 'aetherholm';
+
+  -- 2. the subscription rows whose PATH moved. INSERT-then-DELETE rather than
+  --    UPDATE: `event_subscriptions` is unique on (topic, url), and the three
+  --    titles collapse onto ONE inbox — an UPDATE would violate that constraint
+  --    the moment two of them share a topic, which `identity.user.deleted` is.
+  --    Both rows exist for the length of one statement pair, and the inbox
+  --    dedupes by event id, so a delivery in flight is safe either way.
+  --
+  --    Read from the LIVE estate on 2026-08-31 rather than assumed: the rows are
+  --    in identity (five of them), and every other database's admin-api row.
+  insert into event_subscriptions (topic, url)
+  select distinct topic, 'http://agora:4000/v1/events/emberkin'
+    from event_subscriptions
+   where url in ('http://emberkin:4000/v1/events',
+                 'http://aetherholm:4000/v1/events',
+                 'http://nda:4000/v1/events')
+  on conflict do nothing;
+  delete from event_subscriptions
+   where url in ('http://emberkin:4000/v1/events',
+                 'http://aetherholm:4000/v1/events',
+                 'http://nda:4000/v1/events');
+
+  insert into event_subscriptions (topic, url)
+  select distinct topic, 'http://agora:4000/v1/events/trade'
+    from event_subscriptions where url = 'http://trade:4000/v1/events'
+  on conflict do nothing;
+  delete from event_subscriptions where url = 'http://trade:4000/v1/events';
+
+  insert into event_subscriptions (topic, url)
+  select distinct topic, 'http://agora:4000/v1/events/admin-api'
+    from event_subscriptions where url = 'http://admin-api:4000/v1/events'
+  on conflict do nothing;
+  delete from event_subscriptions where url = 'http://admin-api:4000/v1/events';
+  ```
+
+  The OLD rows are deleted here where wave M5c left its equivalents in place, and
+  the difference is which failure the leftovers produce. M5c's
+  `http://activity:4000/ingest/activity` still RESOLVES and still WORKS — same
+  path, aliased host, deduped by the inbox. These do not: the path 410s by
+  design, so a row left behind is a permanent entry in the producer's
+  `outbox_deliveries.last_error`. Loud is the right answer for a row nobody
+  re-pointed; it is the wrong answer for one that was re-pointed correctly.
+
+  `wallet`'s `http://wallet:4000/events` rows are deliberately NOT in that list:
+  the path did not move and the name still resolves, so re-pointing them would be
+  churn with a window in it.
+
 - **M5e** — `vault` = custody + settlement. Signing plane, internal-only.
 - **M5f** — web replicas 1; backup-runner → CronJob; final count audit.
 

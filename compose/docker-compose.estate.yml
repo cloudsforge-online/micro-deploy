@@ -1781,88 +1781,6 @@ services:
   # it was ever going to be visible.
 
   # ------------------------------------------------------------------- wallet
-  wallet-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../wallet
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      WALLET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/wallet?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      CUSTODY_URL: http://custody:4000
-      INDEXER_URL: http://indexer:4000
-      PRICING_URL: http://pricing:4000
-      WALLET_CHALLENGE_DOMAIN: localhost
-      WALLET_CHALLENGE_URI: http://localhost:4103
-      # On the MIGRATOR too, and not for symmetry: `src/migrator.ts` imports
-      # the eagerly-loaded `env.ts`, so it parses this variable at boot exactly as
-      # the service does. Setting it on one and not the other means a malformed
-      # table migrates the schema and then refuses to serve it.
-      WALLET_FEE_QUOTES: *wallet-fee-quotes
-      # See the anchor: unset, this defaults to testnet on a mainnet estate.
-      WALLET_NETWORK: *money-network
-      INSTANCE_ID: wallet-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  wallet:
-    <<: *service-defaults
-    build:
-      context: ../../wallet
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      WALLET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/wallet?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      CUSTODY_URL: http://custody:4000
-      INDEXER_URL: http://indexer:4000
-      PRICING_URL: http://pricing:4000
-      WALLET_CHALLENGE_DOMAIN: localhost
-      WALLET_CHALLENGE_URI: http://localhost:4103
-      # ── THE LONG-LIVED CREDENTIAL, WHICH THIS FILE NEVER HANDED OVER ──────
-      # estate-bootstrap.sh has been minting these into compose/estate/tokens.env
-      # and NOT ONE SERVICE WAS GIVEN ONE: no `*_IDENTITY_CREDENTIAL` appeared
-      # anywhere in this file, so `--env-file` set variables no container
-      # declared. Every service that adopted the exchange therefore booted,
-      # logged "is not set; every call to a peer will fail 503", and went
-      # `degraded` — which is why `up --wait` could not bring the estate up at
-      # all. Measured on this estate, not inferred.
-      #
-      # Unlike the 10-minute `*_SERVICE_TOKEN` above, this does not expire: the
-      # service exchanges it at POST /service-tokens/exchange for a fresh token
-      # whenever it needs one, so a restart survives and the bootstrap is not a
-      # renewal treadmill. Both are passed while the migration is in flight;
-      # the service logs that it IGNORES the token when it holds a credential.
-      WALLET_IDENTITY_CREDENTIAL: ${WALLET_IDENTITY_CREDENTIAL:-}
-      # See the anchor. This one line is the difference between an estate that
-      # can be withdrawn from and one that answers 503 to every asset.
-      WALLET_FEE_QUOTES: *wallet-fee-quotes
-      # See the anchor. This is the line whose absence froze EMBER withdrawals
-      # and had the mainnet estate minting tb1q… and tltc1… deposit addresses.
-      WALLET_NETWORK: *money-network
-      INSTANCE_ID: wallet-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}103:4000"
-    depends_on:
-      wallet-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-      custody:
-        condition: service_healthy
-      # indexer is a member of the estate now (its profile is gone; see its
-      # block) so INDEXER_URL resolves. It is still NOT waited on here, and that
-      # is deliberate rather than an oversight: INDEXER_CHAINS is unset, so
-      # indexer follows no chain and has no deposit to report. This service must
-      # boot whether or not indexer is healthy, exactly as it did before.
-      agora:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # --------------------------------------------------------------- settlement
   settlement-migrate:
     <<: *migrate-defaults
@@ -1989,49 +1907,6 @@ services:
     healthcheck: *healthcheck
 
   # -------------------------------------------------------------------- trade
-  trade-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../trade
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      TRADE_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/trade?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      PRICING_URL: http://pricing:4000
-      BILLING_URL: http://billing:4000
-      TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      INSTANCE_ID: trade-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  trade:
-    <<: *service-defaults
-    build:
-      context: ../../trade
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      TRADE_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/trade?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      PRICING_URL: http://pricing:4000
-      BILLING_URL: http://billing:4000
-      TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
-      INSTANCE_ID: trade-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}114:4000"
-    depends_on:
-      trade-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-      agora:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # --------------------------------------------------------------- aetherholm
   #
   # ── THE THIRD FORGE WORLDS TITLE, AND ONE OF FIVE DEPLOYABLES NEVER RUN ─────
@@ -2084,110 +1959,6 @@ services:
   # the only thing that moved. The NAME still resolves in Kubernetes: `scripts/k8s-render.py`
   # emits it as an ExternalName from MERGED_INTO, and refuses to render if a compose service
   # by that name returns.
-  emberkin-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../emberkin
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      EMBERKIN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/emberkin?sslmode=require
-      # The migrator loads the same `env.ts`, which demands these three URLs and
-      # the token before it will construct a config — so they are supplied here
-      # too. It dials none of them.
-      LEDGER_URL: http://ledger:4000
-      BILLING_URL: http://billing:4000
-      WORLDS_URL: http://worlds:4000
-      # The credential FIRST and the token still beside it — see the ordering note
-      # in this block's header. `emberkin-migrate` needs both lines for the same
-      # reason it needs the three URLs above: it loads the same `env.ts`, which
-      # builds the whole config before it opens a connection, and it dials none
-      # of them.
-      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
-      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
-      # ── AETHERHOLM'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M3) ──
-      #
-      # micro-aetherholm's code ships inside this image now, as plain directories
-      # under `src/aetherholm/`. Both databases are KEPT and named by their own
-      # variables — the two schemas share SIX table names (`outbox`,
-      # `event_subscriptions`, `outbox_deliveries`, `inbox`, `seasons`, `battles`),
-      # so a query against the wrong handle SUCCEEDS and returns wrong rows. That is
-      # why the merged service stamps a per-route selector rather than resolving one
-      # global handle, and why these stay two databases.
-      #
-      # These two variables are the whole of what moved: aetherholm holds no
-      # credential of its own and reaches no upstream service.
-      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
-      # nda's half, since the merge — see the service below.
-      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
-      INSTANCE_ID: emberkin-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  emberkin:
-    <<: *service-defaults
-    build:
-      context: ../../emberkin
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      EMBERKIN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/emberkin?sslmode=require
-      LEDGER_URL: http://ledger:4000
-      BILLING_URL: http://billing:4000
-      WORLDS_URL: http://worlds:4000
-      # The long-lived `cfsc_…` this service exchanges for short tokens. Section 5b
-      # of `estate-bootstrap.sh` has minted it all along and nothing read it —
-      # confirmed present in the mainnet tokens file 2026-08-09, by key name.
-      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
-      # Still wired, deliberately, and it comes out in a later release. Removing it
-      # in the same change that adds the line above is the one ordering that will
-      # not boot.
-      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
-      # ── AETHERHOLM'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M3) ──
-      #
-      # micro-aetherholm's code ships inside this image now, as plain directories
-      # under `src/aetherholm/`. Both databases are KEPT and named by their own
-      # variables — the two schemas share SIX table names (`outbox`,
-      # `event_subscriptions`, `outbox_deliveries`, `inbox`, `seasons`, `battles`),
-      # so a query against the wrong handle SUCCEEDS and returns wrong rows. That is
-      # why the merged service stamps a per-route selector rather than resolving one
-      # global handle, and why these stay two databases.
-      #
-      # These two variables are the whole of what moved: aetherholm holds no
-      # credential of its own and reaches no upstream service.
-      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
-      # ── NDA'S HALF, SINCE THE MERGE (docs/service-merge-plan.md, wave M4a) ──
-      #
-      # micro-nda's code ships inside this image now, as plain directories under
-      # `src/nda/`, joining aetherholm. THREE databases are kept, and that is not
-      # tidiness: all four of `outbox`, `event_subscriptions`, `outbox_deliveries`
-      # and `inbox` exist in every module with IDENTICAL columns, so a write
-      # through the wrong handle does not fail — it inserts into another module's
-      # dedupe table and swallows the redelivery for ever. `RouteSpec.sql` stamps
-      # the selector per route.
-      #
-      # These two variables are the whole of what moved. nda's upstreams
-      # (BILLING_URL, WORLDS_URL, IDENTITY_URL) were already on this service, which
-      # is exactly why nda was the one absorbed: it widens this pod by nothing.
-      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
-      NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: emberkin-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}122:4000"
-    depends_on:
-      emberkin-migrate:
-        condition: service_completed_successfully
-      identity:
-        condition: service_healthy
-      ledger:
-        condition: service_healthy
-      agora:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # ------------------------------------------------------------------- beacon
   #
   # ── THE RELEASE GATE, WHICH HAD NEVER RUN IN ANY ENVIRONMENT ────────────────
@@ -2454,9 +2225,12 @@ services:
         condition: service_healthy
       ledger:
         condition: service_healthy
+      # `hub-api` was here as a second dependency until wave M5d absorbed it — it is a module of
+      # agora now, so the line above already waits for the process that serves the dashboard.
+      # A `depends_on` naming a service the file no longer declares is a hard compose error, not a
+      # tolerated stale reference, which is why this one had to move with the merge rather than
+      # after it.
       agora:
-        condition: service_healthy
-      hub-api:
         condition: service_healthy
     healthcheck: *healthcheck
 
@@ -2667,248 +2441,12 @@ services:
   # no admin role, so the FIRST ADMIN IS A MANUAL UPDATE. That is deliberate,
   # and `estate-bootstrap.sh` does it as an explicit, named step rather than
   # leaving it as folklore.
-  admin-api-migrate:
-    <<: *migrate-defaults
-    build:
-      context: ../../admin-api
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api?sslmode=require
-      # WHICH ESTATE AM I? Required by admin-api 1.1.0 with no default, deliberately:
-      # its own env.ts records that "a default answer to 'which estate am I?' is how a
-      # testnet backup gets restored over mainnet balances". So it is answered here, per
-      # network, from the same variable the custody and outbox secret files key on --
-      # `CF_EMBER_NETWORK` is set to `testnet` by compose/testnet.env and unset for
-      # mainnet, so the two environments cannot both claim to be the same one.
-      ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
-      # No `IDENTITY_URL`: it comes from `*identity-trust` above, so this block
-      # follows `CF_IDENTITY_URL` per estate. See the long note in `hub-api`
-      # for what overriding it here cost on testnet.
-      LEDGER_URL: http://ledger:4000
-      BILLING_URL: http://billing:4000
-      MARKET_URL: http://market:4000
-      # The migrator never dials notify — it runs migrations and exits — but it boots through
-      # the same env parser as the service, which REQUIRES this. Learned on the 2026.08.30
-      # deploy: the service block got NOTIFY_URL, this block did not, the migrate job refused
-      # to start, and admin-api sat in Created on BOTH networks until this line existed.
-      NOTIFY_URL: http://notify:4000
-      # Same rule, same reason: the migrator never dials nda either, and refuses to start without
-      # it. See the service block below for what this address is for.
-      NDA_URL: http://nda:4000
-      # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
-      # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
-      # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
-      # billing and identity clients, so the operator console authenticated for the ten minutes
-      # after a restart and 401'd every privileged action thereafter — while /livez stayed green,
-      # because it makes no outbound call (micro-org#197).
-      #
-      # `estate-bootstrap.sh` has minted this variable into both tokens files all along and NO
-      # compose block referenced it, which is why the JWT stayed in use.
-      #
-      # ADMIN_API_SERVICE_TOKEN is NOT passed through: 1.3.0 holds it to the same assertion as the
-      # credential, and what the tokens files hold for it is a 701-byte JWT that
-      # `assertServiceCredential` refuses BY NAME (#222). Its default here was
-      # `estate-placeholder-token-0000000000000000` — 40 characters, on no deny-list, over every
-      # length floor, so every guard in the estate passed it. That is #142 exactly.
-      #
-      # This block and admin-api-migrate MUST NOT DRIFT: a market-only change of this shape caused
-      # a testnet-wide outage once, and admin-api depends on its migrator with
-      # service_completed_successfully.
-      ADMIN_API_IDENTITY_CREDENTIAL: ${ADMIN_API_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: admin-api-migrate
-    env_file: *outbox-secrets
-    depends_on:
-      postgres:
-        condition: service_healthy
-
-  admin-api:
-    <<: *service-defaults
-    build:
-      context: ../../admin-api
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api?sslmode=require
-      # WHICH ESTATE AM I? Required by admin-api 1.1.0 with no default, deliberately:
-      # its own env.ts records that "a default answer to 'which estate am I?' is how a
-      # testnet backup gets restored over mainnet balances". So it is answered here, per
-      # network, from the same variable the custody and outbox secret files key on --
-      # `CF_EMBER_NETWORK` is set to `testnet` by compose/testnet.env and unset for
-      # mainnet, so the two environments cannot both claim to be the same one.
-      ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
-      # No `IDENTITY_URL`: it comes from `*identity-trust` above. See `hub-api`.
-      LEDGER_URL: http://ledger:4000
-      BILLING_URL: http://billing:4000
-      MARKET_URL: http://market:4000
-      # The operator mail view (GET /v1/mail, POST /v1/mail/:id/resend). Unlike the four above,
-      # this one is called with the OPERATOR's own bearer rather than admin-api's service token:
-      # notify's /admin/deliveries routes are requireAdmin and refuse a service principal, and
-      # resending somebody's mail should be recorded against the human who asked for it. So there
-      # is no grant to derive and no credential to rotate for this peer — only an address.
-      NOTIFY_URL: http://notify:4000
-      # Forge Worlds. The Worlds screen in the operator console generates and runs *Ninety Days
-      # After* worlds through this, and it is the ONLY door into the service: nda has no row in
-      # `surfaces.ts`, so no gateway router, no DNS record and no tunnel ingress rule — the
-      # container has been healthy for weeks and unreachable from any browser on earth. That is
-      # why the title still reads `draft`.
-      #
-      # Port 4000, NOT the 4110 in nda's own Dockerfile: `x-common-env` sets `PORT: "4000"` for
-      # every service here, and the aetherholm block above argues at length for why nda is
-      # normalised rather than left on its EXPOSEd port — 4110 is notify's HOST port in this file.
-      # The container listens on 4000. `4116` in nda's own `ports:` is the derived HOST port and is
-      # bound to 127.0.0.1, so it is not an address admin-api could use even if it wanted to.
-      #
-      # Called with the OPERATOR's own bearer, like NOTIFY_URL and for the same reason —
-      # nda's `requireAdminPrincipal` takes either a service holding nda:write or a human with
-      # role:admin, and a world should record the human who generated it. So there is no grant to
-      # derive and no credential to rotate here either, only an address.
-      NDA_URL: http://nda:4000
-      # The long-lived credential admin-api EXCHANGES for short-lived tokens, re-minting before
-      # expiry. 1.3.0 is the first version that can: before it there was no ServiceTokenProvider at
-      # all, `index.ts` read the token once at import and handed it verbatim to the ledger, market,
-      # billing and identity clients, so the operator console authenticated for the ten minutes
-      # after a restart and 401'd every privileged action thereafter — while /livez stayed green,
-      # because it makes no outbound call (micro-org#197).
-      #
-      # `estate-bootstrap.sh` has minted this variable into both tokens files all along and NO
-      # compose block referenced it, which is why the JWT stayed in use.
-      #
-      # ADMIN_API_SERVICE_TOKEN is NOT passed through: 1.3.0 holds it to the same assertion as the
-      # credential, and what the tokens files hold for it is a 701-byte JWT that
-      # `assertServiceCredential` refuses BY NAME (#222). Its default here was
-      # `estate-placeholder-token-0000000000000000` — 40 characters, on no deny-list, over every
-      # length floor, so every guard in the estate passed it. That is #142 exactly.
-      #
-      # This block and admin-api-migrate MUST NOT DRIFT: a market-only change of this shape caused
-      # a testnet-wide outage once, and admin-api depends on its migrator with
-      # service_completed_successfully.
-      ADMIN_API_IDENTITY_CREDENTIAL: ${ADMIN_API_IDENTITY_CREDENTIAL:-}
-      INSTANCE_ID: admin-api-estate
-    env_file: *outbox-secrets
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}120:4000"
-    depends_on:
-      admin-api-migrate:
-        condition: service_completed_successfully
-      ledger:
-        condition: service_healthy
-      agora:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # ------------------------------------------------------------------ hub-api
   # No migrator and no database: it is a BFF that composes other services'
   # answers and owns no state. It mints SEVEN separate narrow service tokens,
   # one per upstream, rather than one token with the union of the scopes —
   # which is the least-privilege property the scope vocabulary exists to make
   # possible.
-  hub-api:
-    <<: *service-defaults
-    build:
-      context: ../../hub-api
-      additional_contexts: *build-contexts
-    environment:
-      <<: [*common-env, *identity-trust]
-      # ── NO `IDENTITY_URL` HERE, AND ITS ABSENCE IS THE FIX ─────────────────
-      #
-      # It used to be `http://identity:4000`, written as the first of the
-      # upstream URLs below and years older than the anchor above. A key that
-      # appears in a mapping AFTER a merge key overrides what the merge brought,
-      # silently, so `*identity-trust` set `IDENTITY_URL` from `CF_IDENTITY_URL`
-      # and this line put the local container back — on the one estate where
-      # that is the wrong identity.
-      #
-      # MEASURED 2026-08-14 on testnet, and it is what "wallet could not be
-      # reached" turned out to be. `tokens.testnet.env` holds credentials minted
-      # in the MAINNET identity with `network: testnet` (the combined view's
-      # whole point: one identity, and the row carries the estate). The testnet
-      # identity has never seen them, so `POST /service-tokens/exchange` answered
-      # 401 "the service credential presented is not valid" — and a token
-      # provider that cannot mint throws `ServiceTokenUnavailableError`, which is
-      # not an `HttpError`, so hub-api's `describeFault` fell through to its last
-      # arm and reported EVERY upstream as unreachable. Eleven tiles, one
-      # credential, no network fault anywhere: `fetch` from this container to
-      # `wallet:4000` answered fine throughout.
-      #
-      # The same line sent the reader's own bearer — minted by the mainnet
-      # identity, because there is only one login — to the testnet identity for
-      # `GET /auth/me`, which rejected it as `bad_signature`. Both faults are one
-      # line, and the line is gone. `scripts/check-identity-trust.py` now fails
-      # the build if any service block writes one again.
-      LEDGER_URL: http://ledger:4000
-      WALLET_URL: http://wallet:4000
-      BILLING_URL: http://billing:4000
-      PRICING_URL: http://pricing:4000
-      POLICY_URL: http://policy:4000
-      ACTIVITY_URL: http://activity:4000
-      # ── THE ONE THAT WAS MISSING, AND WHAT IT COST ────────────────────────
-      #
-      # NOTIFY_URL was absent from this block for the whole life of the estate,
-      # and hub-api's env.ts did not require it — so the `notifications` tile
-      # was hard-coded `unavailable`, `degraded` contained it on every single
-      # dashboard response, and hub-web turned that into "notifications is not
-      # showing current data. Everything else on this page is." on EVERY
-      # signed-in Overview, permanently. Measured 2026-08-11:
-      # hub_tile_status_total{tile="notifications",status="unavailable"} was 32
-      # of 32 compositions on mainnet and 29 of 29 on testnet, while notify held
-      # 172 notifications for 85 users and 77 for 37. micro-org #415.
-      #
-      # hub-api 1.4.0 makes this REQUIRED rather than optional: a URL that may
-      # be absent is a feature that can be silently unconfigured, and this one
-      # was, for months, with an incident banner as the only symptom. A deploy
-      # that forgets it now fails at boot with the variable's name.
-      #
-      # `notify:read` is already in IDENTITY_SERVICE_TOKEN_GRANTS for hub-api
-      # above — the grant was derived from the scope constants and provisioned
-      # long before anything used it, so no grant change accompanies this.
-      NOTIFY_URL: http://notify:4000
-      # ── SIX NARROW TOKENS WERE HERE, AND THEIR ABSENCE IS THE POINT ───────
-      # HUB_LEDGER_TOKEN, HUB_WALLET_TOKEN, HUB_BILLING_TOKEN, HUB_PRICING_TOKEN,
-      # HUB_POLICY_TOKEN and HUB_ACTIVITY_TOKEN were six separate 10-minute
-      # tokens, deliberately narrow — the AD-05 separation, so a process reached
-      # by an attacker held six read tokens and not one that could move money.
-      # hub-api has RETIRED all six: env.ts keeps them only as
-      # `legacyServiceTokenPresent`, a presence check it reports and never obeys.
-      # The narrowing did not go away with them; it moved into the exchange,
-      # which mints per upstream from the one credential below. Passing them
-      # anyway meant this deploy minted six live JWTs nothing would ever present.
-      HUB_API_IDENTITY_CREDENTIAL: ${HUB_API_IDENTITY_CREDENTIAL:-}
-      # ── THE SAME DEPLOY FACT hub-web's NGINX RENDERS, HANDED TO THE BFF ───
-      #
-      # `GET /v1/deployment` answers "does THIS estate run a mining pool", and
-      # it exists because the combined view made the question cross-estate.
-      # hub-web has always read `/deployment.json` from its own container, which
-      # is the right answer to "does the estate serving this page run a pool"
-      # and the wrong answer to the question a reader viewing the other network
-      # is actually asking. Testnet runs no micro-pool — the `pool` profile is
-      # mainnet's, and a pool on that estate's regtest litecoind would refuse to
-      # boot — so a mainnet-served page viewing testnet asked `pool-testnet` for
-      # `/v1/pool`, got the 502 that mechanism exists to avoid rendering, and
-      # showed "The pool could not be read" over an EMBER miner that works.
-      #
-      # A WEB path cannot answer it: every `-testnet` web hostname 302s to its
-      # mainnet sibling, so reading the other estate's `/deployment.json` reads
-      # this one's. `/v1` is the half of those hostnames that still answers from
-      # the other estate, which is why the fact is served by the BFF.
-      #
-      # Same variable, same default, same asymmetry as `hub-web` and `pool-web`:
-      # only the exact string `absent` means "no pool here", and the image
-      # defaults to `present` so an estate that has never heard of the flag is
-      # unchanged.
-      POOL_API_PRESENCE: "${POOL_API_PRESENCE:-present}"
-      INSTANCE_ID: hub-api-estate
-    ports:
-      - "127.0.0.1:${CF_PORT_BASE:-4}119:4000"
-    depends_on:
-      ledger:
-        condition: service_healthy
-      wallet:
-        condition: service_healthy
-      agora:
-        condition: service_healthy
-    healthcheck: *healthcheck
-
   # ══════════════════════════════════════════ tier 5: the sixteen frontends ════
   #
   # ── WHY THEY ARE HERE ─────────────────────────────────────────────────────────
@@ -4056,6 +3594,41 @@ services:
       NOTIFY_PUBLIC_URL: https://hub${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       LANTERN_TOKEN: ${LANTERN_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet)}
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
+      # ── WAVE M5d: FOUR MORE MODULES REACH THIS MIGRATOR, AND ONE DELIBERATELY DOES NOT ───────
+      #
+      # `agora/src/migrator.ts` imports each module's `module.ts` for its `*MigrationTargets()`,
+      # and every `env.ts` VALIDATES AT IMPORT. So this Job needs the four modules' upstream URLs
+      # and credentials as well as their DSNs — the M5b wave-30 failure exactly (`agora-migrate`
+      # died on `community … LEDGER_BASE_URL is required`), and the reason this block is longer
+      # than a list of databases.
+      #
+      # hub is the one module NOT imported here: it declares no migration targets, so the migrator
+      # never reaches `agora/src/hub/env.ts` and needs none of its EIGHT upstream URLs. That is a
+      # fact worth being sure of rather than assuming in either direction — `agora/src/migrator.ts`
+      # records it beside the import list.
+      #
+      # SIX databases: trade, wallet, admin_api, emberkin, aetherholm and nda. `emberkinMigrationTargets()`
+      # returns the last three from ONE call, because emberkin is itself a merged process.
+      TRADE_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/trade?sslmode=require
+      TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      WALLET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/wallet?sslmode=require
+      WALLET_CHALLENGE_DOMAIN: localhost
+      WALLET_CHALLENGE_URI: http://localhost:4103
+      WALLET_IDENTITY_CREDENTIAL: ${WALLET_IDENTITY_CREDENTIAL:-}
+      WALLET_FEE_QUOTES: *wallet-fee-quotes
+      WALLET_NETWORK: *money-network
+      ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api?sslmode=require
+      ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
+      ADMIN_API_IDENTITY_CREDENTIAL: ${ADMIN_API_IDENTITY_CREDENTIAL:-}
+      EMBERKIN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/emberkin?sslmode=require
+      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
+      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
+      NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
+      NDA_URL: http://nda:4000
+      WORLDS_URL: http://worlds:4000
+      NOTIFY_URL: http://notify:4000
       INSTANCE_ID: agora-migrate
     # Mirrors the runtime pod's env_file, as lantern-migrate mirrors lantern.
     # The outbox file also carries ACTIVITY_INGEST_SECRETS,
@@ -4246,6 +3819,60 @@ services:
         https://lantern${CF_WEB_SUFFIX:-.cloudsforge.localtest.me},
         https://beacon${CF_WEB_SUFFIX:-.cloudsforge.localtest.me}
       ANALYTICS_TOKEN: ${ANALYTICS_TOKEN:?set it in compose/estate/tokens.env (mainnet) or tokens.testnet.env (testnet); inbound /metrics secret, NOT the pepper}
+      # ── WAVE M5d: THE ACCOUNT TIER, THE ENGINE, THE WALLET, THE CONSOLE, THE TITLES ──────────
+      #
+      # Twenty-three modules in one process. Every line below is a variable one of the five
+      # absorbed services REQUIRED at import, moved here verbatim — same name, same value, same
+      # interpolation — so the merged pod reads exactly what those five pods read.
+      #
+      # `WALLET_URL`, `ACTIVITY_URL`, `NOTIFY_URL` and `NDA_URL` now resolve to THIS POD through
+      # the ExternalName aliases `k8s-render.py`'s MERGED_INTO emits. That is a loopback and it is
+      # deliberate: hub asks wallet for a portfolio over HTTP exactly as it did, and wallet still
+      # serves those paths BARE. Rewriting them to `http://agora:4000` would work and would also
+      # delete the one thing the alias buys — a rollback that is the old image plus flipping the
+      # map, rather than a coordinated edit across every caller.
+      WALLET_URL: http://wallet:4000
+      ACTIVITY_URL: http://activity:4000
+      NOTIFY_URL: http://notify:4000
+      NDA_URL: http://nda:4000
+      WORLDS_URL: http://worlds:4000
+      # hub. It owns NO DATABASE — there is no `HUB_DATABASE_URL` here and there is not meant to
+      # be; it composes seven peers and holds no table. `POOL_API_PRESENCE` is what its
+      # `GET /v1/hub/deployment` answers, and it is deliberately not validated against a pair of
+      # allowed strings: a misspelling must degrade to the answer that costs nothing.
+      HUB_API_IDENTITY_CREDENTIAL: ${HUB_API_IDENTITY_CREDENTIAL:-}
+      POOL_API_PRESENCE: "${POOL_API_PRESENCE:-present}"
+      # trade. `TRADE_SERVICE_TOKEN` is a STATIC bearer this module presents (SD-05, its own and
+      # never shared), not a credential exchanged at identity — which is why it carries a
+      # placeholder default rather than a `:?` refusal.
+      TRADE_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/trade?sslmode=require
+      TRADE_SERVICE_TOKEN: ${TRADE_SERVICE_TOKEN:-estate-placeholder-token-0000000000000000}
+      # wallet. The SIWE challenge pair is the domain and URI a user's wallet signs over, so a
+      # wrong value is a signature that verifies against the wrong site.
+      WALLET_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/wallet?sslmode=require
+      WALLET_CHALLENGE_DOMAIN: localhost
+      WALLET_CHALLENGE_URI: http://localhost:4103
+      WALLET_IDENTITY_CREDENTIAL: ${WALLET_IDENTITY_CREDENTIAL:-}
+      WALLET_FEE_QUOTES: *wallet-fee-quotes
+      WALLET_NETWORK: *money-network
+      # admin. `ADMIN_API_ESTATE_ENVIRONMENT` is the value `estate_identity` is CLAIMED with on
+      # first boot and COMPARED against on every boot after; a disagreement refuses to serve. A
+      # wrong value here poisons every backup taken afterwards, because a restore is refused on it
+      # by `restore_runs_environment_matches()`.
+      ADMIN_API_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/admin_api?sslmode=require
+      ADMIN_API_ESTATE_ENVIRONMENT: ${CF_EMBER_NETWORK:-mainnet}
+      ADMIN_API_IDENTITY_CREDENTIAL: ${ADMIN_API_IDENTITY_CREDENTIAL:-}
+      # emberkin, and the two titles nested inside it. THREE databases from one factory call.
+      # `EMBERKIN_SERVICE_TOKEN` is the pre-minted ten-minute token micro-org#228 exists to
+      # retire: set it and the module logs `fatal` at boot and every outbound call 401s from
+      # minute ten. It is carried here so the variable's presence still produces that warning
+      # rather than being silently ignored.
+      EMBERKIN_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/emberkin?sslmode=require
+      EMBERKIN_IDENTITY_CREDENTIAL: ${EMBERKIN_IDENTITY_CREDENTIAL:-}
+      EMBERKIN_SERVICE_TOKEN: ${EMBERKIN_SERVICE_TOKEN:-}
+      AETHERHOLM_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/aetherholm?sslmode=require
+      NDA_DATABASE_URL: postgres://cloudsforge:${CF_POSTGRES_PASSWORD}@postgres:5432/nda?sslmode=require
+      NDA_IDENTITY_CREDENTIAL: ${NDA_IDENTITY_CREDENTIAL:-}
       INSTANCE_ID: agora-estate
     # `*outbox-secrets` alone until M5a: policy/devplatform verify inbound events
     # against `OUTBOX_ACCEPT_SECRETS`/`DEVPLATFORM_INGEST_SECRETS`, both of which

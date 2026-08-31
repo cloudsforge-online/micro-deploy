@@ -474,6 +474,70 @@ http:
         prefixes:
           - "/worlds/tessera"
 
+    # ══════════════════════════════════════════════════════════════════════════════════════════
+    # THE THREE PATH REWRITES A MERGE MADE NECESSARY, AND THE ONE THAT WAS MISSING FOR A DAY
+    # ══════════════════════════════════════════════════════════════════════════════════════════
+    #
+    # This file had NO `replacePathRegex` and no `addPrefix` at all until wave M5d. That was fine
+    # while one hostname meant one container: a router named a service and the service served the
+    # paths the SDK published. It stopped being fine the moment two services became modules of one
+    # process and both declared the same path, because route matching inside that process is
+    # FIRST-WINS and the loser is a dead route that looks exactly like a live one.
+    #
+    # The rule the merge waves settled on: the PUBLIC owner — the module a caller outside the
+    # estate already addresses — keeps the bare path, and the other module remounts under a
+    # namespace. **A remount inside the process is only half of that.** The bytes on the wire still
+    # say the bare path, so the router that carries them has to rewrite.
+    #
+    # ── WHAT HAPPENED WHEN THAT SECOND HALF WAS SKIPPED (micro-org, wave M5b) ─────────────────
+    #
+    # M5b remounted tessera's four `/v1/listings…` routes so market could keep the bare path, and
+    # did not touch this file. Measured against cloudsforge.online on 2026-08-30:
+    #
+    #   GET /worlds/tessera/v1/listings/x/risk  -> 404, code `not_found`             (market's)
+    #   GET /worlds/tessera/v1/listings         -> 200, an empty list, UNAUTHENTICATED (market's)
+    #   GET /worlds/tessera/v1/tessera/listings -> 401                    (tessera's, unrouted)
+    #
+    # The bodies are described rather than quoted on purpose: a doubled closing brace anywhere in
+    # this file — even inside a `#` comment — reads to Traefik's template parser as the close of an
+    # action, and `check-gateway-templates-parse.py` refuses the file for it. That guard exists
+    # because the 2026-08-19 outage was a template action whose continuation line began with `#`.
+    #
+    # The 404 is market's "no such record", not a route miss — a real route miss on that process
+    # says `no route for GET /v1/zzz…`. So every signed-in user's tessera listings showed EMPTY,
+    # `POST /v1/listings` from tessera-web reached market's create handler, and nothing anywhere
+    # logged a fault. `cf-tessera-listings` below is the fix, and it ships in the same release as
+    # the two rewrites M5d needs — which is the point: a remount and its rewrite ship together or
+    # neither ships.
+    #
+    # `replacePathRegex` rather than `addPrefix`, in all three, because only some paths move. An
+    # `addPrefix` would move the whole surface and take the paths that must stay bare with it.
+
+    # tessera's listings, on both of its routers. `$1` keeps the id and the `/activate` suffix.
+    cf-tessera-listings:
+      replacePathRegex:
+        regex: "^/v1/listings(.*)"
+        replacement: "/v1/tessera/listings$1"
+
+    # hub's WHOLE `/v1` surface. The only blanket rewrite here, and it is blanket because hub
+    # remounted blanket: seven of its eleven paths collided (`/v1/search` with the square's, six
+    # `/v1/conversions…`/`/v1/portfolio`/`/v1/transfers` with wallet's) and splitting the surface
+    # across two address spaces is a rule nobody can hold. `^/v1/(.*)` does not match a bare `/v1`,
+    # which is correct — hub serves nothing there and a gateway 404 is the true answer.
+    cf-hub-prefix:
+      replacePathRegex:
+        regex: "^/v1/(.*)"
+        replacement: "/v1/hub/$1"
+
+    # admin's operator world controls, and NOTHING ELSE of admin's. `GET /v1/worlds` is nda's
+    # public surface on `api.<apex>`, so the operator proxy is the side that gave way; its other
+    # twenty-six paths stay bare because billing dials `/v1/engagement/policies` by SERVICE NAME,
+    # container to container, and no rule in this file could follow that call.
+    cf-admin-operator-worlds:
+      replacePathRegex:
+        regex: "^/v1/worlds(.*)"
+        replacement: "/v1/operator/worlds$1"
+
     # Wave 3g's, and the un-automatable Decision 4 audit re-run for it on 2026-08-20 rather than
     # assumed from the eight above:
     #
@@ -764,6 +828,7 @@ http:
       rule: 'Host(`hub{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
+      middlewares: [cf-hub-prefix]
       service: cf-svc-hub-api
 
     # ─────────────────────────────────────────────────────────────── the apex ──
@@ -1312,6 +1377,7 @@ http:
       rule: 'Host(`admin{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
+      middlewares: [cf-admin-operator-worlds]
       service: cf-svc-admin-api
 
     # ──────────────────── surfaces whose service WAS absent — four have arrived ──
@@ -1930,11 +1996,14 @@ http:
       service: cf-web-tessera
 {{ end }}
 
+    # `cf-tessera-strip-mount` FIRST, then the listings rewrite: the strip turns
+    # `/worlds/tessera/v1/listings` into `/v1/listings`, which is the shape the rewrite matches.
+    # Reversed, the rewrite would see a path that starts `/worlds` and do nothing.
     cf-api-tessera-apex:
       rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/worlds/tessera/v1`)'
       priority: 700
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-tessera-strip-mount]
+      middlewares: [cf-tessera-strip-mount, cf-tessera-listings]
       service: cf-svc-tessera
 
     cf-web-tessera:
@@ -1947,6 +2016,7 @@ http:
       rule: 'Host(`tessera{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
+      middlewares: [cf-tessera-listings]
       service: cf-svc-tessera
 
     # ──────────────────────────────────────────────────────────────── nimbus ──
@@ -3257,10 +3327,24 @@ http:
     # host ports on one developer machine and are a different fact.
     cf-svc-hub-api:
       loadBalancer:
-        servers: [{ url: "http://hub-api:4000" }]
+        # M5d: hub-api is a module of agora now. Re-pointed at the absorber, as
+        # every other absorbed service was — the `hub-api` ExternalName still
+        # resolves here too, this just names the real upstream.
+        #
+        # THE RE-POINT IS ONLY HALF OF IT. hub's whole `/v1` surface moved under
+        # `/v1/hub` in the merged process, so `cf-api-hub` carries a rewrite. A
+        # re-point without it sends `/v1/dashboard` at agora, where the square's
+        # own routes answer or nothing does — which is the M5b tessera
+        # regression, and it is the reason that middleware exists.
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-admin-api:
       loadBalancer:
-        servers: [{ url: "http://admin-api:4000" }]
+        # M5d: admin-api is a module of agora now. Its `/v1/worlds…` operator
+        # controls moved under `/v1/operator`, so `cf-api-admin` carries a
+        # rewrite for that prefix and NOTHING ELSE — every other admin path is
+        # still bare, because billing dials `/v1/engagement/policies` by service
+        # name and no gateway rule could follow it.
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-market:
       loadBalancer:
         servers: [{ url: "http://agora:4000" }]
@@ -3269,7 +3353,10 @@ http:
         servers: [{ url: "http://agora:4000" }]
     cf-svc-trade:
       loadBalancer:
-        servers: [{ url: "http://trade:4000" }]
+        # M5d: trade is a module of agora now. No rewrite: not one of its
+        # thirty-three paths collided with another module's, so every one is
+        # served at exactly the address it was.
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-worlds:
       loadBalancer:
         servers: [{ url: "http://agora:4000" }]
@@ -3304,7 +3391,11 @@ http:
     # the same dev-only compromise compose/estate/initdb.sql records for the database.
     cf-svc-wallet:
       loadBalancer:
-        servers: [{ url: "http://wallet:4000" }]
+        # M5d: wallet is a module of agora now, and the ONE module of the merged
+        # process whose paths did not move. It is the public owner of all seven
+        # `/v1` prefixes this estate publishes for it plus the whole `pay.` host,
+        # so hub is the side that gave way. No rewrite, deliberately.
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-custody:
       loadBalancer:
         servers: [{ url: "http://custody:4000" }]
@@ -3373,10 +3464,17 @@ http:
     # exactly like a container that has not started.
     cf-svc-emberkin:
       loadBalancer:
-        servers: [{ url: "http://emberkin:4000" }]
+        # M5d: emberkin is a module of agora now — and it brought aetherholm and
+        # nda with it, because it was already a merged process of its own.
+        servers: [{ url: "http://agora:4000" }]
     cf-svc-aetherholm:
       loadBalancer:
-        servers: [{ url: "http://emberkin:4000" }]
+        # Still emberkin's pod, which is agora's pod. aetherholm's two FROZEN
+        # title-contract paths moved under `/aetherholm`, and that re-pointing is
+        # NOT a gateway rule: `worlds` computes a title's address from its
+        # registered BASE URL, so the row in the title registry is what moves.
+        # Nothing a browser asks for on this hostname changed.
+        servers: [{ url: "http://agora:4000" }]
     # Behind the same condition as its router, and not because it would break —
     # an unreferenced service is harmless. Because a `cf-svc-faucet` defined in
     # an estate that runs no faucet is a standing invitation to point something

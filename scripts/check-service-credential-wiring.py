@@ -96,12 +96,36 @@ SERVICE_TOKEN = re.compile(r"^[A-Z][A-Z0-9_]*_SERVICE_TOKEN$")
 # reads as absent.
 EMPTY_DEFAULT = re.compile(r"^\$\{([A-Za-z_][A-Za-z0-9_]*):?-\}$")
 
-# Eighteen blocks carry one today, counted 2026-08-09. Fourteen leaves room for a
-# service to be retired without this turning into a chore, and none for the file to
-# quietly stop wiring them — which is the state rules 1 and 2 would both call clean.
-MINIMUM = 14
+# ── THE FLOOR COUNTS CREDENTIALS, NOT BLOCKS (wave M5d) ──────────────────────────────
+#
+# It counted BLOCKS and expected eighteen, which was the right measure while one block
+# meant one service. The merge waves collapsed most of them: five blocks carry a
+# credential today and `agora` alone carries thirteen of them. Lowering a block floor to
+# track that would be this assertion retiring itself one wave at a time — and it would
+# have gone on passing the day a merge dropped twelve credentials on the floor, because
+# the block that lost them would still be one block carrying one.
+#
+# So it counts the distinct `*_IDENTITY_CREDENTIAL` NAMES wired anywhere. That number
+# tracks SERVICES rather than containers, which is what the rule is about, and it does
+# not move when a merge changes where they are wired. Twenty-two are wired today; twelve
+# leaves room for services to be retired without this becoming a chore, and none for the
+# file to quietly stop wiring them — the state rules 1 and 2 would both call clean.
+#
+# Deliberately NOT re-derived from the compose file: a floor computed from the thing
+# under test passes by construction.
+MINIMUM_CREDENTIALS = 12
+# And a block floor, kept as the weaker second signal it now is.
+MINIMUM = 3
 
-REQUIRED = ("emberkin", "emberkin-migrate")
+# ── WAVE M5d: THE TWO BLOCKS THAT MUST CARRY A CREDENTIAL ARE NOW agora's ────────────
+#
+# `emberkin` and `emberkin-migrate` were these until 2026-08-31; emberkin is a module of
+# agora now (`agora/src/emberkin/`) and there is no emberkin container. The requirement
+# it stands for is UNCHANGED and now applies to more: `EMBERKIN_IDENTITY_CREDENTIAL` is
+# still what stops that module running in `static` mode on a ten-minute bearer, and the
+# same two blocks also carry wallet's, hub's, admin's and nda's. Naming the blocks that
+# exist is what keeps the rule enforced; naming ones that do not would make it vacuous.
+REQUIRED = ("agora", "agora-migrate")
 
 
 def unknown_tag(loader, suffix, node):
@@ -171,6 +195,7 @@ def main():
 
     bad = []
     credentialled = set()
+    credential_names = set()
 
     for path in files:
         for service, env in environments(path):
@@ -205,17 +230,42 @@ def main():
                     )
                     continue
                 credentialled.add(service)
+                credential_names.update(creds)
 
             if not creds:
                 continue
 
+            # ── PAIRED BY PREFIX, NOT BY BLOCK (wave M5d) ────────────────────────────
+            #
+            # `<X>_SERVICE_TOKEN` is a LEGACY slot only where `<X>_IDENTITY_CREDENTIAL`
+            # exists to supersede it — that pairing is the whole of rule 2's reasoning:
+            # a placeholder throws at boot on a host that has a perfectly good credential
+            # for the same service and no minted token for it.
+            #
+            # Until the merge waves, one block meant one service and "any credential in
+            # this block" and "this token's own credential" were the same set. They are
+            # not any more. `agora` carries FIVE credentials and also carries
+            # `TRADE_SERVICE_TOKEN`, which is not a legacy slot at all: trade has no
+            # `TRADE_IDENTITY_CREDENTIAL` and never had one, so that token is its ONLY
+            # bearer (SD-05, its own and never shared) and its placeholder default is
+            # what lets a bootstrap-less host render.
+            #
+            # Unpaired, this rule would have demanded an empty default for a variable
+            # `agora/src/trade/env.ts` reads with `requiredSecret` — a boot refusal on
+            # every host, produced by a check meant to prevent one. Pairing is strictly
+            # more precise and loses no existing catch: every pre-merge block had one
+            # prefix, so block-scope and prefix-scope agreed on all of them.
+            cred_prefixes = {c.rsplit("_IDENTITY_CREDENTIAL", 1)[0] for c in creds}
             for key in sorted(k for k in env if SERVICE_TOKEN.match(k)):
+                prefix = key.rsplit("_SERVICE_TOKEN", 1)[0]
+                if prefix not in cred_prefixes:
+                    continue
                 raw = env[key]
                 value = "" if raw is None else str(raw).strip()
                 if EMPTY_DEFAULT.match(value):
                     continue
                 bad.append(
-                    f"{where}: {key} defaults to a literal while {creds[0]} is also wired. "
+                    f"{where}: {key} defaults to a literal while {prefix}_IDENTITY_CREDENTIAL is also wired. "
                     f"The token slot is optional now and still SHAPE-CHECKED when set — it must "
                     f"be a minted JWT, because in `static` mode the value is presented verbatim "
                     f"as a Bearer — so a placeholder here throws at boot on a host that has a "
@@ -235,11 +285,20 @@ def main():
             f"because it loads the same `env.ts` and takes the service down with it."
         )
 
+    if len(credential_names) < MINIMUM_CREDENTIALS:
+        bad.append(
+            f"only {len(credential_names)} distinct *_IDENTITY_CREDENTIAL name(s) are wired "
+            f"anywhere and this estate has twenty-two. Every rule above is satisfied by a file "
+            f"that wires none, so this is the assertion that stops the check passing over an "
+            f"empty answer — and it counts NAMES rather than blocks, because a merge moves "
+            f"credentials between blocks without changing how many services need one."
+        )
     if len(credentialled) < MINIMUM:
         bad.append(
-            f"only {len(credentialled)} service block(s) are wired with a credential and this "
-            f"estate has eighteen. Every rule above is satisfied by a file that wires none, so "
-            f"this is the assertion that stops the check passing over an empty answer."
+            f"only {len(credentialled)} service block(s) wire a credential at all. The estate has "
+            f"collapsed into few enough containers that this is the weaker signal, but a file "
+            f"that wired every credential into ONE block would still be a file that had stopped "
+            f"describing the estate."
         )
 
     if bad:
