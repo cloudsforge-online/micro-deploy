@@ -471,6 +471,45 @@ sign a transaction.
   factory calls**, and cloudsforge-estate goes 18 Deployments → 13. The under-20
   target was met at M5c; this is the wave that makes the platform tier complete.
 
+  **DEPLOYED AND LIVE-VERIFIED, 2026-08-31.** Both networks applied, both
+  gateways rolled, five absorbed Deployments pruned by `k8s-deploy.sh`, and the
+  62 subscription rows moved off the retired paths across 25 databases — 0 left
+  behind. identity's ten collapsed to eight, which is the INSERT-then-DELETE
+  half of the cutover doing its job: `event_subscriptions` is unique on
+  (topic, url) and two titles shared `identity.user.deleted`, so an UPDATE would
+  have hit the constraint.
+
+  Proved through the public edge rather than in-cluster, so no hop is skipped:
+  `hub.<apex>/v1/dashboard` 401 (the rewrite is on), `admin.<apex>/v1/worlds`
+  401 and `/v1/engagement/policies` 401 (the moved family and the bare one, on
+  the same host), `pay.<apex>/v1/deposits` 401, and each title now answers with
+  ITS OWN descriptor on both of its hostnames. estate-verify: the same 2
+  pre-existing failures as M5b and M5c (`app` absent from initdb.sql; market
+  listings need item escrow, micro-org#407) and nothing new. Run ONCE.
+
+  **TWO THINGS THIS WAVE GOT WRONG, AND WHAT NOW CATCHES THEM.**
+
+  1. *The migrate Job died on `MARKET_URL is required — admin-api refuses to
+     start`.* A migrator does not call market. But `migrator.ts` imports
+     `admin/module.ts` for its migration targets and `env.ts` validates the
+     WHOLE config at import, so absorbing a module adds its entire required set
+     to a Job whose author is thinking about databases. Wave 30 refused and
+     applied nothing downstream — the estate was unchanged and the cost was a
+     deploy, not an outage. `micro-agora`'s `src/migratorenv.test.ts` now
+     derives the requirement from twenty-one `env.ts` files and checks it
+     against the rendered Job, on both sides of micro-org's cross-repo sweep.
+
+  2. *`GET /worlds/aetherholm/v1/title` answered 200 with TESSERA's
+     descriptor*, minutes after the gateway rolled. aetherholm's two frozen
+     paths were exempted from `check-remount-rewrites.py` on the ground that
+     `worlds` computes a title's address from its registered base URL, so
+     nothing sends those paths through Traefik. True of worlds; false of the
+     estate — two routers in `estate-web.yml` carry `/v1` for that title.
+     `cf-aetherholm-title-contract` rewrites exactly those two, the exemption is
+     DELETED rather than reworded, and a frozen constant the checker cannot
+     resolve is now a failure where it used to print "pair exists" and pass.
+     That second change is the one that matters: the message was the hole.
+
   **THREE COLLISION SHAPES, FROM ONE RULE.** Ten pairs collided across the
   merged table, computed mechanically rather than reasoned about. The rule is
   the one every wave has used — the PUBLIC owner, the module a caller outside
