@@ -58,11 +58,19 @@ and enumerating them here would be this file guessing at a topology `estate-web.
 already states. The failure this exists to prevent is a rewrite that is ABSENT, not
 one attached to four routers where three would do.
 
-Nor does it check the modules whose remount is not a gateway concern at all:
-aetherholm's two frozen title-contract paths move by re-registering the title's BASE
-URL in `worlds`, because `worlds` computes a title's address from that row rather
-than from a router. Those are declared below and the declaration is checked — a
-stale entry fails like any other.
+Nor does it check the modules whose remount is not a gateway concern at all. There
+is one such module and the list used to have two: aetherholm was exempted on the
+ground that `worlds` computes a title's address from its registered base URL, so
+"no request for these paths ever passes through Traefik". That was true of WORLDS
+and false of the estate — two routers in `estate-web.yml` carry `/v1` for that
+title, and the first M5d deploy answered `GET /worlds/aetherholm/v1/title` with
+TESSERA's descriptor. The exemption is deleted, not reworded.
+
+Its two paths are FROZEN CONSTANTS imported from `@cloudsforge/contracts-worlds`
+rather than string literals, so this file resolves them out of the contracts
+checkout. It used to record such a pair as "exists, value unknown" and pass; that
+is the shape the aetherholm hole had, and an unresolvable constant is now a
+FAILURE — a path whose value this file cannot read is a path it cannot check.
 
 Exit 0 when every remount has a rewrite. Exit 1 otherwise, and NEVER skips: a check
 that cannot run reports failure rather than a success it did not establish.
@@ -74,6 +82,9 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 MICRO = ROOT.parent
 AGORA = MICRO / "agora" / "src"
+# The frozen paths two titles share are declared here, not in either title. Read rather
+# than mirrored: a literal copied into this file would agree with itself for ever.
+CONTRACTS = MICRO / "contracts" / "packages"
 GATEWAY = ROOT / "gateway" / "dynamic"
 
 # ── REMOUNTS THAT ARE NOT A GATEWAY CONCERN, AND WHY ─────────────────────────
@@ -89,12 +100,6 @@ NOT_A_GATEWAY_REWRITE = {
         "(`/v1/scopes`) and agora itself (`/v1/posts/:id`); those two keep the bare path and are "
         "already routed. The claim that community is unrouted is CHECKED below, not trusted."
     ),
-    "emberkin/aetherholm": (
-        "`worlds` computes a title's address from its REGISTERED BASE URL plus the frozen "
-        "suffix (`worlds/src/titleclient.ts`, `pathOf`), so aetherholm moves by being "
-        "registered at `http://agora:4000/aetherholm` — a row in the title registry, not a "
-        "router. No request for these paths ever passes through Traefik."
-    ),
 }
 
 fails = []
@@ -103,6 +108,30 @@ notes = []
 
 def bad(msg):
     fails.append(msg)
+
+
+def contract_constant(name):
+    """The value of `export const <name> = '…'` in the contracts checkout, or None.
+
+    Both titles get these two paths from ONE package, which is why they collide at all, and it is
+    also why this reads the package rather than either title: the day the constant moves, this file
+    follows it instead of comparing a stale copy against a live gateway.
+
+    A missing contracts checkout is not treated as "not found" quietly — the caller turns None into
+    a failure, and the count assertion below makes an empty scan impossible to mistake for a clean
+    one.
+    """
+    if not CONTRACTS.is_dir():
+        return None
+    for path in sorted(CONTRACTS.glob("*/src/*.ts")):
+        found = re.search(
+            rf"^export const {re.escape(name)}\s*=\s*'([^']+)'",
+            path.read_text(encoding="utf8"),
+            re.M,
+        )
+        if found:
+            return found.group(1)
+    return None
 
 
 def module_remounts():
@@ -158,12 +187,20 @@ def module_remounts():
         # `[FROZEN_CONSTANT]: `${PREFIX}${FROZEN_CONSTANT}`` — aetherholm's shape.
         for m in re.finditer(r"\[([A-Z_]+)\]:\s*`\$\{([A-Z_]+)\}\$\{([A-Z_]+)\}`", block.group(1)):
             imported = re.search(rf"^export const {m.group(1)}\s*=\s*'([^']+)'", text, re.M)
-            if imported is None:
-                # Imported from contracts rather than declared here; the module's own suite
-                # pins the value and this file only needs to know the pair EXISTS.
-                pairs[f"<{m.group(1)}>"] = f"<{m.group(2)}>{m.group(1)}"
+            value = imported.group(1) if imported else contract_constant(m.group(1))
+            if value is None:
+                # ── AND THIS IS A FAILURE, WHERE IT USED TO BE A PASS ────────────────────────
+                #
+                # The old branch recorded `<NAME>` and reported "value lives in contracts; pair
+                # exists". A pair that exists is not a pair that is ROUTED, and aetherholm's two
+                # went a whole release with no rewrite behind exactly that message.
+                bad(
+                    f"{rel_dir}/server.ts remounts the frozen constant {m.group(1)}, and neither "
+                    f"that file nor {CONTRACTS} declares its value. The remount cannot be checked "
+                    "against the gateway, and an unchecked remount is how the wrong module answers."
+                )
                 continue
-            pairs[imported.group(1)] = f"{prefixes.get(m.group(2), '')}{imported.group(1)}"
+            pairs[value] = f"{prefixes.get(m.group(2), '')}{value}"
         if not pairs:
             bad(
                 f"{rel_dir}/server.ts declares REMOUNTED_PATHS and this checker read NO pairs out "
@@ -261,7 +298,7 @@ def main():
             continue
         for bare, remounted in sorted(pairs.items()):
             if bare.startswith("<"):
-                notes.append(f"  ok   {module:22} {bare} — value lives in contracts; pair exists")
+                bad(f"{module}: `{bare}` was never resolved to a path — see contract_constant()")
                 continue
             hit = [m for m in mws if covers(m[1], m[2], bare, remounted)]
             if not hit:

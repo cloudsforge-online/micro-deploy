@@ -538,6 +538,32 @@ http:
         regex: "^/v1/worlds(.*)"
         replacement: "/v1/operator/worlds$1"
 
+    # ── THE FOURTH, AND THE ONE THAT WAS EXEMPTED ON A CLAIM THAT WAS FALSE ───────────────────
+    #
+    # aetherholm's two FROZEN title-contract paths. They collide with tessera's, which are the same
+    # two constants out of the same contracts package, and in one process the second title's are
+    # dead: a paid provision would be answered 200 by the wrong game.
+    #
+    # M5d moved aetherholm's by re-registering the title's base URL in `worlds` — `pathOf` composes
+    # the registered pathname with the frozen suffix, so `http://agora:4000/aetherholm` addresses
+    # them without any contracts change. That is TRUE and it is not the whole story, which the
+    # first M5d deploy proved within minutes of the gateway roll:
+    #
+    #   GET https://<apex>/worlds/aetherholm/v1/title  -> 200, and the body named TESSERA
+    #
+    # `worlds` is not the only caller. Two routers here carry `/v1` for aetherholm — the apex mount
+    # and the old hostname — and both hand the bare path to the merged process, where tessera wins
+    # it. `check-remount-rewrites.py` had aetherholm declared as "no request for these paths ever
+    # passes through Traefik"; the declaration is now deleted rather than reworded, and this
+    # rewrite is what makes the general rule apply to it like every other module.
+    #
+    # ANCHORED WITH `$`, unlike the three above, because ONLY these two paths move: aetherholm's
+    # other twenty-seven routes stay bare, and a `(.*)` tail would take them with it.
+    cf-aetherholm-title-contract:
+      replacePathRegex:
+        regex: "^/v1/(title|provision)$"
+        replacement: "/aetherholm/v1/$1"
+
     # Wave 3g's, and the un-automatable Decision 4 audit re-run for it on 2026-08-20 rather than
     # assumed from the eight above:
     #
@@ -1916,7 +1942,11 @@ http:
       rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && (PathPrefix(`/worlds/aetherholm/v1`) || Path(`/worlds/aetherholm/readyz`))'
       priority: 700
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-aetherholm-strip-mount]
+      # AFTER the strip, not before: the strip turns `/worlds/aetherholm/v1/title` into
+      # `/v1/title`, which is the path the rewrite is written against. Reversed, the rewrite would
+      # see the mounted path, match nothing, and the router would look correct while serving
+      # tessera's descriptor to anyone who asked this title for its own.
+      middlewares: [cf-aetherholm-strip-mount, cf-aetherholm-title-contract]
       service: cf-svc-aetherholm
 
     cf-web-aetherholm:
@@ -1929,6 +1959,10 @@ http:
       rule: 'Host(`aetherholm{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
+      # No strip on this one — the old hostname serves the paths unmounted — so the title-contract
+      # rewrite is the only middleware, and it is needed here for the same reason: this router
+      # hands `/v1/title` to a process where tessera owns it.
+      middlewares: [cf-aetherholm-title-contract]
       service: cf-svc-aetherholm
     # `/readyz` is not under `/v1`, so the prefix router above never saw it and the bundle's nginx
     # 404'd it. `aetherholm-web` reads it to render whether the game is up, so a routing gap told
