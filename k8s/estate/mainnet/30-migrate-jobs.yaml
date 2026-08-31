@@ -171,6 +171,8 @@ spec:
           value: info
         - name: MARKET_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/market?sslmode=require
+        - name: MARKET_URL
+          value: http://market:4000
         - name: MINT_DATABASE_URL
           value: postgres://cloudsforge:$(CF_POSTGRES_PASSWORD)@postgres:5432/mint?sslmode=require
         - name: NDA_DATABASE_URL

@@ -3629,6 +3629,20 @@ services:
       NDA_URL: http://nda:4000
       WORLDS_URL: http://worlds:4000
       NOTIFY_URL: http://notify:4000
+      # admin's fourth peer, and the one this Job died on the first time it ran:
+      #
+      #   fatal service=admin-api step=env  MARKET_URL is required — admin-api refuses to start
+      #
+      # A migrator does not call market, and that is exactly why it was missed — but `env.ts`
+      # validates the WHOLE config at import, not the part the caller is about to use, and the
+      # migrator imports `admin/module.ts` for `adminMigrationTargets()`. The four peer URLs above
+      # are here for the same reason and none of them is dialled either.
+      #
+      # Wave 30 refused and applied nothing downstream, so the estate was unchanged — the failure
+      # cost a deploy, not an outage. `micro-agora`'s `src/migratorenv.test.ts` now derives this
+      # requirement from each module's own `env.ts` and checks it against the RENDERED Job below,
+      # so the next absorbed module cannot rediscover it on a cluster.
+      MARKET_URL: http://market:4000
       INSTANCE_ID: agora-migrate
     # Mirrors the runtime pod's env_file, as lantern-migrate mirrors lantern.
     # The outbox file also carries ACTIVITY_INGEST_SECRETS,
