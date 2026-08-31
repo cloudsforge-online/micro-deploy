@@ -224,6 +224,23 @@ jobs:
           repository: cloudsforge-online/micro-billing
           path: billing
 
+      # `check-remount-rewrites.py` reads the REMOUNTED_PATHS of every module in the
+      # merged process, and the frozen path constants two of them share. It REFUSES
+      # rather than skips when either is absent — a check that cannot run reports
+      # failure, not a success it did not establish — so both checkouts are required
+      # here, not optional. Without them the step fails on every push, which is how
+      # this omission was found: the guard was wired into CI in the same wave that
+      # wrote it and was red from its first run.
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-agora
+          path: agora
+
+      - uses: actions/checkout@v4
+        with:
+          repository: cloudsforge-online/micro-contracts
+          path: contracts
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22

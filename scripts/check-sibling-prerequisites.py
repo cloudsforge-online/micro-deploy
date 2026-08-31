@@ -64,6 +64,33 @@ SOURCES = [
 
 REFERENCE = re.compile(r"(?:\.\./)+([A-Za-z0-9_-]+)/")
 
+# ── AND THE PATHLIB SPELLING, WHICH IS HOW `agora` GOT PAST THIS FILE ────────
+#
+# `check-remount-rewrites.py` opens a sibling as `MICRO / "agora" / "src"`, where
+# `MICRO = ROOT.parent`. There is no `../agora/` anywhere in it, so the pattern
+# above saw nothing and the check reported a clean estate while a script in it
+# read a repository no fresh host would have. It was found the way the traceback
+# above describes — on CI, which had no such checkout — rather than by this file.
+#
+# Two shapes, because the alias is a local choice: the direct `.parent / "name"`
+# that two other scripts already use, and any CONSTANT this file first sees
+# assigned from `ROOT.parent`. Anchoring on the assignment rather than on the
+# spelling `MICRO` means the next script may call it whatever it likes.
+# ANCHORED ON `ROOT.parent` RATHER THAN ON ANY `.parent`, which the first version
+# was not: `ROOT = HERE.parent` is this repository's own root and `ROOT / "Makefile"`
+# is a file in it, so the loose form reported `../Makefile/` as a missing sibling.
+# The estate root is one specific expression in these scripts and this matches it.
+PARENT_JOIN = re.compile(r"""ROOT\.parent\s*/\s*["']([A-Za-z0-9_-]+)["']""")
+PARENT_ALIAS = re.compile(r"^([A-Z][A-Z0-9_]*)\s*=\s*ROOT\.parent\s*$", re.M)
+
+
+def pathlib_siblings(text):
+    """Sibling names a python source opens through pathlib rather than a `../` literal."""
+    found = [m.group(1) for m in PARENT_JOIN.finditer(text)]
+    for alias in PARENT_ALIAS.findall(text):
+        found += re.findall(rf"""\b{alias}\s*/\s*["']([A-Za-z0-9_-]+)["']""", text)
+    return found
+
 
 def fail(message):
     print(f"FAIL: {message}", file=sys.stderr)
@@ -110,6 +137,18 @@ for source in SOURCES:
             if name in IN_REPO or name in rows:
                 continue
             undeclared.setdefault(name, f"{source.relative_to(ROOT)}: {stripped[:90]}")
+
+for source in SOURCES:
+    # Whole-file rather than per-line: an alias is assigned on one line and used on
+    # another, so the line-at-a-time loop above cannot see the pair. Comments are not
+    # stripped here because the shapes matched are code — `X = Y.parent` and
+    # `X / "name"` — and prose does not accidentally contain them.
+    if not source.exists() or source.suffix != ".py":
+        continue
+    for name in pathlib_siblings(source.read_text()):
+        if name in IN_REPO or name in rows:
+            continue
+        undeclared.setdefault(name, f"{source.relative_to(ROOT)}: opened through pathlib, not `../`")
 
 if undeclared:
     detail = "\n".join(f"         ../{n}/  — {where}" for n, where in sorted(undeclared.items()))

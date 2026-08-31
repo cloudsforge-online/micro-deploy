@@ -60,6 +60,7 @@ SIBLING_TABLE="\
 org|micro-org|releases|REQUIRED|release-deploy.sh reads ../org/releases/<version>.yaml — without it there is no deploy and no rollback
 contracts|micro-contracts|packages/events/src/audit.ts|REQUIRED|estate-bootstrap.sh reads the audited topic list from the contract; absent, it dies with a FileNotFoundError traceback
 ui|micro-ui|packages/ui/src/surfaces.ts|REQUIRED|estate-up.sh runs surface-routes.py over the surface registry, and seed/beacon.mjs imports it
+agora|micro-agora|src/server.ts|REQUIRED|check-remount-rewrites.py reads every module's REMOUNTED_PATHS out of it and REFUSES rather than skips when it is absent, so CI and a fresh host both fail the merged-route check without it
 analytics|micro-analytics|src/catalogue.ts|DEGRADED|estate-bootstrap.sh cannot read EVENT_TOPICS, so analytics is never subscribed to anything and the estate looks healthy
 runtime|micro-runtime|packages/telemetry|DEGRADED|make check-backup cannot run, and the runtimepkgs build context is unresolvable so no service can be built from source
 mint|micro-mint|src/contracts/generated.ts|OPTIONAL|hearth-dex-token-artifact.mjs cannot extract the FixedSupplyToken bytecode, so a Hearth pool has no pair token to seed against. Only wanted when opening a pool; nothing in a deploy reads it
