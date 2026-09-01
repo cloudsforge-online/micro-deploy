@@ -33,7 +33,7 @@
 
 import { hostname } from 'node:os'
 import { assertSafeRootPath } from './paths.ts'
-import { assertAgeRecipient } from './secrets.ts'
+import { assertAgeRecipient, assertMinerAddress } from './secrets.ts'
 import type { Environment } from './manifest.ts'
 
 /** A property of the repository, not of the deployment. */
@@ -57,6 +57,18 @@ function required(source: Source, name: string): string {
 function optional(source: Source, name: string, fallback: string): string {
   const value = source[name]?.trim()
   return value && value.length > 0 ? value : fallback
+}
+
+/**
+ * An `0x…40` address, or null when unset. Shape-checked at boot for the same reason
+ * `assertAgeRecipient` is: a truncated paste must fail before a nightly run has written every other
+ * artefact, not after. The shape itself lives in `secrets.ts`, next to the one that reads an address
+ * OUT of a key file, so the two cannot drift.
+ */
+function optionalAddress(source: Source, name: string): string | null {
+  const raw = source[name]?.trim()
+  if (!raw) return null
+  return assertMinerAddress(raw)
 }
 
 function integer(source: Source, name: string, fallback: number, min: number, max: number): number {
@@ -106,6 +118,20 @@ export interface Env {
    * than configured, so a mainnet runner cannot be pointed at the testnet key by a settings edit.
    */
   readonly minerKeysDir: string
+
+  /**
+   * The address the key under `minerKeysDir` MUST have, or null to accept whatever is there.
+   *
+   * **The path is not enough, and micro-org#532 is why.** The comment above says a mainnet runner
+   * cannot be pointed at the testnet key, and that is true — but it assumes the DIRECTORY is the
+   * right host's. This estate mines from two machines, the runner mounts the cluster's own
+   * `miner-keys` over a hostPath, and for at least seventeen sets it encrypted the cluster's
+   * coinbase under the name of the chain host's. Every path was correct. Every run was green. The
+   * key holding 112,011 EMBER was in none of them.
+   *
+   * A path says where to look. Only the address says WHAT was found, so that is what is checked.
+   */
+  readonly minerExpectedAddress: string | null
 
   /**
    * An `age1…` **public** key, or null.
@@ -160,6 +186,7 @@ export function loadEnv(source: Source = process.env): Env {
     studioAssetsDir: optional(source, 'BACKUP_STUDIO_ASSETS_DIR', '/volumes/studio-assets'),
     worldAssetsDir: optional(source, 'BACKUP_WORLD_ASSETS_DIR', '/world-assets'),
     minerKeysDir: optional(source, 'BACKUP_MINER_KEYS_DIR', '/miner-keys'),
+    minerExpectedAddress: optionalAddress(source, 'BACKUP_MINER_EXPECTED_ADDRESS'),
     // Shape-checked here so a truncated paste fails at boot rather than after a nightly run has
     // already written every other artefact.
     ageRecipient: source['BACKUP_AGE_RECIPIENT']?.trim()

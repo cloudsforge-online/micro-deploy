@@ -367,6 +367,7 @@ export async function performBackup(deps: RunnerDeps, options: BackupOptions): P
         relPath: `secrets/miner-coinbase-${deps.env.env}.json.age`,
         environment: deps.env.env,
         recipient: deps.env.ageRecipient,
+        expectedAddress: deps.env.minerExpectedAddress,
         timeoutMs: 60_000,
       })
     : { artefact: null, warnings: [] as readonly string[] }

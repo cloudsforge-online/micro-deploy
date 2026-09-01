@@ -230,6 +230,7 @@ export async function backupMinerCoinbaseKey(options: {
   readonly relPath: string
   readonly environment: Environment
   readonly recipient: string | null
+  readonly expectedAddress: string | null
   readonly timeoutMs: number
 }): Promise<SecretsResult> {
   if (!options.recipient) {
@@ -273,6 +274,30 @@ export async function backupMinerCoinbaseKey(options: {
     // The ADDRESS only. The key material is never destructured, never named in a variable, and
     // never touched except as an opaque byte range on its way into `age`'s stdin.
     const address = readPublicAddress(key)
+
+    /*
+     * THE KEY THAT IS HERE IS NOT NECESSARILY THE KEY THIS RUN IS FOR (micro-org#532).
+     *
+     * Refusing rather than writing is the whole point. Writing it anyway and naming the mismatch in
+     * a warning would repeat the defect: the artefact would exist, `backup_secrets_included` would
+     * go to 1, and `MinerCoinbaseKeyUnbacked` would stay silent — which is precisely how seventeen
+     * sets of the wrong key went unnoticed. Returning no artefact makes that gauge 0 and fires the
+     * alert that already exists, whose text is then TRUE.
+     *
+     * Both addresses are public and safe to print. Naming them is what makes the warning actionable
+     * instead of a puzzle.
+     */
+    if (options.expectedAddress && address.toLowerCase() !== options.expectedAddress.toLowerCase()) {
+      return {
+        artefact: null,
+        warnings: [
+          `the miner coinbase key for ${options.environment} is NOT in this set: the key found is ` +
+            `${address}, but BACKUP_MINER_EXPECTED_ADDRESS names ${options.expectedAddress}. Nothing ` +
+            `was written, because a backup under the wrong key's name is worse than no backup. Check ` +
+            `which host's miner-keys directory is mounted — see micro-org#532.`,
+        ],
+      }
+    }
 
     const envelope = buildMinerEnvelope({
       environment: options.environment,
@@ -373,6 +398,21 @@ async function firstPresent(paths: readonly string[]): Promise<{ path: string; c
  * without an address cannot be proven recoverable by any means that does not involve printing the
  * key, and that means does not exist here.
  */
+/**
+ * An address an operator configured, normalised to lower case, or a refusal.
+ *
+ * Beside `ADDRESS_SHAPE` rather than in `env.ts` so there is ONE definition of what an address looks
+ * like in this service. The comparison it feeds is case-insensitive because the form people copy out
+ * of a block explorer is EIP-55 mixed case, and a guard that rejects the thing you were told to
+ * paste gets turned off.
+ */
+export function assertMinerAddress(value: string): string {
+  if (!ADDRESS_SHAPE.test(value)) {
+    throw new SecretsError('BACKUP_MINER_EXPECTED_ADDRESS must be an 0x-prefixed 20-byte address')
+  }
+  return value.toLowerCase()
+}
+
 export function readPublicAddress(plaintext: Buffer): string {
   let parsed: unknown
   try {
