@@ -1729,10 +1729,12 @@ prov_body='{"entitlementId":"estate-verify-unsupported-sku","subject":"estate-ve
 # address as `base.pathname + FROZEN_SUFFIX`, so nothing about the contract moved.
 #
 # `$AETHERHOLM_BASE` rather than `$AETHERHOLM` so this file states the mount once.
-# A bare `$AETHERHOLM/v1/provision` here would now be answered by TESSERA, which
-# is the exact confusion the remount exists to prevent — and it would answer 401
-# rather than 422, so this check would fail LOUDLY rather than pass for the wrong
-# reason. That is worth having, but it is not worth relying on.
+#
+# What stood here said a bare `$AETHERHOLM/v1/provision` "would now be answered by
+# TESSERA, which is the exact confusion the remount exists to prevent". That was
+# true for one release. Since 2026.8.108 tessera's pair is under `/tessera` too and
+# the bare path is answered by NOBODY — a 404, which is a better failure than a 401
+# from the wrong game and is the reason that second move was made.
 AETHERHOLM_BASE="${AETHERHOLM_BASE:-$AETHERHOLM/aetherholm}"
 prov=$(code -X POST "$AETHERHOLM_BASE/v1/provision" -H "authorization: Bearer $wtok2" \
   -H 'content-type: application/json' -d "$prov_body")
@@ -1875,9 +1877,23 @@ echo "── TESSERA: the world, driven — provision, claim, and the two refusa
 # from a working Kiln. It is recorded as a defect for micro-tessera and micro-studio to agree a
 # contract on, rather than dressed up as a passing check.
 
+# ── TESSERA'S TWO FROZEN PATHS MOVED TOO, AND NOW NOTHING ANSWERS THE BARE PAIR ──────────────
+#
+# `GET /v1/title` and `POST /v1/provision` are frozen constants in `@cloudsforge/contracts-worlds`
+# and BOTH titles mount them. M5d moved aetherholm's under `/aetherholm` and left tessera's bare,
+# on the usual rule; 2026.8.108 moved tessera's under `/tessera` as well, because while ONE title
+# answered the bare path a title registered at an origin-only base URL got a 200 and the WRONG
+# GAME'S descriptor. Now it 404s, which is a registry row somebody fixes in a minute.
+#
+# THIS FILE WAS THE FIRST CALLER TO HIT IT, and it did exactly what the change intends: five
+# checks in this section failed loudly on 404 rather than passing against the other title. Only
+# the TWO frozen paths move — `/v1/wards`, `/v1/parcels` and `/v1/discover` are tessera's own and
+# stay on `$TESSERA`.
+TESSERA_BASE="${TESSERA_BASE:-$TESSERA/tessera}"
+
 # The descriptor, unauthenticated — which is itself the assertion. worlds reads this before it
 # holds a credential for the title, so a service that gated it would be unreachable by the bridge.
-tt=$(code "$TESSERA/v1/title")
+tt=$(code "$TESSERA_BASE/v1/title")
 if [ "$tt" = 200 ]; then
   tcap=$(python3 -c "
 import json
@@ -1934,7 +1950,7 @@ wtok3=$(curl -s -X POST "$IDENTITY/service-tokens" -H "authorization: Bearer $at
 ENT="$(date +%s)$$-estate-verify"
 tward=""
 if [ -n "$wtok3" ]; then
-  prov=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $wtok3" \
+  prov=$(code -X POST "$TESSERA_BASE/v1/provision" -H "authorization: Bearer $wtok3" \
     -H 'content-type: application/json' -H "Idempotency-Key: $ENT" \
     -d "{\"entitlementId\":\"$ENT\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
   purn=$(python3 -c "import json;print(json.load(open('/tmp/slice.body')).get('urn',''))" 2>/dev/null)
@@ -1945,7 +1961,7 @@ if [ -n "$wtok3" ]; then
   # THE REPLAY. Same entitlement id, and the contract requires the SAME urn with replayed: true —
   # not merely a second success. A second ward under a second urn would be a purchase provisioned
   # twice, which is what the primary key on `provisions.entitlement_id` exists to prevent.
-  replay2=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $wtok3" \
+  replay2=$(code -X POST "$TESSERA_BASE/v1/provision" -H "authorization: Bearer $wtok3" \
     -H 'content-type: application/json' -H "Idempotency-Key: $ENT" \
     -d "{\"entitlementId\":\"$ENT\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
   rurn=$(python3 -c "import json;b=json.load(open('/tmp/slice.body'));print(b.get('urn','') if b.get('replayed') is True else '')" 2>/dev/null)
@@ -1975,7 +1991,7 @@ if [ -n "$wtok3" ]; then
   # A UUID entitlement id does not escape it: UUIDv7's first twelve hex characters are its
   # 48-bit millisecond timestamp, so two provisions in one millisecond collide too.
   ENT2="${ENT}-second"
-  prov2=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $wtok3" \
+  prov2=$(code -X POST "$TESSERA_BASE/v1/provision" -H "authorization: Bearer $wtok3" \
     -H 'content-type: application/json' -H "Idempotency-Key: $ENT2" \
     -d "{\"entitlementId\":\"$ENT2\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
   case "$prov2" in
@@ -1997,7 +2013,7 @@ fi
 # derived grant is ledger/policy/indexer only, so identity mints it a real, valid, correctly-signed
 # token that simply lacks this authority — which is the case that must 403 rather than 401.
 if [ -n "${ctok:-}" ]; then
-  prefused=$(code -X POST "$TESSERA/v1/provision" -H "authorization: Bearer $ctok" \
+  prefused=$(code -X POST "$TESSERA_BASE/v1/provision" -H "authorization: Bearer $ctok" \
     -H 'content-type: application/json' \
     -d "{\"entitlementId\":\"nope-$$\",\"subject\":\"user:$uid\",\"userId\":\"$uid\",\"sku\":\"world.private.small\",\"scope\":\"title\",\"metadata\":{}}")
   [ "$prefused" = 403 ] \
