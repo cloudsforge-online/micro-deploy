@@ -57,7 +57,15 @@ import {
   type Manifest,
 } from './manifest.ts'
 import { assertSafeDatabaseName, errorText, resolveWithin } from './paths.ts'
-import { dropDatabase, dsnFor, exactRowCount, integrityOf, recreateDatabase, runRestore } from './pg.ts'
+import {
+  dropDatabase,
+  dsnFor,
+  exactRowCount,
+  integrityOf,
+  recreateDatabase,
+  runRestore,
+  tableCountOf,
+} from './pg.ts'
 import { performBackup, type RunnerDeps } from './run.ts'
 
 export const BACKUP_RESTORE = 'backup.restore'
@@ -196,16 +204,53 @@ async function verifyOneDatabase(
     const atDumpTime = artefact.entryCount
     const drift = atDumpTime === undefined ? undefined : rows - atDumpTime
 
+    /*
+     * ── A ZERO-TABLE RESTORE OF A ZERO-TABLE SOURCE IS FAITHFUL (micro-org#517) ─────────────
+     *
+     * `integrityOf` refuses `tables === 0`, and by default it is right to: "pg_restore succeeded
+     * at doing nothing" is a real failure and the reason that clause exists.
+     *
+     * But this estate has databases that legitimately hold no tables — the cluster's own
+     * `postgres` maintenance database, by construction — and restoring one of those to zero tables
+     * is a CORRECT copy of an empty thing. The drill was reporting `verify restore found a
+     * mismatch` at `level: error` on runs where every database matched exactly.
+     *
+     * That is worse than a cosmetic defect. This drill is the estate's only proof that backups are
+     * restorable, and a control whose healthy outcome is the word "mismatch" teaches whoever reads
+     * it to discount the word — so the day it means something, it will read the same as every day
+     * it did not.
+     *
+     * The source is asked ONLY on this path. It is rare, and asking on every target would open a
+     * connection per database to answer a question that almost never arises. The claim is
+     * deliberately modest — the source has no tables NOW — and that is enough to separate "this
+     * database is empty" from "the archive restored nothing". It carries the same live-source
+     * caveat the row-drift note above already carries.
+     *
+     * `performLiveRestore` is deliberately NOT given this: there, the source is the thing being
+     * replaced, so "the source is empty" is not evidence about the archive.
+     */
+    let emptyByDesign = false
+    if (!integrity.ok && integrity.tables === 0 && integrity.unvalidatedConstraints === 0) {
+      emptyByDesign = (await tableCountOf(deps.connection, artefact.name)) === 0
+    }
+    const restored = integrity.ok || emptyByDesign
+
     return {
       name: artefact.name,
       kind: 'database',
-      restored: integrity.ok,
+      restored,
       ...(atDumpTime === undefined ? {} : { rowsAtDumpTime: atDumpTime.toString() }),
       rowsRestored: rows.toString(),
       ...(drift === undefined || drift === 0n ? {} : { rowDrift: drift.toString() }),
       tables: integrity.tables,
       foreignKeys: integrity.foreignKeys,
-      ...(integrity.ok
+      ...(emptyByDesign
+        ? {
+            note:
+              'the source database holds no tables, so restoring none is a faithful copy of it — not a\n' +
+              'mismatch. See micro-org#517',
+          }
+        : integrity.ok
         ? drift !== undefined && drift !== 0n
           ? {
               note:
