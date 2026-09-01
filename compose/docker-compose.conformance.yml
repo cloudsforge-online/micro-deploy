@@ -1,4 +1,18 @@
 # ══════════════════════════════════════════════════════════════════════════════════════════════
+# SUPERSEDED — THE ESTATE RUNS THIS AS A CronJob, NOT AS THIS FILE (micro-org#537).
+#
+#   deploy/k8s/conformance/60-conformance-runner.yaml   the workload
+#   deploy/scripts/k8s-conformance-runner.sh            applies it, pinned to a digest
+#
+# THIS FILE IS WHY THE CORPUS WENT UNREPLAYED FOR A FORTNIGHT. The Kubernetes migration
+# translated the estate's compose services and did not translate this one, and a compose service
+# that is not rendered is simply not there — nothing failed, `conformance_runs` stops on
+# 2026-08-18, and `ConformanceCorpusStale` fired on every suite for fourteen days. So this header
+# is the first thing anybody reading this file should see, and the honest reason it is kept rather
+# than deleted is that every essay below still governs the replay: what the account is for, why a
+# skip is worse than a failure, and why this is not CI.
+#
+# ══════════════════════════════════════════════════════════════════════════════════════════════
 # THE CONFORMANCE RUNNER — the caller that never existed.
 #
 #   docker compose -p cloudsforge-estate \
