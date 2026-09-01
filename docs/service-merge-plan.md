@@ -981,3 +981,45 @@ module of it. `agora-web`'s row is unchanged: that row IS the product.
 **Raised, not done:** splitting the `AGORA_` prefix so the process's config and
 the product's rules stop sharing one namespace. That is the prerequisite for any
 future rename, and it is worth doing on its own.
+
+---
+
+# THE `app` DATABASE — DROPPED 2026-09-01
+
+Every wave record above says estate-verify ended with "the same 2 pre-existing
+failures", and one of the two was:
+
+> on this server and NOT declared in initdb.sql: `app` — a fresh estate would
+> come up without them. Add the line, or drop the database
+
+It has been failing since at least M5b. It is now resolved, by the second half
+of its own advice, and the evidence is recorded here because the action is not
+in any file — it happened on the server.
+
+**What `app` was.** Nothing. Measured before dropping it:
+
+* zero relations across every non-system schema — no tables, views, sequences
+  or foreign tables;
+* zero functions, and one extension, which is `plpgsql` and is in every Postgres
+  database that has ever existed;
+* zero connections in `pg_stat_activity`;
+* 7670 kB, which is an empty database's floor;
+* and **no connection string anywhere in `deploy`, `org` or `faucet` names it** —
+  grepped for `postgres://…/app`, `/app?sslmode` and `*_DATABASE_URL` ending in
+  `/app`.
+
+So it was residue from an earlier layout: created once, never written to, and
+invisible to every guard except the one that compares the live server with
+`initdb.sql`.
+
+**Why dropped rather than declared.** Declaring it would have enshrined a
+database nothing uses, and the check exists to make the live server and a
+rebuilt one agree — a rebuilt estate has never had `app`, which is the proof it
+is not needed. `check-k8s-databases-match-initdb.py` is green and the live
+server now has exactly the 52 databases `initdb.sql` declares, with nothing
+live-but-undeclared.
+
+**Expect ONE standing estate-verify failure from here**, not two: market
+listings are all `draft` because activation needs micro-ledger to escrow the
+ITEM and a `cf:brand:` URN resolves to nothing a buyer could be given
+(micro-org#407). That one is deliberate and is not a drift.
