@@ -306,6 +306,19 @@ check-residue: ## Does any file on this host still hold a live estate secret? RO
 		--against compose/secrets/*.env compose/estate/tokens*.env compose/.env .env \
 		--allow prometheus/secrets alertmanager/secrets
 
+check-tunnel-ingress: ## Does the LIVE tunnel ingress table match what policy.yml says? NEEDS CLUSTER ACCESS
+	@# NOT in `check`, and that is deliberate: every other target there reads
+	@# files in this repository and runs anywhere, including CI. This one asks
+	@# the running connector what it is doing, so it needs a kubeconfig and it
+	@# fails on a laptop that has none — which would make `check` unreliable in
+	@# the one place it most needs to be trusted.
+	@#
+	@# It is the answer to micro-org#512: `gen.py --check` diffed a generated
+	@# file against a file on disk and passed for weeks while both described a
+	@# topology that had been replaced. Two copies agreeing says nothing about
+	@# whether either one runs.
+	@python3 scripts/check-tunnel-ingress.py
+
 estate: ## Confirm the existing eighteen containers are still healthy
 	@docker ps --filter name=cloudsforge- --format '{{.Names}}\t{{.Status}}' | sort
 
