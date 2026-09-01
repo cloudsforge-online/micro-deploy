@@ -1,160 +1,172 @@
-# Rotating the custody master secret
+# The custody master secret, and how to rotate it without losing a key
 
-**Owner** custody · **Referenced by** `.gitignore:23`, `runbooks/runbook-restore-from-backup.md`
-(§ RPO/RTO table, as custody's restore dependency) · **Closes** micro-org#25 item 2
+## Read this first
 
-`CUSTODY_MASTER_SECRET_V<n>` is the key-encryption key for every custodied private key and every
-HD seed on the estate. Rotating it re-encrypts that material under a new version; it does not
-change a single on-chain address, and no user-visible thing moves.
+`CUSTODY_MASTER_SECRET_V<n>` is the **key-encryption key**. It is not a key that signs
+or authenticates anything — it is the key that every custodied private key and every HD
+seed on the estate is encrypted *under*. There is one per version, and the estate holds
+the versions it can still read.
 
-Two documents already pointed here before this file existed. That is why it exists.
+Two facts decide everything below, and they point in opposite directions:
 
----
+- **Losing it is unrecoverable.** The vault is ciphertext. Without the keyring it is
+  ciphertext for ever, and no backup of the vault changes that.
+- **Rotating it is safe, restartable, and cannot lose a key** — because
+  `micro-custody`'s re-encryption pass writes the new blob before it updates the row,
+  and re-reads the blob's own stamp rather than the row's. That is not a claim about
+  care; it is a property of the order of two writes.
 
-## When to run this
+So the dangerous operation here is not rotation. It is **removing an old secret too
+early**, and the whole procedure exists to make that moment observable.
 
-- **An exposure.** The secret reached a transcript, a log, a public repository, a screenshot.
-  Rotation is the whole remedy; nothing else reduces the exposure.
-- **A rehearsal.** SD-06 asks for a quarterly rehearsal on testnet. A procedure nobody has
-  performed is a procedure that does not work — every step below has been wrong at least once in
-  some estate, and a rehearsal is how you find out which one here.
-- **Never on a schedule alone.** Rotation is a live re-encryption over every custodied key. It
-  earns its risk when there is a reason.
+> **If you are here because a secret is believed compromised**, go to *The incident
+> path*. If you are here because a restore is failing, the keyring is what you are
+> missing — go to *The gap that is still open*.
 
-## What you need before you start
+## Where it lives
 
-- Shell on the app host (`savva@192.168.1.129`, inside WSL — see the estate host memo).
-- The current keyring file: `compose/secrets/custody.<estate>.env`, mode 0600, gitignored.
-- 32 bytes of fresh entropy. `openssl rand -base64 32`. **Not** a memorable string: `env.ts`
-  `assertMasterSecret` enforces base64-or-hex, exactly 32 decoded bytes, and an entropy floor
-  calibrated over 200,000 samples, with an exact deny-list and no escape hatch. A placeholder is
-  refused at boot, which is the guard that would have caught the V1 literal.
+| | |
+| --- | --- |
+| **File, on the host** | `compose/secrets/custody.<network>.env`, gitignored, mode 0600 |
+| **In the cluster** | `Secret/secret-custody` in `cloudsforge-estate`, built by `scripts/k8s-secrets.py` |
+| **Keys in it** | `CUSTODY_KEY_VERSION`, and one `CUSTODY_MASTER_SECRET_V<n>` per readable version |
+| **Read by** | `custody` only. No other service holds it, and none should. |
 
-## The shape of the thing
+`CUSTODY_KEY_VERSION` is the **write** version. Every `CUSTODY_MASTER_SECRET_V<n>`
+present is a **readable** version. A rotation is the interval in which both are true of
+different numbers.
 
-The keyring holds **every** version, and `CUSTODY_KEY_VERSION` names the one used for new writes:
+**The value is validated, not trusted.** `custody/src/env.ts` `assertMasterSecret`
+requires base64-or-hex, exactly 32 decoded bytes, and an entropy floor calibrated over
+200,000 samples, plus an exact deny-list that normalises punctuation and case. There is
+no escape hatch — no `NODE_ENV` exemption, no `CUSTODY_ALLOW_*`. A placeholder does not
+start the service.
 
-```
-CUSTODY_MASTER_SECRET_V3="<old, still needed to READ existing ciphertext>"
-CUSTODY_MASTER_SECRET_V4="<the new value>"
-CUSTODY_KEY_VERSION=4
-```
+## Rotating
 
-> The quotes above are not decoration and not shell syntax advice. The CI guard that keeps a
-> keyring out of this repository greps for `CUSTODY_MASTER_SECRET_V<digits>` followed by `=` and
-> anything that is not a quote, a `$`, a `%` or a `#` — because everything else is a literal value
-> and is the defect. An unquoted placeholder in a *document* matches that pattern exactly, and the
-> first version of this runbook turned the guard red. The guard was right: it cannot tell a real
-> secret from a convincing example, and a rule that tried to would be a rule with a hole in it.
+Generate with `openssl rand -base64 32`. **Never print it**, never paste it into a
+terminal that scrolls into a log, never put it in a commit message. Compose it into the
+file from an environment variable rather than typing it on a command line — see
+`runbook-outbox-signing-secret.md`, which makes the same point for the same reason.
 
-Removing the old version before the backlog is drained makes every row still encrypted under it
-**permanently unreadable**. That is the one irreversible mistake available here, and step 5 exists
-solely to prove it cannot be made.
+### 1. Add the new secret, leave the old one
 
----
-
-## Procedure
-
-### 1. Mint the new secret
+In `compose/secrets/custody.<network>.env`, add `CUSTODY_MASTER_SECRET_V<n+1>` and
+**leave `CUSTODY_MASTER_SECRET_V<n>` exactly where it is**. Do not change
+`CUSTODY_KEY_VERSION` yet.
 
 ```sh
-openssl rand -base64 32
+./scripts/k8s-secrets.py --network mainnet            # names only — check V<n+1> appears
+./scripts/k8s-secrets.py --network mainnet --apply
+kubectl rollout restart deploy/custody -n cloudsforge-estate
 ```
 
-### 2. Add it beside the old one, and move the pointer
+Nothing is written under the new version yet. This step only widens what can be read.
 
-Edit `compose/secrets/custody.<estate>.env`. **Add**, never replace:
+### 2. Move the write version
 
-```
-CUSTODY_MASTER_SECRET_V<n+1>=<the new value>
-CUSTODY_KEY_VERSION=<n+1>
-```
+Set `CUSTODY_KEY_VERSION=<n+1>`, apply, restart. From this moment **new** keys and seeds
+are written under V`<n+1>` and every existing blob still decrypts under V`<n>`.
 
-Keep every previous `CUSTODY_MASTER_SECRET_V<n>` line exactly as it is.
+### 3. Drain the backlog
 
-### 3. Restart custody
-
-Through the release script, never a bare `docker compose up` — a bare up drops `mainnet.env` and
-public hostnames degrade to `localtest.me`:
+The job in `custody/src/jobs.ts` drains it on its own every thirty seconds, and that is
+the normal path. To close the window deliberately — a rehearsal, or an incident:
 
 ```sh
-./scripts/release-deploy.sh <current-version>
+kubectl exec -n cloudsforge-estate deploy/custody -- node dist/reencrypt-cli.js
 ```
 
-New writes are now under the new version. Existing ciphertext is untouched and still readable,
-because the old secret is still in the keyring.
+It loops until a pass does no work, and **exits non-zero while anything remains**, so it
+is safe in a loop or a deploy gate: the command succeeding is the same statement as *the
+old secret can now be removed*.
 
-### 4. Drain the backlog
-
-The job in `jobs.ts` drains on its own every thirty seconds. To close the window now — which is
-what you want during an incident, since the interval between "believed compromised" and "actually
-retired" *is* the exposure:
+Ask the database directly rather than trusting a log line:
 
 ```sh
-docker exec cloudsforge-estate-custody-1 node src/reencrypt-cli.ts
+kubectl exec -n cloudsforge-estate postgres-1 -c postgres -- \
+  psql -U postgres -d custody -At -c \
+  "select key_version, count(*) from custody_keys group by 1
+   union all
+   select key_version, count(*) from custody_seeds group by 1 order by 1"
 ```
 
-It **exits non-zero while anything remains**, so it is safe in a loop or a deploy gate. Its
-success is the same statement as "the old secret can now be removed".
+`custody_keys_version_idx` is a partial index on exactly the stragglers, so this is cheap
+and the finish line is observable.
 
-```sh
-until docker exec cloudsforge-estate-custody-1 node src/reencrypt-cli.ts; do sleep 10; done
+### 4. Only now, remove the old secret
+
+When — and only when — nothing remains below `<n+1>`, delete
+`CUSTODY_MASTER_SECRET_V<n>` from the file, apply, restart. **That is the moment the old
+secret stops mattering**, and the moment a compromise of it becomes recoverable.
+
+Removing it on a partial run loses every key still on the old version, irrecoverably.
+That is the one failure this whole procedure is shaped to prevent, which is why step 3
+has a non-zero exit code and a query rather than a progress bar.
+
+## Verifying a rotation actually finished
+
+Three checks, and the third is the one that matters:
+
+1. `CUSTODY_KEY_VERSION` is `<n+1>` in the running pod.
+2. The keyring holds `CUSTODY_MASTER_SECRET_V<n+1>` and no longer holds V`<n>`.
+3. **Every row is at `<n+1>`** — the query in step 3, returning one version and nothing
+   else.
+
+Measured on 2026-09-01, as an example of what a finished rotation looks like:
+`CUSTODY_KEY_VERSION=4`, the keyring holds `CUSTODY_MASTER_SECRET_V4` alone, and
+`custody_keys` and `custody_seeds` are 325 and 254 rows, **all at v4**.
+
+## The incident path
+
+If a secret is believed compromised, the interval between it being retired and it
+*having* to be retired is exactly the exposure. Run steps 1–4 back to back, using the
+CLI in step 3 rather than waiting for the job, and do not stop at step 2 — a new write
+version with the old secret still readable has not reduced the exposure at all.
+
+`SDR-03` says to treat any custody host compromise as unrecoverable. That advice is
+older than this pass: it was written when there was no way to retire a secret, so a
+compromised one stayed load-bearing for ever. With steps 1–4 available, a compromise of
+the *secret* is recoverable. A compromise of the *host* still is not, because the host
+also holds the vault.
+
+## The gap that is still open
+
+**The keyring is not in any automated backup, and the backup runner records that it is
+not.** Verified 2026-09-01 on the newest mainnet set:
+
+```
+MANIFEST.json  →  custodyKeyringIncluded: false
+secrets/       →  miner-coinbase-mainnet.json.age      (and nothing else)
 ```
 
-### 5. Prove the backlog is empty before removing anything
+The **vault** is backed up — `BACKUP_CUSTODY_VAULT_DIR`, the `custody-keys` PVC. The
+**key that decrypts it** is not. Lose the host and every backed-up vault entry is
+unrecoverable ciphertext, and the backup will have gone green every day while that was
+true.
 
-Do not trust the exit code alone. Ask the database, which is the thing that would be lost:
+The off-host copy is made by hand — on paper and an encrypted USB, `docs/custody-backup-restore.md`
+§4 — and nothing checks that it exists or that it is current. **After every rotation,
+that copy is stale until it is redone**, and step 4 above is the point at which the old
+copy stops being able to open the vault.
 
-```sh
-docker exec cloudsforge-estate-postgres-1 psql -U cloudsforge -d custody -A -F' | ' -c "
-  select 'custody_keys' t, key_version, count(*) from custody_keys group by 2
-  union all
-  select 'custody_seeds', key_version, count(*) from custody_seeds group by 2
-  order by 1,2;"
-```
+This is micro-org#25 item 3, and it is the last box on that issue. Note what it is and
+is not: not a confidentiality problem — an **availability** one, and the only single
+point of unrecoverable loss left in the estate.
 
-Every row must name the new version and only the new version. If any older version appears, go
-back to step 4 — **do not proceed**.
+> **Why the automated fix is not obvious.** Writing the KEK into the same backup set as
+> the ciphertext it protects defeats the purpose: one stolen backup then yields both
+> halves. Any real fix has to put the keyring somewhere the vault backup is not, which is
+> a design decision rather than a configuration change — and it is why this has stayed
+> open rather than being quietly patched.
 
-### 6. Retire the old secret
+## Related
 
-Only now, delete the `CUSTODY_MASTER_SECRET_V<n-1>` line, and redeploy as in step 3. Verify
-custody comes back healthy; it will refuse to boot on a malformed or low-entropy keyring, which is
-the intended failure and not a reason to weaken step 1.
-
-### 7. Put the new keyring where losing the host cannot lose it
-
-**The keyring is deliberately NOT in the automated backup.** `backup/setup-destination.sh` says so
-in as many words, and the runner refuses to boot if the keyring is ever placed in its environment:
-the destination holds the custody *vault* (ciphertext, artefact B) and the age-encrypted miner key,
-and never artefact C. Ciphertext and the key that opens it must not share a resting place.
-
-So this step is manual, and it is the step that actually protects the estate:
-
-- write the new keyring to paper, and to an encrypted USB device, per
-  `docs/custody-backup-restore.md` §4;
-- store them apart from the host and from each other;
-- record the date and the version rotated to — not the value — in the operations log.
-
-Skipping this converts a host failure into unrecoverable ciphertext for every custodied key. The
-automated backup will keep going green while that is true, because it is backing up the half that
-is useless on its own.
-
----
-
-## Rolling back
-
-Before step 6, rollback is free: set `CUSTODY_KEY_VERSION` back to the old version and redeploy.
-Material written under the new version stays readable, because the new secret is still present.
-
-**After step 6 there is no rollback.** The old secret is gone and anything still under it is
-ciphertext nobody can open. That is the entire reason step 5 asks the database rather than
-believing a command.
-
-## What rotation does not do
-
-- It does not undo a disclosure. A secret that reached a public place stays there; rotation makes
-  it worthless, which is the best available outcome and is not the same thing.
-- It does not change any address, balance, or on-chain fact.
-- It does not rotate the *testnet* keyring. The two estates resolve to separate keyrings by
-  design, and CI asserts they are separate. Rotate each deliberately.
+- `docs/DISCLOSURE-custody-master-secret-v1.md` — why the V1 disclosure is accepted
+  rather than rewritten. Short version: the disclosed value is a zero-entropy
+  placeholder, not a key, and no row anywhere is encrypted under V1.
+- `docs/custody-backup-restore.md` §4 — the manual off-host copy.
+- `runbook-restore-from-backup.md` — names this runbook as custody's restore dependency,
+  which is exactly the gap above.
+- `runbook-outbox-signing-secret.md` — the same staged shape for a different key, and the
+  reason staging is never skipped.
