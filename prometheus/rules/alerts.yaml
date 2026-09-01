@@ -485,6 +485,83 @@ groups:
             before writing another one to the same volume.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-destination-fs-errors.md
 
+      - alert: BackupDestinationLowSpace
+        # ══════════════════════════════════════════════════════════════════
+        # THE GAUGE EXISTED AND NOTHING READ IT (micro-org#207)
+        # ══════════════════════════════════════════════════════════════════
+        #
+        # `backup_destination_free_bytes` has been exported by the runner since
+        # it was written, alongside `backup_destination_fs_errors` above, and no
+        # rule in this file has ever looked at it. That is the third metric this
+        # week found published, correct and unwatched — after the conformance
+        # timestamp and the miner-key artefact — and it is the cheapest of the
+        # three to close.
+        #
+        # ── WHY THIS MATTERS MORE ON THE VM THAN IT DID ON THE APP HOST ────
+        #
+        # The destination is now `/` on the k3s VM, and `/` is also where
+        # `rancher.io/local-path` puts every PersistentVolume. Measured
+        # 2026-09-02: 24 GB of PVCs and 30 GB of backup sets on one 194 GB
+        # ext4 filesystem, 59.7 GiB free. So the disk filling does not merely
+        # stop the next backup — it stops Postgres writing, which is the
+        # estate.
+        #
+        # ── WHY 20 GiB AND NOT A PERCENTAGE ───────────────────────────────
+        #
+        # A percentage of a disk somebody may resize is a threshold that
+        # silently changes meaning. An absolute floor is arithmetic anybody can
+        # check: 43 sets occupy 30 GB, so a set is roughly 0.7 GB, and 20 GiB
+        # is about twenty-eight more of them — four weeks of warning at one a
+        # night, which is enough time to prune, resize or move without doing it
+        # at speed.
+        #
+        # NO `absent()` COMPANION, for the reason the rule above gives: the
+        # gauge is absent only when the runner is, and `BackupNeverRun` already
+        # says so.
+        expr: backup_destination_free_bytes < 20 * 1024 * 1024 * 1024
+        for: 1h
+        labels:
+          severity: ticket
+          team: platform
+          service: backup-runner
+          sev: "3"
+        annotations:
+          summary: "{{ $value | humanize1024 }}B left where every backup AND every database volume lives"
+          description: >-
+            The backup destination and the local-path PersistentVolumes share
+            one filesystem on the k3s VM, so this filling stops Postgres
+            writing and not only the next backup. Prune old sets, grow the
+            volume, or move the destination — and note that a set restored onto
+            the same disk it was taken from is not a recovery from the failure
+            this warns about.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-destination-fs-errors.md
+
+      - alert: BackupDestinationFillingFast
+        # The floor above answers "how much is left". This answers "how long",
+        # and the two are not the same question: a runaway consumer — a log, a
+        # forgotten dump, an indexer resync — can cross 194 GB in a day and
+        # would trip the floor with hours to spare rather than weeks.
+        #
+        # `predict_linear` over 6h projecting 48h ahead. Six hours of history
+        # so one nightly backup set does not look like a trend, and two days of
+        # runway because that is the shortest window in which somebody can
+        # actually act.
+        expr: predict_linear(backup_destination_free_bytes[6h], 48 * 3600) < 0
+        for: 30m
+        labels:
+          severity: ticket
+          team: platform
+          service: backup-runner
+          sev: "3"
+        annotations:
+          summary: "the backup destination is on course to fill within 48 hours"
+          description: >-
+            Free space is falling fast enough that the filesystem holding every
+            backup AND every database volume runs out inside two days. Find what
+            is writing before pruning: the floor rule will fire on its own if
+            this is ordinary growth, and this one firing first means it is not.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-backup-destination-fs-errors.md
+
   # ==================================================== TICKET — money ======
   - name: cf.ticket.money
     rules:
