@@ -525,7 +525,14 @@ groups:
         # discrepancy an owner has already called intolerable. It stays a ticket
         # because the page on the CONSEQUENCE exists above:
         # `AssetWithdrawalsFrozen` on `ledger_assets_frozen > 0`.
-        expr: ledger_reconciliation_drift != 0 and on (asset) ledger_reconciliation_observed == 1
+        #
+        # `on (asset, network)` SINCE micro-org#533. Both series gained a
+        # `network` label when one ledger process began sweeping both networks.
+        # A join on `asset` alone would then match mainnet's drift against
+        # testnet's observed flag and back — a many-to-many match, which
+        # Prometheus refuses outright, so the rule would stop evaluating rather
+        # than quietly mismatch. Loud, but still off.
+        expr: ledger_reconciliation_drift != 0 and on (asset, network) ledger_reconciliation_observed == 1
         for: 15m
         labels:
           severity: ticket
@@ -538,6 +545,49 @@ groups:
             What the ledger says custody holds and what the chain says custody
             holds have diverged. Two truths is the thing the single-journal
             design exists to prevent, so this is a real finding even when small.
+          runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-reconciliation-drift.md
+
+      - alert: LedgerReconciliationStale
+        # ── THE ALERT FOR A SWEEP THAT STOPPED, AS OPPOSED TO ONE THAT FOUND
+        #    SOMETHING (micro-org#533) ──────────────────────────────────────
+        #
+        # Every other reconciliation series above describes the LAST RUN. None
+        # of them can describe the absence of runs, because a gauge holds its
+        # last value: when the sweep stops, `ledger_reconciliation_drift` and
+        # `ledger_reconciliation_observed` freeze at whatever they last said and
+        # a week-old healthy zero is indistinguishable from a fresh one.
+        #
+        # That is not a hypothetical. Testnet reconciliation stopped on
+        # 2026-08-25 when the consolidation merged the two per-network ledger
+        # deployments and the surviving one kept a single-valued
+        # `LEDGER_RECONCILE_NETWORK`. It went SEVEN DAYS unreconciled with two
+        # assets frozen, and `LedgerReconciliationDrift` could not fire for it,
+        # because a sweep that never runs publishes no drift to compare.
+        #
+        # A TIMESTAMP IS THE ONLY SHAPE IMMUNE TO THAT. Reading `time() - value`
+        # makes staleness a value rather than an absence, so not being written is
+        # itself the signal. The same reasoning as `BackupAgeExceeded`.
+        #
+        # 3600s against a 900s job: four missed runs, so a single slow or
+        # retried pass cannot page. It stays a ticket rather than a page because
+        # the CONSEQUENCE already pages — `AssetWithdrawalsFrozen` on
+        # `ledger_assets_frozen > 0` — and because a stopped sweep is a state to
+        # correct within the hour, not to wake someone for.
+        expr: time() - ledger_reconciliation_last_run_timestamp > 3600
+        for: 10m
+        labels:
+          severity: ticket
+          team: ledger
+          service: ledger
+          sev: "3"
+        annotations:
+          summary: "{{ $labels.asset }} on {{ $labels.network }} has not been reconciled for {{ $value | humanizeDuration }}"
+          description: >-
+            The solvency sweep for this asset has stopped running, which is not
+            the same as running and finding nothing. Every other reconciliation
+            series for it is now frozen at its last value and will keep reporting
+            it. Check that LEDGER_RECONCILE_NETWORK names this network and that
+            the reconciliation job is not dead-lettered.
           runbook_url: https://github.com/cloudsforge-online/stack/blob/main/micro/deploy/runbooks/runbook-reconciliation-drift.md
 
       - alert: DepositAddressUnwatched
