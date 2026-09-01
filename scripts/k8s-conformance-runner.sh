@@ -133,7 +133,10 @@ fi
 # substituted here so what runs is what was resolved above. Substituted on the
 # way in rather than committed, because a digest in a tracked file is a digest
 # somebody has to remember to bump.
-sed "s|image: ${IMAGE}:${TAG}$|image: ${pinned}|" "$MANIFEST" \
+# Both occurrences: the container's `image:` and the `CF_CONFORMANCE_IMAGE_REF`
+# the replay logs, so a Job's own output names the image that produced it.
+sed -e "s|image: ${IMAGE}:${TAG}$|image: ${pinned}|" \
+    -e "s|value: ${IMAGE}:${TAG}$|value: ${pinned}|" "$MANIFEST" \
   | kubectl apply -n "$NAMESPACE" -f -
 
 echo

@@ -131,6 +131,18 @@ spec:
             runAsUser: 1000
             runAsGroup: 1000
             runAsNonRoot: true
+            # `fsGroup` IS WHAT MAKES THE SECRET READABLE, and without it this
+            # pod fails in the most convincing possible way. A Secret volume's
+            # files are owned root:root; the image runs as uid 1000; so mode
+            # 0400 gave the process a directory it could LIST and files it could
+            # not open, and the harness reported exactly what it should have —
+            # "its secret file could not be read" — which reads as a missing
+            # secret rather than a permissions one. Measured, not reasoned:
+            # job conformance-runner-manual-285238 on 2026-09-01.
+            #
+            # kubelet chowns the volume to this gid, so 0440 below is readable
+            # by the process and by nothing else that might later share the pod.
+            fsGroup: 1000
           containers:
             - name: conformance-runner
               # PINNED BY DIGEST at apply time by scripts/k8s-conformance-runner.sh.
@@ -185,6 +197,11 @@ spec:
                       optional: false
                 - name: NODE_ENV
                   value: production
+                # Logged on every replay so a Job's own output says which image
+                # produced it. Substituted with the digest by the apply script;
+                # the value here is what a human reading the manifest sees.
+                - name: CF_CONFORMANCE_IMAGE_REF
+                  value: ghcr.io/cloudsforge-online/micro-conformance:main
               volumeMounts:
                 # READ-ONLY. This process compares; it has no business writing to
                 # the estate's secrets.
@@ -204,6 +221,8 @@ spec:
             - name: estate-secrets
               secret:
                 secretName: estate-tokens
-                defaultMode: 0400
+                # 0440 with `fsGroup: 1000` above. NOT 0400 — see the comment
+                # there; and not 0444, which would be readable by any uid.
+                defaultMode: 0440
             - name: tmp
               emptyDir: {}
