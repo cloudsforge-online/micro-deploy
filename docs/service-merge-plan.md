@@ -878,3 +878,106 @@ Application pods: 54 → ~32 (web bundles ~20→2, three process merges −3).
 Backend repos actively deployed: 31 → 28, with two shared packages absorbing
 the worst duplication. Isolation properties of the money core, key custody,
 identity and the chain plane: unchanged by construction.
+
+---
+
+# M5f — THE FINAL COUNT, AND THE RENAME THAT IS REFUSED — 2026-09-01
+
+The wave sequence is finished. This section is the audit, and it supersedes the
+2026-08-28 disposition above wherever the two disagree: that section concluded
+"consolidation is complete" at **31 Deployments** and then M5a–M5d absorbed
+twenty-two more services. It was not wrong about its rule — it was applied to a
+candidate list that predated the trust-tier framing.
+
+## The count, measured
+
+**17 application Deployments**, read from the cluster on 2026-08-31 after the
+M5d roll (`kubectl get deploy -A`, excluding `kube-system`, `cnpg-system` and
+the six-pod `cf-telemetry` plane, which is upstream binaries rather than this
+estate's own packaging):
+
+| namespace | Deployments | |
+|---|---|---|
+| `cloudsforge-estate` | 13 | agora · backup-runner · beacon · custody · gateway · gateway-testnet · identity · indexer · ledger · pool · settlement · status-web · web |
+| `cf-testnet` | 3 | faucet · hearth-explorer-api · hearth-verify |
+| `cf-edge` | 1 | cloudflared |
+
+From 72 running pods at the start of the consolidation work. The owner's target
+was "under 20 containers"; it was met at M5c and M5d took it to 17.
+
+The registry agrees, and is the machine-readable half: `deployableRepos()`
+returns 52 rows and `releasableRepos()` 30, so **22 rows are absorbed** — every
+one of them into `agora`. Seven services remain releasable beside it (custody,
+identity, indexer, ledger, pool, settlement), plus 21 web bundles that are
+served by two nginx Deployments and two `ops` rows (beacon, faucet).
+
+## Why each survivor is still its own process
+
+The rule the M5 waves used is not the 2026-08-28 one. It is stricter and it is
+about TRUST rather than about coupling:
+
+> **One process per trust tier.** A process that can issue a token, post to the
+> ledger, or sign a transaction shares itself with nothing.
+
+| service | why it is not a module of `agora` |
+|---|---|
+| `identity` | The only issuer of bearer tokens. Every other service's authorisation is downstream of it; a module beside it is a module inside the thing that decides who anyone is. |
+| `ledger` | Posting authority. This is the 2026-08-28 rule's own subject, and it survives the reframing unchanged. |
+| `custody` | Holds signing keys for seven chains. |
+| `settlement` | Broadcasts transactions. Merging widens the set of code paths that can reach a broadcast — the sentence the whole disposition was derived from. |
+| `indexer` | Chain-facing worker, bulkheaded per network in Wave 5. A resource profile nothing like an API service: long polls, reorg replays, third-party RPC timeouts. |
+| `pool` | Speaks Stratum over raw TCP. It is not an HTTP service and cannot be a module of one. |
+| `beacon` | Probes the estate. It must be able to observe the estate failing, which it cannot do from inside it. |
+| `backup-runner` | Restores the estate. Same argument, one step further: it must survive the thing it repairs. |
+| `gateway`, `gateway-testnet` | Traefik. Not this estate's code. |
+| `web`, `status-web` | Static bundles behind nginx; already merged 20 → 2 in Wave 1. |
+| cf-testnet's three | Hearth chain tooling and the testnet faucet, assessed in `consolidation-endgame.md`. |
+
+`custody` + `settlement` is the one merge still available — **M5e, `vault`** —
+and it is FLAGGED, not refused: it would put seven chains' signing keys in the
+transaction broadcaster's process, which is the single highest-consequence
+change left in the estate. It does not run without the owner saying so.
+
+## The `platform` rename: REFUSED, and what to do instead
+
+`agora` names a process that runs twenty-three modules and a social network that
+is one of them. That is a genuine wart and renaming the process is the obvious
+fix. It is refused, on measurement rather than on taste.
+
+**What a rename actually costs**, counted rather than estimated:
+
+* **47 occurrences of `http://agora:4000`** across seven files in `deploy` and
+  `org` — compose, the renderer, the gateway's two dynamic files, the bootstrap,
+  estate-verify and the erasure register.
+* **62 live `event_subscriptions` rows across 25 databases**, which were moved
+  onto `http://agora:4000/v1/events/*` yesterday and would move again.
+* **22 ExternalName aliases** whose `externalName` is `agora.cloudsforge-estate…`.
+* The image, the GHCR history, the repository, and every release manifest that
+  pins the old name by digest.
+
+**And the part that makes it not a rename at all.** The `AGORA_` prefix is used
+for two different things:
+
+  * the PROCESS's own configuration — `AGORA_DATABASE_URL`,
+    `AGORA_IDENTITY_CREDENTIAL`, `AGORA_PUBLIC_URL`, `AGORA_SERVICE_TOKEN`,
+    `AGORA_DATABASE_POOL_MAX`, `AGORA_UPSTREAM_DEADLINE_MS`;
+  * the SOCIAL PRODUCT's rules — `AGORA_POSTS_PER_HOUR`, `AGORA_POST_MAX_CHARS`,
+    `AGORA_FOLLOWS_PER_HOUR`, `AGORA_WHISPERS_PER_HOUR`,
+    `AGORA_POSTING_ENABLED`, `AGORA_PAGE_SIZE_MAX`,
+    `AGORA_NOTIFICATION_TTL_DAYS`.
+
+A rename has to split those, and the split is the hard part: the two sets are
+told apart by knowing what each variable means, not by any rule a script can
+apply. That is a disentangling with a rename on the end of it, and it is a
+second estate-wide URL migration bought for a better name.
+
+**Done instead, today:** the registry row for `agora` described Forge Agora the
+social network — accurate until M5d and wrong about twenty-two modules
+afterwards, in the direction that matters, because `cfctl list` prints it and a
+reader deciding what an `agora` outage takes down would conclude "the social
+network". It now describes the platform tier and says the social product is one
+module of it. `agora-web`'s row is unchanged: that row IS the product.
+
+**Raised, not done:** splitting the `AGORA_` prefix so the process's config and
+the product's rules stop sharing one namespace. That is the prerequisite for any
+future rename, and it is worth doing on its own.
