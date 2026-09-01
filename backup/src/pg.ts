@@ -414,6 +414,28 @@ export async function integrityOf(sql: Sql): Promise<IntegrityReport> {
 }
 
 /**
+ * How many tables a LIVE database has right now.
+ *
+ * Opened only when a restore produced zero tables, which is the rare path — see `restore.ts`. A
+ * database that legitimately has none (the cluster's own `postgres`, say) restores to zero, and
+ * without this the drill calls that a mismatch and says so at `level: error` on a run in which
+ * everything worked (micro-org#517).
+ *
+ * The claim it supports is deliberately modest and is the same one the row-drift note already
+ * makes: the source is LIVE, so this is what it looks like now rather than what it looked like
+ * inside the dump snapshot. That is enough to tell "this database has no tables" from "the archive
+ * restored nothing", which is the only distinction being drawn.
+ */
+export async function tableCountOf(connection: ClusterConnection, database: string): Promise<number> {
+  const sql = postgres(dsnFor(connection, database), { max: 1, onnotice: () => {} })
+  try {
+    return (await integrityOf(sql)).tables
+  } finally {
+    await sql.end({ timeout: 5 }).catch(() => {})
+  }
+}
+
+/**
  * `drop database ... with (force)`, then `create database`.
  *
  * `with (force)` terminates other sessions rather than failing on "database is being accessed by
