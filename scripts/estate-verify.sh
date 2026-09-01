@@ -418,6 +418,43 @@ bad()  { printf '  \033[31mFAIL\033[0m %s\n' "$1"; fails=$((fails+1)); }
 note() { printf '  \033[33mnote\033[0m %s\n' "$1"; }
 code() { curl -s -o /tmp/slice.body -w '%{http_code}' "$@"; }
 
+echo "── the sibling checkouts this file's own checks read ────────────────────"
+#
+# ── WHY THIS IS HERE AND NOT ONLY IN estate-bootstrap.sh (micro-org#539) ─────
+#
+# `provision-siblings.sh` names the repositories the deploy tooling opens under
+# directory names that are NOT the repository names, and `estate-bootstrap.sh`
+# has run it with `--check` in its pre-flight since micro-org#350. **The k8s
+# estate is not brought up with `estate-bootstrap.sh`** — `k8s-deploy.sh` and
+# `k8s-estate-seed.sh` are the path — so on the cluster node nothing has ever
+# checked them.
+#
+# Measured on 2026-09-02: THREE REQUIRED siblings were missing from the k3s VM —
+# `contracts`, `ui` and `agora`. The visible consequence was eleven permanently
+# firing `BeaconTargetDown` alerts, because `seed/beacon.mjs` imports the surface
+# registry out of `../ui` and could not run, so every product probe still named
+# the subdomain the apex consolidation had retired. Nothing said the seeder could
+# not run. The alerts simply stayed red and were read as the estate being down.
+#
+# A FAILURE AND NOT A NOTE. The whole shape of micro-org#350 was a missing
+# repository reported as a traceback in the middle of something else, and the
+# whole shape of `node-tool.sh` was a missing interpreter reported as `ok`. A
+# checkout the tooling needs and does not have is neither.
+if [ -x ./scripts/provision-siblings.sh ]; then
+  if ./scripts/provision-siblings.sh --check >/tmp/estate-siblings.log 2>&1; then
+    ok "every REQUIRED and DEGRADED sibling checkout is present"
+  else
+    while IFS= read -r line; do
+      bad "$line — see /tmp/estate-siblings.log for the clone command"
+    done < <(grep -E "missing prerequisite:.*\((REQUIRED|DEGRADED)\)" /tmp/estate-siblings.log \
+             | sed 's/^missing prerequisite: *//')
+    grep -qE "missing prerequisite:.*\((REQUIRED|DEGRADED)\)" /tmp/estate-siblings.log \
+      || bad "provision-siblings.sh --check exited non-zero and named nothing — see /tmp/estate-siblings.log"
+  fi
+else
+  bad "no ./scripts/provision-siblings.sh — this checkout cannot say which siblings it needs"
+fi
+
 echo "── health, over a real socket ───────────────────────────────────────────"
 # Every service in the environment, not a sample. A service that boots is not a
 # service that works — that is what the flows below are for — but a service that
