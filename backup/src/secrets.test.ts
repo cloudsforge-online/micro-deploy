@@ -11,6 +11,7 @@ import {
   minerKeySources,
   readPublicAddress,
   SecretsError,
+  assertMinerAddress,
 } from './secrets.ts'
 
 // The real mainnet coinbase address, which is PUBLIC and on chain. The `privateKey` here is a
@@ -72,6 +73,7 @@ test('WITH NO RECIPIENT, nothing is written and the manifest says why — there 
       relPath: 'secrets/out.age',
       environment: 'mainnet',
       recipient: null,
+      expectedAddress: null,
       timeoutMs: 5_000,
     })
 
@@ -95,6 +97,7 @@ test('an absent key file is a warning, not a failed run — but it no longer rea
       relPath: 'secrets/out.age',
       environment: 'testnet',
       recipient: `age1${'q'.repeat(58)}`,
+      expectedAddress: null,
       timeoutMs: 5_000,
     })
     assert.equal(result.artefact, null)
@@ -153,6 +156,7 @@ test('with both files present the keystore is read, not the plaintext beside it'
           relPath: 'secrets/out.age',
           environment: 'mainnet',
           recipient: `age1${'q'.repeat(58)}`,
+          expectedAddress: null,
           timeoutMs: 5_000,
         }),
       (err: unknown) => err instanceof SecretsError && /no valid `address` field/.test((err as Error).message),
@@ -203,4 +207,94 @@ test('the keystore address is readable without touching the ciphertext, so publi
   // The whole reason the keystore can be backed up by this module unchanged: it carries the same
   // plaintext `address` field the schema's public_ref constraint is checked against.
   assert.equal(readPublicAddress(Buffer.from(KEYSTORE_FILE)), '0x980d52a868d41a34a186ce890874c8e547975b45')
+})
+
+/*
+ * micro-org#532. The estate mines from two hosts, and for at least seventeen sets the runner
+ * encrypted the WRONG one under the right one's name — same path, same valid JSON, different key.
+ * Every check that existed passed, because every check was about the path.
+ */
+const OTHER_HOST_KEY_FILE = JSON.stringify({
+  address: '0x2098b519aaf94e704534c6de35c5c516723dcca8', // the k8s VM's coinbase
+  privateKey: `0x${'0'.repeat(64)}`,
+  warning: 'plaintext',
+})
+const CHAIN_HOST_ADDRESS = '0x980d52a868d41a34a186ce890874c8e547975b45'
+
+test('a key that is not the one this run is for is REFUSED, not written under its name', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-secrets-'))
+  try {
+    const sources = minerKeySources(dir, 'mainnet')
+    await mkdir(join(dir, 'mainnet'), { recursive: true })
+    await writeFile(sources.plaintextPath, OTHER_HOST_KEY_FILE, { mode: 0o600 })
+
+    const result = await backupMinerCoinbaseKey({
+      sources,
+      destination: join(dir, 'out.age'),
+      relPath: 'secrets/out.age',
+      environment: 'mainnet',
+      recipient: `age1${'q'.repeat(58)}`,
+      expectedAddress: CHAIN_HOST_ADDRESS,
+      timeoutMs: 5_000,
+    })
+
+    // No artefact is the entire fix. `run.ts` sets `backup_secrets_included` from exactly this, so
+    // refusing is what makes `MinerCoinbaseKeyUnbacked` fire — and its text is then true. Writing it
+    // with a warning attached would leave the gauge at 1 and reproduce the silence.
+    assert.equal(result.artefact, null)
+    assert.equal(result.warnings.length, 1)
+    // Both addresses named. They are public, and a warning that says only "mismatch" sends whoever
+    // reads it back to the database to find out which key it actually got.
+    assert.match(result.warnings[0] ?? '', /0x2098b519aaf94e704534c6de35c5c516723dcca8/)
+    assert.match(result.warnings[0] ?? '', /0x980d52a868d41a34a186ce890874c8e547975b45/)
+
+    // And nothing reached the destination: a refusal that leaves a half-written file is a file a
+    // later manifest can still describe.
+    await assert.rejects(() => rm(join(dir, 'out.age'), { force: false }), /ENOENT/)
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('the expected address is compared case-insensitively, so a checksummed paste still matches', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'cf-secrets-'))
+  try {
+    const sources = minerKeySources(dir, 'mainnet')
+    await mkdir(join(dir, 'mainnet'), { recursive: true })
+    await writeFile(sources.plaintextPath, KEY_FILE, { mode: 0o600 })
+
+    // EIP-55 mixed case is what an operator copies out of a block explorer.
+    const checksummed = `0x${CHAIN_HOST_ADDRESS.slice(2).toUpperCase()}`
+    let refused = false
+    try {
+      const result = await backupMinerCoinbaseKey({
+        sources,
+        destination: join(dir, 'out.age'),
+        relPath: 'secrets/out.age',
+        environment: 'mainnet',
+        recipient: `age1${'q'.repeat(58)}`,
+        expectedAddress: checksummed,
+        timeoutMs: 5_000,
+      })
+      refused = result.artefact === null && /BACKUP_MINER_EXPECTED_ADDRESS/.test(result.warnings[0] ?? '')
+    } catch {
+      // `age` is not necessarily on this machine, and reaching it is already past the guard. What
+      // this test denies is a REFUSAL, not a successful encryption.
+    }
+    assert.equal(refused, false, 'a checksummed form of the same address must not trip the guard')
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
+})
+
+test('a configured expected address is shape-checked at boot, and normalised', () => {
+  // Lower-cased on the way in so the comparison never has to think about it.
+  assert.equal(assertMinerAddress(`0x${CHAIN_HOST_ADDRESS.slice(2).toUpperCase()}`), CHAIN_HOST_ADDRESS)
+  assert.equal(assertMinerAddress(CHAIN_HOST_ADDRESS), CHAIN_HOST_ADDRESS)
+
+  // The failure this catches is a truncated paste, which must stop the process at boot rather than
+  // silently widen the guard to "matches nothing" on the night it is needed.
+  assert.throws(() => assertMinerAddress('0x980d52a8'), SecretsError)
+  assert.throws(() => assertMinerAddress('980d52a868d41a34a186ce890874c8e547975b45'), SecretsError)
+  assert.throws(() => assertMinerAddress(''), SecretsError)
 })
