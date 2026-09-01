@@ -20,14 +20,47 @@
 > `release-deploy.sh` run here. Everything below still describes the compose
 > estate: accurate for how a release is *cut*, and for rolling back, but it is
 > no longer how the live estate is deployed.
+>
+> ### And it is 17 Deployments, not 50
+>
+> Two consolidations ran to completion after the Kubernetes move, and both are
+> finished:
+>
+> - **the network merge** (Waves 0–6) put mainnet and testnet in ONE namespace —
+>   one Postgres cluster, one identity, one notify, both Traefiks in
+>   `cloudsforge-estate`, and twenty duplicate web bundles collapsed to two nginx
+>   pods;
+> - **the service merge** (M1–M5d) collapsed the over-split services into
+>   `agora`, which now runs **23 modules**. Twenty-two registry rows are
+>   `absorbed(…)`; each keeps its own database, migrations, scopes and event
+>   paths, and each former repository's README points at its module.
+>
+> **17 application Deployments, from 72 running pods at the start.**
+>
+> | namespace | |
+> |---|---|
+> | `cloudsforge-estate` (13) | agora · identity · ledger · custody · settlement · indexer · pool · beacon · backup-runner · gateway · gateway-testnet · web · status-web |
+> | `cf-testnet` (3) | faucet · hearth-explorer-api · hearth-verify |
+> | `cf-edge` (1) | cloudflared |
+>
+> What is still separate is separate under one rule — *a process that can issue a
+> token, post to the ledger or sign a transaction shares itself with nothing* —
+> and every survivor has a written disposition in
+> [`docs/service-merge-plan.md`](docs/service-merge-plan.md) under **M5f**, which
+> also records the two things that were REFUSED: the `agora` → `platform` rename,
+> and merging `custody` with `settlement` (**M5e**, flagged, needs the owner).
 
 ---
 
 ## The telemetry plane
 
-AD-20, built. A **parallel** stack: it runs beside the existing eighteen-container
-estate without touching it, shares no port, no container name and no volume with
-it, and joins exactly one of its networks — read-only, to scrape Beacon.
+AD-20, built. A **parallel** stack: it runs beside the estate without touching it,
+shares no port, no container name and no volume with it, and joins exactly one of
+its networks — read-only, to scrape Beacon. (It said "the existing eighteen-container
+estate" when it was written; the estate is 17 Deployments across three namespaces now,
+and the telemetry plane's six pods sit outside that count in `cf-telemetry` — they are
+upstream binaries rather than this estate's own packaging, which is why M5f leaves them
+alone.)
 
 Nothing under `repos/` or in the root `docker-compose.yml` is modified by
 anything here, and `down.sh` removes only what this project created.
