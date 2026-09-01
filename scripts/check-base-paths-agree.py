@@ -19,6 +19,9 @@ them has to say the same string:
        — where the container will actually answer
     5. the gateway      deploy/gateway/dynamic/estate-web.yml
        — which requests on the apex reach that container at all
+    6. the API base     <repo>/src/lib/hosts.ts          `apiBase()`
+       — where the RUNNING page sends `/v1/…`, which is the mount again and is
+         the one statement that is a derivation rather than a literal
 
 Nothing in the stack cross-checks them, and each disagreement FAILS DIFFERENTLY
 and none of them fails loudly:
@@ -35,6 +38,13 @@ and none of them fails loudly:
              path the server does not serve.
     4 vs 5   the gateway routes `/journal` to a container that answers 404 on it.
              Traefik reports a healthy backend; the reader gets nginx's default.
+    any vs 6 the page loads perfectly, every asset arrives, every link is right —
+             and every API call goes to the APEX ROOT instead of the mount,
+             where micro-site answers its own SPA shell or a 404, always as
+             `text/html`. Every panel renders a failure state and the network
+             tab is entirely green. `micro-web-template` shipped exactly this
+             for the fortnight after wave 3, because its CI had no pushes to
+             run on, and it is the file every new surface is scaffolded from.
 
 Every one of those is a 200-shaped failure somewhere upstream of the actual
 mistake, which is why this is a check and not a convention.
@@ -194,6 +204,120 @@ def location_prefix(mod, pat):
     return literal, None
 
 
+# ── PART 6: WHERE THE RUNNING PAGE SENDS ITS API CALLS ────────────────────────
+#
+# The other four bundle statements are LITERALS and can be compared to the
+# registry directly. This one is a derivation — `apiBase()` composes an answer at
+# run time — so what is checked is that it composes the mount AT ALL, by one of
+# the three shapes the estate actually uses. A bundle that invents a fourth is
+# the failure this exists for, and the fourth that existed was
+# `micro-web-template`'s: a resolver that answered `''` for same-origin, which is
+# correct for a surface at the root and sends every call to the apex for a
+# surface at a path.
+#
+# WHY A SHAPE AND NOT A VALUE. `apiBase()` reads `window.location` and, on nine
+# of these bundles, the reader's chosen network as well (micro-org#459). There is
+# no value to compare against from here without running a browser. The shape is
+# what distinguishes "composes the mount" from "does not", and the three below
+# are exhaustive over the estate as measured on 2026-09-01 — `micro-org#…` task
+# 207 exists to collapse them to one, at which point this becomes a single case.
+SHAPES = (
+    (
+        "apiBaseFor",
+        "delegates to `apiBaseFor` in @cloudsforge/ui, which returns the surface's own mount "
+        "for same-origin and drops it under `pnpm dev` where no gateway strips it",
+    ),
+    (
+        "BASE",
+        "composes its own router `BASE` onto the viewed origin, which is the same answer "
+        "reached the other way round",
+    ),
+    (
+        "viewedSurfaceUrl",
+        "returns the whole surface URL, mount included, and narrows to the origin only when "
+        "the hostname is local",
+    ),
+    (
+        r"pathname\.replace",
+        "derives the mount from its own surface URL's pathname, which is the same answer "
+        "`apiBaseFor` computes and the shape it was extracted from",
+    ),
+)
+
+# ── AND THE BUNDLES THAT HAVE NO OWN-SURFACE API BASE, WHICH IS NOT THE SAME ──
+#
+# Three of the path-mounted surfaces do not call an API of their own at all, or
+# call one that lives at a DIFFERENT registry key. For those the question part 6
+# asks is meaningless, and answering it with a shape would be inventing an
+# obligation. Each is declared with the key it really uses, and the declaration
+# is CHECKED below in both directions — a stale entry fails like any other table
+# in this directory.
+NO_OWN_API = {
+    "worlds": (
+        "api",
+        "worlds-web talks to `api.<apex>`, which the gateway comment beside `cf-api-worlds-host` "
+        "also states. `API_SURFACE` and `PRODUCT` are deliberately different keys in its "
+        "`hosts.ts`, and `api` is not path-mounted, so there is no mount for its API base to "
+        "carry",
+    ),
+    "exchange": (
+        None,
+        "exchange-web calls identity (`nimbusUrl()`) and a chain RPC (`rpcUrl()`), and nothing "
+        "of its own. There is no `/v1/…` from this bundle to send anywhere",
+    ),
+    "journal": (
+        None,
+        "journal-web is content: it calls identity for the account bar and nothing else. Its "
+        "articles are in the bundle",
+    ),
+}
+
+
+def api_base_carries_mount(key, base, repo, checkout):
+    """Part 6: `apiBase()` must compose the mount, by one of the recognised shapes."""
+    hosts = checkout / "src" / "lib" / "hosts.ts"
+    if not hosts.exists():
+        bad(
+            f"'{key}' is mounted at '{base}' and {repo}/src/lib/hosts.ts does not exist, so "
+            f"nothing here can say where its running page sends `/v1/…`. Either the module moved "
+            f"or this bundle resolves its API some other way, unchecked either direction"
+        )
+        return
+    text = hosts.read_text(encoding="utf8")
+    # Comments first: every one of these files argues about the mount at length, and the words
+    # `apiBaseFor` and `BASE` appear in prose in most of them.
+    body = re.sub(r"/\*[\s\S]*?\*/", "", text)
+    body = re.sub(r"//[^\n]*", "", body)
+    found = [name for name, _ in SHAPES if re.search(name if "\\" in name else rf"\b{name}\b", body)]
+    if found:
+        return
+    if key in NO_OWN_API:
+        used, why = NO_OWN_API[key]
+        # The claim, checked. A bundle that GAINS an own-surface API base while sitting on this
+        # list would be exempted from the one check that would have caught it.
+        if used is None and re.search(r"\bapiBase\b", body):
+            bad(
+                f"'{key}' is declared as having no API base of its own — {why} — and "
+                f"{repo}/src/lib/hosts.ts now defines `apiBase`. Either it gained one, in which "
+                f"case it needs a shape that carries the mount, or the entry is stale"
+            )
+        if used is not None and not re.search(rf"'{used}'", body):
+            bad(
+                f"'{key}' is declared as reaching its API at the '{used}' surface — {why} — and "
+                f"{repo}/src/lib/hosts.ts no longer names '{used}'. The exemption has stopped "
+                f"being true and the mount is unchecked"
+            )
+        return
+    bad(
+        f"'{key}' is mounted at '{base}' and {repo}/src/lib/hosts.ts composes its API base by "
+        f"none of the shapes that carry a mount. The page will load, every asset will arrive and "
+        f"every link will be right, and every `/v1/…` call will go to the apex root — where "
+        f"micro-site answers `text/html`, so each panel renders a failure state over a green "
+        f"network tab. One of:\n"
+        + "\n".join(f"           * `{name}` — {why}" for name, why in SHAPES)
+    )
+
+
 def check_bundle(key, base, repo):
     """Parts 2-4: the bundle's own three statements, in its own checkout."""
     checkout = MICRO / repo
@@ -255,6 +379,8 @@ def check_bundle(key, base, repo):
     # orchestrator probes on the container and which knows nothing about the
     # publication, and the `location /` catch-all, which nginx.conf's header
     # states exists to answer 404 for exactly this reason.
+    api_base_carries_mount(key, base, repo, checkout)
+
     nginx = checkout / "nginx.conf"
     if not nginx.exists():
         bad(f"'{key}' is mounted at '{base}' and {repo}/nginx.conf does not exist — nothing here "
@@ -456,6 +582,16 @@ def main():
         if missing:
             unread.append(missing)
 
+    # The part-6 exemptions are a table, so they are a claim in both directions like every other
+    # one here: a name that has stopped being a path-mounted surface is pointing this check at a
+    # question nobody is asking, and hiding the answer to one that is.
+    for key in sorted(set(NO_OWN_API) - keys):
+        bad(
+            f"NO_OWN_API names '{key}', which is not a registry surface serving its own bundle at "
+            f"a path. Either it moved back to a subdomain or it was renamed; either way the "
+            f"exemption is exempting nothing and would silently cover a future surface of that name"
+        )
+
     gateway_rule_shape(mounted)
     verifier_agrees(mounted)
 
@@ -467,7 +603,11 @@ def main():
     if fails:
         print(f"\n{len(fails)} disagreement(s).")
         return 1
-    print(f"ok — {len(mounted)} path-mounted surface(s), five statements each, all agreeing.")
+    print(
+        f"ok — {len(mounted)} path-mounted surface(s), six statements each, all agreeing"
+        + (f" ({len(NO_OWN_API)} of them declared as having no API base of their own)."
+           if NO_OWN_API else ".")
+    )
     return 0
 
 
