@@ -65,15 +65,31 @@
 # — an unarmed redactor must never look like a redactor with nothing to do.
 #
 # ══════════════════════════════════════════════════════════════════════════════
-# NO INTERNAL CA, AND THAT IS A DELIBERATE OMISSION
+# THE TRUST BUNDLE, WHICH I FIRST LEFT OUT AND WAS WRONG TO
 # ══════════════════════════════════════════════════════════════════════════════
 #
-# Compose mounted `gateway/certs/ca.crt` as `NODE_EXTRA_CA_CERTS`, from when the
-# runner dialled internal hostnames. It does not any more: `CONFORMANCE_MICRO_APEX`
-# makes every target `<sub>.cloudsforge.online`, which is a public address with a
-# public certificate, and beacon is reached over plain HTTP inside the cluster.
-# Mounting a CA this process has no use for would widen what it trusts for
-# nothing.
+# The argument for omitting it was that `CONFORMANCE_MICRO_APEX` makes every
+# target `<sub>.cloudsforge.online` — a public address with a public certificate
+# — and beacon is plain HTTP inside the cluster, so a CA would widen what this
+# process trusts for nothing.
+#
+# The harness refused, and it was right:
+#
+#     base 'micro' reaches 10 target(s) over https and NODE_EXTRA_CA_CERTS is
+#     unset, so the estate CA is not trusted and every scenario would skip on a
+#     handshake failure that reads like a dead estate.
+#
+# It refuses rather than skipping BECAUSE the failure it is guarding against is
+# indistinguishable from a dead estate, and a replay that skipped ten targets
+# would publish, go green, and certify nothing. Weakening that check to fit this
+# deployment would be the exact move this estate's checks exist to prevent.
+#
+# `gateway-trust`'s `trust.crt` is the file for this and says so in its own
+# header: "the file passed to `curl --cacert` and `NODE_EXTRA_CA_CERTS`, one
+# process at a time, and never installed anywhere". It is the estate CA plus the
+# Cloudflare Origin root — narrow, per-process trust, which is the arrangement
+# that file was built for. A ConfigMap and not a Secret, because both roots in it
+# are public certificates.
 #
 # ══════════════════════════════════════════════════════════════════════════════
 # MAINNET ONLY
@@ -195,6 +211,10 @@ spec:
                       name: estate-tokens
                       key: BEACON_TOKEN
                       optional: false
+                # See the header. Per-process trust for the estate CA and the
+                # Cloudflare Origin root, never installed in a trust store.
+                - name: NODE_EXTRA_CA_CERTS
+                  value: /estate/trust/trust.crt
                 - name: NODE_ENV
                   value: production
                 # Logged on every replay so a Job's own output says which image
@@ -206,6 +226,7 @@ spec:
                 # READ-ONLY. This process compares; it has no business writing to
                 # the estate's secrets.
                 - {name: estate-secrets, mountPath: /estate/secrets, readOnly: true}
+                - {name: estate-trust, mountPath: /estate/trust, readOnly: true}
                 # `readOnlyRootFilesystem: true` above needs somewhere for
                 # anything that writes a temporary file. Nothing in the replay
                 # should, and if something starts to, this is the only place it
@@ -224,5 +245,11 @@ spec:
                 # 0440 with `fsGroup: 1000` above. NOT 0400 — see the comment
                 # there; and not 0444, which would be readable by any uid.
                 defaultMode: 0440
+            - name: estate-trust
+              configMap:
+                name: gateway-trust
+                # Both roots in it are PUBLIC certificates, so world-readable in
+                # this pod costs nothing and needs no fsGroup dance.
+                defaultMode: 0444
             - name: tmp
               emptyDir: {}
