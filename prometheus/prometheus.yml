@@ -338,14 +338,31 @@ scrape_configs:
   # one testnet deployable whose silence cannot be noticed any other way. Every
   # other testnet service failing is visible in a browser within the hour; a
   # backup that stopped is visible only on the day it is needed.
-  - job_name: backup-runner-testnet
-    static_configs:
-      - targets: ["cf-testnet-backup-runner-1:4130"]
-        labels:
-          instance: cf-testnet-backup-runner:4130
-          team: platform
-          service: backup-runner
-          estate: testnet
+  # ── AND IT IS GONE, BECAUSE THERE IS ONE CLUSTER AND ONE RUNNER (micro-org#542)
+  #
+  # Everything above was true of TWO Postgres clusters. There is one now, and the
+  # mainnet runner backs up every database in it. Measured on the newest set,
+  # 2026-09-01:
+  #
+  #     /srv/cloudsforge-backups/mainnet/20260901T084309Z/db
+  #       54 dumps, 22 of them `*_testnet`
+  #
+  # The `cf-testnet` namespace has no `backup-runner` Deployment and has not had
+  # one since the consolidation; `/srv/cloudsforge-backups/testnet` stops on
+  # 2026-08-24. So this job scraped a pod that does not exist, `absent()` was
+  # therefore true, and `BackupNeverRun` fired continuously saying "nothing has
+  # ever backed cf-testnet-backup-runner:4130 up" — about databases that were
+  # being backed up daily, inside the set above.
+  #
+  # THAT IS THE INVERSE OF THE FAILURE THIS FILE IS FULL OF, and it is not
+  # harmless. An alert that says a control is missing when it is present teaches
+  # the same lesson as one that says a control is fine when it is not: that the
+  # alert is not worth reading. The clause in `BackupNeverRun` goes with it.
+  #
+  # A SECOND RUNNER IS STILL ADDABLE, and the rule that made this readable holds:
+  # two jobs, two `instance` values, one clause each in `BackupNeverRun` — the
+  # instances are written out there precisely so that adding a runner without
+  # adding a clause is a visible omission.
   # ── THE TESTNET CHAIN IS NOT A SECOND TARGET ANY MORE ────────────────────
   #
   # There was a `cf-indexer-testnet` job here, added by micro-org#398 so the two
