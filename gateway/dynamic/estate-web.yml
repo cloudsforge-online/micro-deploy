@@ -564,6 +564,29 @@ http:
         regex: "^/v1/(title|provision)$"
         replacement: "/aetherholm/v1/$1"
 
+    # ── AND TESSERA'S, WHICH MAKES THE BARE PATH ANSWER NOTHING ──────────────────────────────
+    #
+    # The rewrite above moved aetherholm's pair and left tessera's bare, on the usual rule: the
+    # module a caller already addresses keeps the path. That resolved the collision and left a
+    # sharper edge behind it.
+    #
+    # `worlds` composes a title's address from the pathname of its REGISTERED base URL plus the
+    # frozen suffix. A row at an origin-only base — `http://agora:4000`, which is what every row
+    # looked like before M5d and what a hand-written one looks like again — asks for the bare
+    # `/v1/title`. While ONE title answered that, such a row got a 200 and the WRONG GAME'S
+    # descriptor: a misconfigured row was indistinguishable from a correct one, and the only
+    # symptom was a player provisioned something they had not bought.
+    #
+    # With both moved, nothing in the process answers the bare paths and the merged listener 404s
+    # them. A row somebody fixes in a minute, instead of a 200 nobody has a reason to look at.
+    #
+    # Same anchored shape as aetherholm's, and for the same reason: ONLY these two paths move.
+    # tessera's listings rewrite below is separate and unanchored because those paths have a tail.
+    cf-tessera-title-contract:
+      replacePathRegex:
+        regex: "^/v1/(title|provision)$"
+        replacement: "/tessera/v1/$1"
+
     # Wave 3g's, and the un-automatable Decision 4 audit re-run for it on 2026-08-20 rather than
     # assumed from the eight above:
     #
@@ -2037,7 +2060,10 @@ http:
       rule: 'Host(`{{ env "CF_SITE_HOST" }}`) && PathPrefix(`/worlds/tessera/v1`)'
       priority: 700
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-tessera-strip-mount, cf-tessera-listings]
+      # The strip first, then the two rewrites, which do not overlap: one matches `/v1/listings…`
+      # and the other exactly `/v1/title` or `/v1/provision`. Traefik applies them in order and
+      # each leaves the other's paths untouched.
+      middlewares: [cf-tessera-strip-mount, cf-tessera-listings, cf-tessera-title-contract]
       service: cf-svc-tessera
 
     cf-web-tessera:
@@ -2050,7 +2076,7 @@ http:
       rule: 'Host(`tessera{{ env "CF_WEB_SUFFIX" }}`) && PathPrefix(`/v1`)'
       priority: 600
       entryPoints: [websecure, tunnel]
-      middlewares: [cf-tessera-listings]
+      middlewares: [cf-tessera-listings, cf-tessera-title-contract]
       service: cf-svc-tessera
 
     # ──────────────────────────────────────────────────────────────── nimbus ──

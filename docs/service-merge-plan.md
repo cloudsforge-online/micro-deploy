@@ -565,9 +565,14 @@ sign a transaction.
   because community has no router at all, and that exemption is now declared AND
   checked.
 
-  Follow-up, next release: move tessera's two frozen paths to `/tessera/v1/*`
-  as well. While ONE title still answers the bare path, a title registered at an
-  origin-only base URL is answered by that title rather than 404ing loudly.
+  Follow-up, DONE 2026-09-01: tessera's two frozen paths moved to `/tessera/v1/*`
+  as well, so NO module answers the bare pair and a title registered at an
+  origin-only base URL 404s loudly instead of being handed the wrong game.
+  `mergedroutes.test.ts` asserts the absence across the whole merged table rather
+  than per module — "nothing answers this" is the property, and two per-module
+  cases would still pass the day a third title mounted it. tessera has no row in
+  the `titles` registry, so unlike aetherholm's there was nothing to migrate; the
+  day one is added it must name `http://agora:4000/tessera`.
 
   **THE CUTOVER STEPS THAT ARE NOT IN A FILE.** Two live changes ship with this
   release and neither is a manifest, so both are written here rather than
