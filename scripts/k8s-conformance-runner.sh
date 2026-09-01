@@ -87,16 +87,32 @@ say "beacon Service" "resolvable at http://beacon:4000"
 
 # ── 3. THE IMAGE, RESOLVED TO A DIGEST ──────────────────────────────────────
 #
-# `docker manifest inspect` and not a pull: this may run from a machine that is
-# not the node, and the question is whether the reference EXISTS in the registry
-# rather than whether this disk has it. Anonymous — every package in the
-# organisation is public, which `publish-image.yml` re-checks on every publish.
-digest="$(docker manifest inspect "${IMAGE}:${TAG}" 2>/dev/null \
-  | sed -n 's/.*"digest": *"\(sha256:[0-9a-f]*\)".*/\1/p' | head -1 || true)"
+# curl AND NOT `docker manifest inspect`, WHICH THIS SCRIPT TRIED FIRST AND
+# WHICH DOES NOT WORK WHERE IT HAS TO RUN. **The k3s VM has no docker.** k3s
+# drives containerd directly, and the only Docker on the estate is the BuildKit
+# host used to build the backup runner. A script whose one job is to make a
+# deploy safe, that cannot run on the node it deploys to, is not a check — it is
+# a step somebody skips.
+#
+# The registry's own HTTP API needs no daemon and no credential: every package in
+# the organisation is public, which `publish-image.yml` re-checks on every
+# publish. The Accept headers matter — without them the registry answers with a
+# v1 manifest whose digest is NOT the one Kubernetes will pull, so the pin would
+# be to something real and wrong.
+registry_token="$(curl -fsSL \
+  "https://ghcr.io/token?scope=repository:${IMAGE#ghcr.io/}:pull&service=ghcr.io" 2>/dev/null \
+  | sed -n 's/.*"token":"\([^"]*\)".*/\1/p' || true)"
+digest=""
+if [ -n "$registry_token" ]; then
+  digest="$(curl -fsSI \
+    -H "Authorization: Bearer ${registry_token}" \
+    -H 'Accept: application/vnd.oci.image.index.v1+json' \
+    -H 'Accept: application/vnd.docker.distribution.manifest.list.v2+json' \
+    -H 'Accept: application/vnd.docker.distribution.manifest.v2+json' \
+    "https://ghcr.io/v2/${IMAGE#ghcr.io/}/manifests/${TAG}" 2>/dev/null \
+    | tr -d '\r' | sed -n 's/^[Dd]ocker-[Cc]ontent-[Dd]igest: *//p' | head -1 || true)"
+fi
 if [ -z "$digest" ]; then
-  # A second route for a host with no docker but a working crane/skopeo is not
-  # offered: a missing digest here must be a hard stop, because the alternative
-  # is applying a floating tag and calling it pinned.
   echo "::error::cannot resolve ${IMAGE}:${TAG} to a digest" >&2
   echo "The image is published by micro-conformance's own CI on a green push to main." >&2
   echo "Applying a floating tag instead would mean the replay that certifies a release" >&2
