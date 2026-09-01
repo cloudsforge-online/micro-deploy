@@ -49,10 +49,10 @@
 #
 # Read from the same gitignored directories `../up.sh` writes:
 #
-#   prometheus/secrets/    beacon_token, analytics_token, lantern_token
+#   prometheus/secrets/    beacon_token
 #   alertmanager/secrets/  beacon_token, page_webhook_url, ticket_webhook_url
 #
-# EMPTY is a supported mode for all six — Alertmanager's config documents why —
+# EMPTY is a supported mode for all four — Alertmanager's config documents why —
 # but ABSENT is not, so every key is created unconditionally, empty if need be.
 # No value is ever printed by this script, at any verbosity. The Grafana admin
 # password is separate: it has no default anywhere by deliberate policy
@@ -312,10 +312,15 @@ secret_file() {  # secret_file <dir> <name> -> prints the path to use
   printf '%s' "$path"
 }
 
+# ONE KEY, because one job presents a header. `analytics_token` and
+# `lantern_token` were here until 2026-09-02 and neither had a reader left:
+# analytics' job went at wave M1 and lantern's at wave M5a, both absorbed into
+# agora, whose /metrics is unauthenticated like every other entry in the
+# generated list. A credential mounted where nothing presents it is a copy no
+# guard is watching (micro-org#430), and it cannot be rotated by observation
+# because nothing would notice it being wrong.
 kubectl create secret generic prometheus-secrets --namespace "$NAMESPACE" \
   --from-file=beacon_token="$(secret_file "$ROOT/prometheus/secrets" beacon_token)" \
-  --from-file=analytics_token="$(secret_file "$ROOT/prometheus/secrets" analytics_token)" \
-  --from-file=lantern_token="$(secret_file "$ROOT/prometheus/secrets" lantern_token)" \
   --dry-run=client -o yaml | kubectl apply -f - >/dev/null
 
 kubectl create secret generic alertmanager-secrets --namespace "$NAMESPACE" \

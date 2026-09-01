@@ -315,6 +315,24 @@ for cf_seed_pair in CF_LEDGER_URL:LEDGER CF_BILLING_URL:BILLING CF_NDA_URL:NDA \
 done
 unset cf_seed_pair cf_seed_dst cf_seed_val
 
+# ── ONE SCRAPE TARGET PER WORKLOAD (micro-org#541) ───────────────────────────
+#
+# A k8s fact, so it is checked HERE and not in `estate-verify.sh`: after the
+# service merge every absorbed service keeps an ExternalName CNAME onto its
+# absorber, so a scrape target left pointing at one of them is `up`, fast, and
+# returns a perfectly valid exposition page — belonging to a different service.
+# Prometheus then files one pod's traffic under twenty `service` labels and the
+# SLO rules, which aggregate on that label, burn twenty error budgets when one
+# route fails. Measured 2026-09-01: twenty-four alerts, three of them pages, for
+# one broken route.
+#
+# WARNS, does not exit. The estate is serving either way and this is a statement
+# about the observability plane; a verifier that refused to check anything else
+# because the monitoring is duplicated would be the worse failure.
+if ! python3 ./scripts/check-prometheus-target-aliases.py --namespace "$CF_NAMESPACE"; then
+  echo "k8s-estate-verify: the scrape list above needs attention; continuing." >&2
+fi
+
 export CF_RUNTIME=k8s
 export CF_NAMESPACE
 export CF_GATEWAY_NAMESPACE

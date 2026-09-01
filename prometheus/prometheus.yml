@@ -206,19 +206,39 @@ scrape_configs:
   # in a hardcoded alternation (`cf-platform-overview.json`), and those are
   # corrected in the same change.
 
-  - job_name: lantern
-    scheme: http
-    http_headers:
-      x-lantern-token:
-        files:
-          - /etc/prometheus/secrets/lantern_token
-    static_configs:
-      - targets: ["cloudsforge-estate-lantern-1:4000"]
-        labels:
-          instance: lantern:4000
-          team: platform
-          service: lantern
-          tier: "2"
+  # `lantern` HAD A JOB HERE AND NO LONGER EXISTS AS A TARGET EITHER, for the
+  # same reason as analytics above, one level up.
+  #
+  # Wave M5a absorbed lantern (which had already absorbed analytics at M1) into
+  # agora. There is no lantern pod: `lantern` in this namespace is an
+  # ExternalName — a DNS CNAME onto `agora.cloudsforge-estate.svc.cluster.local`
+  # — so this job did not scrape lantern. It scraped AGORA'S `/metrics`, a second
+  # time, and stored every series on that page under `service="lantern"`.
+  #
+  # That is not a cosmetic duplicate. `rules/slo.yaml` aggregates
+  # `http_requests_total` by `(network, service, tier)`, so one process's traffic
+  # arriving under two service names is two burn rates computed from identical
+  # numerators and denominators — and on 2026-09-01 a single failing route
+  # (`POST /v1/events/tessera`) fired TWENTY-FOUR SLO alerts naming twenty
+  # services, three of them at severity `page` (micro-org#541). Nineteen of the
+  # twenty were phantoms of this shape.
+  #
+  # ── THE GENERATED LIST NEVER HAD THIS PROBLEM; IT WAS NEVER REGENERATED ─────
+  #
+  # `targets/services.yaml` is rendered from the release manifest and drops an
+  # absorbed service the moment it leaves the manifest — a render against release
+  # 2026.8.109 emits SEVEN targets. The deployed ConfigMap held TWENTY-SEVEN,
+  # rendered on 2026-08-19 and never refreshed, because the comment below is true
+  # of `release-deploy.sh` and was never true of `k8s-deploy.sh`: the Kubernetes
+  # deploy path did not render the scrape list at all. It does now, and
+  # `scripts/check-prometheus-target-aliases.py` refuses a config in which two
+  # targets resolve to one workload, so a future absorption cannot re-create this
+  # silently.
+  #
+  # No alert or recording rule selects `service="lantern"` — checked across
+  # `prometheus/rules/*.yaml` before removing this. Its `x-lantern-token` header
+  # went with it: agora's `/metrics` is unauthenticated exactly like every other
+  # entry in the generated list, and the token gated a route that is gone.
 
   # -------------------------------------------------- new estate services ---
   # The estate's backend deployables. Each exposes the RED and job metrics that
