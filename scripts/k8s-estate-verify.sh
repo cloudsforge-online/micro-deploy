@@ -333,6 +333,21 @@ if ! python3 ./scripts/check-prometheus-target-aliases.py --namespace "$CF_NAMES
   echo "k8s-estate-verify: the scrape list above needs attention; continuing." >&2
 fi
 
+# ── EVERY ERASURE SUBSCRIPTION REACHES A ROUTE THAT EXISTS (micro-org#474) ────
+#
+# Also a k8s fact, and for the same reason as the scrape check above: after the
+# merge a subscription URL naming an absorbed service RESOLVES, through that
+# service's ExternalName CNAME, and is answered by the absorber's 410 tombstone
+# for the bare path. The row is present, the delivery succeeds, and nothing is
+# erased. `check-erasure-register.py` cannot see it — the register is right and
+# the running process is what disagrees.
+#
+# WARNS rather than exiting, so a monitoring or bootstrap gap does not stop the
+# rest of the verification. It is loud, and it is the only thing that looks.
+if ! python3 ./scripts/check-erasure-subscriptions-live.py --namespace "$CF_NAMESPACE"; then
+  echo "k8s-estate-verify: the erasure subscriptions above need attention; continuing." >&2
+fi
+
 export CF_RUNTIME=k8s
 export CF_NAMESPACE
 export CF_GATEWAY_NAMESPACE
