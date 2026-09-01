@@ -1,0 +1,209 @@
+# The conformance replay, in the cluster — micro-org#537.
+#
+# Applied by `scripts/k8s-conformance-runner.sh`, which pins the image digest and
+# refuses to apply a tag it cannot resolve.
+#
+# The compose original is `compose/docker-compose.conformance.yml`, and every essay
+# in that file still governs. This header records only what the translation had to
+# decide differently, and why.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# WHY THIS EXISTS AT ALL
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# micro-org#439: both ends of the conformance gate were built and never joined —
+# the corpus, the comparator, `publish.ts`, beacon's `POST /v1/conformance` and
+# the per-suite gate input were all complete and `conformance_runs` was empty
+# because NOTHING CALLED ANY OF IT. The compose runner closed that.
+#
+# micro-org#537: the Kubernetes migration then left the compose runner behind. A
+# compose service that is not rendered is simply not there, nothing failed when
+# it was not translated, and `conformance_runs` stops on 2026-08-18 — the day of
+# the migration — while `ConformanceCorpusStale` fired on every suite for a
+# fortnight saying exactly the right thing: "Find the runner, not the divergence."
+#
+# So this is the same defect twice, by two routes, and what makes the second one
+# worse is that the alert WAS correct and WAS firing the whole time.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# A CronJob AND NOT A Deployment, WHICH IS A CHANGE FROM COMPOSE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# `replay.sh loop` slept for `CF_CONFORMANCE_INTERVAL` between replays and relied
+# on `restart: unless-stopped` to survive a reboot. That is compose's only way to
+# schedule anything. Here the schedule is the orchestrator's, and the difference
+# is not stylistic:
+#
+#   * A container that sleeps for a day is a container whose failure to wake up
+#     NOTHING NOTICES. A CronJob that does not fire leaves no Job, and
+#     `kube_cronjob_status_last_successful_time` says so.
+#   * `restartPolicy: Never` plus `backoffLimit: 0` means a breaking difference
+#     is reported ONCE, as a failed Job, and not as a crash-loop that re-signs-in
+#     to identity every few seconds for as long as the divergence lasts. That was
+#     `replay.sh`'s own argument for not exiting non-zero from `loop`, and the
+#     CronJob gets it for free.
+#   * `concurrencyPolicy: Forbid` because two replays racing would double every
+#     authenticated sign-in and publish two rows per suite per day.
+#
+# `startingDeadlineSeconds` is deliberately generous: this node has been rebooted
+# mid-window before, and a missed replay that is simply skipped is how a gate
+# quietly stops having an input again.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# THE SECRETS ARRIVE AS A DIRECTORY, NOT AS A FILE
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# The harness resolves recorded secret literals so a corpus cannot come to
+# contain one, and compose gave it the estate's `tokens.env` as a read-only bind
+# mount. The cluster has no such file, and writing the estate's whole secret set
+# to disk a second time to create one would be the wrong trade.
+#
+# micro-conformance now reads `CONFORMANCE_SECRETS_FILE` as a DIRECTORY of
+# one-value-per-file, which is exactly how Kubernetes projects a Secret. The same
+# `estate-tokens` Secret every service already reads is mounted read-only at
+# /estate/secrets, and `assertSecretLiterals` refuses the run if it is unreadable
+# — an unarmed redactor must never look like a redactor with nothing to do.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# NO INTERNAL CA, AND THAT IS A DELIBERATE OMISSION
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# Compose mounted `gateway/certs/ca.crt` as `NODE_EXTRA_CA_CERTS`, from when the
+# runner dialled internal hostnames. It does not any more: `CONFORMANCE_MICRO_APEX`
+# makes every target `<sub>.cloudsforge.online`, which is a public address with a
+# public certificate, and beacon is reached over plain HTTP inside the cluster.
+# Mounting a CA this process has no use for would widen what it trusts for
+# nothing.
+#
+# ══════════════════════════════════════════════════════════════════════════════
+# MAINNET ONLY
+# ══════════════════════════════════════════════════════════════════════════════
+#
+# There is one corpus and it was recorded against mainnet. Chain id is contract
+# rather than gauge in it — `0x1cf3` mainnet, `0x1cf4` testnet — so a testnet
+# replay of THIS corpus reports a breaking difference that means "wrong estate"
+# and nothing else. Testnet needs its own recorded corpus before it can be
+# replayed, and this manifest is therefore NOT applied to cf-testnet.
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: conformance-runner
+  labels:
+    app.kubernetes.io/name: conformance-runner
+    app.kubernetes.io/part-of: cloudsforge-estate
+spec:
+  # 04:30 UTC daily. The question the release gate actually asks is "has the
+  # corpus been replayed since the last release", and this estate cuts a release
+  # most days — so daily is the cadence the question is asked at. Hourly would
+  # spend forty authenticated sign-ins a day re-measuring something that only
+  # changes when a deploy lands.
+  schedule: "30 4 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  # An hour. A node rebooted through the window still replays; a window silently
+  # skipped is how a gate stops having an input without anything saying so.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  # Three, not one: a failed replay's LOG is the diagnosis, and one is not enough
+  # to tell "it broke today" from "it has been broken since Tuesday".
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      # Reported once, as a failed Job. Not a crash-loop that re-signs-in to
+      # identity every few seconds for as long as a divergence lasts — the
+      # divergence is already published as a `fail` row in `conformance_runs`
+      # and a non-zero `beacon_conformance_vectors{result="failed"}`.
+      backoffLimit: 0
+      # Half an hour is generous for eight suites; it exists so a hung request
+      # cannot hold `concurrencyPolicy: Forbid` shut for ever and silently
+      # cancel every subsequent replay.
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: conformance-runner
+        spec:
+          restartPolicy: Never
+          # No API credential: nothing in this deployable talks to Kubernetes.
+          automountServiceAccountToken: false
+          securityContext:
+            runAsUser: 1000
+            runAsGroup: 1000
+            runAsNonRoot: true
+          containers:
+            - name: conformance-runner
+              # PINNED BY DIGEST at apply time by scripts/k8s-conformance-runner.sh.
+              # The tag below is what a human reads; the digest is what runs.
+              image: ghcr.io/cloudsforge-online/micro-conformance:main
+              args: ["once"]
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              env:
+                # THE APEX IS THE ESTATE THIS COMPARES AGAINST. It is what turns
+                # `<sub>.<apex>` into a real address.
+                - name: CONFORMANCE_MICRO_APEX
+                  value: cloudsforge.online
+                # A DIRECTORY — see the header. Read to resolve recorded secret
+                # literals so a value that IS a secret is redacted out of the
+                # corpus rather than compared.
+                - name: CONFORMANCE_SECRETS_FILE
+                  value: /estate/secrets
+                # The compose service alias is now a cluster Service. Plain HTTP
+                # inside the namespace, as every other in-cluster call is.
+                - name: CF_BEACON_URL
+                  value: http://beacon:4000
+                # ── THE ACCOUNT IS REQUIRED, AND A SKIP IS WHY ─────────────────
+                #
+                # Five of the eight suites sign in. Without an account they SKIP
+                # — beacon refuses to derive `pass` from zero comparisons, so the
+                # run stays honest — and the estate ends up with a replay that
+                # runs daily, publishes, clears every alert and compares barely
+                # anything. `optional: false` makes that unreachable rather than
+                # merely unlikely.
+                #
+                # It still borrows the last of beacon's provisioned journey
+                # accounts (micro-org#443). Giving it a ninth of its own is a
+                # change to `estate-tokens` and no change to this file.
+                - name: CONFORMANCE_ACCOUNT
+                  valueFrom:
+                    secretKeyRef:
+                      name: estate-tokens
+                      key: CF_CONFORMANCE_ACCOUNT
+                      optional: false
+                # The same credential Prometheus and Alertmanager present. By
+                # NAME into the environment and never as `--beacon-token` on a
+                # command line, where `ps` would show it.
+                - name: BEACON_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: estate-tokens
+                      key: BEACON_TOKEN
+                      optional: false
+                - name: NODE_ENV
+                  value: production
+              volumeMounts:
+                # READ-ONLY. This process compares; it has no business writing to
+                # the estate's secrets.
+                - {name: estate-secrets, mountPath: /estate/secrets, readOnly: true}
+                # `readOnlyRootFilesystem: true` above needs somewhere for
+                # anything that writes a temporary file. Nothing in the replay
+                # should, and if something starts to, this is the only place it
+                # can — not the source tree and not the corpus.
+                - {name: tmp, mountPath: /tmp}
+              resources:
+                requests:
+                  cpu: 100m
+                  memory: 256Mi
+                limits:
+                  memory: 1Gi
+          volumes:
+            - name: estate-secrets
+              secret:
+                secretName: estate-tokens
+                defaultMode: 0400
+            - name: tmp
+              emptyDir: {}
