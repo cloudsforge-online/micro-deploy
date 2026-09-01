@@ -361,14 +361,117 @@ const declaredNothing = new Map()
  */
 const DECLARES_NONE = /export const ([A-Z0-9_]*SCOPES)\b[^=]*=\s*NO_SCOPES_REQUIRED\b/g
 
+/**
+ * Which checkouts are now MODULES of another checkout, derived from the layout.
+ *
+ * The service merge moved twenty services into `agora/src/<name>/` (and two levels deep in three
+ * cases — `agora/src/activity/notify`) without deleting a repository. This derivation walked the
+ * estate directory, so it read each of them TWICE and reported the module copies under paths
+ * nothing recognises: five of the six failures on 2026-09-01 were entries in `grant-gaps.json`
+ * keyed `billing/src/ledger.ts` no longer matching a file now read as `agora/src/billing/ledger.ts`.
+ *
+ * A GRANT IS PER SERVICE AND STAYS PER SERVICE. The compose block still names `billing`,
+ * `community` and the rest, because identity mints per service identity and the merge changed the
+ * process, not who is asking. So an absorbed service is read from the LIVE copy — the one the pod
+ * runs — and reported under its ORIGINAL path, which is what every gap entry, every issue and every
+ * message a person reads is keyed on.
+ *
+ * Two rounds, and the second is not an optimisation: `notify` was absorbed into `activity` and
+ * `activity` into `agora`, so a single round finds `activity/src/notify` first and points notify at
+ * a checkout that is itself skipped — leaving notify read from nowhere.
+ */
+function absorptionsOf() {
+  const candidates = new Set(repos)
+  const discover = (absorbers) => {
+    const found = []
+    for (const absorber of absorbers) {
+      const descend = (rel, depth) => {
+        if (depth > 3) return
+        let entries
+        try {
+          entries = readdirSync(join(ESTATE, absorber, rel)).sort()
+        } catch {
+          return
+        }
+        for (const entry of entries) {
+          if (/^(node_modules|dist|build|coverage|\.git)$/.test(entry)) continue
+          const relModule = join(rel, entry)
+          const dir = join(ESTATE, absorber, relModule)
+          try {
+            if (!statSync(dir).isDirectory()) continue
+          } catch {
+            continue
+          }
+          // `hub-api` is `agora/src/hub` and `admin-api` is `agora/src/admin`: the repository name
+          // carries a suffix the module directory does not. Tried as well as the exact name, never
+          // instead of it, and `looksLikeACopy` still has to agree — so this is a candidate rather
+          // than a rule. Without it those two services' outbound scopes were attributed to `agora`
+          // itself, which is a grant widening dressed up as a derivation.
+          const names = [entry, `${entry}-api`]
+          for (const service of names) {
+            if (
+              service !== absorber &&
+              candidates.has(service) &&
+              !found.some((e) => e.service === service) &&
+              looksLikeACopy(join(ESTATE, service, 'src'), dir)
+            ) {
+              found.push({ service, into: absorber, dir })
+              break
+            }
+          }
+          descend(relModule, depth + 1)
+        }
+      }
+      descend('src', 1)
+    }
+    return found
+  }
+  const anywhere = new Set(discover([...candidates].sort()).map((e) => e.service))
+  return discover([...candidates].sort().filter((r) => !anywhere.has(r)))
+}
+
+/** A majority of the standalone repository's own top-level sources, by name, present in the module. */
+function looksLikeACopy(standaloneSrc, moduleDir) {
+  const namesIn = (dir) => {
+    try {
+      return new Set(readdirSync(dir).filter((n) => n.endsWith('.ts') && !n.endsWith('.test.ts')))
+    } catch {
+      return new Set()
+    }
+  }
+  const standalone = namesIn(standaloneSrc)
+  if (standalone.size < 3) return false
+  const module = namesIn(moduleDir)
+  let shared = 0
+  for (const n of standalone) if (module.has(n)) shared += 1
+  return shared * 2 > standalone.size
+}
+
+const ABSORBED = new Map(absorptionsOf().map((e) => [e.service, e]))
+/** Every absorbed module's directory, so an absorbing scan stops at its modules' edges. */
+const MODULE_DIRS = [...ABSORBED.values()].map((e) => e.dir)
+if (ABSORBED.size > 0) {
+  console.log(
+    `derive-grants: ${ABSORBED.size} service(s) read from their absorber's module directory rather than their own checkout: ${[...ABSORBED.keys()].sort().join(' ')}`,
+  )
+}
+
 for (const repo of repos) {
   // `service-template` is a template, not a deployment. Granting it anything would put a service
   // that does not exist into identity's allowlist.
   if (repo === 'service-template') continue
+  const moved = ABSORBED.get(repo)
+  const base = moved ? moved.dir : join(ESTATE, repo, 'src')
+  // Strictly BELOW this scan's base — which is not the same as "this repo is an absorber". `notify`
+  // sits inside the `activity` module, so activity is a module that is itself an absorber.
+  const nested = MODULE_DIRS.filter((d) => d !== base && d.startsWith(base + '/'))
   const found = new Map()
-  for (const path of collect(join(ESTATE, repo, 'src'))) {
+  for (const path of collect(base)) {
+    if (nested.some((d) => path.startsWith(d + '/'))) continue
     const text = stripComments(readFileSync(path, 'utf8'))
-    const rel = relative(ESTATE, path)
+    // The ORIGINAL layout — `billing/src/ledger.ts`, not `agora/src/billing/ledger.ts`. Every gap
+    // entry and every issue is keyed on it, and a module's move is a fact about the deployment.
+    const rel = moved ? `${repo}/src/${relative(base, path)}` : relative(ESTATE, path)
     const presents = presentsCredential(text)
 
     /** scope -> provenance, as declared by THIS file */
