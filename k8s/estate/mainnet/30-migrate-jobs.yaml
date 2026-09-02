@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.108  (2026.8.108.yaml)
+# Release:   2026.8.110  (2026.8.110.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.108.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.110.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -15,7 +15,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: agora-migrate-2026-8-108
+  name: agora-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: agora-migrate
@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
       - name: agora-migrate
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:c3338729b54ca5694983f1e8e9c7e04e7fa024d0c12ca37598419fe81a4b6539
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:ee17c5ff11799a61e1a247fc1e737fcb4d6aabaa00d06576b25b733f255f5ea4
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -291,7 +291,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: beacon-migrate-2026-8-108
+  name: beacon-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: beacon-migrate
@@ -367,7 +367,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-keys-init-2026-8-108
+  name: custody-keys-init-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: custody-keys-init
@@ -419,7 +419,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-migrate-2026-8-108
+  name: custody-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: custody-migrate
@@ -498,7 +498,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: identity-migrate-2026-8-108
+  name: identity-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: identity-migrate
@@ -577,7 +577,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: indexer-migrate-2026-8-108
+  name: indexer-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: indexer-migrate
@@ -651,7 +651,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ledger-migrate-2026-8-108
+  name: ledger-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: ledger-migrate
@@ -727,7 +727,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pool-migrate-2026-8-108
+  name: pool-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: pool-migrate
@@ -841,7 +841,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: settlement-migrate-2026-8-108
+  name: settlement-migrate-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: settlement-migrate
@@ -935,7 +935,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-assets-init-2026-8-108
+  name: studio-assets-init-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: studio-assets-init
@@ -987,7 +987,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-assets-check-2026-8-108
+  name: tessera-assets-check-2026-8-110
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: tessera-assets-check
