@@ -65,6 +65,51 @@
 #              lives in the service's own handler, table by table, next to the
 #              code that does it, because a rationale in a deploy file is a
 #              rationale that drifts from the behaviour it describes
+#
+# ── THE ESTATE'S RULE, DECIDED 2026-09-02 ─────────────────────────────────────
+#
+# **WHEN A PERSON ASKS TO BE FORGOTTEN, EVERYTHING IS ANONYMISED.**
+#
+# The owner's decision, and it settles what micro-org#534 had been holding open
+# for the four money-holding services — `wallet`, `ledger`, `custody`, `pool`.
+# Those four could not simply delete: a posting without an account is a journal
+# that no longer balances, a deposit address without an owner is money nobody can
+# be credited for, a share without a miner is a payout that cannot be paid. The
+# question "what does the estate do with a balance owed to somebody who has asked
+# to be forgotten" now has one answer, and it is the same answer everywhere:
+#
+#   * the SUBJECT is replaced by `erased:<random uuid>` — one placeholder per
+#     erasure, from a CSPRNG, never derived from the id it replaces and never
+#     stored beside it, so the link is destroyed rather than merely indexed away;
+#   * the ROW STAYS, with every column that is a fact about a transaction rather
+#     than about a person untouched — amounts, rates, timestamps, hashes, the
+#     ledger references that make the record auditable;
+#   * FREE TEXT THE PERSON WROTE is neutralised as well, because a display name,
+#     a prompt or a city name is personal data in its CONTENT and not merely in
+#     its key. Anonymising the owner of a string somebody chose does not
+#     anonymise the string.
+#
+# ── WHERE `delete` SURVIVES, AND WHY THAT IS THE SAME RULE ───────────────────
+#
+# `delete` remains legal in this column and four services use it. Deleting a row
+# is a STRICTLY STRONGER form of the same outcome: there is no subject left to
+# anonymise. It is the right action when a row is purely personal and nothing
+# depends on it — a research node, an alliance membership, a brand kit, a
+# generated image — because retaining a de-identified husk of it would be
+# personal-adjacent data kept for no purpose, which Art. 5(1)(e) is against.
+#
+# The rule is therefore: ANONYMISE, and delete only where deletion leaves less
+# behind than anonymisation would. A service that cannot delete without breaking
+# a record anonymises, and never refuses.
+#
+# ── WHAT THIS RULE DOES NOT PERMIT ──────────────────────────────────────────
+#
+# It is not an excuse to retain. A row kept under this rule must still have a
+# reason to exist — the `retained` column names it and the drill checks it — and
+# "we anonymised it, so keeping it is free" is not one. Nor is it a licence to
+# stop at the id: the free-text clause above is the half that is easy to forget,
+# and `erasure.test.ts`'s catalogue sweep in worlds, studio and foresight is what
+# catches it.
 #   retained   tables that lawfully KEEP a row naming the person, comma-separated,
 #              or `-`. Declared in advance, here, so that `SCAN` skips them and
 #              the drill can still print what survived. A table not named here
@@ -265,3 +310,7 @@ agora|agora|http://agora:4000/v1/events/agora|mixed|-|insert into voices (subjec
 foresight|foresight|http://agora:4000/v1/events/agora|anonymise|custodial_stakes|insert into markets (id, question, resolution_criteria, category, category_version, resolution_source_kind, resolution_source_ref, close_time) values ('00000000-0000-4000-8000-0000000d5301'::uuid, 'drill?', 'drill', 'test', 1, 'manual', 'drill', now() + interval '1 day') on conflict do nothing; insert into custodial_stakes (market_id, subject, outcome, stake_asset_code, stake_amount, pool_amount, stake_rate_usd_scaled, pool_rate_usd_scaled) values ('00000000-0000-4000-8000-0000000d5301', 'user:{{uid}}', 1, 'EMBER', 1000, 1000, 1, 1)|SCAN
 studio|studio|http://agora:4000/v1/events/agora|delete|-|insert into brand_kits (owner_subject, name, accent) values ('user:{{uid}}', 'Drill', '#aabbcc'); insert into credit_accounts (owner_subject, cap_usd_micros) values ('user:{{uid}}', 5000000)|SCAN
 worlds|worlds|http://agora:4000/v1/events/worlds|mixed|-|insert into titles (id, slug, name, service_url) values ('00000000-0000-4000-8000-0000000d5201', 'erasure-drill', 'Erasure Drill', 'http://drill.invalid') on conflict do nothing; insert into seasons (id, title_id, slug, name, starts_at, ends_at, reward_budget_wei) values ('00000000-0000-4000-8000-0000000d5202', '00000000-0000-4000-8000-0000000d5201', 'erasure-drill', 'Erasure Drill', now(), now() + interval '30 days', 1000) on conflict do nothing; insert into achievements (id, title_id, key, name) values ('00000000-0000-4000-8000-0000000d5203', '00000000-0000-4000-8000-0000000d5201', 'erasure-drill', 'Erasure Drill') on conflict do nothing; insert into player_profiles (user_id, display_name) values ('{{uid}}', 'drill') on conflict do nothing; insert into player_achievements (user_id, achievement_id) values ('{{uid}}', '00000000-0000-4000-8000-0000000d5203') on conflict do nothing; insert into inventory_items (user_id, title_scope, item_urn, source) values ('{{uid}}', '*', 'urn:cf:drill:item', 'reward'); insert into reward_grants (season_id, user_id, title_id, reason, amount_wei, journal_entry_id, idempotency_key) values ('00000000-0000-4000-8000-0000000d5202', '{{uid}}', '00000000-0000-4000-8000-0000000d5201', 'drill', 1, concat('drill-', '{{uid}}'), concat('drill-', '{{uid}}')) on conflict do nothing; insert into provisions (entitlement_id, subject, sku, scope, kind) values (concat('drill-', '{{uid}}'), concat('user:', '{{uid}}'), 'erasure-drill', '*', 'cosmetic') on conflict do nothing; insert into outbox (topic, key, producer, actor, payload, published_at) values ('worlds.profile.updated', concat('player:', '{{uid}}'), 'worlds', concat('user:', '{{uid}}'), jsonb_build_object('userId', '{{uid}}'), now())|SCAN
+wallet|wallet|http://agora:4000/v1/events/agora|anonymise|-|insert into wallets (id, user_id, origin, chain, network, address, address_key, label, status) values ('00000000-0000-4000-8000-0000000d5401'::uuid, '{{uid}}', 'managed', 'litecoin', 'mainnet', concat('ltc1', substr(md5('{{uid}}'), 1, 20)), concat('k-', substr(md5('{{uid}}'), 1, 16)), 'drill', 'active') on conflict do nothing; insert into deposit_address_assignments (id, user_id, asset_code, chain, network, wallet_id, address, address_key, custody_key_urn) values ('00000000-0000-4000-8000-0000000d5402'::uuid, '{{uid}}', 'LTC', 'litecoin', 'mainnet', '00000000-0000-4000-8000-0000000d5401', concat('ltc1', substr(md5('{{uid}}'), 1, 20)), concat('k-', substr(md5('{{uid}}'), 1, 16)), concat('urn:custody:', '{{uid}}')) on conflict do nothing; insert into idempotency_keys (key, user_id, route, request_hash) values (concat('{{uid}}', ':POST /v1/wallets:drill'), '{{uid}}', 'POST /v1/wallets', 'drill') on conflict do nothing|SCAN
+ledger|ledger|http://ledger:4000/v1/events|anonymise|-|insert into accounts (subject, asset_code, purpose) values (concat('user:', '{{uid}}'), 'EMBER', 'available') on conflict do nothing|SCAN
+custody|custody|http://custody:4000/v1/events|anonymise|-|insert into custody_seeds (id, user_id, family, key_version) values ('00000000-0000-4000-8000-0000000d5501'::uuid, '{{uid}}', 'utxo', 1) on conflict do nothing; insert into custody_keys (address, chain, family, purpose, network, user_id, order_id, scheme, derivation_path, seed_id, key_version, storage, created_by, idempotency_key) values (concat('ltc1drill', substr(md5('{{uid}}'), 1, 16)), 'litecoin', 'utxo', 'deposit', 'mainnet', '{{uid}}', concat('deposit:', '{{uid}}'), 'hd_bip44', concat('m/44', chr(39), '/2', chr(39), '/0', chr(39), '/0/0'), '00000000-0000-4000-8000-0000000d5501', 1, 'vault', concat('user:', '{{uid}}'), concat('drill:', '{{uid}}')) on conflict do nothing|SCAN
+pool|pool|http://pool:4146/v1/events|delete|-|insert into pool_account_links (user_id, account) values ('{{uid}}', concat('cf', substr(md5('{{uid}}'), 1, 12))) on conflict do nothing|SCAN
