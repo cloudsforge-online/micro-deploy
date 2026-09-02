@@ -39,6 +39,17 @@
 #   url        where identity's relay POSTs the event. IN-CLUSTER, port 4000 —
 #              this is what goes in `event_subscriptions.url`.
 #
+#              AND NAME THE SERVICE'S PORT, NOT THE PROCESS'S DEFAULT. Every
+#              row here is :4000, and `pool` is the one that looks like it
+#              should not be: `pool/src/env.ts` defaults `PORT` to 4146 and the
+#              README says 4146, so a reader writing this row from the code will
+#              write 4146. The estate sets `PORT=4000` and the Service publishes
+#              4000->4000, so :4146 resolves to a port nothing listens on — a
+#              subscription that looks configured and delivers nothing, which is
+#              the same failure the paragraph below describes reached by a
+#              different route. `check-erasure-subscriptions-live.py` POSTs every
+#              URL in this file from inside the cluster, and is what catches it.
+#
 #              NAME THE ABSORBER AND ITS MOUNTED PATH, NEVER THE ABSORBED
 #              SERVICE. After the merge, `worlds`, `policy` and seventeen others
 #              are ExternalName Services — DNS CNAMEs onto `agora` — so a URL
@@ -313,4 +324,4 @@ worlds|worlds|http://agora:4000/v1/events/worlds|mixed|-|insert into titles (id,
 wallet|wallet|http://agora:4000/v1/events/agora|anonymise|-|insert into wallets (id, user_id, origin, chain, network, address, address_key, label, status) values ('00000000-0000-4000-8000-0000000d5401'::uuid, '{{uid}}', 'managed', 'litecoin', 'mainnet', concat('ltc1', substr(md5('{{uid}}'), 1, 20)), concat('k-', substr(md5('{{uid}}'), 1, 16)), 'drill', 'active') on conflict do nothing; insert into deposit_address_assignments (id, user_id, asset_code, chain, network, wallet_id, address, address_key, custody_key_urn) values ('00000000-0000-4000-8000-0000000d5402'::uuid, '{{uid}}', 'LTC', 'litecoin', 'mainnet', '00000000-0000-4000-8000-0000000d5401', concat('ltc1', substr(md5('{{uid}}'), 1, 20)), concat('k-', substr(md5('{{uid}}'), 1, 16)), concat('urn:custody:', '{{uid}}')) on conflict do nothing; insert into idempotency_keys (key, user_id, route, request_hash) values (concat('{{uid}}', ':POST /v1/wallets:drill'), '{{uid}}', 'POST /v1/wallets', 'drill') on conflict do nothing|SCAN
 ledger|ledger|http://ledger:4000/v1/events|anonymise|-|insert into accounts (subject, asset_code, purpose) values (concat('user:', '{{uid}}'), 'EMBER', 'available') on conflict do nothing|SCAN
 custody|custody|http://custody:4000/v1/events|anonymise|-|insert into custody_seeds (id, user_id, family, key_version) values ('00000000-0000-4000-8000-0000000d5501'::uuid, '{{uid}}', 'utxo', 1) on conflict do nothing; insert into custody_keys (address, chain, family, purpose, network, user_id, order_id, scheme, derivation_path, seed_id, key_version, storage, created_by, idempotency_key) values (concat('ltc1drill', substr(md5('{{uid}}'), 1, 16)), 'litecoin', 'utxo', 'deposit', 'mainnet', '{{uid}}', concat('deposit:', '{{uid}}'), 'hd_bip44', concat('m/44', chr(39), '/2', chr(39), '/0', chr(39), '/0/0'), '00000000-0000-4000-8000-0000000d5501', 1, 'vault', concat('user:', '{{uid}}'), concat('drill:', '{{uid}}')) on conflict do nothing|SCAN
-pool|pool|http://pool:4146/v1/events|delete|-|insert into pool_account_links (user_id, account) values ('{{uid}}', concat('cf', substr(md5('{{uid}}'), 1, 12))) on conflict do nothing|SCAN
+pool|pool|http://pool:4000/v1/events|delete|-|insert into pool_account_links (user_id, account) values ('{{uid}}', concat('cf', substr(md5('{{uid}}'), 1, 12))) on conflict do nothing|SCAN
