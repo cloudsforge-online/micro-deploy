@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.115  (2026.8.115.yaml)
+# Release:   2026.8.116  (2026.8.116.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.115.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.116.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -583,7 +583,7 @@ spec:
     spec:
       containers:
       - name: custody
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:8ceff08bffb70f151ad3540e9d9acf1303340269811052ffbc1da1402067a926
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:349bca3e7baa28da0f67a785f5be67b6c2ffe3db63122da7a4329d7ee73b8c5a
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
@@ -1026,7 +1026,7 @@ spec:
     spec:
       containers:
       - name: pool
-        image: ghcr.io/cloudsforge-online/micro-pool@sha256:5b69622ccc48dcb27243001917c7630bacdbc50ebd95066193aa85ad0b8961cf
+        image: ghcr.io/cloudsforge-online/micro-pool@sha256:29c3ce907eed0286b4800b27d9b56fa8dd8f1663514162f46c183364862f0ee1
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
