@@ -827,6 +827,10 @@ spec:
           value: /etc/ssl/estate/trust.crt
         - name: CF_NETWORK_SINGLE
           value: mainnet
+        envFrom:
+        - secretRef:
+            name: secret-outbox
+            optional: false
         volumeMounts:
         - name: gateway-trust
           mountPath: /etc/ssl/estate/trust.crt
