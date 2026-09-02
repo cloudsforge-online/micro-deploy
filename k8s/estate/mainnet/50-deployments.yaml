@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.111  (2026.8.111.yaml)
+# Release:   2026.8.112  (2026.8.112.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.111.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.112.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -37,7 +37,7 @@ spec:
     spec:
       containers:
       - name: agora
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:170e1d2fb0d161a8cf4992533dc5d5f8e07d39f6c063ba8f5eab1e93d1f8e0ca
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:edcd424e01434e035271a3d5b1336af796979a648781df93daa92595a5308ff5
         imagePullPolicy: IfNotPresent
         env:
         - name: CF_POSTGRES_PASSWORD
