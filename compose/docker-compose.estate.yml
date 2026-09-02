@@ -3108,6 +3108,13 @@ services:
       POOL_DOGE_PAYOUT_ADDRESS: ${POOL_DOGE_PAYOUT_ADDRESS:-}
       POOL_FEE_BASIS_POINTS: ${POOL_FEE_BASIS_POINTS:-100}
       INSTANCE_ID: pool-migrate
+    # micro-org#534. `env.ts` is eager and `OUTBOX_SIGNING_SECRET` is REQUIRED, so
+    # the migrate job needs it exactly as much as the service does: the migrator
+    # imports the same module and would exit(1) before touching the schema
+    # without it. Read only to VERIFY the inbound `identity.user.deleted`
+    # delivery — this service still publishes nothing and still has no outbox.
+    env_file:
+      - *outbox-secret-file
     depends_on:
       postgres:
         condition: service_healthy
@@ -3136,6 +3143,11 @@ services:
     env_file:
       - path: generated/stratum.env
         required: false
+      # micro-org#534 — verification only. This pool publishes nothing and has no
+      # outbox; it now RECEIVES one event, `identity.user.deleted`, and the HMAC
+      # over the delivery is the only thing that authenticates the relay. See the
+      # migrate job above and `pool/src/env.ts` for the whole argument.
+      - *outbox-secret-file
     environment:
       # `*identity-trust` was already on this line and is now LOAD-BEARING rather
       # than incidental. micro-org#289 gives the pool a user-facing route for the
