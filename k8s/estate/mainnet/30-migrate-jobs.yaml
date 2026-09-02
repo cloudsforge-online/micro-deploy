@@ -2,11 +2,11 @@
 #
 # Network:   mainnet
 # Namespace: cloudsforge-estate
-# Release:   2026.8.114  (2026.8.114.yaml)
+# Release:   2026.8.115  (2026.8.115.yaml)
 # Source:    compose/docker-compose.estate.yml + render-vars.mainnet.yaml
 #
 # Regenerate with:
-#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.114.yaml \
+#   ./scripts/k8s-render.py --network mainnet --release ../org/releases/2026.8.115.yaml \
 #       --outdir k8s/estate/mainnet
 #
 # Contains NO secret values. Every credential is a secretKeyRef by name; see the
@@ -15,7 +15,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: agora-migrate-2026-8-114
+  name: agora-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: agora-migrate
@@ -33,7 +33,7 @@ spec:
     spec:
       containers:
       - name: agora-migrate
-        image: ghcr.io/cloudsforge-online/micro-agora@sha256:cc1554477b8c94da2db77ea89258c8219a64d8d519fffacba940cfd932a7d168
+        image: ghcr.io/cloudsforge-online/micro-agora@sha256:4637de0cf8bffd14e30ca617faedd02f6efcde2c9c710e65a5a93b35280832df
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -291,7 +291,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: beacon-migrate-2026-8-114
+  name: beacon-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: beacon-migrate
@@ -367,7 +367,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-keys-init-2026-8-114
+  name: custody-keys-init-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: custody-keys-init
@@ -419,7 +419,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: custody-migrate-2026-8-114
+  name: custody-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: custody-migrate
@@ -437,7 +437,7 @@ spec:
     spec:
       containers:
       - name: custody-migrate
-        image: ghcr.io/cloudsforge-online/micro-custody@sha256:c30e23527e27d90809f97a76518a32f6867a93086f1484a8b7d65b17755f0d2a
+        image: ghcr.io/cloudsforge-online/micro-custody@sha256:8ceff08bffb70f151ad3540e9d9acf1303340269811052ffbc1da1402067a926
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -498,7 +498,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: identity-migrate-2026-8-114
+  name: identity-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: identity-migrate
@@ -577,7 +577,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: indexer-migrate-2026-8-114
+  name: indexer-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: indexer-migrate
@@ -651,7 +651,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: ledger-migrate-2026-8-114
+  name: ledger-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: ledger-migrate
@@ -669,7 +669,7 @@ spec:
     spec:
       containers:
       - name: ledger-migrate
-        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:a73cdc351982805e30d4f87858c556e0e4d4fb05f1447ee6f1750886c5180444
+        image: ghcr.io/cloudsforge-online/micro-ledger@sha256:686b827d7c610417f49f12fb3ae1e8020b42d8ff5e7ed8e82e130a30910289fa
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -727,7 +727,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: pool-migrate-2026-8-114
+  name: pool-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: pool-migrate
@@ -745,7 +745,7 @@ spec:
     spec:
       containers:
       - name: pool-migrate
-        image: ghcr.io/cloudsforge-online/micro-pool@sha256:d325e7a4f8b641541eca2a5ed3746517264a5002a17188969f6bceca2ead958a
+        image: ghcr.io/cloudsforge-online/micro-pool@sha256:5b69622ccc48dcb27243001917c7630bacdbc50ebd95066193aa85ad0b8961cf
         imagePullPolicy: IfNotPresent
         command:
         - node
@@ -845,7 +845,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: settlement-migrate-2026-8-114
+  name: settlement-migrate-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: settlement-migrate
@@ -939,7 +939,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: studio-assets-init-2026-8-114
+  name: studio-assets-init-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: studio-assets-init
@@ -991,7 +991,7 @@ spec:
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: tessera-assets-check-2026-8-114
+  name: tessera-assets-check-2026-8-115
   namespace: cloudsforge-estate
   labels:
     app.kubernetes.io/name: tessera-assets-check
